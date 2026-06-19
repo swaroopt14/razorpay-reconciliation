@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"log"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -23,20 +24,47 @@ import (
 	"zord-token-enclave/tracing"
 )
 
+// internalAuthMiddleware validates X-Zord-Internal-Token on every request
+// except /v1/health. The token is read from ENCLAVE_INTERNAL_TOKEN env var.
+// If the env var is not set, the service refuses to start (see main).
+func internalAuthMiddleware(token string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.URL.Path == "/v1/health" {
+			c.Next()
+			return
+		}
+		provided := c.GetHeader("X-Zord-Internal-Token")
+		if provided == "" || provided != token {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "unauthorized",
+			})
+			return
+		}
+		// Set caller_id for handlers to use in audit
+		c.Set("caller_id", c.GetHeader("X-Zord-Caller-ID"))
+		c.Next()
+	}
+}
+
 func main() {
 	cleanup := tracing.InitTracing("zord-token-enclave")
 	defer cleanup()
 
 	cfg := config.Load()
 
-	// ---------------- DB SETUP ----------------
+	// Load internal auth token — refuse to start if missing
+	internalToken := os.Getenv("ENCLAVE_INTERNAL_TOKEN")
+	if internalToken == "" {
+		log.Fatal("❌ ENCLAVE_INTERNAL_TOKEN is not set — refusing to start without authentication")
+	}
+
 	// ---------------- DB SETUP ----------------
 	database, err := sql.Open("postgres", cfg.DBURL)
 	if err != nil {
 		log.Fatal("❌ Failed to connect DB:", err)
 	}
 
-	// ✅ FIX: Set connection pool limits
+	// Set connection pool limits
 	database.SetMaxOpenConns(50)
 	database.SetMaxIdleConns(20)
 	database.SetConnMaxLifetime(10 * time.Minute)
@@ -60,14 +88,18 @@ func main() {
 	// ---------------- MIGRATION WORKER ----------------
 	go func() {
 		for {
-			log.Println("🔁 Starting key migration cycle...")
-
-			// ⚠️ For now hardcoded tenant (can extend later)
-			err := tokenSvc.MigrateKeys(context.Background(), "tenant_1")
+			log.Println("🔁 Starting migration check for all tenants...")
+			tenants, err := tokenSvc.GetAllTenants(context.Background())
 			if err != nil {
-				log.Println("❌ Migration error:", err)
+				log.Println("❌ Failed to load tenants for migration:", err)
 			} else {
-				log.Println("✅ Migration cycle completed")
+				for _, tenantID := range tenants {
+					if err := tokenSvc.MigrateKeys(context.Background(), tenantID); err != nil {
+						log.Printf("❌ Migration error for tenant %s: %v", tenantID, err)
+					} else {
+						log.Printf("✅ Migration cycle completed for tenant %s", tenantID)
+					}
+				}
 			}
 
 			time.Sleep(1 * time.Minute)
@@ -83,7 +115,7 @@ func main() {
 				log.Println("❌ Auto-rotation error:", err)
 			}
 
-			time.Sleep(10 * time.Minute) // configurable
+			time.Sleep(10 * time.Minute)
 		}
 	}()
 
@@ -143,6 +175,7 @@ func main() {
 			ctx,
 			event.TenantID,
 			event.TraceID,
+			"kafka-tokenize-consumer", // actor
 			pii,
 		)
 		if err != nil {
@@ -191,9 +224,10 @@ func main() {
 	r.Use(
 		gin.Recovery(),
 		otelgin.Middleware("zord-token-enclave"),
+		internalAuthMiddleware(internalToken), // P0 auth gate
 	)
 
-	// health
+	// health — exempt from auth by middleware
 	r.GET("/v1/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})

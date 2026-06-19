@@ -7,13 +7,13 @@ import { useEffect, useRef } from 'react'
 import { FinalLandingAssistantButton } from '@/components/landing-final/FinalLandingAssistantButton'
 import { FinalLandingNavbar } from '@/components/landing-final/FinalLandingNavbar'
 
-const dockItems = ['Intent intake', 'Dynamic routing', 'Live tracking', 'Proof export']
+const dockItems = ['Intent intake', 'Connector watch', 'Live tracking', 'Evidence Pack']
 
 const metricItems = [
-  { label: 'Routing', value: '12', unit: 'ms' },
-  { label: 'Visibility', value: '99.9', unit: '%' },
-  { label: 'Signals', value: '4', unit: 'sources' },
-  { label: 'State', value: 'Stable', unit: '' },
+  { label: 'Stages', value: '4', unit: 'steps' },
+  { label: 'Signals', value: 'Multi', unit: 'source' },
+  { label: 'Proof', value: 'Export', unit: 'ready' },
+  { label: 'Preview', value: 'Sandbox', unit: '' },
 ]
 
 const stageDetails = [
@@ -22,34 +22,34 @@ const stageDetails = [
     nav: 'Intent',
     title: 'Create the payout intent',
     body:
-      'A payout request enters Zord with beneficiary, amount, business rules, and routing constraints. The platform validates payload shape, risk flags, and proof requirements before dispatch starts.',
+      'A payout request enters Zord with beneficiary, amount, business rules, and proof requirements. The platform validates instruction details, risk flags, and workspace context before downstream tracking begins.',
     bullets: [
-      'Validate amount, tenant, beneficiary, and compliance constraints',
+      'Validate amount, workspace, beneficiary, and compliance constraints',
       'Attach business context so later teams understand why the payout exists',
-      'Normalize the request into one contract before providers are even chosen',
+      'Normalize the request into one shared record before connector signals attach',
     ],
     metrics: [
-      { label: 'Contract checks', value: '36' },
-      { label: 'Risk rules', value: '9' },
-      { label: 'Prep latency', value: '12ms' },
+      { label: 'Contract checks', value: 'Configured' },
+      { label: 'Risk rules', value: 'Workspace' },
+      { label: 'Prep state', value: 'Validated' },
     ],
     panel: 'intent' as const,
   },
   {
     id: '02',
-    nav: 'Routing',
-    title: 'Choose the best provider path',
+    nav: 'Connectors',
+    title: 'Observe connector and rail posture',
     body:
-      'The routing engine compares provider health, rail availability, latency, and cost rules in real time. Zord can switch paths automatically before your team ever sees a failed payout queue.',
+      'Zord surfaces connector performance, confirmation trust, and rail posture from live workspace data. Operations can see which paths need review before failures become queue pressure.',
     bullets: [
-      'Evaluate primary and failover providers for each payout window',
-      'Shift by amount bucket, rail, or business priority automatically',
-      'Record the decision so support and finance can explain why a route changed',
+      'Compare primary and fallback connectors for each payout window',
+      'Watch failure signals, slow responses, and confirmation trust in one connector view',
+      'Record posture changes so support and finance can explain what shifted',
     ],
     metrics: [
-      { label: 'Providers scored', value: '6' },
-      { label: 'Auto-routed', value: '92%' },
-      { label: 'Fee delta', value: '-14%' },
+      { label: 'Connector view', value: 'Live' },
+      { label: 'Leakage signals', value: 'Surfaced' },
+      { label: 'Review path', value: 'Guided' },
     ],
     panel: 'routing' as const,
   },
@@ -58,34 +58,34 @@ const stageDetails = [
     nav: 'Tracking',
     title: 'Track every payout state',
     body:
-      'Once dispatched, Zord keeps the provider acknowledgement, bank confirmation, settlement progress, and exception signals in one timeline. Operations teams see exactly where money is waiting.',
+      'Once sent to the bank path, Zord keeps the provider acknowledgement, bank confirmation, settlement progress, and exception signals in one timeline. Operations teams see exactly where money is waiting.',
     bullets: [
       'Merge provider and bank events into one chronological payout story',
       'Surface lagging stages before finance starts chasing support teams',
       'Highlight which failures are provider-side, bank-side, or data-side',
     ],
     metrics: [
-      { label: 'States captured', value: '11' },
-      { label: 'Sync interval', value: '18s' },
-      { label: 'Exception SLA', value: 'Live' },
+      { label: 'States captured', value: 'End-to-end' },
+      { label: 'Sync model', value: 'Workspace' },
+      { label: 'Exception view', value: 'Live' },
     ],
     panel: 'tracking' as const,
   },
   {
     id: '04',
     nav: 'Proof',
-    title: 'Confirm delivery and export proof',
+    title: 'Confirm delivery and export Evidence Packs',
     body:
       'Zord confirms whether money actually reached and assembles the evidence pack required by finance, compliance, legal, or support. You don’t need to reopen five systems to defend one payout.',
     bullets: [
-      'Match webhook, provider timeline, and statement evidence together',
-      'Keep proof packs ready for disputes, audits, and merchant questions',
-      'Export a single artifact instead of rebuilding the trail manually',
+      'Match confirmation signals, provider timeline, and statement evidence together',
+      'Keep Evidence Packs ready for disputes, audits, and merchant questions',
+      'Export one artifact instead of rebuilding the trail manually',
     ],
     metrics: [
-      { label: 'Proof sources', value: '4' },
-      { label: 'Ready packs', value: '14.7k' },
-      { label: 'Export time', value: '1 click' },
+      { label: 'Proof sources', value: 'Linked' },
+      { label: 'Pack readiness', value: 'Workspace' },
+      { label: 'Export path', value: 'One click' },
     ],
     panel: 'proof' as const,
   },
@@ -94,18 +94,18 @@ const stageDetails = [
 const teamCards = [
   {
     title: 'Operations',
-    body: 'See where payouts are stuck, why routing changed, and which queue needs attention right now.',
-    tags: ['Live queue', 'Provider lag', 'Exception SLA'],
+    body: 'See where payouts are stuck, which connector is degrading, and which queue needs attention right now.',
+    tags: ['Live queue', 'Connector lag', 'Exception review'],
   },
   {
     title: 'Finance',
-    body: 'Understand whether money moved, reconcile the final state, and keep defensible proof for every transfer.',
-    tags: ['Finality', 'Proof packs', 'Audit trail'],
+    body: 'Understand whether money moved, reconcile the final state, and keep defensible Evidence Packs for every transfer.',
+    tags: ['Finality', 'Evidence Packs', 'Audit trail'],
   },
   {
     title: 'Engineering',
-    body: 'Connect through APIs and webhooks while keeping one normalized model for payout state across providers.',
-    tags: ['API', 'Webhooks', 'Contracts'],
+    body: 'Connect payment sources while keeping one shared payout record across providers and banks.',
+    tags: ['Integrations', 'Confirmations', 'Shared record'],
   },
 ]
 
@@ -147,18 +147,18 @@ function PulseIcon() {
   )
 }
 
-function RoutingChart() {
+function ConnectorChart() {
   const lanes = [
-    { label: 'Cashfree · IMPS', score: '99.9%', width: '92%', gradient: 'from-indigo-300 via-violet-400 to-cyan-400' },
-    { label: 'Razorpay · Failover', score: '99.2%', width: '81%', gradient: 'from-sky-300 via-blue-400 to-indigo-500' },
-    { label: 'Yes Bank UPI', score: '91.4%', width: '56%', gradient: 'from-amber-300 via-amber-400 to-orange-500' },
+    { label: 'Cashfree · IMPS', score: 'Stable', width: '82%', gradient: 'from-indigo-300 via-violet-400 to-cyan-400' },
+    { label: 'Razorpay · Failover', score: 'Watch', width: '68%', gradient: 'from-sky-300 via-blue-400 to-indigo-500' },
+    { label: 'Yes Bank UPI', score: 'Review', width: '48%', gradient: 'from-amber-300 via-amber-400 to-orange-500' },
   ]
 
   return (
     <div className="rounded-2xl border border-white/8 bg-black/30 p-4">
       <div className="mb-4 flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-slate-500">
-        <span>Routing score</span>
-        <span>Live provider health</span>
+        <span>Connector posture</span>
+        <span>Product preview</span>
       </div>
 
       <div className="space-y-4">
@@ -190,7 +190,7 @@ function RoutingChart() {
       </div>
 
       <div className="mt-4 grid grid-cols-3 gap-2">
-        {['Primary path', 'Failover ready', 'Cost aware'].map((chip) => (
+        {['Primary path', 'Fallback ready', 'Leakage watch'].map((chip) => (
           <div key={chip} className="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2 text-center text-[10px] uppercase tracking-[0.18em] text-slate-400">
             {chip}
           </div>
@@ -203,13 +203,13 @@ function RoutingChart() {
 function ProofChart() {
   const radius = 46
   const circumference = 2 * Math.PI * radius
-  const progress = 0.978
+  const progress = 0.82
 
   return (
     <div className="rounded-2xl border border-white/8 bg-black/30 p-4">
       <div className="mb-4 flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-slate-500">
-        <span>Proof completeness</span>
-        <span>Pack ready</span>
+        <span>Evidence Pack completeness</span>
+        <span>Preview</span>
       </div>
 
       <div className="flex items-center gap-5">
@@ -239,16 +239,16 @@ function ProofChart() {
             </defs>
           </svg>
           <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <div className="text-[24px] font-light tracking-tight text-white">97.8%</div>
-            <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Ready</div>
+            <div className="text-[24px] font-light tracking-tight text-white">Ready</div>
+            <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Preview</div>
           </div>
         </div>
 
         <div className="flex-1 space-y-3">
           {[
-            ['Webhook receipt', '100%'],
-            ['Provider trail', '98%'],
-            ['Bank statement', '95%'],
+            ['Webhook receipt', 'Linked'],
+            ['Provider trail', 'Linked'],
+            ['Bank statement', 'Pending'],
           ].map(([label, value], index) => (
             <div key={label}>
               <div className="mb-1.5 flex items-center justify-between text-[11px] text-slate-300">
@@ -285,13 +285,13 @@ function StagePanel({ panel }: { panel: (typeof stageDetails)[number]['panel'] }
           whileHover={{ y: -4, scale: 1.01 }}
         >
           <div className="mb-3 flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-slate-500">
-            <span>Intent payload</span>
+            <span>Payment instruction</span>
             <span>Validated</span>
           </div>
           <div className="space-y-2 font-mono text-[12px] text-slate-300">
             <div>{'beneficiary_id: seller_4821'}</div>
-            <div>{'amount: ₹50,000'}</div>
-            <div>{'mode: best_available'}</div>
+            <div>{'amount: sample_value'}</div>
+            <div>{'mode: workspace_preview'}</div>
             <div>{'proof: required'}</div>
           </div>
         </motion.div>
@@ -317,11 +317,11 @@ function StagePanel({ panel }: { panel: (typeof stageDetails)[number]['panel'] }
   if (panel === 'routing') {
     return (
       <div className="space-y-3">
-        <RoutingChart />
+        <ConnectorChart />
         {[
-          ['Cashfree', '99.9%', '₹3.10'],
-          ['Razorpay', '99.2%', '₹3.35'],
-          ['Yes Bank UPI', '91.4%', '₹2.95'],
+          ['Cashfree', 'Stable', 'Primary IMPS'],
+          ['Razorpay', 'Watch', 'Failover lane'],
+          ['Yes Bank UPI', 'Review', 'Overflow lane'],
         ].map(([name, success, cost], index) => (
           <motion.div
             key={name}
@@ -358,7 +358,7 @@ function StagePanel({ panel }: { panel: (typeof stageDetails)[number]['panel'] }
           ['Settlement update', '09:43:02', false],
         ].map(([label, time, active], index) => (
           <motion.div
-            key={label}
+            key={String(label)}
             className="flex gap-3"
             initial={{ opacity: 0, x: 18 }}
             whileInView={{ opacity: 1, x: 0 }}
@@ -412,7 +412,7 @@ function StagePanel({ panel }: { panel: (typeof stageDetails)[number]['panel'] }
         transition={{ duration: 0.42, delay: 0.16 }}
         whileHover={{ y: -2, scale: 1.01 }}
       >
-        Export pack in one click for audit, dispute, or merchant communication.
+        Export Evidence Pack in one click for audit, dispute, or merchant communication.
       </motion.div>
     </div>
   )
@@ -602,7 +602,7 @@ export default function HowItWorksClient() {
               </div>
 
               <h2 className="mb-7 text-4xl font-normal leading-[1.02] tracking-[-0.05em] text-slate-800 sm:text-5xl lg:text-[4.3rem]">
-                Route.
+                Observe.
                 <br />
                 <span className="text-slate-600">Track.</span>
                 <br />
@@ -610,8 +610,8 @@ export default function HowItWorksClient() {
               </h2>
 
               <p className="mb-9 max-w-xl text-[16px] font-light leading-8 text-slate-500 sm:text-[17px]">
-                Zord receives your payout intent, chooses the best provider path, watches every downstream state change,
-                and confirms whether money actually reached. Finance, operations, and engineering teams see the same truth from one system.
+                Zord receives your payout intent, surfaces connector and bank posture, watches every downstream state change,
+                and confirms whether money actually reached. Finance, operations, and engineering teams see the same truth from one workspace.
               </p>
 
               <div className="flex flex-wrap items-center gap-4">
@@ -951,7 +951,7 @@ export default function HowItWorksClient() {
                   This is what a payout operating system should feel like
                 </h3>
                 <p className="mt-4 text-base font-light leading-7 text-slate-500">
-                  Zord gives your teams a single operating layer for routing, payout visibility, confirmation, and proof export without the usual reconciliation scramble.
+                  Zord gives your teams a single operating layer for connector visibility, payout confirmation, matching, and Evidence Pack export without the usual reconciliation scramble.
                 </p>
               </div>
 

@@ -1,0 +1,133 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-recording-rules
+  namespace: monitoring
+data:
+  recording-rules.yml: |
+    groups:
+      # ── Cluster-level aggregations ────────────────────────────────────────
+      - name: cluster_aggregations
+        interval: 30s
+        rules:
+          # Total cluster CPU usage percentage
+          - record: cluster:cpu_usage:percent
+            expr: 100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
+
+          # Total cluster memory usage percentage
+          - record: cluster:memory_usage:percent
+            expr: (1 - (sum(node_memory_MemAvailable_bytes) / sum(node_memory_MemTotal_bytes))) * 100
+
+          # Total cluster disk usage percentage
+          - record: cluster:disk_usage:percent
+            expr: (1 - (sum(node_filesystem_avail_bytes{mountpoint="/"}) / sum(node_filesystem_size_bytes{mountpoint="/"}))) * 100
+
+          # Total running pods
+          - record: cluster:pods_running:count
+            expr: count(kube_pod_status_phase{phase="Running"})
+
+          # Total pending pods
+          - record: cluster:pods_pending:count
+            expr: count(kube_pod_status_phase{phase="Pending"}) or vector(0)
+
+      # ── Node-level aggregations ───────────────────────────────────────────
+      - name: node_aggregations
+        interval: 30s
+        rules:
+          # CPU usage per node
+          - record: node:cpu_usage:percent
+            expr: 100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) by (instance) * 100)
+
+          # Memory usage per node
+          - record: node:memory_usage:percent
+            expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100
+
+          # Pods per node
+          - record: node:pods:count
+            expr: sum(kube_pod_info) by (node)
+
+      # ── Namespace-level aggregations ──────────────────────────────────────
+      - name: namespace_aggregations
+        interval: 30s
+        rules:
+          # CPU usage per namespace
+          - record: namespace:cpu_usage:sum
+            expr: sum(rate(container_cpu_usage_seconds_total{namespace!=""}[5m])) by (namespace)
+
+          # Memory usage per namespace (MB)
+          - record: namespace:memory_usage_mb:sum
+            expr: sum(container_memory_working_set_bytes{namespace!=""}) by (namespace) / 1024 / 1024
+
+          # Pod count per namespace
+          - record: namespace:pods:count
+            expr: count(kube_pod_info) by (namespace)
+
+      # ── Service-level aggregations (zord namespace) ───────────────────────
+      - name: zord_service_aggregations
+        interval: 30s
+        rules:
+          # CPU usage per pod in zord namespace
+          - record: zord:pod_cpu_usage:sum
+            expr: sum(rate(container_cpu_usage_seconds_total{namespace="zord", container!=""}[5m])) by (pod)
+
+          # Memory usage per pod in zord namespace (MB)
+          - record: zord:pod_memory_usage_mb:sum
+            expr: sum(container_memory_working_set_bytes{namespace="zord", container!=""}) by (pod) / 1024 / 1024
+
+          # Pod restarts in zord namespace (last 1 hour)
+          - record: zord:pod_restarts_1h:sum
+            expr: increase(kube_pod_container_status_restarts_total{namespace="zord"}[1h])
+
+      # ── Kong API Gateway aggregations ─────────────────────────────────────
+      - name: kong_aggregations
+        interval: 30s
+        rules:
+          # Total request rate (req/s)
+          - record: kong:requests:rate5m
+            expr: sum(rate(kong_http_requests_total[5m]))
+
+          # Error rate (5xx per second)
+          - record: kong:errors_5xx:rate5m
+            expr: sum(rate(kong_http_requests_total{code=~"5.."}[5m]))
+
+          # Error percentage
+          - record: kong:error_percent:rate5m
+            expr: (sum(rate(kong_http_requests_total{code=~"5.."}[5m])) / sum(rate(kong_http_requests_total[5m]))) * 100
+
+          # Request rate per route
+          - record: kong:route_requests:rate5m
+            expr: sum(rate(kong_http_requests_total[5m])) by (route)
+
+          # P50 latency
+          - record: kong:latency_p50:ms
+            expr: histogram_quantile(0.50, sum(rate(kong_request_latency_ms_bucket[5m])) by (le))
+
+          # P95 latency
+          - record: kong:latency_p95:ms
+            expr: histogram_quantile(0.95, sum(rate(kong_request_latency_ms_bucket[5m])) by (le))
+
+          # P99 latency
+          - record: kong:latency_p99:ms
+            expr: histogram_quantile(0.99, sum(rate(kong_request_latency_ms_bucket[5m])) by (le))
+
+          # Bandwidth (KB/s)
+          - record: kong:bandwidth_ingress:kbs
+            expr: sum(rate(kong_bandwidth_bytes{direction="ingress"}[5m])) / 1024
+
+          - record: kong:bandwidth_egress:kbs
+            expr: sum(rate(kong_bandwidth_bytes{direction="egress"}[5m])) / 1024
+
+      # ── HPA aggregations ──────────────────────────────────────────────────
+      - name: hpa_aggregations
+        interval: 60s
+        rules:
+          # Services at max replicas
+          - record: hpa:at_max_replicas:count
+            expr: count(kube_horizontalpodautoscaler_status_current_replicas == kube_horizontalpodautoscaler_spec_max_replicas)
+
+          # Total desired vs current replicas
+          - record: hpa:replicas_desired:sum
+            expr: sum(kube_horizontalpodautoscaler_status_desired_replicas{namespace=~"zord|api-gateway"})
+
+          - record: hpa:replicas_current:sum
+            expr: sum(kube_horizontalpodautoscaler_status_current_replicas{namespace=~"zord|api-gateway"})

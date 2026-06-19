@@ -69,6 +69,24 @@ func (c *Client) InvokeRCAClusteringAsync(ctx context.Context, req RCARequest, c
 	}
 }
 
+// InvokeLeakagePredictionAsync fires a leakage regression request in the background.
+// If the pool is full, cb is called immediately with a safe fallback.
+func (c *Client) InvokeLeakagePredictionAsync(
+	ctx context.Context,
+	req LeakagePredictionRequest,
+	cb func(LeakagePredictionResult, error),
+) {
+	err := c.invokeAsync(func() {
+		result, err := c.InvokeLeakagePrediction(ctx, req)
+		cb(result, err)
+	})
+	if err != nil {
+		log.Printf("mlclient: InvokeLeakagePredictionAsync pool full tenant=%s batch=%s - using fallback",
+			req.TenantID, req.BatchID)
+		go cb(FallbackLeakagePredictionResult(), err)
+	}
+}
+
 // InvokeZScoreAsync fires a Z-score anomaly detection request in the background.
 // cb is called from a goroutine when the result is ready.
 // If the pool is full, cb is called immediately (in its own goroutine) with FallbackZScoreResult.

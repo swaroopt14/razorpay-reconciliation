@@ -120,8 +120,8 @@ func validateInstrumentParsed(intent models.ParsedIncomingIntent) error {
 		if strings.TrimSpace(intent.AccountNumber) == "" {
 			return semanticError("account_number required for BANK instrument")
 		}
-		if !ifscRegex.MatchString(intent.Beneficiary.Instrument.IFSC) {
-			return semanticError("invalid IFSC format")
+		if !ifscRegex.MatchString(strings.TrimSpace(intent.Beneficiary.Instrument.IFSC)) {
+			return semanticError("Invalid IFSC format: must be exactly 11 characters")
 		}
 		// FIX: Reject invalid combinations
 		// if intent.Beneficiary.Instrument.VPA != "" {

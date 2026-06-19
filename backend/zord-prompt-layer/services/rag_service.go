@@ -235,8 +235,34 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 	}
 
 	scope := utils.NormalizeScope(rawScope, time.Now(), time.Local)
+	resolvedQuery := req.Query
+	historyContext := ""
+	if s.memory != nil {
+		history, memErr := s.memory.GetRecent(ctx, req.TenantID, req.UserID, req.SessionID)
+		if memErr != nil {
+			log.Printf("[prompt-layer][memory] read failed tenant=%s user=%s session=%s err=%v", req.TenantID, req.UserID, req.SessionID, memErr)
+		} else if len(history) > 0 {
+			var hb strings.Builder
+			for i, t := range history {
+				hb.WriteString(fmt.Sprintf("[%d] at=%s user=%s assistant=%s\n",
+					i+1,
+					t.Timestamp.UTC().Format(time.RFC3339),
+					utils.SanitizeAnswerText(t.UserMessage),
+					utils.SanitizeAnswerText(t.AssistantSummary),
+				))
+			}
+			historyContext = hb.String()
+			resolvedQuery = resolveFollowupQuery(req.Query, history)
+		}
+	}
+	if !strings.EqualFold(strings.TrimSpace(resolvedQuery), strings.TrimSpace(req.Query)) {
+		log.Printf("[prompt-layer][memory] followup resolved tenant=%s user=%s session=%s", req.TenantID, req.UserID, req.SessionID)
+	}
 
-	chunks, err := s.retriever.Retrieve(req, intentID, traceID, topK, scope)
+	retrievalReq := req
+	retrievalReq.Query = resolvedQuery
+
+	chunks, err := s.retriever.Retrieve(retrievalReq, intentID, traceID, topK, scope)
 	if err != nil {
 		return dto.QueryResponse{}, fmt.Errorf("retrieval failed: %w", err)
 	}
@@ -252,7 +278,7 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 		if strings.TrimSpace(fallbackRaw.TimePhrase) != "" {
 			fallbackScope := utils.NormalizeScope(fallbackRaw, time.Now(), time.Local)
 			if fallbackScope.HasExplicitTime {
-				retryChunks, retryErr := s.retriever.Retrieve(req, intentID, traceID, topK, fallbackScope)
+				retryChunks, retryErr := s.retriever.Retrieve(retrievalReq, intentID, traceID, topK, fallbackScope)
 				if retryErr == nil && len(retryChunks) > 0 {
 					chunks = retryChunks
 					scope = fallbackScope
@@ -290,10 +316,12 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 		return edgeOnlyResp, nil
 	}
 	rcaContext := ""
+	var rcaClusters *client.RCAClustersResponse
+	var rcaErr error
 	if s.intelligence != nil {
 		log.Printf("[prompt-layer][rca] fetching tenant RCA clusters tenant=%s", req.TenantID)
 
-		rcaClusters, rcaErr := s.intelligence.FetchRCAClusters(req.TenantID)
+		rcaClusters, rcaErr = s.intelligence.FetchRCAClusters(req.TenantID)
 		if rcaErr != nil {
 			log.Printf("[prompt-layer][rca] clusters fetch failed tenant=%s err=%v", req.TenantID, rcaErr)
 		} else {
@@ -306,28 +334,15 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 			rcaContext = strings.Join(parts, "\n")
 		}
 	}
-	historyContext := ""
-	if s.memory != nil {
-		history, memErr := s.memory.GetRecent(ctx, req.TenantID, req.UserID, req.SessionID)
-		if memErr != nil {
-			log.Printf("[prompt-layer][memory] read failed tenant=%s user=%s session=%s err=%v", req.TenantID, req.UserID, req.SessionID, memErr)
-		} else if len(history) > 0 {
-			var hb strings.Builder
-			for i, t := range history {
-				hb.WriteString(fmt.Sprintf("[%d] at=%s user=%s assistant=%s\n",
-					i+1,
-					t.Timestamp.UTC().Format(time.RFC3339),
-					utils.SanitizeAnswerText(t.UserMessage),
-					utils.SanitizeAnswerText(t.AssistantSummary),
-				))
-			}
-			historyContext = hb.String()
-		}
-	}
 	context := ""
 
 	if strings.TrimSpace(historyContext) != "" {
 		context += "[CHAT_HISTORY_CONTEXT]\n" + historyContext + "\n"
+	}
+	if !strings.EqualFold(strings.TrimSpace(resolvedQuery), strings.TrimSpace(req.Query)) {
+		context += "[RESOLVED_QUERY_CONTEXT]\n"
+		context += "Original user query: " + utils.SanitizeAnswerText(req.Query) + "\n"
+		context += "Resolved business query: " + utils.SanitizeAnswerText(resolvedQuery) + "\n"
 	}
 	context += buildBusinessContext(chunks)
 	if strings.TrimSpace(rcaContext) != "" {
@@ -417,7 +432,14 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 	if scope.WantsVisualization {
 		kind := detectVizKind(req.Query)
 		var vizNarrative string
-		viz, vizNarrative = s.buildDetailedVisualizationFromChunks(chunks, req, scope, kind, conf)
+
+		if rv, rn, ok := s.buildRCAVisualizationFromClusters(rcaClusters, req, scope, kind, conf); ok {
+			viz = rv
+			vizNarrative = rn
+		} else {
+			viz, vizNarrative = s.buildDetailedVisualizationFromChunks(chunks, req, scope, kind, conf)
+		}
+
 		if strings.TrimSpace(vizNarrative) != "" {
 			answer = strings.TrimSpace(answer + "\n\n**Visualization note:** " + vizNarrative)
 		}
@@ -444,7 +466,33 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 	}, nil
 
 }
+func resolveFollowupQuery(query string, history []ChatTurn) string {
+	q := strings.TrimSpace(query)
+	if q == "" || len(history) == 0 {
+		return q
+	}
 
+	lower := strings.ToLower(q)
+	isFollowup := strings.Contains(lower, "those") ||
+		strings.Contains(lower, "that") ||
+		strings.Contains(lower, "these") ||
+		strings.Contains(lower, "them") ||
+		strings.Contains(lower, "same ones")
+
+	if !isFollowup {
+		return q
+	}
+
+	last := history[len(history)-1]
+	prevUser := utils.SanitizeAnswerText(last.UserMessage)
+	prevAssistant := utils.SanitizeAnswerText(last.AssistantSummary)
+
+	if strings.TrimSpace(prevUser) == "" && strings.TrimSpace(prevAssistant) == "" {
+		return q
+	}
+
+	return strings.TrimSpace(q + " Previous business context: " + prevUser + " " + prevAssistant)
+}
 func mustJSON(v any) []byte {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -1014,7 +1062,176 @@ func extractStatusToken(text string) string {
 		return ""
 	}
 }
+func (s *DefaultRAGService) buildRCAVisualizationFromClusters(
+	rca *client.RCAClustersResponse,
+	req dto.QueryRequest,
+	scope utils.QueryScope,
+	kind vizKind,
+	confidence string,
+) (*dto.Visualization, string, bool) {
+	if rca == nil || !rca.DataAvailable || len(rca.Clusters) == 0 {
+		return nil, "", false
+	}
 
+	type agg struct {
+		label string
+		value float64
+	}
+	acc := map[string]float64{}
+
+	for _, raw := range rca.Clusters {
+		var obj map[string]any
+		if err := json.Unmarshal(raw, &obj); err != nil {
+			continue
+		}
+
+		label := firstString(obj,
+			"cluster_name", "label", "reason", "reason_code", "failure_reason", "bucket", "name", "cluster_id")
+		if strings.TrimSpace(label) == "" {
+			label = "Cluster"
+		}
+		label = utils.SanitizeAnswerText(label)
+		if strings.TrimSpace(label) == "" || uuidLeakRe.MatchString(label) {
+			continue
+		}
+
+		v := firstNumber(obj,
+			"affected_amount_minor", "total_affected_amount_minor", "affected_count", "count", "points")
+		if v <= 0 {
+			v = 1
+		}
+		acc[label] += v
+	}
+
+	if len(acc) == 0 {
+		return nil, "", false
+	}
+
+	series := make([]dto.VisualizationPoint, 0, len(acc))
+	for k, v := range acc {
+		series = append(series, dto.VisualizationPoint{Label: k, Value: v})
+	}
+	sort.Slice(series, func(i, j int) bool { return series[i].Value > series[j].Value })
+
+	title := "RCA Cluster Distribution"
+	subtitle := "Root-cause concentration for current tenant scope"
+	description := "This visualization is generated from intelligence RCA clusters to explain concentration of operational issues."
+	xAxis := "RCA Cluster"
+	yAxis := "Impact"
+
+	total := 0.0
+	for _, p := range series {
+		total += p.Value
+	}
+	top := series[0]
+	insight := utils.SanitizeAnswerText(fmt.Sprintf("Highest concentration is in %s (%.0f impact units).", top.Label, top.Value))
+
+	metrics := []dto.VisualizationMetric{
+		{Key: "Tenant", Value: utils.SanitizeAnswerText(req.TenantID)},
+		{Key: "Clusters", Value: fmt.Sprintf("%d", len(series))},
+		{Key: "Total impact", Value: fmt.Sprintf("%.0f", total)},
+	}
+
+	variants := []dto.VisualizationVariant{
+		{
+			ChartType:      "bar",
+			Title:          title,
+			Subtitle:       subtitle,
+			Description:    description,
+			XAxis:          xAxis,
+			YAxis:          yAxis,
+			Series:         sanitizeVisualizationSeries(series),
+			Legend:         sanitizeStringList([]string{"RCA cluster impact comparison"}),
+			Insights:       sanitizeStringList([]string{insight}),
+			SummaryMetrics: sanitizeMetrics(metrics),
+		},
+		{
+			ChartType:      "pie",
+			Title:          "RCA Share Breakdown",
+			Subtitle:       "Percentage contribution by RCA cluster",
+			Description:    "Use this to see dominant root-cause share.",
+			Series:         sanitizeVisualizationSeries(series),
+			Legend:         sanitizeStringList([]string{"Cluster share of total impact"}),
+			Insights:       sanitizeStringList([]string{insight}),
+			SummaryMetrics: sanitizeMetrics(metrics),
+		},
+		{
+			ChartType:      "donut",
+			Title:          "RCA Contribution Mix",
+			Subtitle:       "Relative mix of RCA categories",
+			Description:    "Shows contribution split in a compact format.",
+			Series:         sanitizeVisualizationSeries(series),
+			Legend:         sanitizeStringList([]string{"Contribution by cluster"}),
+			Insights:       sanitizeStringList([]string{insight}),
+			SummaryMetrics: sanitizeMetrics(metrics),
+		},
+		{
+			ChartType:      "table",
+			Title:          "RCA Cluster Table View",
+			Subtitle:       "Ranked RCA cluster impact",
+			Description:    "Tabular ranking for operational review.",
+			XAxis:          "Cluster",
+			YAxis:          "Impact",
+			Series:         sanitizeVisualizationSeries(series),
+			Legend:         sanitizeStringList([]string{"Ranked cluster impact"}),
+			Insights:       sanitizeStringList([]string{insight}),
+			SummaryMetrics: sanitizeMetrics(metrics),
+		},
+	}
+
+	return &dto.Visualization{
+		VisualizationID: "viz-rca-" + strings.ToLower(string(kind)),
+		ChartType:       "bar",
+		Title:           title,
+		Subtitle:        subtitle,
+		Description:     utils.SanitizeAnswerText(description),
+		XAxis:           xAxis,
+		YAxis:           yAxis,
+		Series:          sanitizeVisualizationSeries(series),
+		ChartVariants:   sanitizeVisualizationVariants(variants),
+		Legend:          sanitizeStringList([]string{"RCA cluster impact comparison"}),
+		Insights:        sanitizeStringList([]string{insight}),
+		SummaryMetrics:  sanitizeMetrics(metrics),
+		TimeWindow:      buildVisualizationWindow(scope),
+		Confidence:      confidence,
+	}, insight, true
+}
+
+func firstString(m map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			switch t := v.(type) {
+			case string:
+				if strings.TrimSpace(t) != "" {
+					return strings.TrimSpace(t)
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func firstNumber(m map[string]any, keys ...string) float64 {
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			switch t := v.(type) {
+			case float64:
+				return t
+			case float32:
+				return float64(t)
+			case int:
+				return float64(t)
+			case int64:
+				return float64(t)
+			case json.Number:
+				if f, err := t.Float64(); err == nil {
+					return f
+				}
+			}
+		}
+	}
+	return 0
+}
 func sanitizeVisualizationSeries(in []dto.VisualizationPoint) []dto.VisualizationPoint {
 	out := make([]dto.VisualizationPoint, 0, len(in))
 	for _, p := range in {
@@ -1053,7 +1270,28 @@ func sanitizeMetrics(in []dto.VisualizationMetric) []dto.VisualizationMetric {
 	}
 	return out
 }
-
+func sanitizeVisualizationVariants(in []dto.VisualizationVariant) []dto.VisualizationVariant {
+	out := make([]dto.VisualizationVariant, 0, len(in))
+	for _, v := range in {
+		item := dto.VisualizationVariant{
+			ChartType:      strings.TrimSpace(v.ChartType),
+			Title:          utils.SanitizeAnswerText(v.Title),
+			Subtitle:       utils.SanitizeAnswerText(v.Subtitle),
+			Description:    utils.SanitizeAnswerText(v.Description),
+			XAxis:          utils.SanitizeAnswerText(v.XAxis),
+			YAxis:          utils.SanitizeAnswerText(v.YAxis),
+			Series:         sanitizeVisualizationSeries(v.Series),
+			Legend:         sanitizeStringList(v.Legend),
+			Insights:       sanitizeStringList(v.Insights),
+			SummaryMetrics: sanitizeMetrics(v.SummaryMetrics),
+		}
+		if strings.TrimSpace(item.ChartType) == "" || strings.TrimSpace(item.Title) == "" {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
+}
 func buildVisualizationWindow(scope utils.QueryScope) *dto.VisualizationWindow {
 	if !scope.HasExplicitTime {
 		if strings.TrimSpace(scope.TimePhrase) == "" {

@@ -15,9 +15,17 @@ spec:
     spec:
       securityContext:
         fsGroup: 999
+      priorityClassName: infra-critical
+      # Schedule on the stateful on-demand node group
+      tolerations:
+        - key: workload
+          value: stateful
+          effect: NoSchedule
+      nodeSelector:
+        workload: stateful
       containers:
         - name: postgres
-          image: postgres:16-alpine
+          image: public.ecr.aws/docker/library/postgres:16-alpine
           ports:
             - containerPort: 5432
               name: postgres
@@ -91,7 +99,7 @@ spec:
           resources:
             requests:
               cpu: 500m
-              memory: 1Gi
+              memory: 512Mi
             limits:
               cpu: "2"
               memory: 2Gi

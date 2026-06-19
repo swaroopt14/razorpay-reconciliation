@@ -44,3 +44,15 @@ func FallbackRCAResult() RCAClusterResult {
 		FeatureContractVersion: "rca_v1",
 	}
 }
+
+// FallbackLeakagePredictionResult represents leakage prediction being unavailable.
+// Callers should not treat this as a real low-risk prediction.
+func FallbackLeakagePredictionResult() LeakagePredictionResult {
+	return LeakagePredictionResult{
+		PredictedLeakageRate:  0.0,
+		PredictedLeakageMinor: 0.0,
+		RiskTier:              "",
+		ModelReady:            false,
+		Status:                "UNAVAILABLE",
+	}
+}

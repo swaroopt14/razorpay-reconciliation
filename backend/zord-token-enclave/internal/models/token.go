@@ -12,4 +12,6 @@ type TokenRecord struct {
 	KeyVersion      int
 	Status          string
 	CreatedAt       time.Time
+	Actor           string // who requested tokenization
+	TraceID         string // trace ID from caller
 }

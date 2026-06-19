@@ -1,6 +1,0 @@
-export { PaymentsCard } from './PaymentsCard'
-export { VolumeCard } from './VolumeCard'
-export { RetentionCard } from './RetentionCard'
-export { TransactionsCard } from './TransactionsCard'
-export { CustomersCard } from './CustomersCard'
-export { InsightCard } from './InsightCard'

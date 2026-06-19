@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 	"zord-evidence/models"
+
+	"github.com/shopspring/decimal"
 )
 
 type EvidenceRepository struct {
@@ -40,7 +42,7 @@ func (r *EvidenceRepository) SavePack(ctx context.Context, pack *models.Evidence
 
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO evidence_packs(
-	evidence_pack_id, tenant_id, intent_id, contract_id, batch_id, mode, pack_status, merkle_root,
+	evidence_pack_id, tenant_id, intent_id, contract_id, batch_id, client_payout_ref, amount, currency, mode, pack_status, merkle_root,
 	ruleset_version, schema_versions_json, signature_alg, signature_value, object_ref,
 	supersedes_pack_id, pack_completeness_score, leaf_count, required_leaf_count,
 	settlement_leaf_present_flag, attachment_decision_leaf_present_flag, 
@@ -48,14 +50,17 @@ INSERT INTO evidence_packs(
 	required_fields_status, tokenization_status, governance_decision,
 	settlement_record_received, canonical_settlement_created, bank_reference,
 	client_reference, attachment_decision, match_confidence,
-	value_date_check, amount_match,
+	value_date_check, amount_match, zord_signature,
 	created_at, updated_at
-) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)`,
+) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39)`,
 		pack.EvidencePackID,
 		pack.TenantID,
 		nullStr(pack.IntentID),
 		nullStr(pack.ContractID),
 		nullStr(pack.ClientBatchID),
+		pack.ClientPayoutRef,
+		pack.Amount,
+		pack.Currency,
 		pack.Mode,
 		"ACTIVE",
 		pack.MerkleRoot,
@@ -84,6 +89,7 @@ INSERT INTO evidence_packs(
 		pack.MatchConfidence,
 		pack.ValueDateCheck,
 		pack.AmountMatch,
+		nullStr(pack.ZordSignature),
 		pack.CreatedAt,
 		pack.CreatedAt,
 	)
@@ -167,7 +173,11 @@ func (r *EvidenceRepository) GetPackByID(ctx context.Context, packID string) (*m
 	var mc sql.NullFloat64
 	var vdc, am sql.NullBool
 
-	q := `SELECT tenant_id, intent_id, contract_id, batch_id, mode, pack_status, merkle_root,
+	var clientPayoutRef sql.NullString
+	var currency sql.NullString
+	var amount decimal.NullDecimal
+
+	q := `SELECT tenant_id, intent_id, contract_id, batch_id, client_payout_ref, amount, currency, mode, pack_status, merkle_root,
 	             ruleset_version, schema_versions_json, signature_alg, signature_value,
 	             object_ref, supersedes_pack_id, pack_completeness_score, leaf_count,
 	             required_leaf_count, settlement_leaf_present_flag, attachment_decision_leaf_present_flag,
@@ -175,18 +185,18 @@ func (r *EvidenceRepository) GetPackByID(ctx context.Context, packID string) (*m
 	             required_fields_status, tokenization_status, governance_decision,
 	             settlement_record_received, canonical_settlement_created, bank_reference,
 	             client_reference, attachment_decision, match_confidence,
-	             value_date_check, amount_match,
+	             value_date_check, amount_match, zord_signature,
 	             created_at
 	      FROM evidence_packs WHERE evidence_pack_id=$1`
 	err := r.db.QueryRowContext(ctx, q, packID).Scan(
-		&pack.TenantID, &intentID, &contractID, &batchID, &pack.Mode, &pack.PackStatus,
+		&pack.TenantID, &intentID, &contractID, &batchID, &clientPayoutRef, &amount, &currency, &pack.Mode, &pack.PackStatus,
 		&pack.MerkleRoot, &pack.RulesetVersion, &schemaVersionsJSON,
 		&sigAlg, &signature, &objectRef, &supersedesPackID,
 		&pack.PackCompletenessScore, &pack.LeafCount, &pack.RequiredLeafCount,
 		&pack.SettlementLeafPresentFlag, &pack.AttachmentDecisionLeafPresentFlag,
 		&pack.PaymentInstructionReceived, &pack.CanonicalIntentCreated, &pack.MappingProfileUsed,
 		&pack.RequiredFieldsStatus, &pack.TokenizationStatus, &pack.GovernanceDecision,
-		&srr, &csc, &br, &cr, &ad, &mc, &vdc, &am,
+		&srr, &csc, &br, &cr, &ad, &mc, &vdc, &am, &pack.ZordSignature,
 		&createdAt,
 	)
 	if err != nil {
@@ -228,6 +238,15 @@ func (r *EvidenceRepository) GetPackByID(ctx context.Context, packID string) (*m
 	if am.Valid {
 		pack.AmountMatch = &am.Bool
 	}
+	if clientPayoutRef.Valid {
+		pack.ClientPayoutRef = &clientPayoutRef.String
+	}
+	if amount.Valid {
+		pack.Amount = amount.Decimal
+	}
+	if currency.Valid {
+		pack.Currency = currency.String
+	}
 	if len(schemaVersionsJSON) > 0 {
 		_ = json.Unmarshal(schemaVersionsJSON, &pack.SchemaVersions)
 	}
@@ -261,7 +280,7 @@ func (r *EvidenceRepository) GetPackByID(ctx context.Context, packID string) (*m
 // ListByIntentID returns pack summaries for a given tenant + intent_id (spec §17).
 func (r *EvidenceRepository) ListByIntentID(ctx context.Context, tenantID, intentID string) ([]models.EvidencePackSummary, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT evidence_pack_id, tenant_id, intent_id, contract_id, batch_id, mode, pack_status,
+		SELECT evidence_pack_id, tenant_id, intent_id, contract_id, batch_id, client_payout_ref, amount, currency, mode, pack_status,
 		       merkle_root, ruleset_version, supersedes_pack_id, pack_completeness_score, leaf_count,
 		       required_leaf_count, settlement_leaf_present_flag, attachment_decision_leaf_present_flag,
 		       payment_instruction_received, canonical_intent_created, mapping_profile_used,
@@ -286,8 +305,11 @@ func (r *EvidenceRepository) ListByIntentID(ctx context.Context, tenantID, inten
 		var br, cr, ad sql.NullString
 		var mc sql.NullFloat64
 		var vdc, am sql.NullBool
+		var clientPayoutRef sql.NullString
+		var currency sql.NullString
+		var amount decimal.NullDecimal
 		if err := rows.Scan(
-			&s.EvidencePackID, &s.TenantID, &iid, &cid, &bid,
+			&s.EvidencePackID, &s.TenantID, &iid, &cid, &bid, &clientPayoutRef, &amount, &currency,
 			&s.Mode, &s.PackStatus, &s.MerkleRoot, &s.RulesetVersion, &spid,
 			&s.PackCompletenessScore, &s.LeafCount, &s.RequiredLeafCount,
 			&s.SettlementLeafPresentFlag, &s.AttachmentDecisionLeafPresentFlag,
@@ -334,6 +356,15 @@ func (r *EvidenceRepository) ListByIntentID(ctx context.Context, tenantID, inten
 		if am.Valid {
 			s.AmountMatch = &am.Bool
 		}
+		if clientPayoutRef.Valid {
+			s.ClientPayoutRef = &clientPayoutRef.String
+		}
+		if amount.Valid {
+			s.Amount = amount.Decimal
+		}
+		if currency.Valid {
+			s.Currency = currency.String
+		}
 		result = append(result, s)
 	}
 	return result, nil
@@ -342,7 +373,7 @@ func (r *EvidenceRepository) ListByIntentID(ctx context.Context, tenantID, inten
 // ListByBatchID returns pack summaries for a given tenant + batch_id.
 func (r *EvidenceRepository) ListByBatchID(ctx context.Context, tenantID, batchID string) ([]models.EvidencePackSummary, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT evidence_pack_id, tenant_id, intent_id, contract_id, batch_id, mode, pack_status,
+		SELECT evidence_pack_id, tenant_id, intent_id, contract_id, batch_id, client_payout_ref, amount, currency, mode, pack_status,
 		       merkle_root, ruleset_version, supersedes_pack_id, pack_completeness_score, leaf_count,
 		       required_leaf_count, settlement_leaf_present_flag, attachment_decision_leaf_present_flag,
 		       payment_instruction_received, canonical_intent_created, mapping_profile_used,
@@ -367,8 +398,11 @@ func (r *EvidenceRepository) ListByBatchID(ctx context.Context, tenantID, batchI
 		var br, cr, ad sql.NullString
 		var mc sql.NullFloat64
 		var vdc, am sql.NullBool
+		var clientPayoutRef sql.NullString
+		var currency sql.NullString
+		var amount decimal.NullDecimal
 		if err := rows.Scan(
-			&s.EvidencePackID, &s.TenantID, &iid, &cid, &bid,
+			&s.EvidencePackID, &s.TenantID, &iid, &cid, &bid, &clientPayoutRef, &amount, &currency,
 			&s.Mode, &s.PackStatus, &s.MerkleRoot, &s.RulesetVersion, &spid,
 			&s.PackCompletenessScore, &s.LeafCount, &s.RequiredLeafCount,
 			&s.SettlementLeafPresentFlag, &s.AttachmentDecisionLeafPresentFlag,
@@ -415,6 +449,15 @@ func (r *EvidenceRepository) ListByBatchID(ctx context.Context, tenantID, batchI
 		if am.Valid {
 			s.AmountMatch = &am.Bool
 		}
+		if clientPayoutRef.Valid {
+			s.ClientPayoutRef = &clientPayoutRef.String
+		}
+		if amount.Valid {
+			s.Amount = amount.Decimal
+		}
+		if currency.Valid {
+			s.Currency = currency.String
+		}
 		result = append(result, s)
 	}
 	return result, nil
@@ -423,7 +466,7 @@ func (r *EvidenceRepository) ListByBatchID(ctx context.Context, tenantID, batchI
 // ListIntentPacksByBatchID returns all intent-level packs for a given batch.
 func (r *EvidenceRepository) ListIntentPacksByBatchID(ctx context.Context, tenantID, batchID string) ([]models.EvidencePackSummary, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT evidence_pack_id, tenant_id, intent_id, contract_id, batch_id, mode, pack_status,
+		SELECT evidence_pack_id, tenant_id, intent_id, contract_id, batch_id, client_payout_ref, amount, currency, mode, pack_status,
 		       merkle_root, ruleset_version, supersedes_pack_id, pack_completeness_score, leaf_count,
 		       required_leaf_count, settlement_leaf_present_flag, attachment_decision_leaf_present_flag,
 		       payment_instruction_received, canonical_intent_created, mapping_profile_used,
@@ -448,8 +491,11 @@ func (r *EvidenceRepository) ListIntentPacksByBatchID(ctx context.Context, tenan
 		var br, cr, ad sql.NullString
 		var mc sql.NullFloat64
 		var vdc, am sql.NullBool
+		var clientPayoutRef sql.NullString
+		var currency sql.NullString
+		var amount decimal.NullDecimal
 		if err := rows.Scan(
-			&s.EvidencePackID, &s.TenantID, &iid, &cid, &bid,
+			&s.EvidencePackID, &s.TenantID, &iid, &cid, &bid, &clientPayoutRef, &amount, &currency,
 			&s.Mode, &s.PackStatus, &s.MerkleRoot, &s.RulesetVersion, &spid,
 			&s.PackCompletenessScore, &s.LeafCount, &s.RequiredLeafCount,
 			&s.SettlementLeafPresentFlag, &s.AttachmentDecisionLeafPresentFlag,
@@ -495,6 +541,15 @@ func (r *EvidenceRepository) ListIntentPacksByBatchID(ctx context.Context, tenan
 		}
 		if am.Valid {
 			s.AmountMatch = &am.Bool
+		}
+		if clientPayoutRef.Valid {
+			s.ClientPayoutRef = &clientPayoutRef.String
+		}
+		if amount.Valid {
+			s.Amount = amount.Decimal
+		}
+		if currency.Valid {
+			s.Currency = currency.String
 		}
 		result = append(result, s)
 	}

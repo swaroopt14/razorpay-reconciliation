@@ -206,7 +206,10 @@ CREATE TABLE IF NOT EXISTS dlq_items (
     client_batch_ref TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     batch_id TEXT,
-    source_row_num INT
+    source_row_num INT,
+    dlq_status TEXT,
+    intent_context JSONB,
+    trace_id UUID
 );
 
 -- Create indexes for DLQ analysis

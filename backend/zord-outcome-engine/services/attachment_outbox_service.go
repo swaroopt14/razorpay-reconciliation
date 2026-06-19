@@ -72,8 +72,8 @@ func (s *AttachmentOutboxService) EmitForJob(
 	intentLookup := make(map[uuid.UUID]intentInfo)
 	var intentIDs []uuid.UUID
 	for _, d := range decisions {
-		if d.IntentID != nil {
-			intentIDs = append(intentIDs, *d.IntentID)
+		if d.IntentID != uuid.Nil {
+			intentIDs = append(intentIDs, d.IntentID)
 		}
 	}
 	if len(intentIDs) > 0 {
@@ -90,7 +90,6 @@ func (s *AttachmentOutboxService) EmitForJob(
 		if err != nil {
 			return fmt.Errorf("failed to lookup intents for outbox: %w", err)
 		}
-		defer rows.Close()
 
 		for rows.Next() {
 			var idStr, corrID, curr string
@@ -110,18 +109,19 @@ func (s *AttachmentOutboxService) EmitForJob(
 				IntendedExecutionAt: intendedAt,
 			}
 		}
+		rows.Close()
 	}
 
 	// 2. Fetch batch summary data for aggregate amounts
-	var totalIntendedAmount, totalConfirmedAmount, totalVariance decimal.Decimal
+	var totalIntendedAmount, totalConfirmedAmount, totalVariance, originalSettledAmount decimal.Decimal
 	row := db.DB.QueryRowContext(ctx, `
-		SELECT total_intended_amount, total_observed_amount, total_variance
+		SELECT total_intended_amount,original_settled_amount, total_observed_amount, total_variance
 		FROM batch_attachment_summaries 
 		WHERE attachment_job_id = $1 
 		LIMIT 1`,
 		job.AttachmentJobID,
 	)
-	_ = row.Scan(&totalIntendedAmount, &totalConfirmedAmount, &totalVariance)
+	_ = row.Scan(&totalIntendedAmount, &originalSettledAmount, &totalConfirmedAmount, &totalVariance)
 
 	for _, d := range decisions {
 		// ── 1. attachment.decision.created ────────────────────────────────
@@ -131,8 +131,8 @@ func (s *AttachmentOutboxService) EmitForJob(
 		intendedAmount := decimal.Zero
 		settledAmount := decimal.Zero
 
-		if d.IntentID != nil {
-			if info, ok := intentLookup[*d.IntentID]; ok {
+		if d.IntentID != uuid.Nil {
+			if info, ok := intentLookup[d.IntentID]; ok {
 				cID = info.ContractID
 				corrID = info.CorridorID
 				curr = info.Currency
@@ -146,61 +146,38 @@ func (s *AttachmentOutboxService) EmitForJob(
 		var bankRef, clientRefCandidate string
 		var obsCreatedAt time.Time
 		var parsedCreatedAt time.Time
-		if obs, ok := obsMap[d.SettlementObservationID]; ok {
-			bID = obs.ClientBatchID
-			if bID == "" && obs.BatchReference != nil {
-				bID = *obs.BatchReference
-			}
-			settledAmount = obs.Amount
-			if corrID == "" {
-				corrID = obs.CorridorID
-			}
-			if curr == "" {
-				curr = obs.CurrencyCode
-			}
-			if obs.TraceID != nil {
-				tID = *obs.TraceID
-			}
-			if obs.BankReference != nil {
-				bankRef = *obs.BankReference
-			}
-			if obs.ClientReferenceCandidate != nil {
-				clientRefCandidate = *obs.ClientReferenceCandidate
-			}
-			obsCreatedAt = obs.CreatedAt
+		if d.SettlementObservationID != nil {
+			if obs, ok := obsMap[*d.SettlementObservationID]; ok {
+				bID = obs.ClientBatchID
+				if bID == "" && obs.BatchReference != nil {
+					bID = *obs.BatchReference
+				}
+				settledAmount = obs.Amount
+				if corrID == "" {
+					corrID = obs.CorridorID
+				}
+				if curr == "" {
+					curr = obs.CurrencyCode
+				}
+				if obs.TraceID != nil {
+					tID = *obs.TraceID
+				}
+				if obs.BankReference != nil {
+					bankRef = *obs.BankReference
+				}
+				if obs.ClientReferenceCandidate != nil {
+					clientRefCandidate = *obs.ClientReferenceCandidate
+				}
+				obsCreatedAt = obs.CreatedAt
 
-			if pr, ok2 := parsedByRowRef[obs.SourceRowRef]; ok2 {
-				parsedCreatedAt = pr.CreatedAt
-			}
-		}
-
-		// If IntentID is missing, try to find it by reference from the observation (user request: take from table directly)
-		intentID := d.IntentID
-		if intentID == nil {
-			if obs, ok := obsMap[d.SettlementObservationID]; ok && obs.ClientReferenceCandidate != nil {
-				var foundID uuid.UUID
-				err := db.DB.QueryRowContext(ctx, `
-					SELECT intent_id FROM canonical_intents 
-					WHERE client_payout_ref = $1 AND tenant_id = $2 
-					LIMIT 1`, *obs.ClientReferenceCandidate, d.TenantID).Scan(&foundID)
-				if err == nil {
-					intentID = &foundID
-					// Re-enrich identifiers from the found intent
-					var corrIDStr string
-					var foundContractID uuid.UUID
-					_ = db.DB.QueryRowContext(ctx, `
-						SELECT 
-							contract_id,
-							COALESCE(corridor, ''),
-							currency_code,
-							amount
-						FROM canonical_intents
-						WHERE intent_id = $1`, foundID).Scan(&foundContractID, &corrIDStr, &curr, &intendedAmount)
-					cID = foundContractID
-					corrID = corrIDStr
+				if pr, ok2 := parsedByRowRef[obs.SourceRowRef]; ok2 {
+					parsedCreatedAt = pr.CreatedAt
 				}
 			}
 		}
+
+		// intentID is always populated now
+		intentID := d.IntentID
 
 		// Defensive enrichment for contract_id if still missing
 		if cID == uuid.Nil && corrID != "" {
@@ -212,7 +189,7 @@ func (s *AttachmentOutboxService) EmitForJob(
 		}
 
 		intentIDStr := ""
-		if intentID != nil {
+		if intentID != uuid.Nil {
 			intentIDStr = intentID.String()
 		}
 
@@ -221,52 +198,61 @@ func (s *AttachmentOutboxService) EmitForJob(
 			contractIDStr = cID.String()
 		}
 		var valueDateCheck bool
-        var amountMatch bool
-        if v, ok := varianceByDecision[d.AttachmentDecisionID]; ok {
-            valueDateCheck = v.ValueDateMismatchFlag
-            amountMatch = v.AmountVariance.IsZero()
-        }
+		var amountMatch bool
+		if v, ok := varianceByDecision[d.AttachmentDecisionID]; ok {
+			valueDateCheck = v.ValueDateMismatchFlag
+			amountMatch = v.AmountVariance.IsZero()
+		}
 
 		// Fetch observation for metadata enrichment
-		obs, ok := obsMap[d.SettlementObservationID]
-		if !ok {
-			log.Printf("attachment.outbox.missing_obs decision=%s obs=%s", d.AttachmentDecisionID, d.SettlementObservationID)
-			continue
+		var envelopeID string
+		if d.SettlementObservationID != nil {
+			obs, ok := obsMap[*d.SettlementObservationID]
+			if !ok {
+				log.Printf("attachment.outbox.missing_obs decision=%s obs=%s", d.AttachmentDecisionID, d.SettlementObservationID)
+				continue
+			}
+			envelopeID = obs.SettlementEnvelopeID.String()
 		}
-		envelopeID := obs.SettlementEnvelopeID.String()
+
+		var obsIDStr string
+		if d.SettlementObservationID != nil {
+			obsIDStr = d.SettlementObservationID.String()
+		}
 
 		payload := map[string]interface{}{
-			"event_id":                  uuid.New().String(),
-			"attachment_decision_id":    d.AttachmentDecisionID,
-			"attachment_job_id":         d.AttachmentJobID,
-			"tenant_id":                 d.TenantID,
-			"trace_id":                  tID.String(),
-			"occurred_at":               time.Now().UTC().Format(time.RFC3339),
-			"settlement_observation_id": d.SettlementObservationID,
-			"intent_id":                 intentIDStr,
-			"contract_id":               contractIDStr,
-			"corridor_id":               corrID,
-			"batch_id":                  bID,
-			"settled_amount":            settledAmount.String(),
-			"intended_amount":           intendedAmount.String(),
-			"currency":                  curr,
-			"candidate_set_size":        d.CandidateSetSize,
-			"decision_type":             d.DecisionType,
-			"decision_reason_code":      d.DecisionReasonCode,
-			"confidence_score":          d.ConfidenceScore,
-			"ambiguity_score":           d.AmbiguityScore,
-			"matching_ruleset_version":  d.MatchingRulesetVersion,
-			"winning_score":             d.WinningScore,
-			"runner_up_score":           d.RunnerUpScore,
-			"score_margin":              d.ScoreMargin,
-			"candidate_set_hash":        d.CandidateSetHash,
-			"supporting_carriers":       d.SupportingCarriersJSON,
+			"event_id":                     uuid.New().String(),
+			"attachment_decision_id":       d.AttachmentDecisionID,
+			"attachment_job_id":            d.AttachmentJobID,
+			"tenant_id":                    d.TenantID,
+			"trace_id":                     tID.String(),
+			"occurred_at":                  time.Now().UTC().Format(time.RFC3339),
+			"settlement_observation_id":    obsIDStr,
+			"intent_id":                    intentIDStr,
+			"contract_id":                  contractIDStr,
+			"corridor_id":                  corrID,
+			"batch_id":                     bID,
+			"settled_amount":               settledAmount.String(),
+			"source_system":                "", // TODO: handle source system for unmatched
+			"intended_amount":              intendedAmount.String(),
+			"currency":                     curr,
+			"candidate_set_size":           d.CandidateSetSize,
+			"decision_type":                d.DecisionType,
+			"decision_reason_code":         d.DecisionReasonCode,
+			"confidence_score":             d.ConfidenceScore,
+			"ambiguity_score":              d.AmbiguityScore,
+			"matching_ruleset_version":     d.MatchingRulesetVersion,
+			"winning_score":                d.WinningScore,
+			"runner_up_score":              d.RunnerUpScore,
+			"score_margin":                 d.ScoreMargin,
+			"candidate_set_hash":           d.CandidateSetHash,
+			"supporting_carriers":          d.SupportingCarriersJSON,
 			"settlement_record_received":   parsedCreatedAt.UTC().Format(time.RFC3339),
 			"canonical_settlement_created": obsCreatedAt.UTC().Format(time.RFC3339),
 			"bank_reference":               bankRef,
 			"client_reference":             clientRefCandidate,
 			"attachment_decision":          d.DecisionType,
-			"match_confidence":             d.ConfidenceScore,
+			"match_confidence":             d.MatchConfidence,
 			"value_date_check":             valueDateCheck,
 			"amount_match":                 amountMatch,
 		}
@@ -295,7 +281,7 @@ func (s *AttachmentOutboxService) EmitForJob(
 			flagPayload := map[string]interface{}{
 				"attachment_decision_id":    d.AttachmentDecisionID,
 				"tenant_id":                 d.TenantID,
-				"settlement_observation_id": d.SettlementObservationID,
+				"settlement_observation_id": obsIDStr,
 				"ambiguity_score":           d.AmbiguityScore,
 				"candidate_set_hash":        d.CandidateSetHash,
 				"reason_code":               d.DecisionReasonCode,
@@ -312,7 +298,7 @@ func (s *AttachmentOutboxService) EmitForJob(
 			flagPayload := map[string]interface{}{
 				"attachment_decision_id":    d.AttachmentDecisionID,
 				"tenant_id":                 d.TenantID,
-				"settlement_observation_id": d.SettlementObservationID,
+				"settlement_observation_id": obsIDStr,
 				"reason_code":               d.DecisionReasonCode,
 				"ambiguity_score":           d.AmbiguityScore,
 			}
@@ -329,7 +315,7 @@ func (s *AttachmentOutboxService) EmitForJob(
 			reviewPayload := map[string]interface{}{
 				"attachment_decision_id":    d.AttachmentDecisionID,
 				"tenant_id":                 d.TenantID,
-				"settlement_observation_id": d.SettlementObservationID,
+				"settlement_observation_id": obsIDStr,
 				"reason_code":               d.DecisionReasonCode,
 				"winning_score":             d.WinningScore,
 				"runner_up_score":           d.RunnerUpScore,
@@ -412,6 +398,11 @@ func (s *AttachmentOutboxService) EmitForJob(
 		if obs, ok := obsMap[v.SettlementObservationID]; ok && obs.TraceID != nil {
 			vTraceID = *obs.TraceID
 		}
+		// Look up obs for source_system — same obsMap used above for corridorID/batchID.
+		var vSourceSystem string
+		if vobs, ok := obsMap[v.SettlementObservationID]; ok {
+			vSourceSystem = vobs.SourceSystem
+		}
 
 		vPayload := map[string]interface{}{
 			"event_id":              uuid.New().String(),
@@ -431,6 +422,7 @@ func (s *AttachmentOutboxService) EmitForJob(
 			"currency":              currency,
 			"expected_value_date":   expectedDateStr,
 			"actual_value_date":     actualDateStr,
+			"source_system":         vSourceSystem, // ProviderID in zord-intelligence
 			"cross_period_flag":     v.CrossPeriodFlag,
 			"deduction_reason":      "TAX",
 			"is_whitelisted":        false,
@@ -462,7 +454,15 @@ func (s *AttachmentOutboxService) EmitForJob(
 		SELECT 
 			batch_id, source_reference, total_intended_amount, 
 			total_observed_amount, total_variance, batch_attachment_status,
-			ambiguity_score
+			avg_matched_attachment_ambiguity, avg_matched_attachment_confidence,
+			avg_matched_attachment_quality,
+			matched_intent_count, total_intent_count,
+			matched_pair_variance, net_batch_delta, orphan_observed_amount,
+			unresolved_intended_amount, orphan_observation_count, unresolved_count,
+			intent_count_coverage, intent_value_coverage,
+			observed_count_allocation_coverage, observed_value_allocation_coverage,
+			original_intended_amount, original_settled_amount,
+			matched_intended_amount, matched_observed_amount
 		FROM batch_attachment_summaries 
 		WHERE attachment_job_id = $1 
 		LIMIT 1`,
@@ -471,7 +471,25 @@ func (s *AttachmentOutboxService) EmitForJob(
 	var summaryBatchID *string
 	var summarySourceRef string
 	var summaryAmbiguity float64
-	if err := row.Scan(&summaryBatchID, &summarySourceRef, &totalIntendedAmount, &totalConfirmedAmount, &totalVariance, &finalityStatus, &summaryAmbiguity); err == nil {
+	var summaryMatchConfidence float64
+	var summaryQualityScore float64
+	var matchedIntentCount, totalIntentCount int
+	var matchedPairVariance, netBatchDelta, orphanObservedAmount, unresolvedIntendedAmount decimal.Decimal
+	var orphanObservationCount, unresolvedIntentCount int
+	var intentCountCoverage, intentValueCoverage, observedCountCoverage, observedValueCoverage float64
+	var originalIntendedAmount, matchedIntendedAmount, matchedObservedAmount decimal.Decimal
+	if err := row.Scan(
+		&summaryBatchID, &summarySourceRef, &totalIntendedAmount,
+		&totalConfirmedAmount, &totalVariance, &finalityStatus,
+		&summaryAmbiguity, &summaryMatchConfidence, &summaryQualityScore,
+		&matchedIntentCount, &totalIntentCount,
+		&matchedPairVariance, &netBatchDelta, &orphanObservedAmount,
+		&unresolvedIntendedAmount, &orphanObservationCount, &unresolvedIntentCount,
+		&intentCountCoverage, &intentValueCoverage,
+		&observedCountCoverage, &observedValueCoverage,
+		&originalIntendedAmount, &originalSettledAmount,
+		&matchedIntendedAmount, &matchedObservedAmount,
+	); err == nil {
 		if summaryBatchID != nil {
 			batchID = *summaryBatchID
 		}
@@ -481,14 +499,27 @@ func (s *AttachmentOutboxService) EmitForJob(
 	// 2. Fetch corridor_id from the first observation in this job
 	if len(decisions) > 0 {
 		firstObsID := decisions[0].SettlementObservationID
-		if obs, ok := obsMap[firstObsID]; ok {
-			corridorID = obs.CorridorID
+		if firstObsID != nil {
+			if obs, ok := obsMap[*firstObsID]; ok {
+				corridorID = obs.CorridorID
+			}
 		}
 	}
 
 	// 3. Fetch batch estimate counts and file_sha256 from canonical_settlement_batches and settlement_ingest_runs
 	var fileSHA string
-	if job.JobScopeType == models.JobScopeSettlementBatch {
+	ingestRunID := ""
+	if job.JobScopeType == models.JobScopeIngestRun {
+		ingestRunID = job.ScopeRef
+	} else if job.JobScopeType == models.JobScopeSettlementBatch && len(decisions) > 0 {
+		firstObsID := decisions[0].SettlementObservationID
+		if firstObsID != nil {
+			if obs, ok := obsMap[*firstObsID]; ok {
+			ingestRunID = obs.IngestRunID
+		}
+		}
+	}
+	if ingestRunID != "" {
 		row = db.DB.QueryRowContext(ctx, `
 			SELECT 
 				b.row_count, b.success_count_estimate, b.failed_count_estimate, 
@@ -496,29 +527,17 @@ func (s *AttachmentOutboxService) EmitForJob(
 				r.file_sha256
 			FROM canonical_settlement_batches b
 			JOIN settlement_ingest_runs r ON r.ingest_run_id = b.ingest_run_id
-			WHERE r.ingest_run_id = $1 AND b.tenant_id = $2
+			WHERE b.ingest_run_id = $1 AND b.tenant_id = $2
 			ORDER BY b.created_at DESC
 			LIMIT 1`,
-			job.ScopeRef, job.TenantID,
+		ingestRunID, job.TenantID,
 		)
 		if err := row.Scan(&totalCount, &successCount, &failedCount, &pendingCount, &reversedCount, &fileSHA); err != nil {
-			// ScopeRef may be ingest_run_id or client_batch_id depending on caller; try client_batch_id fallback
-			log.Printf("attachment.outbox.batch_metadata_lookup_by_run_id_failed scope_ref=%s err=%v — trying client_batch_id", job.ScopeRef, err)
-			row = db.DB.QueryRowContext(ctx, `
-				SELECT 
-					b.row_count, b.success_count_estimate, b.failed_count_estimate, 
-					b.pending_count_estimate, b.reversal_count_estimate,
-					r.file_sha256
-				FROM canonical_settlement_batches b
-				JOIN settlement_ingest_runs r ON r.ingest_run_id = b.ingest_run_id
-				WHERE b.client_batch_id = $1 AND b.tenant_id = $2
-				ORDER BY b.created_at DESC
-				LIMIT 1`,
-				job.ScopeRef, job.TenantID,
-			)
-			_ = row.Scan(&totalCount, &successCount, &failedCount, &pendingCount, &reversedCount, &fileSHA)
+			log.Printf("attachment.outbox.batch_metadata_lookup_by_ingest_run_failed ingest_run_id=%s scope_ref=%s err=%v", ingestRunID, job.ScopeRef, err)
 		}
-		log.Printf("attachment.outbox.file_sha256 scope_ref=%s file_sha256=%q", job.ScopeRef, fileSHA)
+		log.Printf("attachment.outbox.batch_metadata ingest_run_id=%s scope_ref=%s total=%d success=%d failed=%d pending=%d reversed=%d file_sha256=%q",
+			ingestRunID, job.ScopeRef, totalCount, successCount, failedCount, pendingCount, reversedCount, fileSHA)
+			
 	}
 
 	batchPayload := map[string]interface{}{
@@ -536,10 +555,31 @@ func (s *AttachmentOutboxService) EmitForJob(
 		"pending_count":                pendingCount,
 		"reversed_count":               reversedCount,
 		"partial_recon_count":          0,
+		"total_intent_count":           totalIntentCount,
+		"matched_intent_count":         matchedIntentCount,
+		"unresolved_intent_count":      unresolvedIntentCount,
+		"orphan_observation_count":     orphanObservationCount,
 		"total_intended_amount_minor":  totalIntendedAmount.String(),
 		"total_confirmed_amount_minor": totalConfirmedAmount.String(),
+		"original_intended_amount":     originalIntendedAmount.String(),
+		"original_settled_amount":      originalSettledAmount.String(),
+		"matched_intended_amount":      matchedIntendedAmount.String(),
+		"matched_observed_amount":      matchedObservedAmount.String(),
+		"unresolved_intended_amount":   unresolvedIntendedAmount.String(),
+		"orphan_observed_amount":       orphanObservedAmount.String(),
+		"matched_pair_variance":        matchedPairVariance.String(),
+		"net_batch_delta":              netBatchDelta.String(),
 		"total_variance_minor":         totalVariance.String(),
-		"ambiguity_score":              aggregateAmbiguity,
+		"intent_count_coverage":        intentCountCoverage,
+		"intent_value_coverage":        intentValueCoverage,
+		"observed_count_allocation_coverage": observedCountCoverage,
+		"observed_value_allocation_coverage": observedValueCoverage,
+		"avg_matched_attachment_ambiguity": aggregateAmbiguity,
+		"ambiguity_score":                    aggregateAmbiguity,
+		"avg_matched_attachment_confidence": summaryMatchConfidence,
+		"avg_matched_attachment_quality":   summaryQualityScore,
+		"aggregate_score":                  summaryQualityScore,
+		"aggregate_match_confidence":         summaryMatchConfidence,
 		"batch_finality_status":        finalityStatus,
 		"job_status":                   job.Status,
 	}
@@ -702,10 +742,10 @@ type leafBundlePayload struct {
 	CanonicalSettlementCreated *time.Time `json:"canonical_settlement_created,omitempty"`
 	BankReference              *string    `json:"bank_reference,omitempty"`
 	ClientReference            *string    `json:"client_reference,omitempty"`
-	AttachmentDecision        *string    `json:"attachment_decision,omitempty"`
-	MatchConfidence           *float64   `json:"match_confidence,omitempty"`
-	ValueDateCheck            *bool      `json:"value_date_check,omitempty"`
-	AmountMatch               *bool      `json:"amount_match,omitempty"`
+	AttachmentDecision         *string    `json:"attachment_decision,omitempty"`
+	MatchConfidence            *float64   `json:"match_confidence,omitempty"`
+	ValueDateCheck             *bool      `json:"value_date_check,omitempty"`
+	AmountMatch                *bool      `json:"amount_match,omitempty"`
 }
 
 // EmitLeafBundlesForJob emits outcome_outbox events for all winner-resolved
@@ -745,25 +785,25 @@ func (s *AttachmentOutboxService) EmitLeafBundlesForJob(
 		}
 		rows, err := db.DB.QueryContext(ctx, `SELECT ingest_run_id, file_sha256 FROM settlement_ingest_runs WHERE ingest_run_id = ANY($1)`, pq.Array(ids))
 		if err == nil {
-			defer rows.Close()
 			for rows.Next() {
 				var rid, sha string
 				if err := rows.Scan(&rid, &sha); err == nil {
 					shaMap[rid] = sha
 				}
 			}
+			rows.Close()
 		} else {
 			log.Printf("leaf_bundle.sha_fetch_failed err=%v", err)
 		}
 	}
 
 	for _, d := range decisions {
-		// Only emit for decisions that resolved to a specific intent.
-		if d.IntentID == nil {
+		// Only emit for decisions that resolved to a specific observation.
+		if d.SettlementObservationID == nil {
 			continue
 		}
 
-		obs, ok := obsMap[d.SettlementObservationID]
+		obs, ok := obsMap[*d.SettlementObservationID]
 		if !ok {
 			log.Printf("leaf_bundle.obs_missing decision=%s obs=%s", d.AttachmentDecisionID, d.SettlementObservationID)
 			continue
@@ -837,7 +877,7 @@ func (s *AttachmentOutboxService) EmitLeafBundlesForJob(
 			valueDateCheck = &vdc
 			amountMatch = &am
 		}
-		
+
 		t1 := parsedCreatedAt.UTC()
 		t2 := obs.CreatedAt.UTC()
 		decType := d.DecisionType
@@ -862,10 +902,10 @@ func (s *AttachmentOutboxService) EmitLeafBundlesForJob(
 			CanonicalSettlementCreated: &t2,
 			BankReference:              bankRef,
 			ClientReference:            clientRefCandidate,
-			AttachmentDecision:        &decType,
-			MatchConfidence:           &conf,
-			ValueDateCheck:            valueDateCheck,
-			AmountMatch:               amountMatch,
+			AttachmentDecision:         &decType,
+			MatchConfidence:            &conf,
+			ValueDateCheck:             valueDateCheck,
+			AmountMatch:                amountMatch,
 		}
 
 		if err := s.insertEvent(ctx, d.TenantID, d.AttachmentJobID,
@@ -885,15 +925,19 @@ func (s *AttachmentOutboxService) EmitLeafBundlesForJob(
 // computeAttachmentDecisionLeafHash returns a deterministic SHA-256 hex hash of the
 // attachment decision fields that matter for evidence integrity:
 //
-//	SHA256( selected_intent | settlement_observation | candidate_set | match_score | ruleset_version )
+//	SHA256( intent_id | settlement_observation_id | candidate_set | match_score | ruleset_version )
 func computeAttachmentDecisionLeafHash(d models.AttachmentDecision) string {
 	intent := ""
-	if d.IntentID != nil {
+	if d.IntentID != uuid.Nil {
 		intent = d.IntentID.String()
+	}
+	observation := ""
+	if d.SettlementObservationID != nil {
+		observation = d.SettlementObservationID.String()
 	}
 	raw := fmt.Sprintf("%s|%s|%s|%f|%s",
 		intent,
-		d.SettlementObservationID.String(),
+		observation,
 		d.CandidateSetHash,
 		d.WinningScore,
 		d.MatchingRulesetVersion,

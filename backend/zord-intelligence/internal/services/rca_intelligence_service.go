@@ -281,7 +281,7 @@ func (s *RCAIntelligenceService) ComputeAndSaveGradeA(
 	}
 	if len(frags) < 2 {
 		log.Printf("rca_svc.ComputeAndSaveGradeA: too few candidates (%d) batch=%s — skipping", len(frags), batchID)
-		return nil
+		return nil // defer above handles cleanup
 	}
 
 	// Step 2: compute batch-level aggregates for denormalisation

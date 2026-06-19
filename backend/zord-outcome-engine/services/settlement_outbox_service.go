@@ -116,9 +116,12 @@ func (s *SettlementOutboxService) EmitForJob(
 			"status_observation":   obs.SettlementStatus,
 			"ingest_run_id":        obs.IngestRunID,
 			"mapping_confidence":   obs.MappingConfidence,
+			"bank_id":              obs.BankID,
+			"source_system":        obs.SourceSystem,
+			"corridor_id":          obs.CorridorID,
 		}
 
-		if err := s.insertEvent(ctx, eventID, eventTenantID, eventTraceID, jobID, settlementBatchID, "settlement_observation", obs.SettlementObservationID, "canonical.settlement.created", payload); err != nil {
+		if err := s.insertEvent(ctx, eventID, eventTenantID, eventTraceID, jobID, settlementBatchID, "settlement_observation", obs.SettlementObservationID, "canonical.settlement.created", payload, obs.BankID, &obs.SourceSystem, &obs.CorridorID); err != nil {
 			lastErr = err
 		}
 	}
@@ -131,7 +134,7 @@ func (s *SettlementOutboxService) EmitForJob(
 		"event":           "batch_ready",
 	}
 
-	if err := s.insertEvent(ctx, uuid.New(), tenantID, uuid.Nil, jobID, settlementBatchID, "settlement_observation", uuid.New(), "canonical.settlement.batch_ready", payload); err != nil {
+	if err := s.insertEvent(ctx, uuid.New(), tenantID, uuid.Nil, jobID, settlementBatchID, "settlement_observation", uuid.New(), "canonical.settlement.batch_ready", payload, nil, nil, nil); err != nil {
 		lastErr = err
 	}
 	batchCount++
@@ -151,6 +154,9 @@ func (s *SettlementOutboxService) insertEvent(
 	entityID uuid.UUID,
 	eventType string,
 	payload interface{},
+	bankID *string,
+	sourceSystem *string,
+	corridorID *string,
 ) error {
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
@@ -163,12 +169,14 @@ func (s *SettlementOutboxService) insertEvent(
 			event_id, tenant_id, trace_id, envelope_id,
 			aggregate_type, aggregate_id,
 			event_type, payload,
-			status, retry_count, created_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+			status, retry_count, created_at,
+			bank_id, source_system, corridor_id
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
 		eventID, tenantID, traceID, jobID,
 		family, entityID,
 		eventType, payloadJSON,
 		"PENDING", 0, time.Now().UTC(),
+		bankID, sourceSystem, corridorID,
 	)
 	if err != nil {
 		log.Printf("settlement.outbox.insert_failed type=%s err=%v", eventType, err)

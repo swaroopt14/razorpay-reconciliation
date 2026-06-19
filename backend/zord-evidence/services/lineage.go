@@ -7,42 +7,64 @@ import (
 	"zord-evidence/models"
 )
 
-// BuildTimeline converts the internal EvidencePack leaf set into the ordered
-// human-readable operational milestones required by spec §5 Engine A.
-// The timeline is derived entirely from pack.Items and pack.CreatedAt —
-// no additional DB queries required.
+// BuildTimeline converts the EvidencePack into a chronological array of
+// real-world operational milestones (spec §5 Engine A).
+//
+// Timestamps use the actual upstream signal fields carried on the pack
+// (PaymentInstructionReceived, SettlementRecordReceived, etc.) so the
+// timeline reflects the true payment lifecycle, not an artificial offset.
+// Leaves without a real timestamp fall back to pack.CreatedAt with a
+// stable positional offset so the ordering is always correct.
 func BuildTimeline(pack *models.EvidencePack) []models.TimelineEvent {
-	events := make([]models.TimelineEvent, 0, len(pack.Items)+2)
+	// Real timestamps from upstream signals, keyed by leaf type.
+	// These are populated by intent/outcome consumers from relay events.
+	realTimestamps := map[string]time.Time{}
 
-	// Map leaf types to human-readable milestone descriptions.
-	// We use pack.CreatedAt as anchor; each leaf gets a deterministic offset
-	// so that the timeline is stable across repeated calls.
-	baseTime := pack.CreatedAt
+	if pack.PaymentInstructionReceived != nil {
+		realTimestamps[models.LeafTypeEnvelopeHash] = *pack.PaymentInstructionReceived
+	}
+	if pack.CanonicalIntentCreated != nil {
+		realTimestamps[models.LeafTypeCanonicalIntentHash] = *pack.CanonicalIntentCreated
+		realTimestamps[models.LeafTypeGovernanceDecision] = *pack.CanonicalIntentCreated
+	}
+	if pack.SettlementRecordReceived != nil {
+		realTimestamps[models.LeafTypeRawSettlementFile] = *pack.SettlementRecordReceived
+		realTimestamps[models.LeafTypeRawSettlementLine] = *pack.SettlementRecordReceived
 
+	}
+	if pack.CanonicalSettlementCreated != nil {
+		realTimestamps[models.LeafTypeCanonicalSettlementObservation] = *pack.CanonicalSettlementCreated
+		realTimestamps[models.LeafTypeAttachmentDecision] = *pack.CanonicalSettlementCreated
+		realTimestamps[models.LeafTypeVarianceDecision] = *pack.CanonicalSettlementCreated
+	}
+	// FINAL_EVIDENCE_VIEW is always the pack creation time — that's when it was sealed.
+	realTimestamps[models.LeafTypeFinalEvidenceView] = pack.CreatedAt
+
+	// Human-readable milestone labels per leaf type.
 	leafEvents := map[string]string{
-		models.LeafTypeRawSettlementFile:              "Bank settlement file received and fingerprint recorded",
-		models.LeafTypeRawSettlementLine:              "Payment instruction received from ERP / originating system",
-		models.LeafTypeCanonicalSettlementObservation: "Structured settlement record schema verified",
-		models.LeafTypeCanonicalIntentHash:            "Canonical payment intent hash computed and anchored",
-		models.LeafTypeEnvelopeHash:                   "File payload envelope securely hashed and recorded",
-		models.LeafTypeAttachmentDecision:             "UTR reference auto-matched via reconciliation engine (Service 5)",
-		models.LeafTypeVarianceDecision:               "Financial variance analysis completed",
-		models.LeafTypeGovernanceDecision:             "Policy and compliance governance check passed (Service 2)",
-		models.LeafTypeBatchAttachmentSummary:         "Batch attachment summary computed",
+		models.LeafTypeEnvelopeHash:                   "Payment instruction fingerprint recorded",
+		models.LeafTypeCanonicalIntentHash:            "Structured payment intent created",
+		models.LeafTypeGovernanceDecision:             "Governance and duplicate-risk checks passed",
+		models.LeafTypeRawSettlementLine:              "Bank settlement record received",
+		models.LeafTypeRawSettlementFile:              "Bank settlement file received via SFTP",
+		models.LeafTypeCanonicalSettlementObservation: "Settlement record matched to payment intent using UTR",
+		models.LeafTypeAttachmentDecision:             "Match decision created — intent attached to settlement",
+		models.LeafTypeVarianceDecision:               "Variance, value-date, and amount checks completed",
+		models.LeafTypeBatchAttachmentSummary:         "Batch attachment summary computed across all intents",
 		models.LeafTypeBatchVarianceSummary:           "Batch variance summary computed",
 		models.LeafTypeCanonicalBatch:                 "Canonical batch record anchored",
-		models.LeafTypeFileContentHash:                "Raw file content hash verified",
-		models.LeafTypeFinalEvidenceView:              "Immutable evidence pack successfully compiled and sealed",
+		models.LeafTypeFileContentHash:                "Raw file content hash verified and recorded",
+		models.LeafTypeFinalEvidenceView:              "Evidence pack compiled and sealed",
 	}
 
-	// Determine a stable display order.
+	// Stable display order — mirrors the Zord payment lifecycle sequence.
 	leafOrder := map[string]int{
-		models.LeafTypeRawSettlementFile:              0,
-		models.LeafTypeRawSettlementLine:              1,
-		models.LeafTypeEnvelopeHash:                   2,
-		models.LeafTypeCanonicalSettlementObservation: 3,
-		models.LeafTypeCanonicalIntentHash:            4,
-		models.LeafTypeGovernanceDecision:             5,
+		models.LeafTypeEnvelopeHash:                   0,
+		models.LeafTypeCanonicalIntentHash:            1,
+		models.LeafTypeGovernanceDecision:             2,
+		models.LeafTypeRawSettlementLine:              3,
+		models.LeafTypeRawSettlementFile:              4,
+		models.LeafTypeCanonicalSettlementObservation: 5,
 		models.LeafTypeAttachmentDecision:             6,
 		models.LeafTypeVarianceDecision:               7,
 		models.LeafTypeBatchAttachmentSummary:         8,
@@ -58,24 +80,34 @@ func BuildTimeline(pack *models.EvidencePack) []models.TimelineEvent {
 	}
 	ordered := make([]orderedItem, 0, len(pack.Items))
 	for _, item := range pack.Items {
-		o := 50 // unknown leaf types land in the middle
+		o := 50
 		if v, ok := leafOrder[item.Type]; ok {
 			o = v
 		}
 		ordered = append(ordered, orderedItem{order: o, item: item})
 	}
 	sort.Slice(ordered, func(i, j int) bool {
+		ti := realTimestamps[ordered[i].item.Type]
+		tj := realTimestamps[ordered[j].item.Type]
+		if !ti.Equal(tj) {
+			return ti.Before(tj)
+		}
 		return ordered[i].order < ordered[j].order
 	})
 
-	// Assign a 1-second offset per position so timestamps are distinct and ordered.
+	events := make([]models.TimelineEvent, 0, len(ordered))
 	for i, oi := range ordered {
+		ts, hasReal := realTimestamps[oi.item.Type]
+		if !hasReal || ts.IsZero() {
+			// Fallback: position-based offset from pack creation
+			ts = pack.CreatedAt.Add(-time.Duration(len(ordered)-i) * time.Second)
+		}
 		label, ok := leafEvents[oi.item.Type]
 		if !ok {
 			label = fmt.Sprintf("Artifact recorded: %s", oi.item.Type)
 		}
 		events = append(events, models.TimelineEvent{
-			Timestamp: baseTime.Add(-time.Duration(len(ordered)-i) * time.Second),
+			Timestamp: ts.UTC(),
 			Event:     label,
 			NodeID:    oi.item.LeafHash,
 		})
@@ -90,7 +122,7 @@ func BuildLineageGraph(pack *models.EvidencePack) models.LineageGraph {
 	nodes := make([]models.LineageNode, 0, len(pack.Items)+4)
 	edges := make([]models.LineageEdge, 0, len(pack.Items)+4)
 
-	// Node type labels — covers both single-intent and batch pack leaf types
+	// Node labels — covers both single-intent and batch pack leaf types
 	labelOf := map[string]string{
 		models.LeafTypeRawSettlementLine:              "Original Payment File",
 		models.LeafTypeCanonicalSettlementObservation: "Structured Payment Intent",
@@ -123,7 +155,6 @@ func BuildLineageGraph(pack *models.EvidencePack) models.LineageGraph {
 		models.LeafTypeFinalEvidenceView:              "SEAL",
 	}
 
-	// Build one node per leaf.
 	leafIDByType := make(map[string]string)
 	for _, item := range pack.Items {
 		nodeID := item.LeafHash
@@ -137,7 +168,6 @@ func BuildLineageGraph(pack *models.EvidencePack) models.LineageGraph {
 		if !ok {
 			nType = "TRANSFORM"
 		}
-
 		nodes = append(nodes, models.LineageNode{
 			ID:            nodeID,
 			Label:         label,
@@ -148,7 +178,7 @@ func BuildLineageGraph(pack *models.EvidencePack) models.LineageGraph {
 		})
 	}
 
-	// Proof root node (the Merkle root itself)
+	// Proof root node
 	rootNodeID := "merkle_root"
 	nodes = append(nodes, models.LineageNode{
 		ID:       rootNodeID,
@@ -156,14 +186,6 @@ func BuildLineageGraph(pack *models.EvidencePack) models.LineageGraph {
 		NodeType: "SEAL",
 		LeafHash: pack.MerkleRoot,
 	})
-
-	// Wire edges per the DAG spec §5 Engine B:
-	// RAW_SETTLEMENT_LINE → CANONICAL_SETTLEMENT_OBSERVATION → GOVERNANCE_CHECK
-	// RAW_SETTLEMENT_FILE  → MATCH_DECISION
-	// CANONICAL_SETTLEMENT_OBSERVATION → MATCH_DECISION
-	// GOVERNANCE_CHECK     → FINAL_EVIDENCE_VIEW
-	// MATCH_DECISION       → FINAL_EVIDENCE_VIEW
-	// FINAL_EVIDENCE_VIEW  → PROOF_ROOT
 
 	maybeEdge := func(fromType, toType, label string) {
 		from, fok := leafIDByType[fromType]
@@ -191,7 +213,6 @@ func BuildLineageGraph(pack *models.EvidencePack) models.LineageGraph {
 	maybeEdge(models.LeafTypeBatchAttachmentSummary, models.LeafTypeFinalEvidenceView, "")
 	maybeEdge(models.LeafTypeBatchVarianceSummary, models.LeafTypeFinalEvidenceView, "")
 
-	// Every leaf feeds the proof root.
 	if fev, ok := leafIDByType[models.LeafTypeFinalEvidenceView]; ok {
 		edges = append(edges, models.LineageEdge{From: fev, To: rootNodeID, Label: "seal"})
 	}

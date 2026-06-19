@@ -3,9 +3,10 @@
 import { useState } from "react"
 import React from 'react'
 import Link from 'next/link'
-import { ChevronDown, Menu, X, Home, BookOpen, LogOut, Settings, BarChart3, Search, MoreVertical, Zap, FileText, GitBranch, MessageSquare, AlertCircle } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { ChevronDown, Menu, X, Home, BookOpen, LogOut, Settings, BarChart3, Search, MoreVertical, FileText, GitBranch, MessageSquare, AlertCircle, Landmark } from 'lucide-react'
+import clsx from 'clsx'
 import { useSidebar } from '@/app/context/sidebar-context'
+import { PAYOUT_VIEW_URLS } from '@/services/payout-command/model'
 
 interface NavItem {
   id: string
@@ -32,7 +33,18 @@ const navSections: NavSection[] = [
   {
     title: 'Core Operations',
     items: [
-      { id: 'intent-journal', label: 'Intent Journal', icon: <BookOpen className="w-4 h-4" />, href: '/intent-journal' },
+      {
+        id: 'intent-journal',
+        label: 'Intent Journal',
+        icon: <BookOpen className="w-4 h-4" />,
+        href: `${PAYOUT_VIEW_URLS.liveConsole}?dock=grid`,
+      },
+      {
+        id: 'settlement-journal',
+        label: 'Settlement Journal',
+        icon: <Landmark className="w-4 h-4" />,
+        href: `${PAYOUT_VIEW_URLS.liveConsole}?dock=settlement`,
+      },
       { id: 'dlq', label: 'Dead Letter Queue', icon: <AlertCircle className="w-4 h-4" />, href: '/dlq' },
       { id: 'schema-contracts', label: 'Schema & Contracts', icon: <FileText className="w-4 h-4" />, href: '/schema' },
       { id: 'replay-evidence', label: 'Replay & Evidence', icon: <GitBranch className="w-4 h-4" />, href: '/replay' },
@@ -49,7 +61,12 @@ const navSections: NavSection[] = [
   {
     title: 'Admin',
     items: [
-      { id: 'settings', label: 'Settings & Audit Logs', icon: <Settings className="w-4 h-4" />, href: '/settings' },
+      {
+        id: 'settings',
+        label: 'Settings & Audit Logs',
+        icon: <Settings className="w-4 h-4" />,
+        href: PAYOUT_VIEW_URLS.settingsAccount,
+      },
       { id: 'logout', label: 'Log out', icon: <LogOut className="w-4 h-4" />, href: '/' },
     ],
   },
@@ -75,7 +92,7 @@ const CollapsibleSidebarComponent = () => {
     <>
       {/* Sidebar */}
       <aside
-        className={cn(
+        className={clsx(
           'fixed left-0 top-0 h-screen bg-[#1a1a1a] border-r border-gray-700/50 transition-all duration-300 z-50 flex flex-col',
           isOpen ? 'w-64' : 'w-20'
         )}
@@ -114,7 +131,7 @@ const CollapsibleSidebarComponent = () => {
               {section.collapsible ? (
                 <button
                   onClick={() => toggleSection(section.title)}
-                  className={cn(
+                  className={clsx(
                     'w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-semibold text-gray-400 hover:text-gray-200 transition',
                     !isOpen && 'justify-center'
                   )}
@@ -122,7 +139,7 @@ const CollapsibleSidebarComponent = () => {
                   {isOpen && <span>{section.title}</span>}
                   {isOpen && (
                     <ChevronDown
-                      className={cn(
+                      className={clsx(
                         'w-4 h-4 transition-transform',
                         expandedSections[section.title] ? 'rotate-0' : '-rotate-90'
                       )}
@@ -135,7 +152,7 @@ const CollapsibleSidebarComponent = () => {
 
               {/* Section Items */}
               <div
-                className={cn(
+                className={clsx(
                   'space-y-1 overflow-hidden transition-all',
                   section.collapsible && !expandedSections[section.title] ? 'hidden' : ''
                 )}
@@ -144,7 +161,7 @@ const CollapsibleSidebarComponent = () => {
                   <Link
                     key={item.id}
                     href={item.href}
-                    className={cn(
+                    className={clsx(
                       'flex items-center justify-between px-3 py-2 rounded-lg text-sm text-gray-300 hover:text-white hover:bg-gray-700/50 transition',
                       !isOpen && 'justify-center px-2'
                     )}
@@ -168,7 +185,7 @@ const CollapsibleSidebarComponent = () => {
 
         {/* Footer - User Info */}
         <div className="border-t border-gray-700/50 p-3">
-          <div className={cn('flex items-center gap-3', !isOpen && 'justify-center')}>
+          <div className={clsx('flex items-center gap-3', !isOpen && 'justify-center')}>
             <div className="w-8 h-8 bg-gradient-to-br from-yellow-400 to-orange-500 rounded-lg flex items-center justify-center flex-shrink-0">
               <span className="text-xs font-bold text-white">LS</span>
             </div>

@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"log"
 
+	"github.com/shopspring/decimal"
+
 	"zord-intent-engine/internal/models"
 
 	"github.com/google/uuid"
@@ -254,6 +256,7 @@ INSERT INTO outbox (
     next_attempt_at,
     created_at,
 	batchid,
+	source_row_num,
     aggregate_confidence_score, -- NEW
     required_fields_status,
     tokenization_status,
@@ -266,7 +269,7 @@ INSERT INTO outbox (
     $20,$21,$22,$23,$24,$25,$26,$27,$28,$29,
     $30,$31,$32,$33,$34,$35,$36,$37,$38,$39,
     $40,$41,$42,$43,$44,$45,$46,$47,$48,$49,
-    $50,$51,$52,$53, $54, $55, $56, $57, $58, $59 -- UPDATED
+    $50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60
 )`
 
 	outbox.ContractID = intent.ContractID
@@ -327,12 +330,13 @@ INSERT INTO outbox (
 		outbox.NextRetryAt,                // $51
 		outbox.CreatedAt,                  // $52
 		outbox.BatchID,                    // $53  ← matches column: batchid
-		outbox.AggregateConfidenceScore,   // $54 -- NEW
-		outbox.RequiredFieldsStatus,       // $55
-		outbox.TokenizationStatus,         // $56
-		outbox.GovernanceDecision,         // $57
-		outbox.PaymentInstructionReceived, // $58
-		outbox.CanonicalIntentCreated,     // $59
+		outbox.SourceRowNum,               // $54  ← matches column: source_row_num
+		outbox.AggregateConfidenceScore,   // $55 -- NEW
+		outbox.RequiredFieldsStatus,       // $56
+		outbox.TokenizationStatus,         // $57
+		outbox.GovernanceDecision,         // $58
+		outbox.PaymentInstructionReceived, // $59
+		outbox.CanonicalIntentCreated,     // $60
 	)
 	if err != nil {
 		log.Printf("Repo.Save: INSERT outbox failed: %v", err)
@@ -806,7 +810,7 @@ func (r *PaymentIntentRepo) CheckIdempotencyRegistry(
 //	dlq_rate > 0.05  → cap at 75
 //	dlq_rate > 0.10  → cap at 60
 //	dlq_rate > 0.20  → cap at 40
-func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, batchID string) (float64, error) {
+func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, tenantID, batchID string) (float64, error) {
 	if batchID == "" {
 		return 0, nil
 	}
@@ -814,9 +818,10 @@ func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, 
 	// Step 1: Gather batch counts from payment_intents (canonicalized rows)
 	var canonicalized int
 	var avgQuality, avgMatchability, avgProof, avgDupRisk, avgSchema, avgMapping sql.NullFloat64
+	var totalAmount decimal.Decimal
 	var lowMatchCount, lowProofCount, dupRiskCount int
 	var dupRiskAmount int64
-	var tenantID sql.NullString
+	var retrievedTenantID sql.NullString
 	var sourceSystem sql.NullString
 
 	err := r.db.QueryRowContext(ctx, `
@@ -833,14 +838,16 @@ func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, 
             SUM(CASE WHEN duplicate_risk_flag = true THEN 1 ELSE 0 END),
             COALESCE(SUM(CASE WHEN duplicate_risk_score >= 31 THEN (amount * 100)::BIGINT ELSE 0 END), 0),
             MAX(tenant_id::TEXT),
-            MAX(source_system)
+            MAX(source_system),
+            COALESCE(SUM(amount), 0)
         FROM payment_intents
-        WHERE batchid = $1
-    `, batchID).Scan(
+        WHERE tenant_id = $1 AND
+		batchid=$2
+    `, tenantID, batchID).Scan(
 		&canonicalized,
 		&avgQuality, &avgMatchability, &avgProof, &avgDupRisk, &avgSchema, &avgMapping,
 		&lowMatchCount, &lowProofCount, &dupRiskCount, &dupRiskAmount,
-		&tenantID, &sourceSystem,
+		&retrievedTenantID, &sourceSystem, &totalAmount,
 	)
 	if err != nil {
 		return 0, err
@@ -849,22 +856,22 @@ func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, 
 	// Step 2: Get DLQ count for this batch from dlq_items
 	var dlqCount int
 	_ = r.db.QueryRowContext(ctx, `
-        SELECT COUNT(*) FROM dlq_items WHERE batch_id = $1
-    `, batchID).Scan(&dlqCount)
+        SELECT COUNT(*) FROM dlq_items WHERE tenant_id = $1 AND batch_id = $2
+    `, tenantID, batchID).Scan(&dlqCount)
 
 	// Fallback if tenantID/sourceSystem not in payment_intents (all DLQ'd)
-	if !tenantID.Valid || tenantID.String == "" {
+	if !retrievedTenantID.Valid || retrievedTenantID.String == "" {
 		_ = r.db.QueryRowContext(ctx, `
-            SELECT MAX(tenant_id::TEXT) FROM dlq_items WHERE batch_id = $1
-        `, batchID).Scan(&tenantID)
+            SELECT MAX(tenant_id::TEXT) FROM dlq_items WHERE tenant_id = $1 AND batch_id = $2
+        `, tenantID, batchID).Scan(&retrievedTenantID)
 	}
 
 	// Step 3: Get review count (FLAGGED governance state)
 	var reviewCount int
 	_ = r.db.QueryRowContext(ctx, `
         SELECT COUNT(*) FROM payment_intents
-        WHERE batchid = $1 AND governance_state IN ('FLAGGED','REQUIRES_REVIEW')
-    `, batchID).Scan(&reviewCount)
+        WHERE tenant_id = $1 AND batchid = $2 AND governance_state IN ('FLAGGED','REQUIRES_REVIEW')
+    `, tenantID, batchID).Scan(&reviewCount)
 
 	// Step 4: Full denominator — received = canonicalized + dlq
 	received := canonicalized + dlqCount
@@ -918,8 +925,8 @@ func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, 
 	_, err = r.db.ExecContext(ctx, `
         UPDATE payment_intents
         SET aggregate_confidence_score = $1
-        WHERE batchid = $2
-    `, batchScore, batchID) // stored as 0–1
+        WHERE tenant_id = $2 AND batchid = $3
+    `, batchScore, tenantID, batchID) // stored as 0–1
 	if err != nil {
 		return 0, err
 	}
@@ -947,14 +954,22 @@ func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, 
 	breakdownJSON, _ := json.Marshal(batchBreakdown)
 
 	_, err = r.db.ExecContext(ctx, `
-        UPDATE outbox
+        WITH locked AS (
+            SELECT event_id
+            FROM outbox
+            WHERE tenant_id = $3 AND batchid = $4
+            ORDER BY event_id
+            FOR UPDATE
+        )
+        UPDATE outbox o
         SET aggregate_confidence_score = $1,
             payload = jsonb_set(
-                jsonb_set(payload, '{aggregate_confidence_score}', to_jsonb($1::numeric)),
+                jsonb_set(o.payload, '{aggregate_confidence_score}', to_jsonb($1::numeric)),
                 '{batch_quality_breakdown}', $2::jsonb
             )
-        WHERE batchid = $3
-    `, batchScore, breakdownJSON, batchID)
+        FROM locked l
+        WHERE o.event_id = l.event_id
+    `, batchScore, breakdownJSON, tenantID, batchID)
 	if err != nil {
 		return 0, err
 	}
@@ -967,14 +982,14 @@ func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, 
         canonicalization_success_rate, avg_schema_completeness_score,
         avg_mapping_confidence_score, avg_matchability_score, avg_proof_readiness_score,
         avg_intent_quality_score, duplicate_risk_amount_minor, batch_quality_score,
-        score_breakdown_json, updated_at
+        score_breakdown_json, total_amount, updated_at
     ) VALUES (
         $1, $2, $3, $4, $5, $6, $7,
         $8, $9, $10,
         $11, $12, $13, $14, $15,
         $16, $17, $18,
-        $19, now()
-    ) ON CONFLICT (batch_id) DO UPDATE SET
+        $19, $20, now()
+    ) ON CONFLICT (tenant_id, batch_id) DO UPDATE SET
         tenant_id = EXCLUDED.tenant_id,
         source_system = EXCLUDED.source_system,
         received_count = EXCLUDED.received_count,
@@ -993,6 +1008,7 @@ func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, 
         duplicate_risk_amount_minor = EXCLUDED.duplicate_risk_amount_minor,
         batch_quality_score = EXCLUDED.batch_quality_score,
         score_breakdown_json = EXCLUDED.score_breakdown_json,
+        total_amount = EXCLUDED.total_amount,
         updated_at = now()
     `
 	_, err = r.db.ExecContext(ctx, upsertBatchQuery,
@@ -1001,7 +1017,7 @@ func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, 
 		canonRate, safeFloat(avgSchema),
 		safeFloat(avgMapping), safeFloat(avgMatchability), safeFloat(avgProof),
 		safeFloat(avgQuality), dupRiskAmount, batchScore,
-		breakdownJSON,
+		breakdownJSON, totalAmount,
 	)
 	if err != nil {
 		log.Printf("⚠️ Failed to upsert into canonical_batches for batchID=%s: %v", batchID, err)

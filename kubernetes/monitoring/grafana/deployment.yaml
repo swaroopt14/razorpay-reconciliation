@@ -13,21 +13,35 @@ spec:
       labels:
         app: grafana
     spec:
+      securityContext:
+        fsGroup: 472
+        runAsUser: 472
+        runAsNonRoot: true
       containers:
         - name: grafana
-          image: grafana/grafana:10.4.0
+          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/grafana:10.4.0
           ports:
             - containerPort: 3000
           env:
             - name: GF_SECURITY_ADMIN_USER
-              value: admin
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-credentials
+                  key: ADMIN_USER
             - name: GF_SECURITY_ADMIN_PASSWORD
-              value: zord-grafana-2026
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-credentials
+                  key: ADMIN_PASSWORD
             - name: GF_SERVER_ROOT_URL
-              value: http://localhost:3000
+              value: https://grafana.zordnet.com
           volumeMounts:
             - name: datasources
               mountPath: /etc/grafana/provisioning/datasources
+            - name: dashboard-provisioning
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
             - name: data
               mountPath: /var/lib/grafana
           resources:
@@ -41,5 +55,32 @@ spec:
         - name: datasources
           configMap:
             name: grafana-datasources
+        - name: dashboard-provisioning
+          configMap:
+            name: grafana-dashboard-provisioning
+        - name: dashboards
+          projected:
+            sources:
+              - configMap:
+                  name: grafana-dashboards
+              - configMap:
+                  name: grafana-dashboards-nodes
+              - configMap:
+                  name: grafana-dashboards-platform
+              - configMap:
+                  name: grafana-dashboards-data-layer
         - name: data
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: grafana-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-data
+  namespace: monitoring
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi

@@ -69,6 +69,8 @@ export async function GET(
       }
     })
     
+    const now = new Date()
+
     // Generate rebalance history (last 24h)
     const rebalanceHistory = [
       {
@@ -92,7 +94,6 @@ export async function GET(
     ]
     
     // Generate throughput and latency data (last 24 hours, hourly)
-    const now = new Date()
     const throughputData = Array.from({ length: 24 }, (_, i) => {
       const timestamp = new Date(now.getTime() - (23 - i) * 60 * 60 * 1000)
       return {

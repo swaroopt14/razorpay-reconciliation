@@ -109,6 +109,11 @@ func main() {
 		log.Fatal("failed to load signing key:", err)
 	}
 
+	// Initialize HS256 JWT signing secret (shared with Kong for gateway-level validation).
+	if err := services.InitJWTSigningSecret(); err != nil {
+		log.Fatal("failed to initialize JWT signing secret:", err)
+	}
+
 	routes.Routes(server, h)
 
 	// Add metrics endpoint

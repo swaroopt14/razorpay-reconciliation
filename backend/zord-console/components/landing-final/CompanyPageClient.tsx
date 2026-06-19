@@ -76,7 +76,7 @@ export default function CompanyPageClient() {
         body: 'ZORD is one product in that larger system: a financial operations layer where payout control, proof, and explainable action become native to infrastructure.',
         stats: [
           { value: '2', label: 'product tracks' },
-          { value: '53k+', label: 'hackathon teams' },
+          { value: 'Research', label: 'to operations' },
           { value: 'AI-first', label: 'enterprise fabric' },
         ],
         imagePosition: 'right',
@@ -102,7 +102,7 @@ export default function CompanyPageClient() {
                 <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Products</div>
                 <div className="mt-3 text-lg font-semibold text-white">ZORD + Gateway</div>
                 <p className="mt-2 text-sm leading-6 text-slate-400">
-                  ZORD focuses on payout and compliance orchestration, while Arealis continues building broader enterprise intelligence infrastructure.
+                  ZORD focuses on payout operations and compliance-ready evidence, while Arealis continues building broader enterprise intelligence infrastructure.
                 </p>
               </div>
               <div className="rounded-[1.3rem] border border-white/10 bg-white/[0.03] p-5">

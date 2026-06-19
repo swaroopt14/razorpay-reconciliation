@@ -1,0 +1,61 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Kong Plugin: Prometheus Metrics
+# ─────────────────────────────────────────────────────────────────────────────
+# Configured in kong/configmap.yaml (declarative config).
+# This file serves as documentation and reference.
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# CONFIGURATION
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Metrics Endpoint: http://kong-gateway:8100/metrics
+# (Kong status port, same as health check)
+#
+# Enabled Metrics:
+#   - status_code_metrics: true    (HTTP status code distribution)
+#   - latency_metrics: true        (request/response latency histograms)
+#   - bandwidth_metrics: true      (ingress/egress bytes)
+#   - upstream_health_metrics: true (backend service health)
+#   - per_consumer: false          (disabled — no Kong consumers configured)
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# PROMETHEUS SCRAPE CONFIG
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# The Kong deployment has these annotations for auto-discovery:
+#   prometheus.io/scrape: "true"
+#   prometheus.io/port: "8100"
+#   prometheus.io/path: "/metrics"
+#
+# If using the monitoring stack (kubernetes/monitoring/), Prometheus will
+# auto-discover Kong pods and scrape metrics.
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# KEY METRICS EXPORTED
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# kong_http_requests_total{service, route, code, method}
+#   - Total HTTP requests by service, route, status code, method
+#
+# kong_request_latency_ms{service, route, type}
+#   - Request latency (type: kong=proxy time, upstream=backend time)
+#
+# kong_bandwidth_bytes{service, route, direction}
+#   - Bandwidth (direction: ingress/egress)
+#
+# kong_upstream_target_health{upstream, target, state}
+#   - Backend health status (healthy/unhealthy)
+#
+# kong_datastore_reachable
+#   - 1 if config is loaded (always 1 in DB-less mode)
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# GRAFANA DASHBOARD
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Import Kong's official Grafana dashboard:
+#   Dashboard ID: 7424 (Kong Official)
+#   URL: https://grafana.com/grafana/dashboards/7424
+#
+# Or create custom panels using the metrics above.
+# ─────────────────────────────────────────────────────────────────────────────

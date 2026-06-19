@@ -262,7 +262,9 @@ test.describe('tenant-scoped surfaces (no batch_id on client prod GETs)', () => 
     })
     expect(
       batchScoped,
-      `home should not pass batch scope on prod GETs: ${batchScoped.map((c) => c.pathname + c.search).join(', ')}`,
+      `home should not pass batch scope on prod GETs: ${batchScoped
+        .map((c) => `${c.pathname}?${c.searchParams.toString()}`)
+        .join(', ')}`,
     ).toHaveLength(0)
 
     for (const cap of gets) {

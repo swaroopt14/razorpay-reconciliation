@@ -702,7 +702,7 @@ export function SignUpFormMultiStep({
           </div>
           <h3 className="mt-3 text-base font-semibold text-white">Set up live account</h3>
           <p className="mt-1 text-sm text-gray-400">
-            For teams ready to move real money. We'll guide you through KYC, connectors, and plan after signup.
+            For teams ready to move real money. We&apos;ll guide you through KYC, connectors, and plan after signup.
           </p>
           <ul className="mt-3 space-y-1 text-xs text-gray-400">
             <li>✓ Sandbox available too — switch anytime</li>

@@ -12,15 +12,6 @@ type TokenHandler struct {
 	svc *services.TokenService
 }
 
-type DetokenizeRequest struct {
-	AccountNumber string `json:"account_number"`
-	IFSC          string `json:"ifsc"`
-	VPA           string `json:"vpa"`
-	Name          string `json:"name"`
-	Phone         string `json:"phone"`
-	Email         string `json:"email"`
-}
-
 func NewTokenHandler(s *services.TokenService) *TokenHandler {
 	return &TokenHandler{svc: s}
 }
@@ -42,10 +33,20 @@ func (h *TokenHandler) Tokenize(c *gin.Context) {
 		return
 	}
 
+	// Actor comes from the authenticated caller header (set by middleware)
+	actor := c.GetString("caller_id")
+	if actor == "" {
+		actor = c.GetHeader("X-Zord-Caller-ID")
+	}
+	if actor == "" {
+		actor = "unknown"
+	}
+
 	tokens, err := h.svc.TokenizePII(
 		c.Request.Context(),
 		req.TenantID,
 		req.TraceID,
+		actor,
 		req.PII,
 	)
 	if err != nil {
@@ -53,7 +54,5 @@ func (h *TokenHandler) Tokenize(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"tokens": tokens,
-	})
+	c.JSON(http.StatusOK, gin.H{"tokens": tokens})
 }

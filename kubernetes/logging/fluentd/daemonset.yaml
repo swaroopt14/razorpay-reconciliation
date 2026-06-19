@@ -20,7 +20,7 @@ spec:
           effect: NoSchedule
       containers:
         - name: fluentd
-          image: fluent/fluentd-kubernetes-daemonset:v1.16-debian-elasticsearch8-1
+          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/fluentd:v1.16-debian-elasticsearch8-1
           env:
             - name: FLUENT_ELASTICSEARCH_HOST
               value: elasticsearch.logging.svc.cluster.local
@@ -48,10 +48,14 @@ spec:
               readOnly: true
             - name: buffer
               mountPath: /var/log/fluentd-buffers
+          ports:
+            - name: http
+              containerPort: 9880
+              protocol: TCP
           resources:
             requests:
               cpu: 100m
-              memory: 256Mi
+              memory: 64Mi
             limits:
               cpu: 500m
               memory: 512Mi

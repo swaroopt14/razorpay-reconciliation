@@ -82,6 +82,7 @@ func CanonicalIntentToOutboxEvent(
 		DuplicateReasonCode:       intent.DuplicateReasonCode,
 		ClientBatchRef:            intent.ClientBatchRef,
 		AggregateConfidenceScore:  intent.AggregateConfidenceScore, // NEW
+		SourceRowNum:              intent.SourceRowNum,
 		RequiredFieldsStatus:      intent.RequiredFieldsStatus,
 		TokenizationStatus:        intent.TokenizationStatus,
 		GovernanceDecision:        intent.GovernanceDecision,

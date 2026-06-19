@@ -219,3 +219,7 @@ func (w *Worker) nack(ctx context.Context, leaseID string, eventIDs []string) {
 	metrics.NackTotal.WithLabelValues(w.svcCfg.Name, "success").Inc()
 	w.log.Info("nacked events", zap.Int64("updated", updated), zap.String("lease_id", leaseID))
 }
+
+func (w *Worker) Name() string {
+	return w.svcCfg.Name
+}

@@ -162,7 +162,7 @@ func (h *DashboardLeakageHandler) GetLeakageKPIs(w http.ResponseWriter, r *http.
 	resp.WindowEnd = &snap.WindowEnd
 	resp.ComputedAt = &snap.CreatedAt
 	resp.TotalIntendedAmountMinor = kpis.TotalIntendedAmountMinor
-	resp.TotalObservedSettledAmountMinor = kpis.TotalObservedSettledAmountMinor
+	resp.TotalObservedSettledAmountMinor = kpis.TotalObservedSettledAmountMinor.Truncate(2)
 	resp.UnmatchedAmountMinor = kpis.UnmatchedAmountMinor
 	resp.UnderSettlementAmountMinor = kpis.UnderSettlementAmountMinor
 	resp.OrphanAmountMinor = kpis.OrphanAmountMinor

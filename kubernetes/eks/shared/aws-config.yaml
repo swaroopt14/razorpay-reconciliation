@@ -9,4 +9,4 @@ data:
   DB_HOST: zord-postgres
   DB_PORT: "5432"
   DB_SSLMODE: disable
-  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector.tracing.svc.cluster.local:4318
+  OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector.tracing.svc.cluster.local:4317

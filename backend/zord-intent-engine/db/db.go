@@ -181,6 +181,7 @@ func CreateTables() error {
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     sent_at TIMESTAMPTZ,
 	batchid TEXT,
+	source_row_num INT,
     aggregate_confidence_score NUMERIC(5,2),      -- existing
 
     -- 🆕 Added for tracking status
@@ -260,10 +261,44 @@ func CreateTables() error {
 		source_row_num INT,
 		dlq_status TEXT NOT NULL DEFAULT 'DLQ_TERMINAL',
 		intent_context JSONB,
-		trace_id TEXT
+		trace_id TEXT,
+		lease_id UUID,
+		leased_by TEXT,
+		lease_until TIMESTAMPTZ,
+		retry_count INT NOT NULL DEFAULT 0,
+		next_attempt_at TIMESTAMPTZ,
+		dispatched_at TIMESTAMPTZ
 	);`
 
 	if _, err := DB.Exec(dlqItems); err != nil {
+		return err
+	}
+
+	// Ensure lease columns exist on dlq_items for the pull API
+	if _, err := DB.Exec(`
+		ALTER TABLE dlq_items
+		ADD COLUMN IF NOT EXISTS lease_id UUID,
+		ADD COLUMN IF NOT EXISTS leased_by TEXT,
+		ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ,
+		ADD COLUMN IF NOT EXISTS retry_count INT NOT NULL DEFAULT 0,
+		ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ,
+		ADD COLUMN IF NOT EXISTS dispatched_at TIMESTAMPTZ;
+	`); err != nil {
+		return err
+	}
+
+	// Indexes for lease scanning and ack/nack operations
+	if _, err := DB.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_dlq_items_pending_lease
+		ON dlq_items (dlq_status, lease_until, created_at);
+	`); err != nil {
+		return err
+	}
+
+	if _, err := DB.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_dlq_items_lease_id
+		ON dlq_items (lease_id);
+	`); err != nil {
 		return err
 	}
 
@@ -423,11 +458,11 @@ CREATE TABLE IF NOT EXISTS etl_quality_results (
 	if _, err := DB.Exec(tenantSynonymProfiles); err != nil {
 		log.Fatal("tenant_synonym_profiles:", err)
 	}
-
+	// canonical batch schema
 	canonicalBatches := `
 	CREATE TABLE IF NOT EXISTS canonical_batches (
-		batch_id                        TEXT PRIMARY KEY,
-		tenant_id                       UUID,
+    	tenant_id                       UUID NOT NULL,
+    	batch_id                        TEXT NOT NULL,
 		source_system                   TEXT,
 		received_count                  INT NOT NULL DEFAULT 0,
 		canonicalized_count             INT NOT NULL DEFAULT 0,
@@ -445,11 +480,34 @@ CREATE TABLE IF NOT EXISTS etl_quality_results (
 		duplicate_risk_amount_minor     BIGINT DEFAULT 0,
 		batch_quality_score             NUMERIC(6,2) DEFAULT 0,
 		score_breakdown_json            JSONB DEFAULT '{}',
+		total_amount                    NUMERIC DEFAULT 0,
 		created_at                      TIMESTAMPTZ DEFAULT now(),
-		updated_at                      TIMESTAMPTZ DEFAULT now()
+		updated_at                      TIMESTAMPTZ DEFAULT now(),
+		lease_id                        UUID,
+		leased_by                       TEXT,
+		lease_until                     TIMESTAMPTZ,
+		retry_count                     INT NOT NULL DEFAULT 0,
+		next_attempt_at                 TIMESTAMPTZ,
+		dispatched_at                   TIMESTAMPTZ,
+		    PRIMARY KEY (tenant_id, batch_id)
 	);`
 	if _, err := DB.Exec(canonicalBatches); err != nil {
 		log.Fatal("canonical_batches:", err)
+	}
+
+	// Lease indexes for relay batch-completion polling
+	if _, err := DB.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_canonical_batches_lease_id
+		ON canonical_batches (lease_id);
+	`); err != nil {
+		log.Fatal("idx_canonical_batches_lease_id:", err)
+	}
+
+	if _, err := DB.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_canonical_batches_pending_lease
+		ON canonical_batches (dispatched_at, lease_until);
+	`); err != nil {
+		log.Fatal("idx_canonical_batches_pending_lease:", err)
 	}
 
 	mappingProfiles := `
@@ -545,6 +603,19 @@ CREATE TABLE IF NOT EXISTS etl_quality_results (
 
 	if _, err := DB.Exec(intentIngestRows); err != nil {
 		log.Fatal("intent_ingest_rows:", err)
+	}
+
+	// ── Schema migrations (add columns that may be missing on older DBs) ──────
+	// Add new ALTER TABLE statements here when columns are added to existing tables.
+	// These are idempotent — safe to run on every startup.
+	migrations := []string{
+		// Add future column migrations here, e.g.:
+		// `ALTER TABLE payment_intents ADD COLUMN IF NOT EXISTS new_column TEXT;`,
+	}
+	for _, m := range migrations {
+		if _, err := DB.Exec(m); err != nil {
+			log.Printf("migration warning: %v (stmt: %.80s)", err, m)
+		}
 	}
 
 	return nil

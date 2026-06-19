@@ -17,6 +17,7 @@ services:
       - KAFKA_TOPIC_PII_TOKENIZE_REQUEST=pii.tokenize.request
       - KAFKA_TOPIC_PII_TOKENIZE_RESULT=pii.tokenize.result
       - ZORD_PII_ENCLAVE_URL=http://host.docker.internal:8087
+      - ENCLAVE_INTERNAL_TOKEN=${ENCLAVE_INTERNAL_TOKEN}
       - DB_HOST=zord-intent-postgres
       - DB_PORT=5432
       - DB_USER=intent_user

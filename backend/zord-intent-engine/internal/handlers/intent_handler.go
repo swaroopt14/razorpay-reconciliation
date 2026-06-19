@@ -87,12 +87,14 @@ func (h *IntentHandler) List(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.URL.Query().Get("tenant_id")
 	status := r.URL.Query().Get("status")
 	intentType := r.URL.Query().Get("intent_type")
+	batchID := strings.TrimSpace(r.URL.Query().Get("batch_id"))
 
 	// Call repository
 	intents, total, err := h.queryRepo.ListIntents(ctx, persistence.IntentFilter{
 		TenantID:   tenantID,
 		Status:     status,
 		IntentType: intentType,
+		BatchID:    batchID,
 		Page:       page,
 		PageSize:   pageSize,
 	})
@@ -140,7 +142,13 @@ func (h *IntentHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fetch from database
-	intent, err := h.queryRepo.GetIntentByID(ctx, intentID)
+	tenantID := strings.TrimSpace(r.Header.Get("X-Tenant-ID"))
+	if tenantID == "" {
+		respondError(w, "INVALID_REQUEST", "tenant_id header is required", http.StatusBadRequest, nil)
+		return
+	}
+
+	intent, err := h.queryRepo.GetIntentByID(ctx, tenantID, intentID)
 
 	if err != nil {
 		if err.Error() == "intent not found" || strings.Contains(err.Error(), "not found") {
@@ -203,7 +211,13 @@ func (h *IntentHandler) ListPaymentIntentLiteByBatch(w http.ResponseWriter, r *h
 	ctx := r.Context()
 
 	tenantID := strings.TrimSpace(r.Header.Get("tenant_id"))
+	if tenantID == "" {
+		tenantID = strings.TrimSpace(r.URL.Query().Get("tenant_id"))
+	}
 	batchID := strings.TrimSpace(r.Header.Get("batch_id"))
+	if batchID == "" {
+		batchID = strings.TrimSpace(r.URL.Query().Get("batch_id"))
+	}
 
 	if tenantID == "" {
 		respondError(w, "INVALID_REQUEST", "tenant_id header is required", http.StatusBadRequest, nil)
@@ -214,6 +228,7 @@ func (h *IntentHandler) ListPaymentIntentLiteByBatch(w http.ResponseWriter, r *h
 		return
 	}
 
+	// Lite query includes intent_quality_score; returns every row for batchid (no pagination cap).
 	items, err := h.queryRepo.ListPaymentIntentLiteByBatch(ctx, tenantID, batchID)
 	if err != nil {
 		respondError(w, "DATABASE_ERROR", "Failed to fetch payment intent data", http.StatusInternalServerError, err)
@@ -222,12 +237,21 @@ func (h *IntentHandler) ListPaymentIntentLiteByBatch(w http.ResponseWriter, r *h
 	if items == nil {
 		items = []models.PaymentIntentLite{}
 	}
+	total := len(items)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(struct {
-		Items []models.PaymentIntentLite `json:"items"`
-	}{Items: items})
+		Items      []models.PaymentIntentLite `json:"items"`
+		Pagination TablePagination            `json:"pagination"`
+	}{
+		Items: items,
+		Pagination: TablePagination{
+			Page:     1,
+			PageSize: total,
+			Total:    total,
+		},
+	})
 }
 
 func (h *IntentHandler) ListDLQItemsByBatchSimple(w http.ResponseWriter, r *http.Request) {

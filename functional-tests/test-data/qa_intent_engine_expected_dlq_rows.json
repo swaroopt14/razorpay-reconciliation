@@ -1,0 +1,60 @@
+{
+  "generated_at": "2026-06-17",
+  "intent_file": "qa_intent_engine_50_rows.csv",
+  "settlement_csv_file": "qa_razorpay_settlement_50_rows.csv",
+  "settlement_xlsx_file": "qa_razorpay_settlement_50_rows.xlsx",
+  "upload_notes": {
+    "intent": "Use bulk ingest pass-through mode: omit x-zord-tenant-type and omit X-Zord-Source-System so canonical dot headers reach zord-intent-engine without profile remapping.",
+    "settlement": "Use psp=razorpay. The XLSX is the service-ready file for the Razorpay parser; the CSV has the same headers and values for review."
+  },
+  "expected_intent_dlq_rows": [
+    {
+      "row": 7,
+      "client_payout_ref": "ZORD_QA_PAY_600007",
+      "expected_dlq": true,
+      "target_reason": "lowercase IFSC should fail strict regex before canonical uppercasing"
+    },
+    {
+      "row": 13,
+      "client_payout_ref": "ZORD_QA_PAY_600013",
+      "expected_dlq": true,
+      "target_reason": "IFSC missing required fifth-character zero"
+    },
+    {
+      "row": 19,
+      "client_payout_ref": "ZORD_QA_PAY_600019",
+      "expected_dlq": true,
+      "target_reason": "UPI VPA has no @ delimiter"
+    },
+    {
+      "row": 25,
+      "client_payout_ref": "ZORD_QA_PAY_600025",
+      "expected_dlq": true,
+      "target_reason": "accounting parentheses are not a valid decimal in canonical fast path"
+    },
+    {
+      "row": 31,
+      "client_payout_ref": "ZORD_QA_PAY_600031",
+      "expected_dlq": true,
+      "target_reason": "negative amount policy flag"
+    },
+    {
+      "row": 37,
+      "client_payout_ref": "ZORD_QA_PAY_600037",
+      "expected_dlq": true,
+      "target_reason": "zero amount semantic validation"
+    },
+    {
+      "row": 43,
+      "client_payout_ref": "ZORD_QA_PAY_600043",
+      "expected_dlq": true,
+      "target_reason": "decimal scale greater than 2"
+    },
+    {
+      "row": 49,
+      "client_payout_ref": "ZORD_QA_PAY_600049",
+      "expected_dlq": true,
+      "target_reason": "currency unsupported by validator allowlist"
+    }
+  ]
+}

@@ -98,6 +98,7 @@ func (s *LLMService) GenerateFromContextScoped(userQuery string, context string,
 		"You are Zord Prompt Layer assistant.\n" +
 			"Rules:\n" +
 			"1) Use only CONTEXT. Do not infer facts that are not present in CONTEXT.\n" +
+			"Copy numeric and money values exactly as shown in CONTEXT. Do not divide, multiply, round, add commas, remove decimals, add decimals, or change the numeric representation.\n" +
 			"2) If CONTEXT is insufficient, clearly say: \"I don't have enough information in current data to answer that confidently.\"\n" +
 			"3) Use plain, simple language that anyone can understand, even without technical or finance background.\n" +
 			"4) Talk like a helpful teammate or friend, not like a system log.\n" +
@@ -316,6 +317,8 @@ func (s *LLMService) GenerateOperationalJSON(userQuery, context, visRule string)
 			"- Use simple business English.\n" +
 			"- Avoid technical words unless necessary.\n" +
 			"- Do not use backend metric names.\n" +
+			"- Copy numeric and money values exactly as shown in CONTEXT. Do not divide, multiply, round, add commas, remove decimals, add decimals, or change the numeric representation.\n" +
+			"- If CONTEXT says INR 13146, answer INR 13146 exactly. Do not write INR 131.46 or INR 13,146.\n" +
 			"- Do not say \"leakage\" unless context clearly says money is actually lost. Prefer \"payment gap\", \"value needing review\", or \"unclear value\".\n" +
 			"- Do not say \"confirmed\" unless bank/settlement/outcome data is available.\n" +
 			"- Do not say \"proof-ready\" unless evidence data is available.\n" +
@@ -326,6 +329,49 @@ func (s *LLMService) GenerateOperationalJSON(userQuery, context, visRule string)
 			"- If both are available, explain matched value, unmatched value, review value, and confidence if present.\n" +
 			"- If data_available=false for any section, explain missing data in plain language.\n" +
 			"- If denominator is zero/unavailable, do not present 0% as real performance; say not available yet.\n\n" +
+			"Count and aggregate rules:\n" +
+			"- For count questions, use only aggregate summary values from CONTEXT.\n" +
+			"- Never estimate totals by counting sample records or citations.\n" +
+			"- Clearly distinguish payment instructions received, payment instructions processed, failed payment instructions, DLQ entries, and unique payment instructions affected by DLQ.\n" +
+			"- If CONTEXT includes a status breakdown, explain the most important status groups in business language.\n" +
+			"- If aggregate summary is missing for a count question, say the total cannot be calculated from current data.\n\n" +
+			"Policy rules:\n" +
+			"- Follow the policy facts provided in CONTEXT. Do not invent policy outcomes.\n" +
+			"- If a policy summary is present, treat it as more reliable than sample records.\n\n" +
+
+			"Payment count policy:\n" +
+			"- For count questions, use only aggregate summary values from CONTEXT.\n" +
+			"- Never estimate totals by counting sample records or citations.\n" +
+			"- Clearly distinguish payment instructions received, payment instructions processed, pending payment instructions, and failed payment instructions.\n" +
+			"- If CONTEXT includes a status breakdown, explain the key status groups in business language.\n" +
+			"- If aggregate summary is missing for a count question, say the total cannot be calculated from current data.\n\n" +
+
+			"Settlement ETA policy:\n" +
+			"- If CONTEXT includes Settlement ETA policy, use it to answer settlement arrival questions.\n" +
+			"- T+1_day means settlement is normally expected one day after the latest relevant payment instruction timestamp.\n" +
+			"- Use words like expected or estimated unless settlement evidence is already available.\n" +
+			"- Do not claim an exact or guaranteed settlement arrival time unless settlement confirmation exists in CONTEXT.\n\n" +
+
+			"DLQ failure policy:\n" +
+			"- Clearly distinguish DLQ entries from unique payment instructions affected by DLQ.\n" +
+			"- Do not call every DLQ entry a failed payment instruction unless CONTEXT says the affected payment instruction failed.\n" +
+			"- If reason or stage breakdown is present, explain the main failure concentration in business language.\n" +
+			"- If DLQ aggregate data is missing, do not estimate failure totals from sample records.\n\n" +
+
+			"Duplicate check policy:\n" +
+			"- Use duplicate-control or idempotency evidence from CONTEXT when answering duplicate processing questions.\n" +
+			"- Explain duplicate risk as no indication, possible duplicate-control conflict, or needs review based only on CONTEXT.\n" +
+			"- Do not expose idempotency keys, hashes, request fingerprints, or internal IDs.\n\n" +
+
+			"Upload progress policy:\n" +
+			"- For upload or batch progress questions, compare received/upload evidence with payment instruction counts when available.\n" +
+			"- If only upload intake data is available, say the file was received but final payment progress is not visible yet.\n" +
+			"- Do not say all payments are processed unless payment instruction or downstream status data supports it.\n\n" +
+
+			"Follow-up resolution policy:\n" +
+			"- If CONTEXT includes RESOLVED_QUERY_CONTEXT, answer the resolved business query while keeping the response natural for the original user query.\n" +
+			"- Use previous conversation context only to resolve references like those, that, them, these, or same ones.\n" +
+			"- Do not guess what a follow-up refers to if the resolved context is missing or unclear.\n\n" +
 			"Action rules:\n" +
 			"- Include next steps only when user asks what to do, or context includes available_actions, or context clearly shows missing data/review items.\n" +
 			"- Do not invent actions.\n\n" +
@@ -375,6 +421,7 @@ func (s *LLMService) GenerateEvidenceJSON(userQuery, context string) (EvidencePr
 		"You are Zord's evidence and dispute-resolution assistant.\n" +
 			"Use only CONTEXT.\n" +
 			"Do not reveal raw hashes, signatures, encrypted values, internal IDs, account numbers, PAN, tokens, API keys, or secrets.\n" +
+			"Copy numeric and money values exactly as shown in CONTEXT. Do not divide, multiply, round, add commas, remove decimals, add decimals, or change the numeric representation.\n" +
 			"You may say proof root available/verified if context says so, but do not print raw proof root unless marked safe.\n\n" +
 			"Explain:\n" +
 			"- whether evidence pack exists,\n" +
@@ -431,6 +478,7 @@ func (s *LLMService) GenerateNavigationHowTo(userQuery, context string) (string,
 		"You are Zord's in-product guide.\n" +
 			"Use only CONTEXT.\n" +
 			"Explain where the user should go and what they should click.\n" +
+			"Copy numeric and money values exactly as shown in CONTEXT. Do not divide, multiply, round, add commas, remove decimals, add decimals, or change the numeric representation.\n" +
 			"Do not mention backend systems or internal IDs.\n" +
 			"Do not invent unavailable screens.\n\n" +
 			"Answer format:\n" +

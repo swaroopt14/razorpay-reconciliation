@@ -28,6 +28,7 @@ package config
 //   to GRADE_B is required — no accidental finality-grade exposure.
 
 import (
+	"fmt"
 	"log"
 	"os"
 
@@ -49,16 +50,16 @@ type Config struct {
 	KafkaGroupID string
 
 	// ── Kafka Input Topics (ZPI reads FROM these) ────────────────
-	TopicIntentCreated     string
-	TopicDispatchCreated   string
-	TopicOutcomeNormalized string
-	TopicFinalityCert      string
-	TopicFinalContract     string
-	TopicEvidenceReady     string
-	TopicDLQ               string
-	TopicStatementMatch    string
+	TopicIntentCreated      string
+	TopicDispatchCreated    string
+	TopicOutcomeNormalized  string
+	TopicFinalityCert       string
+	TopicFinalContract      string
+	TopicEvidenceReady      string
+	TopicDLQ                string
+	TopicStatementMatch     string
 	TopicCorridorHealthTick string
-	TopicSLATimerTick      string
+	TopicSLATimerTick       string
 
 	// ── Grade A Input Topics ────────────────────────────────────
 	TopicSettlementCreated  string
@@ -66,6 +67,12 @@ type Config struct {
 	TopicVarianceRecord     string
 	TopicBatchSummary       string
 	TopicGovernanceDecision string
+
+	// ── Pattern Intelligence Input Topics ────────────────────────
+	// TopicDLQItem receives per-intent manual review events from Service 2.
+	// Emitted when a payment row is routed to human review before dispatch.
+	// Used to compute manual_review_rate_by_source and trigger source-fix recommendations.
+	TopicDLQItem string
 
 	// ── Kafka Output Topics (ZPI publishes TO these) ──────────────
 	TopicActuationRetry      string
@@ -133,6 +140,9 @@ func Load() *Config {
 		TopicBatchSummary:       getWithDefault("TOPIC_BATCH_SUMMARY", "batch.summary.updated"),
 		TopicGovernanceDecision: getWithDefault("TOPIC_GOVERNANCE_DECISION", "governance.decision.created"),
 
+		// ── Pattern Intelligence Input Topics ─────────────────────
+		TopicDLQItem: getWithDefault("TOPIC_DLQ_ITEM", "payments.intent.dlq"),
+
 		// ── Kafka Output Topics ──────────────────────────────────────
 		TopicActuationRetry:      getWithDefault("TOPIC_ACTUATION_RETRY", "zpi.actuation.retry"),
 		TopicActuationEvidence:   getWithDefault("TOPIC_ACTUATION_EVIDENCE", "zpi.actuation.evidence"),
@@ -140,9 +150,8 @@ func Load() *Config {
 		TopicActuationBatchPatch: getWithDefault("TOPIC_ACTUATION_BATCH_PATCH", "zpi.actuation.batch_patch"),
 
 		// ── ML Service Topics ────────────────────────────────────────
-		TopicMLRequest: getWithDefault("TOPIC_ML_REQUEST", "ml.request.events"),
-		TopicMLResult:  getWithDefault("TOPIC_ML_RESULT", "ml.result.events"),
-
+		TopicMLRequest:                  getWithDefault("TOPIC_ML_REQUEST", "ml.request.events"),
+		TopicMLResult:                   getWithDefault("TOPIC_ML_RESULT", "ml.result.events"),
 		// ── PHASE 6: Intelligence Mode ────────────────────────────
 		IntelligenceMode: mode,
 	}
@@ -179,4 +188,16 @@ func getWithDefault(key, defaultVal string) string {
 		return defaultVal
 	}
 	return value
+}
+
+func getIntWithDefault(key string, defaultVal int) int {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultVal
+	}
+	var parsed int
+	if _, err := fmt.Sscanf(value, "%d", &parsed); err != nil || parsed <= 0 {
+		return defaultVal
+	}
+	return parsed
 }

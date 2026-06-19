@@ -24,8 +24,13 @@ import { generateBenToken, tokenizeBeneficiaryFull } from '@/services/payout-com
 export type LiveJournalDrawerRowInput = {
   requestId: string
   batchId: string
+  clientBatchRef?: string
+  clientPayoutRef?: string
+  sourceRowNum?: number | null
   amount: number
-  method: 'Bank Transfer' | 'LSM' | 'NACH'
+  method: 'Bank Transfer' | 'LSM' | 'NACH' | '—'
+  rail?: string
+  beneficiaryName?: string | null
   paymentPartner: string
   bank: string
   /** Table row status label */
@@ -70,10 +75,24 @@ function beneficiaryNameFromApi(b: unknown): { first: string; last: string } | n
   return { first: parts[0]!, last: parts.slice(1).join(' ') }
 }
 
-function railFromRow(method: LiveJournalDrawerRowInput['method']): string {
+function beneficiaryNameFromHint(name: string | null | undefined): { first: string; last: string } | null {
+  if (typeof name !== 'string' || !name.trim()) return null
+  const parts = name.trim().split(/\s+/)
+  if (parts.length === 1) return { first: parts[0]!, last: '—' }
+  return { first: parts[0]!, last: parts.slice(1).join(' ') }
+}
+
+function railFromRow(method: LiveJournalDrawerRowInput['method'], railHint?: string): string {
+  const hint = String(railHint ?? '').trim().toUpperCase()
+  if (hint.includes('RTGS')) return 'RTGS'
+  if (hint.includes('NEFT')) return 'NEFT'
+  if (hint.includes('NACH')) return 'NACH'
+  if (hint.includes('IMPS')) return 'IMPS'
+  if (hint.includes('UPI')) return 'UPI'
+  if (hint.includes('LSM') || hint.includes('INSTA')) return 'LSM'
   if (method === 'LSM') return 'IMPS'
   if (method === 'NACH') return 'NACH'
-  return 'NEFT'
+  return '—'
 }
 
 function connectorFromRow(partner: string, bank: string): string {
@@ -90,7 +109,7 @@ function defaultAttachment(row: LiveJournalDrawerRowInput): AttachmentDecision {
   return {
     chosenConnector,
     chosenConnectorType: connectorType(row.paymentPartner),
-    chosenRail: railFromRow(row.method),
+    chosenRail: railFromRow(row.method, row.rail),
     score: 0,
     reasonCodes: [],
     alternatives: [],
@@ -162,11 +181,13 @@ export function buildLiveIntentDetailFromRowAndApi(
   const dispatchedAt = ingestedAt
 
   const fromName = beneficiaryNameFromApi(api?.beneficiary)
+  const fallbackName = beneficiaryNameFromHint(row.beneficiaryName)
   const last4 = hashToLast4(row.requestId)
   const bankLabel = row.bank
-  const beneficiaryFull = fromName
-    ? tokenizeBeneficiaryFull(fromName.first, fromName.last, last4, bankLabel)
-    : tokenizeBeneficiaryFull('Beneficiary', 'Record', last4, bankLabel)
+  const chosenName = fromName ?? fallbackName
+  const beneficiaryFull = chosenName
+    ? tokenizeBeneficiaryFull(chosenName.first, chosenName.last, last4, bankLabel)
+    : tokenizeBeneficiaryFull('Masked', 'Beneficiary', last4, bankLabel)
 
   const beneficiaryToken = generateBenToken(row.requestId)
 
@@ -190,7 +211,7 @@ export function buildLiveIntentDetailFromRowAndApi(
     beneficiaryToken,
     amount,
     currency,
-    rail: railFromRow(row.method),
+    rail: railFromRow(row.method, row.rail),
     connector: connectorFromRow(row.paymentPartner, row.bank),
     status: lifecycle,
     defensibilityScore: defensibility,
@@ -203,8 +224,8 @@ export function buildLiveIntentDetailFromRowAndApi(
     evidence: defaultEvidence(ingestedAt),
     mode,
     intentKind,
-    clientPayoutRef: null,
-    clientBatchRef: null,
+    clientPayoutRef: row.clientPayoutRef ?? null,
+    clientBatchRef: row.clientBatchRef ?? row.batchId,
     beneficiaryFingerprint: `fp_${row.requestId.slice(-12)}`,
     canonicalHash: `ch_${row.requestId.slice(-16)}`,
     ingestedAt,

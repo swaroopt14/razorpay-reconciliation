@@ -6,6 +6,7 @@ import { STORAGE_KEYS } from '@/constants'
 const AUTH_KEY = STORAGE_KEYS.AUTH
 const ROLE_KEY = STORAGE_KEYS.CURRENT_ROLE
 const AUTH_CHANGED_EVENT = 'zord-auth-changed'
+export const SESSION_EXPIRED_EVENT = 'zord-session-expired'
 const SESSION_HINT_COOKIE = 'zord_session_present'
 const ROLE_COOKIE = 'zord_role'
 
@@ -26,6 +27,8 @@ interface AuthApiSession {
   workspace_code: string
   role: UserRole
   access_expires_at: string
+  idle_expires_at?: string
+  absolute_expires_at?: string
 }
 
 interface AuthApiEnvelope {
@@ -44,6 +47,15 @@ interface LoginRequest {
 function emitAuthChanged() {
   if (typeof window === 'undefined') return
   window.dispatchEvent(new Event(AUTH_CHANGED_EVENT))
+}
+
+export function emitSessionExpired() {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT))
+}
+
+export function notifySessionExpired() {
+  emitSessionExpired()
 }
 
 function readCookie(name: string): string | null {
@@ -74,6 +86,8 @@ function toClientUser(payload: AuthApiEnvelope): User {
     name: payload.user.name,
     mfaEnabled: payload.user.mfa_enabled,
     sessionExpiresAt: payload.session.access_expires_at,
+    idleExpiresAt: payload.session.idle_expires_at,
+    absoluteExpiresAt: payload.session.absolute_expires_at,
   }
 }
 

@@ -125,8 +125,12 @@ async function fetchEdgeOverview(): Promise<OverviewData | null> {
 
     if (!response.ok) return null
     const payload = (await response.json()) as EdgeOverviewResponse
-    const payloadKpis = payload.kpis ?? payload
-    const payloadSlo = payloadKpis.slo ?? {}
+    const payloadKpis = (payload.kpis ?? payload) as Partial<OverviewKPIs> & {
+      slo?: Partial<OverviewKPIs['slo']>
+      latency_ms?: number
+      success_rate_pct?: number
+    }
+    const payloadSlo = (payloadKpis.slo ?? {}) as Partial<OverviewKPIs['slo']>
 
     return {
       environment: payload.environment === 'SANDBOX' ? 'SANDBOX' : 'PRODUCTION',

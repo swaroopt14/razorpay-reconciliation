@@ -41,6 +41,7 @@ type LeakageIntelligenceService struct {
 	mlRepo       *persistence.MLFeatureStoreRepo
 	predRepo     *persistence.MLPredictionRepo
 	mlClient     *mlclient.Client
+	batchRepo    *persistence.BatchContractRepo
 }
 
 // NewLeakageIntelligenceService creates a LeakageIntelligenceService.
@@ -50,6 +51,7 @@ func NewLeakageIntelligenceService(
 	mlRepo *persistence.MLFeatureStoreRepo,
 	predRepo *persistence.MLPredictionRepo,
 	mlClient *mlclient.Client,
+	batchRepo *persistence.BatchContractRepo,
 ) *LeakageIntelligenceService {
 	return &LeakageIntelligenceService{
 		projRepo:     projRepo,
@@ -57,6 +59,7 @@ func NewLeakageIntelligenceService(
 		mlRepo:       mlRepo,
 		predRepo:     predRepo,
 		mlClient:     mlClient,
+		batchRepo:    batchRepo,
 	}
 }
 
@@ -165,6 +168,7 @@ func (s *LeakageIntelligenceService) ComputeAndSave(
 	if leakage == nil {
 		return nil
 	}
+	leakage = s.applyBatchFallback(ctx, tenantID, windowStart, windowEnd, leakage)
 
 	// Step 2: build the deterministic snapshot from projection data
 	snap := s.buildSnapshot(leakage)
@@ -223,6 +227,72 @@ func (s *LeakageIntelligenceService) ComputeAndSave(
 	})
 
 	return nil
+}
+
+func (s *LeakageIntelligenceService) applyBatchFallback(
+	ctx context.Context,
+	tenantID string,
+	windowStart, windowEnd time.Time,
+	leakage *models.LeakageValue,
+) *models.LeakageValue {
+	if s == nil || s.batchRepo == nil || leakage == nil {
+		return leakage
+	}
+	if leakage.TotalIntendedAmountMinor.IsPositive() &&
+		(leakage.UnmatchedAmountMinor.IsPositive() ||
+			leakage.UnderSettlementAmountMinor.IsPositive() ||
+			leakage.ReversalExposureMinor.IsPositive() ||
+			leakage.OrphanAmountMinor.IsPositive()) {
+		return leakage
+	}
+
+	summary, err := s.batchRepo.SummarizeLeakageForWindow(ctx, tenantID, windowStart, windowEnd)
+	if err != nil || summary == nil {
+		if err != nil {
+			log.Printf("leakage_svc: batch fallback failed tenant=%s: %v", tenantID, err)
+		}
+		return leakage
+	}
+	if !summary.TotalIntendedAmountMinor.IsPositive() {
+		return leakage
+	}
+
+	enriched := *leakage
+	enriched.TotalIntendedAmountMinor = summary.TotalIntendedAmountMinor
+	if summary.UnmatchedAmountMinor.IsPositive() || enriched.UnmatchedAmountMinor.IsZero() {
+		enriched.UnmatchedAmountMinor = summary.UnmatchedAmountMinor
+	}
+	if summary.UnderSettlementAmountMinor.IsPositive() || enriched.UnderSettlementAmountMinor.IsZero() {
+		enriched.UnderSettlementAmountMinor = summary.UnderSettlementAmountMinor
+	}
+	if summary.OrphanAmountMinor.IsPositive() || enriched.OrphanAmountMinor.IsZero() {
+		enriched.OrphanAmountMinor = summary.OrphanAmountMinor
+	}
+	if summary.ReversalExposureMinor.IsPositive() || enriched.ReversalExposureMinor.IsZero() {
+		enriched.ReversalExposureMinor = summary.ReversalExposureMinor
+	}
+	if enriched.TotalObservedSettledAmountMinor.LessThanOrEqual(decimal.Zero) && summary.TotalObservedSettledAmountMinor.IsPositive() {
+		enriched.TotalObservedSettledAmountMinor = summary.TotalObservedSettledAmountMinor
+	}
+	enriched.TotalAmountMinor = enriched.UnmatchedAmountMinor.
+		Add(enriched.UnderSettlementAmountMinor).
+		Add(enriched.OrphanAmountMinor).
+		Add(enriched.ReversalExposureMinor)
+	if enriched.TotalIntendedAmountMinor.IsPositive() {
+		enriched.LeakagePercentage = enriched.UnmatchedAmountMinor.
+			Add(enriched.UnderSettlementAmountMinor).
+			Add(enriched.ReversalExposureMinor).
+			Div(enriched.TotalIntendedAmountMinor).
+			InexactFloat64()
+	}
+	if enriched.BreakdownByType == nil {
+		enriched.BreakdownByType = map[string]decimal.Decimal{}
+	}
+	enriched.BreakdownByType["UNMATCHED_INTENT"] = enriched.UnmatchedAmountMinor
+	enriched.BreakdownByType["UNDER_SETTLEMENT"] = enriched.UnderSettlementAmountMinor
+	enriched.BreakdownByType["ORPHAN_SETTLEMENT"] = enriched.OrphanAmountMinor
+	enriched.BreakdownByType["REVERSAL"] = enriched.ReversalExposureMinor
+	return &enriched
 }
 
 // buildSnapshot converts a LeakageValue projection into a full LeakageSnapshot.

@@ -1,0 +1,14 @@
+{
+  "name": "payout-smoke-simulator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Single-port API simulator for manual payout-command UI review",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -79,6 +79,7 @@ type OutboxEvent struct {
 	DuplicateReasonCode       string          `json:"duplicate_reason_code,omitempty" db:"duplicate_reason_code"`
 	ClientBatchRef            string          `json:"client_batch_ref,omitempty" db:"client_batch_ref"`
 	AggregateConfidenceScore  *float64        `json:"aggregate_confidence_score,omitempty" db:"aggregate_confidence_score"` // NEW
+	SourceRowNum              *int            `json:"source_row_num,omitempty" db:"source_row_num"`
 
 	// 🆕 Status Fields
 	RequiredFieldsStatus *bool   `json:"required_fields_status,omitempty" db:"required_fields_status"`

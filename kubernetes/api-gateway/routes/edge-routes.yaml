@@ -1,0 +1,67 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Kong Routes: zord-edge (API Gateway & Ingestion)
+# ─────────────────────────────────────────────────────────────────────────────
+# These routes are defined in kong/configmap.yaml (declarative config).
+# This file serves as documentation and reference.
+#
+# Service: zord-edge
+# Upstream: http://zord-edge.zord.svc.cluster.local:8080
+# Port: 8080
+#
+# Routes:
+#   - name: edge-admin
+#     path: /v1/admin
+#     description: Tenant registration, admin operations
+#     auth: X-Zord-ADMIN-KEY header (handled by zord-edge internally)
+#     rate_limit: 300/min (global)
+#     logging: file-log enabled (audit)
+#
+#   - name: edge-bulk-ingest
+#     path: /v1/bulk-ingest
+#     description: CSV/XLSX bulk payment intent upload
+#     auth: Bearer token (API key from tenant registration)
+#     rate_limit: 30/min (stricter — heavy operation)
+#     logging: file-log enabled (audit)
+#     max_body: 50MB
+#
+#   - name: edge-ingest
+#     path: /v1/ingest
+#     description: Single payment intent ingestion
+#     auth: Bearer token
+#     rate_limit: 300/min (global)
+#
+#   - name: edge-webhooks
+#     path: /v1/webhooks
+#     description: PSP webhook callbacks
+#     auth: Webhook signature verification (handled by zord-edge)
+#     rate_limit: 300/min (global)
+#
+#   - name: edge-tenants
+#     path: /v1/tenants
+#     description: Tenant management APIs
+#     auth: Bearer token
+#     rate_limit: 300/min (global)
+#
+#   - name: edge-connectors
+#     path: /v1/connectors
+#     description: PSP connector management
+#     auth: Bearer token
+#     rate_limit: 300/min (global)
+#
+#   - name: edge-auth
+#     path: /v1/auth
+#     description: Authentication (login, refresh, logout)
+#     auth: None (public) / Bearer token (refresh)
+#     rate_limit: 300/min (global)
+#
+#   - name: edge-health
+#     path: /edge/health
+#     description: Health check endpoint
+#     auth: None
+#     rate_limit: None (health checks excluded)
+#
+# Notes:
+#   - zord-edge handles its own API key validation internally
+#   - Kong adds rate limiting, CORS, security headers, and request correlation
+#   - Bulk ingest has stricter rate limits (30/min) due to heavy processing
+# ─────────────────────────────────────────────────────────────────────────────

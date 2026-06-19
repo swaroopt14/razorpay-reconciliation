@@ -95,6 +95,12 @@ type ServiceConfig struct {
 	// Key: event_type, Value: Kafka topic name.
 	TopicMap map[string]string `mapstructure:"topic_map"`
 
+	// IsDLQ tells relay to use DLQClient/DLQWorker instead of OutboxClient/OutboxWorker
+	IsDLQ bool `mapstructure:"is_dlq"`
+
+	// IsBatch tells relay to use BatchClient/BatchWorker instead of OutboxClient/OutboxWorker
+	IsBatch bool `mapstructure:"is_batch"`
+
 	// Retry settings (Kafka-side) — override global if set.
 	MaxRetryAttempts int           `mapstructure:"max_retry_attempts"`
 	RetryBaseDelay   time.Duration `mapstructure:"retry_base_delay"`

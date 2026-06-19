@@ -5,5 +5,13 @@ export interface User {
   email: string
   role: UserRole
   tenant?: string
+  tenantId?: string
+  tenantName?: string
+  workspaceCode?: string
   name: string
+  mfaEnabled?: boolean
+  sessionExpiresAt?: string
+  idleExpiresAt?: string
+  absoluteExpiresAt?: string
 }
+

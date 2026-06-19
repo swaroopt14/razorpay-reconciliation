@@ -4,11 +4,13 @@ import "time"
 
 // Event type constants — must match Python app/schemas.py exactly.
 const (
-	EventIFScore   = "ISOLATION_FOREST_SCORE"
-	EventZScore    = "ZSCORE_DETECT"
-	EventLRPredict = "LOGISTIC_REGRESSION_PREDICT"
-	EventLRTrain   = "LOGISTIC_REGRESSION_TRAIN"
-	EventRCACluster = "RCA_CLUSTER_SUMMARIZE"
+	EventIFScore        = "ISOLATION_FOREST_SCORE"
+	EventZScore         = "ZSCORE_DETECT"
+	EventLRPredict      = "LOGISTIC_REGRESSION_PREDICT"
+	EventLRTrain        = "LOGISTIC_REGRESSION_TRAIN"
+	EventRCACluster     = "RCA_CLUSTER_SUMMARIZE"
+	EventLeakagePredict = "LEAKAGE_PREDICTION_PREDICT"
+	EventLeakageTrain   = "LEAKAGE_PREDICTION_TRAIN"
 )
 
 // MLRequest is the envelope published to ml.request.events.
@@ -126,14 +128,14 @@ func BuildLRFeatures(
 // RCACandidate is one payment intent with all merged signals from Services 2, 5B, 5C, 6, 7.
 // Field names must stay in sync with Python schemas.RCACandidate exactly.
 type RCACandidate struct {
-	IntentID              string  `json:"intent_id"`
-	ReasonText            string  `json:"reason_text"`
-	IntendedAmountMinor   int64   `json:"intended_amount_minor"`
+	IntentID            string `json:"intent_id"`
+	ReasonText          string `json:"reason_text"`
+	IntendedAmountMinor int64  `json:"intended_amount_minor"`
 	// Categorical
-	SourceStrengthClass   string  `json:"source_strength_class"`
-	ObservationKind       string  `json:"observation_kind"`
-	DecisionType          string  `json:"decision_type"`
-	GovernanceState       string  `json:"governance_state"`
+	SourceStrengthClass string `json:"source_strength_class"`
+	ObservationKind     string `json:"observation_kind"`
+	DecisionType        string `json:"decision_type"`
+	GovernanceState     string `json:"governance_state"`
 	// Numeric
 	ParseConfidence       float64 `json:"parse_confidence"`
 	MappingConfidence     float64 `json:"mapping_confidence"`
@@ -203,6 +205,36 @@ type RCAClusterResult struct {
 	TotalPoints              int                 `json:"total_points"`
 	TotalAffectedAmountMinor int64               `json:"total_affected_amount_minor"`
 	FeatureContractVersion   string              `json:"feature_contract_version"`
+}
+
+// LeakagePredictionRequest carries the batch-level intent-safe feature row for
+// leakage-rate regression.
+type LeakagePredictionRequest struct {
+	TenantID string
+	BatchID  string
+	Features map[string]interface{}
+}
+
+// LeakagePredictionResult mirrors the Python CatBoost bundle inference output.
+type LeakagePredictionResult struct {
+	PredictedLeakageRate  float64
+	PredictedLeakageMinor float64
+	RiskTier              string
+	ModelReady            bool
+	Status                string
+	TrainingRowCount      int
+	MinTrainingRows       int
+	FallbackFeatureCount  int
+	FallbackFeatures      []string
+	FallbackSegmentLevel  string
+}
+
+// LeakageTrainRequest signals that a newly labeled leakage batch is now available
+// in ml_feature_store. The Python side reads the actual training rows from the
+// intelligence database and retrains when enough have accumulated.
+type LeakageTrainRequest struct {
+	TenantID string
+	BatchID  string
 }
 
 func clamp(v float64) float64 {

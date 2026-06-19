@@ -184,5 +184,19 @@ func CreateTable() error {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	// ── Schema migrations (add columns that may be missing on older DBs) ──────
+	// Add new ALTER TABLE statements here when columns are added to existing tables.
+	// These are idempotent — safe to run on every startup.
+	migrations := []string{
+		// Add future column migrations here, e.g.:
+		// `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS new_column TEXT;`,
+	}
+	for _, m := range migrations {
+		if _, err := DB.Exec(m); err != nil {
+			log.Printf("migration warning: %v (stmt: %.80s)", err, m)
+		}
+	}
+
 	return nil
 }

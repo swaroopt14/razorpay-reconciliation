@@ -47,20 +47,32 @@ type VisualizationWindow struct {
 	ToUTC   string `json:"to_utc,omitempty"`
 	Label   string `json:"label,omitempty"`
 }
-
+type VisualizationVariant struct {
+	ChartType      string                `json:"chart_type"` // bar|pie|donut|line|stacked_bar|table|timeline
+	Title          string                `json:"title"`
+	Subtitle       string                `json:"subtitle,omitempty"`
+	Description    string                `json:"description,omitempty"`
+	XAxis          string                `json:"x_axis,omitempty"`
+	YAxis          string                `json:"y_axis,omitempty"`
+	Series         []VisualizationPoint  `json:"series,omitempty"`
+	Legend         []string              `json:"legend,omitempty"`
+	Insights       []string              `json:"insights,omitempty"`
+	SummaryMetrics []VisualizationMetric `json:"summary_metrics,omitempty"`
+}
 type Visualization struct {
-	VisualizationID   string                `json:"visualization_id,omitempty"`
-	ChartType         string                `json:"chart_type,omitempty"` // bar|line|stacked_bar|donut|table
-	Title             string                `json:"title"`
-	Subtitle          string                `json:"subtitle,omitempty"`
-	Description       string                `json:"description,omitempty"`
-	XAxis             string                `json:"x_axis"`
-	YAxis             string                `json:"y_axis"`
-	Series            []VisualizationPoint  `json:"series"`
-	Legend            []string              `json:"legend,omitempty"`
-	Insights          []string              `json:"insights,omitempty"`
-	SummaryMetrics    []VisualizationMetric `json:"summary_metrics,omitempty"`
-	TimeWindow        *VisualizationWindow  `json:"time_window,omitempty"`
-	Confidence        string                `json:"confidence,omitempty"`
-	EmptyStateMessage string                `json:"empty_state_message,omitempty"`
+	VisualizationID   string                 `json:"visualization_id,omitempty"`
+	ChartType         string                 `json:"chart_type,omitempty"` // bar|line|stacked_bar|donut|table
+	Title             string                 `json:"title"`
+	Subtitle          string                 `json:"subtitle,omitempty"`
+	Description       string                 `json:"description,omitempty"`
+	XAxis             string                 `json:"x_axis"`
+	YAxis             string                 `json:"y_axis"`
+	Series            []VisualizationPoint   `json:"series"`
+	ChartVariants     []VisualizationVariant `json:"chart_variants,omitempty"`
+	Legend            []string               `json:"legend,omitempty"`
+	Insights          []string               `json:"insights,omitempty"`
+	SummaryMetrics    []VisualizationMetric  `json:"summary_metrics,omitempty"`
+	TimeWindow        *VisualizationWindow   `json:"time_window,omitempty"`
+	Confidence        string                 `json:"confidence,omitempty"`
+	EmptyStateMessage string                 `json:"empty_state_message,omitempty"`
 }

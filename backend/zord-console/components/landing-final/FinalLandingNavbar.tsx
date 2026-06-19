@@ -78,7 +78,7 @@ const navItems: NavItem[] = [
       {
         label: 'How it works',
         href: '/final-landing/how-it-works',
-        note: 'Walk through the routing, tracking, and proof model in detail.',
+        note: 'Walk through the observe-track-confirm-prove operating model in detail.',
       },
       {
         label: 'Pricing & rollout',
@@ -306,30 +306,26 @@ export function FinalLandingNavbar({
 
   return (
     <nav className="relative z-50 px-4 pt-6 sm:px-6">
-      <Link
-        href="/"
-        className="absolute left-4 top-0 z-[60] sm:left-6"
-        aria-label="Zord home"
-      >
-        <ZordLogo
-          size="hero"
-          variant="dark"
-          fitToHeight
-          className="!w-auto max-w-[11rem] sm:max-w-[14rem] lg:max-w-[18rem]"
-        />
-      </Link>
-
       <div
-        className="relative mx-auto flex w-full max-w-[1240px] items-center justify-between rounded-[42px] border border-white/12 px-4 py-4 backdrop-blur-[30px]"
+        className="relative mx-auto flex w-full max-w-[1240px] items-center gap-3 rounded-[42px] border border-white/12 px-3 py-3 backdrop-blur-[30px] sm:gap-4 sm:px-4 sm:py-3.5 lg:gap-6 lg:px-5"
         style={frostedNavShellStyle}
       >
+        <Link href="/" className="relative z-10 shrink-0" aria-label="Zord home">
+          <ZordLogo
+            size="md"
+            variant="dark"
+            fitToHeight
+            embedded
+            className="!w-auto max-w-[9.5rem] sm:max-w-[11rem]"
+          />
+        </Link>
         <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-[42px]">
           <div className="absolute inset-x-12 top-0 h-px bg-gradient-to-r from-transparent via-white/60 to-transparent" />
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.12),transparent_22%),radial-gradient(circle_at_bottom_right,rgba(198,239,207,0.08),transparent_24%),radial-gradient(circle_at_50%_-10%,rgba(59,166,247,0.12),transparent_30%)]" />
           <div className="absolute inset-[1px] rounded-[40px] border border-white/[0.06]" />
         </div>
 
-        <div className="relative z-10 hidden flex-1 items-center justify-center gap-1 lg:flex">
+        <div className="relative z-10 hidden min-w-0 flex-1 items-center justify-center gap-1 lg:flex">
           {navItems.map((item) => {
             const hasMenu = Boolean(item.menu?.length)
             const isActive = activeNav === item.label
@@ -433,7 +429,7 @@ export function FinalLandingNavbar({
           })}
         </div>
 
-        <div className="relative z-10 ml-auto flex items-center gap-3">
+        <div className="relative z-10 ml-auto flex shrink-0 items-center gap-2 sm:gap-3">
           <Link
             href="/signin/tenant"
             className="hidden h-14 items-center rounded-[20px] border border-white/12 px-6 text-[16px] font-semibold text-slate-100/90 shadow-[0_14px_24px_rgba(0,0,0,0.14)] transition hover:border-white/18 hover:text-white lg:inline-flex"

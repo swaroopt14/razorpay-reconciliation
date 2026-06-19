@@ -18,6 +18,10 @@ func NewValidator(dlqRepo persistence.DLQRepository) *Validator {
 	return &Validator{dlqRepo: dlqRepo}
 }
 
+func (v *Validator) DLQRepo() persistence.DLQRepository {
+	return v.dlqRepo
+}
+
 // ValidateParsed executes validation on already-parsed payload (STEP 5 → STEP 6)
 func (v *Validator) ValidateParsed(
 	ctx context.Context,

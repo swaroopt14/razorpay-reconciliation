@@ -12,8 +12,8 @@ export function sessionTenantForPromptLayer(
   if (!tenantReady) {
     return {
       ok: false,
-      title: 'Resolving tenant',
-      body: 'Loading your workspace tenant from the signed-in session…',
+      title: 'Resolving workspace',
+      body: 'Loading your workspace from the signed-in session…',
     }
   }
   const tid = tenantId.trim()
@@ -21,7 +21,7 @@ export function sessionTenantForPromptLayer(
     return {
       ok: false,
       title: 'Sign in required',
-      body: 'Ask Zord needs a session tenant_id from /api/auth/me. Sign in to sandbox or live, then try again.',
+      body: 'Sign in to sandbox or live, then try Ask Zord again.',
     }
   }
   return { ok: true, tenantId: tid }

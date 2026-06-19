@@ -14,8 +14,14 @@ RCA_MODEL_PATH: str = os.getenv("RCA_MODEL_PATH", "/data/rca_model.pkl")
 # Minimum new labeled batches before triggering async retrain
 RCA_RETRAIN_THRESHOLD: int = int(os.getenv("RCA_RETRAIN_THRESHOLD", "50"))
 
+LEAKAGE_MODEL_PATH: str = os.getenv("LEAKAGE_MODEL_PATH", "/data/leakage_prediction_bundle.joblib")
+INTELLIGENCE_DATABASE_URL: str = os.getenv("INTELLIGENCE_DATABASE_URL", "")
+LEAKAGE_RETRAIN_THRESHOLD: int = int(os.getenv("LEAKAGE_RETRAIN_THRESHOLD", "50"))
+LEAKAGE_REAL_SAMPLE_WEIGHT: float = float(os.getenv("LEAKAGE_REAL_SAMPLE_WEIGHT", "1.0"))
+
 # Canonical model version strings shared with Go side
 MODEL_VERSION_IF: str = "isolation_forest_v1"
 MODEL_VERSION_LR: str = "logistic_regression_v1"
 MODEL_VERSION_ZSCORE: str = "zscore_v1"
 MODEL_VERSION_RCA: str = "rca_hdbscan_v1"
+MODEL_VERSION_LEAKAGE: str = "leakage_prediction_v1"

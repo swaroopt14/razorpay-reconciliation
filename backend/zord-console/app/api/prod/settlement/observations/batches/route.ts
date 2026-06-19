@@ -33,6 +33,10 @@ export async function GET(request: NextRequest) {
   const upstreamParams = new URLSearchParams({ tenant_id: tenantId })
   const clientBatchId = request.nextUrl.searchParams.get('client_batch_id')?.trim()
   if (clientBatchId) upstreamParams.set('client_batch_id', clientBatchId)
+  const page = request.nextUrl.searchParams.get('page')?.trim()
+  const pageSize = request.nextUrl.searchParams.get('page_size')?.trim()
+  if (page) upstreamParams.set('page', page)
+  if (pageSize) upstreamParams.set('page_size', pageSize)
 
   const url = `${settlementBase()}/v1/settlement/observations/batches?${upstreamParams.toString()}`
 

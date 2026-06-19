@@ -20,8 +20,8 @@ import (
 	"github.com/zord/zord-intelligence/internal/persistence"
 	"github.com/zord/zord-intelligence/internal/services"
 	"github.com/zord/zord-intelligence/internal/worker"
-	"github.com/zord/zord-intelligence/tracing"
 	kafkapkg "github.com/zord/zord-intelligence/kafka"
+	"github.com/zord/zord-intelligence/tracing"
 )
 
 func init() {
@@ -125,11 +125,12 @@ func main() {
 	policyService := services.NewPolicyService(policyRepo, projRepo, actionService)
 
 	// ── PHASE 4 & 7: Six intelligence layer services + Explanation ────────
-	leakageSvc := services.NewLeakageIntelligenceService(projRepo, snapshotRepo, mlRepo, predRepo, mlClient)
+	leakageSvc := services.NewLeakageIntelligenceService(projRepo, snapshotRepo, mlRepo, predRepo, mlClient, batchRepo)
+	leakagePredSvc := services.NewLeakagePredictionService(batchRepo, projRepo, mlRepo, predRepo, mlClient)
 	ambiguitySvc := services.NewAmbiguityIntelligenceService(context.Background(), projRepo, snapshotRepo, mlRepo, predRepo, mlClient)
 	defensibilitySvc := services.NewDefensibilityIntelligenceService(projRepo, snapshotRepo, batchRepo)
 	rcaSvc := services.NewRCAIntelligenceService(projRepo, snapshotRepo, mlClient)
-	patternSvc := services.NewPatternIntelligenceService(projRepo, snapshotRepo, batchRepo, mlRepo, predRepo, mlClient)
+	patternSvc := services.NewPatternIntelligenceService(projRepo, snapshotRepo, batchRepo, mlRepo, predRepo, mlClient, slaRepo)
 	recommendationSvc := services.NewRecommendationIntelligenceService(snapshotRepo)
 	explSvc := services.NewExplanationService(explRepo, snapshotRepo, batchRepo)
 
@@ -143,6 +144,7 @@ func main() {
 		policyService,
 		slaRepo,
 		leakageSvc,
+		leakagePredSvc,
 		ambiguitySvc,
 		defensibilitySvc,
 		rcaSvc,
@@ -168,7 +170,7 @@ func main() {
 	}()
 
 	// ── Step 7: Create background workers ─────────────────────────────────
-	outboxWorker := worker.NewOutboxWorker(outboxRepo, actionRepo, producer, cfg)
+	outboxWorker := worker.NewOutboxWorker(outboxRepo, actionRepo, producer, cfg, projRepo)
 	slaWorker := worker.NewSLAWorker(slaRepo, actionService, projectionService)
 	cronWorker := worker.NewPolicyCronWorker(projRepo, policyService)
 
@@ -186,13 +188,14 @@ func main() {
 	modeHandler := handlers.NewIntelligenceModeHandler(projectionService, projRepo)
 
 	intelBase := handlers.NewIntelligenceBase(projectionService, snapshotRepo)
-	leakageHandler := handlers.NewLeakageHandler(intelBase)
+	leakageHandler := handlers.NewLeakageHandler(intelBase, projRepo)
 	ambiguityHandler := handlers.NewAmbiguityHandler(intelBase)
 	defensibilityHandler := handlers.NewDefensibilityHandler(intelBase)
 	rcaHandler := handlers.NewRCAHandler(intelBase)
 	patternHandler := handlers.NewPatternHandler(intelBase)
 	recommendationHandler := handlers.NewRecommendationHandler(intelBase)
 	batchHandler := handlers.NewBatchHandler(batchRepo, projRepo, projectionService)
+	leakageTimeseriesHandler := handlers.NewLeakageTimeseriesHandler(batchRepo)
 	historyHandler := handlers.NewHistoryHandler(projectionService, snapshotRepo)
 	explanationHandler := handlers.NewExplanationHandler(explSvc)
 
@@ -204,6 +207,8 @@ func main() {
 	dashPatternH := handlers.NewDashboardPatternHandler(snapshotRepo, projRepo, intelligenceMode)
 	dashRecommendationH := handlers.NewDashboardRecommendationHandler(actionRepo, snapshotRepo, intelligenceMode)
 	dashRCAH := handlers.NewDashboardRCAHandler(snapshotRepo, intelligenceMode)
+	dashBubbleMapH := handlers.NewDashboardBubbleMapHandler(batchRepo, intelligenceMode)
+	dashBatchContractH := handlers.NewDashboardBatchContractHandler(batchRepo, intelligenceMode)
 
 	// ── Step 9: Build the HTTP router ─────────────────────────────────────
 	router := handlers.NewRouter(
@@ -219,6 +224,7 @@ func main() {
 		patternHandler,
 		recommendationHandler,
 		batchHandler,
+		leakageTimeseriesHandler,
 		historyHandler,
 		explanationHandler,
 		dashLeakageH,
@@ -227,6 +233,8 @@ func main() {
 		dashPatternH,
 		dashRecommendationH,
 		dashRCAH,
+		dashBubbleMapH,
+		dashBatchContractH,
 	)
 
 	// ── Step 10: Create the HTTP server ───────────────────────────────────
@@ -314,6 +322,7 @@ func activeTopicsForMode(cfg *config.Config) []string {
 			cfg.TopicEvidenceReady,
 			cfg.TopicGovernanceDecision,
 			cfg.TopicBatchSummary,
+			cfg.TopicDLQItem, // Pattern Intelligence: manual review events
 		)
 	}
 
@@ -333,6 +342,7 @@ func activeTopicsForMode(cfg *config.Config) []string {
 		cfg.TopicVarianceRecord,
 		cfg.TopicBatchSummary,
 		cfg.TopicGovernanceDecision,
+		cfg.TopicDLQItem, // Pattern Intelligence: manual review events
 	)
 }
 

@@ -43,12 +43,15 @@ services:
 
       - ENVIRONMENT=production
       - JAEGER_ENDPOINT=http://host.docker.internal:14268/api/traces
+      - SIGNING_KEY_PATH=/run/secrets/signing_key.pem
 
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - zord-network
+    volumes:
+      - ./signing_key.pem:/run/secrets/signing_key.pem:ro
     restart: unless-stopped
     # Container healthcheck intentionally omitted for minimal scratch image.
     # Use platform/orchestrator health probes (/healthz) instead.

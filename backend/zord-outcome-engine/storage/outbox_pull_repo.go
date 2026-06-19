@@ -87,7 +87,10 @@ leased AS (
 		o.attachment_decision,
 		o.match_confidence,
 		o.value_date_check,
-		o.amount_match
+		o.amount_match,
+		o.bank_id,
+		o.source_system,
+		o.corridor_id
 )
 SELECT
 	event_id,
@@ -114,7 +117,10 @@ SELECT
 	attachment_decision,
 	match_confidence,
 	value_date_check,
-	amount_match
+	amount_match,
+	bank_id,
+	source_system,
+	corridor_id
 FROM leased
 ORDER BY created_at ASC;
 `
@@ -136,6 +142,7 @@ ORDER BY created_at ASC;
 		var br, cr, ad sql.NullString
 		var mc sql.NullFloat64
 		var vdc, am sql.NullBool
+		var bID, srcSys, corrID sql.NullString
 
 		if err := rows.Scan(
 			&evt.EventID,
@@ -163,6 +170,9 @@ ORDER BY created_at ASC;
 			&mc,
 			&vdc,
 			&am,
+			&bID,
+			&srcSys,
+			&corrID,
 		); err != nil {
 			return "", nil, nil, err
 		}
@@ -207,6 +217,15 @@ ORDER BY created_at ASC;
 		}
 		if am.Valid {
 			evt.AmountMatch = &am.Bool
+		}
+		if bID.Valid {
+			evt.BankID = &bID.String
+		}
+		if srcSys.Valid {
+			evt.SourceSystem = &srcSys.String
+		}
+		if corrID.Valid {
+			evt.CorridorID = &corrID.String
 		}
 
 		events = append(events, evt)

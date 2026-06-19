@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { fetchDLQItems } from '@/services/backend/dlq'
+import { fetchDLQItems, fetchDLQManualReviewItems, type BackendDLQItem } from '@/services/backend/dlq'
+import { mapBackendDlqForClient } from '@/services/backend/dlqBffTransform'
 import {
   applyRefreshedSessionCookies,
   requireSessionTenantForProdProxy,
@@ -8,26 +9,39 @@ import {
 // Force dynamic rendering for API routes
 export const dynamic = 'force-dynamic'
 
+function mergeDlqRows(primary: BackendDLQItem[], manualReview: BackendDLQItem[]): BackendDLQItem[] {
+  const merged = new Map<string, BackendDLQItem>()
+  const keyOf = (item: BackendDLQItem): string => {
+    if (item.dlq_id && item.dlq_id.trim()) return `id:${item.dlq_id.trim()}`
+    const envelope = item.envelope_id?.trim() || 'na'
+    const stage = item.stage?.trim() || 'na'
+    const reason = item.reason_code?.trim() || 'na'
+    const created = item.created_at?.trim() || 'na'
+    return `row:${envelope}:${stage}:${reason}:${created}`
+  }
+
+  for (const item of [...primary, ...manualReview]) {
+    merged.set(keyOf(item), item)
+  }
+  return Array.from(merged.values())
+}
+
 export async function GET(request: NextRequest) {
   const gate = await requireSessionTenantForProdProxy(request)
   if (!gate.ok) return gate.response
   const tenantId = gate.tenantId
 
   try {
-    const items = await fetchDLQItems({ tenant_id: tenantId })
-    const list = Array.isArray(items) ? items : []
+    const [standardRows, manualReviewRows] = await Promise.all([
+      fetchDLQItems({ tenant_id: tenantId }),
+      fetchDLQManualReviewItems({ tenant_id: tenantId }),
+    ])
+    const list = mergeDlqRows(
+      Array.isArray(standardRows) ? standardRows : [],
+      Array.isArray(manualReviewRows) ? manualReviewRows : [],
+    )
 
-    const transformedItems = list.map((item) => ({
-      dlq_id: item.dlq_id,
-      envelope_id: item.envelope_id,
-      client_batch_ref: item.client_batch_ref,
-      stage: item.stage,
-      reason_code: item.reason_code,
-      error_detail: item.error_detail,
-      replayable: item.replayable,
-      created_at: item.created_at,
-      tenant_id: item.tenant_id,
-    }))
+    const transformedItems = list.map(mapBackendDlqForClient)
 
     const res = NextResponse.json({
       items: transformedItems,

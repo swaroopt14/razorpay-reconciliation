@@ -16,14 +16,14 @@ spec:
     spec:
       initContainers:
         - name: fix-permissions
-          image: busybox
+          image: public.ecr.aws/docker/library/busybox:1.36
           command:
             ["sh", "-c", "chown -R 1000:1000 /usr/share/elasticsearch/data"]
           volumeMounts:
             - name: data
               mountPath: /usr/share/elasticsearch/data
         - name: increase-vm-max-map
-          image: busybox
+          image: public.ecr.aws/docker/library/busybox:1.36
           command: ["sysctl", "-w", "vm.max_map_count=262144"]
           securityContext:
             privileged: true
@@ -43,7 +43,7 @@ spec:
             - name: xpack.security.http.ssl.enabled
               value: "false"
             - name: ES_JAVA_OPTS
-              value: "-Xms1g -Xmx1g"
+              value: "-Xms512m -Xmx512m"
             - name: cluster.name
               value: zord-logs
             - name: node.name
@@ -56,10 +56,10 @@ spec:
           resources:
             requests:
               cpu: 500m
-              memory: 2Gi
+              memory: 1Gi
             limits:
               cpu: "2"
-              memory: 3Gi
+              memory: 2Gi
           readinessProbe:
             httpGet:
               path: /_cluster/health?local=true

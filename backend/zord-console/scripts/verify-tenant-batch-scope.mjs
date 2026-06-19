@@ -51,13 +51,41 @@ const checks = [
   },
   {
     file: 'services/payout-command/prod-api/settlementObservations.ts',
-    mustInclude: ['client_batch_id', 'observationsUrl(clientBatchId'],
+    mustInclude: ['client_batch_id', 'observationsUrl(bid'],
     label: 'settlement client uses client_batch_id query only',
   },
   {
     file: 'services/payout-command/prod-api/getIntelligenceKpis.ts',
     mustInclude: ['BFF injects tenant from session', 'batch_id: bid'],
     label: 'intelligence KPI client is session-scoped',
+  },
+  {
+    file: 'app/api/prod/intelligence/leakage/route.ts',
+    mustInclude: ['forwardIntelligence'],
+    label: 'leakage BFF forwards query params (batch_id)',
+  },
+  {
+    file: 'app/api/prod/intelligence/ambiguity/route.ts',
+    mustInclude: ['forwardIntelligence'],
+    label: 'ambiguity BFF forwards query params (batch_id)',
+  },
+  {
+    file: 'app/api/prod/intelligence/timeseries/leakage/route.ts',
+    mustInclude: ['forwardIntelligence'],
+    label: 'leakage timeseries BFF forwards query params (batch_id)',
+  },
+  {
+    file: 'src/features/payout-command/hooks/useIntelligenceBatchUrlSync.ts',
+    mustInclude: ["params.set('batch_id'", "params.delete('batch_id')"],
+    label: 'leakage/ambiguity URL sync for batch_id',
+  },
+  {
+    file: 'src/features/payout-command/intent-journal/intentJournalSidebarUtils.ts',
+    mustInclude: [
+      'export function resolveBatchHealthStatus(batch: BatchRecord): BatchStatus | null',
+      'return batchStatusFromConfidencePct(confPct)',
+    ],
+    label: 'sidebar health tier from aggregate score when present',
   },
 ]
 
@@ -86,8 +114,8 @@ for (const check of checks) {
 }
 
 const batchPages = [
-  ['intent journal', 'app/payout-command-view/today/_components/intent-journal/journalBatchCache.ts', 'getIntentJournalPaymentIntentsForSession'],
-  ['evidence', 'app/payout-command-view/today/_components/evidence/EvidenceSurface.tsx', 'listEvidencePacksForBatch'],
+  ['intent journal', 'src/features/payout-command/intent-journal/journalBatchCache.ts', 'getIntentJournalPaymentIntentsForSession'],
+  ['evidence', 'src/features/payout-command/evidence/EvidenceSurface.tsx', 'listEvidencePacksForBatch'],
   ['settlement', 'services/payout-command/prod-api/settlementObservations.ts', 'getSettlementObservationsForClientBatch'],
 ]
 

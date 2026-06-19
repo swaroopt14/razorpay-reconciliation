@@ -52,6 +52,7 @@ func (w *TokenizeWorker) ProcessTokenizeEvent(
 		ctx,
 		event.TenantID,
 		event.TraceID,
+		"kafka-tokenize-consumer", // actor for audit
 		pii,
 	)
 

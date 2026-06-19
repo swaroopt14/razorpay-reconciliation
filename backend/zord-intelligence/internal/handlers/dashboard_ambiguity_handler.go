@@ -116,6 +116,10 @@ type DashboardAmbiguityResponse struct {
 	ValueAtRiskMinor decimal.Decimal `json:"value_at_risk_minor"`
 	RiskTier         string          `json:"risk_tier,omitempty"`
 
+	// Donut — Ambiguity Mix (server-computed from snapshot rates)
+	AmbiguityMixSegments []ambiguityMixSegment `json:"ambiguity_mix_segments,omitempty"`
+	ClearingPct          float64               `json:"clearing_pct,omitempty"`
+
 	// Intelligence mode — GRADE_A or GRADE_B
 	IntelligenceMode string `json:"intelligence_mode,omitempty"`
 }
@@ -196,6 +200,15 @@ func (h *DashboardAmbiguityHandler) GetAmbiguityKPIs(w http.ResponseWriter, r *h
 		0.25*kpis.LowConfidenceRate +
 		0.20*kpis.CandidateCollisionRate +
 		0.20*kpis.ProviderRefMissingRate) * 100
+
+	mixSegments, clearingPct := buildAmbiguityMixSegments(
+		kpis.ProviderRefMissingRate,
+		kpis.AmbiguityRate,
+		kpis.LowConfidenceRate,
+		kpis.AvgAttachmentConfidence,
+	)
+	resp.AmbiguityMixSegments = mixSegments
+	resp.ClearingPct = clearingPct
 
 	writeJSON(w, http.StatusOK, resp)
 }

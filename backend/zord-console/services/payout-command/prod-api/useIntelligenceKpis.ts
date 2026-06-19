@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   getAmbiguityKpis,
   getDefensibilityKpis,
@@ -41,15 +41,23 @@ export type UseIntelligenceKpisOptions = {
   batchId?: string
   /** Optional date window forwarded to intelligence dashboards (from_date / to_date). */
   dateQuery?: IntelligenceDateQuery
+  /** Set to 0 or less to load once without starting a polling interval. */
   intervalMs?: number
 }
 
 /**
  * Fans out intelligence dashboard KPIs and polls every `intervalMs` (default 30s).
+ * Set `intervalMs` to 0 or less to fetch only once.
  * Does not require client `tenant_id` — BFF resolves tenant from session.
  */
 export function useIntelligenceKpis(options: UseIntelligenceKpisOptions): IntelligenceKpis {
   const { tenantReady, batchId, dateQuery, intervalMs = DEFAULT_POLL_MS } = options
+  const dateFrom = dateQuery?.from_date ?? ''
+  const dateTo = dateQuery?.to_date ?? ''
+  const normalizedDateQuery = useMemo(
+    () => (dateFrom || dateTo ? { from_date: dateFrom, to_date: dateTo } : undefined),
+    [dateFrom, dateTo],
+  )
 
   const [leakage, setLeakage] = useState<LeakageKpiResponse | null>(null)
   const [ambiguity, setAmbiguity] = useState<AmbiguityKpiResponse | null>(null)
@@ -67,12 +75,12 @@ export function useIntelligenceKpis(options: UseIntelligenceKpisOptions): Intell
     setLoading(true)
     try {
       const [lk, am, df, pt, rc, rcaRes] = await Promise.all([
-        getLeakageKpis(dateQuery, apiTrimmedString(batchId) || undefined),
-        getAmbiguityKpis(dateQuery, apiTrimmedString(batchId) || undefined),
-        getDefensibilityKpis(dateQuery),
+        getLeakageKpis(normalizedDateQuery, apiTrimmedString(batchId) || undefined),
+        getAmbiguityKpis(normalizedDateQuery, apiTrimmedString(batchId) || undefined),
+        getDefensibilityKpis(normalizedDateQuery),
         getPatternsKpis(apiTrimmedString(batchId) || undefined),
-        getRecommendationsKpis(dateQuery),
-        getRcaKpis(dateQuery),
+        getRecommendationsKpis(normalizedDateQuery),
+        getRcaKpis(normalizedDateQuery),
       ])
       if (cancelledRef.current) return
       setLeakage(lk)
@@ -85,7 +93,7 @@ export function useIntelligenceKpis(options: UseIntelligenceKpisOptions): Intell
     } finally {
       if (!cancelledRef.current) setLoading(false)
     }
-  }, [tenantReady, batchId, dateQuery?.from_date, dateQuery?.to_date])
+  }, [tenantReady, batchId, normalizedDateQuery])
 
   useEffect(() => {
     cancelledRef.current = false
@@ -99,6 +107,11 @@ export function useIntelligenceKpis(options: UseIntelligenceKpisOptions): Intell
       return
     }
     void refresh()
+    if (intervalMs <= 0) {
+      return () => {
+        cancelledRef.current = true
+      }
+    }
     const id = window.setInterval(() => {
       void refresh()
     }, intervalMs)

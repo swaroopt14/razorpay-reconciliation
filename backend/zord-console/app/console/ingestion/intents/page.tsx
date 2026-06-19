@@ -14,6 +14,7 @@ function mapStatusToDisplay(status: IntentStatus): string {
     RECEIVED: 'CANONICALIZED',
     REJECTED_PREACC: 'REJECTED_PREACC',
     QUEUED_ACC: 'QUEUED_ACC',
+    CANONICALIZED: 'CANONICALIZED',
   }
   return statusMap[status] || status
 }

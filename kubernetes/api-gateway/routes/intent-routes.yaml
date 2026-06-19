@@ -1,0 +1,39 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Kong Routes: zord-intent-engine (Validation & Canonicalization)
+# ─────────────────────────────────────────────────────────────────────────────
+# These routes are defined in kong/configmap.yaml (declarative config).
+# This file serves as documentation and reference.
+#
+# Service: zord-intent-engine
+# Upstream: http://zord-intent-engine.zord.svc.cluster.local:8083
+# Port: 8083
+#
+# Routes:
+#   - name: intent-api
+#     path: /v1/intents
+#     description: Payment intent CRUD, status queries, batch operations
+#     auth: Bearer token (validated by upstream service)
+#     rate_limit: 300/min (global)
+#
+#   - name: intent-dlq
+#     path: /v1/dlq
+#     description: Dead letter queue management (retry, inspect, purge)
+#     auth: Bearer token / Admin key
+#     rate_limit: 300/min (global)
+#
+#   - name: intent-etl
+#     path: /v1/etl
+#     description: ETL run status, quality results, normalization records
+#     auth: Bearer token
+#     rate_limit: 300/min (global)
+#
+#   - name: intent-health
+#     path: /intent/health
+#     description: Health check endpoint
+#     auth: None
+#
+# Notes:
+#   - Internal /internal/* endpoints are NOT exposed through Kong
+#   - Airflow calls /internal/airflow/transform directly via K8s DNS
+#   - Relay polls /internal/outbox/lease directly via K8s DNS
+# ─────────────────────────────────────────────────────────────────────────────

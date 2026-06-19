@@ -1,5 +1,5 @@
 import { Suspense } from 'react'
-import { EvidencePackDetailClient } from './_components/EvidencePackDetailClient'
+import { EvidencePackDetailClient } from '@/features/payout-command/evidence-pack/_components/EvidencePackDetailClient'
 
 export default function EvidencePackPage({ params }: { params: { packId: string } }) {
   return (

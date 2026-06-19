@@ -53,7 +53,7 @@ export default function DLQPage() {
         timestamp: r.receivedAt,
       }))
 
-      setDlQEntries(entries)
+      setDlqEntries(entries)
     } catch (error) {
       console.error('Failed to load DLQ:', error)
     } finally {

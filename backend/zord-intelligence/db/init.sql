@@ -702,6 +702,10 @@ CREATE TABLE IF NOT EXISTS batch_contracts (
     total_confirmed_amount_minor NUMERIC(20,2) NOT NULL DEFAULT 0,
     -- Amount confirmed settled so far.
 
+    original_settled_amount_minor NUMERIC(20,2) NOT NULL DEFAULT 0,
+    -- Original settled amount reported by Service 5C before any corrections,
+    -- from BatchSummaryUpdatedEvent.OriginalSettledAmountMinor.
+
     total_variance_minor        NUMERIC(20,2) NOT NULL DEFAULT 0,
     -- intended - confirmed. Positive = leakage. Negative = overpayment.
 
@@ -718,8 +722,94 @@ CREATE TABLE IF NOT EXISTS batch_contracts (
     ambiguity_score             NUMERIC(4,3),
     -- 0.000–1.000 from Ambiguity Intelligence. NULL until computed.
 
+    match_confidence            NUMERIC(4,3),
+    -- 0.000–1.000 aggregate_match_confidence from BatchSummaryUpdatedEvent (Service 5C).
+    -- NULL until the first batch.summary.updated event for this batch.
+
     defensibility_tier          TEXT,
     CHECK (defensibility_tier IN ('STRONG', 'GOOD', 'WEAK', 'FRAGILE', NULL)),
+
+    -- ── Intent-time batch feature state (Leakage Prediction) ──────────────────
+    -- These fields are updated as intent rows arrive so we can score a batch
+    -- before settlement data appears. BatchSummaryUpdatedEvent later writes the
+    -- authoritative operational totals into the existing aggregate columns above.
+
+    intent_row_count            INT          NOT NULL DEFAULT 0,
+    intent_total_amount_minor   NUMERIC(20,2) NOT NULL DEFAULT 0,
+    intent_amount_square_sum    NUMERIC(30,2) NOT NULL DEFAULT 0,
+    intent_min_amount_minor     NUMERIC(20,2),
+    intent_max_amount_minor     NUMERIC(20,2),
+    client_payout_ref_present_count INT      NOT NULL DEFAULT 0,
+
+    batch_currency              TEXT,
+    batch_source_system         TEXT,
+    batch_rail                  TEXT,
+    batch_intent_type           TEXT,
+    batch_provider_key          TEXT,
+    first_intent_created_at     TIMESTAMPTZ,
+
+    -- ── Batch leakage label + prediction state ────────────────────────────────
+    -- under_settlement_amount_minor is part of the true leakage label:
+    -- unmatched + under_settlement + confirmed_reversal.
+    -- predicted_leakage_* are written by the batch leakage prediction model.
+
+    under_settlement_amount_minor NUMERIC(20,2) NOT NULL DEFAULT 0,
+    predicted_leakage_rate      NUMERIC(10,6),
+    predicted_leakage_minor     NUMERIC(20,2),
+    predicted_leakage_model_id  TEXT,
+    predicted_at                TIMESTAMPTZ,
+
+    -- ── Per-batch risk attribution (Pattern Intelligence) ─────────────────────
+    -- These fields are incremented by individual event handlers (NOT reset by
+    -- BatchSummaryUpdatedEvent). They give the frontend per-batch leakage and
+    -- risk detail so operators can see exactly which batch is causing issues.
+
+    unmatched_amount_minor      NUMERIC(20,2) NOT NULL DEFAULT 0,
+    -- Sum of intended_amount_minor for MATCH_UNRESOLVED and MATCH_AMBIGUOUS
+    -- attachment decisions. An unmatched intent means no settlement was found,
+    -- and an ambiguous intent means a settlement could not be confidently
+    -- attached — both leave the amount unconfirmed and at risk.
+
+    reversal_exposure_minor     NUMERIC(20,2) NOT NULL DEFAULT 0,
+    -- Sum of variance_amount_minor for REVERSAL variance records.
+    -- Settled and then reversed — money already paid out but clawed back.
+
+    orphan_amount_minor         NUMERIC(20,2) NOT NULL DEFAULT 0,
+    -- Sum of settled_amount_minor for orphan settlements (no matching intent).
+    -- Settlements that cannot be attributed to any payout intent.
+
+    duplicate_risk_exposure_minor NUMERIC(20,2) NOT NULL DEFAULT 0,
+    -- Sum of intended_amount_minor for intents with duplicate_risk_flag=true.
+    -- Potential duplicate payouts that need review before dispatch or settlement.
+
+    missing_ref_count           INT          NOT NULL DEFAULT 0,
+    -- Count of intents/settlements missing critical references:
+    -- client_payout_ref (empty), provider_ref (missing), or bank_ref (missing).
+    -- High count = attachment ambiguity risk and weak audit trail.
+
+    unexplained_variance_minor  NUMERIC(20,2) NOT NULL DEFAULT 0,
+    -- Sum of variance_amount_minor for non-whitelisted variance records.
+    -- Real unexplained loss — NOT pre-agreed PSP fees or TDS.
+
+    whitelisted_deduction_minor NUMERIC(20,2) NOT NULL DEFAULT 0,
+    -- Sum of variance_amount_minor for whitelisted (pre-agreed) deductions.
+    -- PSP fees, TDS, commissions — expected and approved, NOT real leakage.
+
+    settlement_ref_count        INT          NOT NULL DEFAULT 0,
+    -- Total settlement observations (CanonicalSettlementCreatedEvent) seen for
+    -- this batch. Denominator for bank_reference_coverage.
+
+    bank_ref_present_count      INT          NOT NULL DEFAULT 0,
+    -- Count of settlement observations where bank_ref, UTR, or RRN is present.
+    -- Numerator for bank_reference_coverage = bank_ref_present_count / settlement_ref_count.
+
+    decision_ref_count          INT          NOT NULL DEFAULT 0,
+    -- Total attachment decisions (AttachmentDecisionCreatedEvent) seen for
+    -- this batch. Denominator for client_reference_coverage.
+
+    client_ref_present_count    INT          NOT NULL DEFAULT 0,
+    -- Count of attachment decisions where client_reference is present.
+    -- Numerator for client_reference_coverage = client_ref_present_count / decision_ref_count.
 
     last_updated_at             TIMESTAMPTZ  NOT NULL DEFAULT now(),
     created_at                  TIMESTAMPTZ  NOT NULL DEFAULT now()
@@ -939,6 +1029,27 @@ ALTER TABLE action_contracts
 
 ALTER TABLE action_contracts
     ADD COLUMN IF NOT EXISTS severity TEXT;
+
+-- Per-batch bank reference coverage (settlement_ref_count / bank_ref_present_count).
+-- Added for existing databases where batch_contracts predates these columns.
+ALTER TABLE batch_contracts
+    ADD COLUMN IF NOT EXISTS settlement_ref_count INT NOT NULL DEFAULT 0;
+
+ALTER TABLE batch_contracts
+    ADD COLUMN IF NOT EXISTS bank_ref_present_count INT NOT NULL DEFAULT 0;
+
+-- Per-batch client reference coverage (decision_ref_count / client_ref_present_count).
+-- Added for existing databases where batch_contracts predates these columns.
+ALTER TABLE batch_contracts
+    ADD COLUMN IF NOT EXISTS decision_ref_count INT NOT NULL DEFAULT 0;
+
+ALTER TABLE batch_contracts
+    ADD COLUMN IF NOT EXISTS client_ref_present_count INT NOT NULL DEFAULT 0;
+
+-- aggregate_match_confidence from BatchSummaryUpdatedEvent (Service 5C).
+-- Added for existing databases where batch_contracts predates this column.
+ALTER TABLE batch_contracts
+    ADD COLUMN IF NOT EXISTS match_confidence NUMERIC(4,3);
 
 -- "Which policies belong to the LEAKAGE family and fired today?"
 CREATE INDEX IF NOT EXISTS idx_ac_family_created

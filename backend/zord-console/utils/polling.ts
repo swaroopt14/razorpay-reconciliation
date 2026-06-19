@@ -4,7 +4,7 @@ export function createPolling<T>(
   fetchFn: () => Promise<T>,
   shouldStop: (data: T) => boolean,
   interval: number = 3000
-): () => () => void {
+): (callback: (data: T) => void) => () => void {
   let timeoutId: NodeJS.Timeout | null = null
   let stopped = false
 

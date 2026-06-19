@@ -47,6 +47,7 @@ import (
 type OutboxWorker struct {
 	outboxRepo *persistence.OutboxRepo
 	actionRepo *persistence.ActionContractRepo // PHASE 5: for expiry sweep
+	projRepo   *persistence.ProjectionRepo    // for RCA fragment TTL cleanup
 	producer   *kafkapkg.Producer
 	cfg        *config.Config
 }
@@ -59,10 +60,12 @@ func NewOutboxWorker(
 	actionRepo *persistence.ActionContractRepo,
 	producer *kafkapkg.Producer,
 	cfg *config.Config,
+	projRepo *persistence.ProjectionRepo,
 ) *OutboxWorker {
 	return &OutboxWorker{
 		outboxRepo: outboxRepo,
 		actionRepo: actionRepo,
+		projRepo:   projRepo,
 		producer:   producer,
 		cfg:        cfg,
 	}
@@ -96,6 +99,14 @@ func (w *OutboxWorker) Start(ctx context.Context) {
 //   1. Sweep expired PENDING_APPROVAL contracts → EXPIRED (PHASE 5)
 //   2. Fetch ready outbox entries and deliver them to Kafka
 func (w *OutboxWorker) runOnce(ctx context.Context) {
+	// Clean up stale RCA fragment rows older than 10 minutes.
+	// Fragments are temporary per-intent accumulation rows created while a
+	// batch's events are arriving. They must not accumulate indefinitely.
+	// 10 minutes is comfortably longer than any batch processing window.
+	if _, err := w.projRepo.CleanupStaleRCAFragments(ctx, 10*time.Minute); err != nil {
+		logger.Error(fmt.Sprintf("outbox_worker: rca fragment cleanup error: %v", err))
+	}
+
 	// PHASE 5: Expire stale approval windows FIRST.
 	// We do this before fetching deliverable entries so that any entries
 	// whose contract just expired are cleanly excluded from delivery.

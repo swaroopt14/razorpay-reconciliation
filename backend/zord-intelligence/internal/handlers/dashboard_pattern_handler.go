@@ -24,6 +24,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -75,6 +76,17 @@ type tenantPatternKPIFields struct {
 	SettlementDelayP95Days       float64 `json:"settlement_delay_p95_days"`
 }
 
+// ProviderDecisionStats is the per-provider breakdown for A9 decision_success_rate,
+// sourced from the pattern.provider.{provider_id} projection.
+type ProviderDecisionStats struct {
+	TotalDecisions          int    `json:"total_decisions"`
+	SuccessfulDecisionCount int    `json:"successful_decision_count"`
+	DecisionSuccessRate     string `json:"decision_success_rate"`
+	AmbiguityRate           string `json:"ambiguity_rate"`
+	UnresolvedDecisions     int    `json:"unresolved_decisions"`
+	OrphanRate              string `json:"orphan_rate"`
+}
+
 // DashboardPatternResponse is the frontend-ready payload for the pattern dashboard card.
 type DashboardPatternResponse struct {
 	TenantID      string     `json:"tenant_id"`
@@ -95,6 +107,16 @@ type DashboardPatternResponse struct {
 	// denominator: total_decisions - unresolved_settlement_count from ambiguity projection
 	ValueDateMismatchCount int     `json:"value_date_mismatch_count"`
 	ValueDateMismatchRate  float64 `json:"value_date_mismatch_rate"`
+
+	// A9 — decision_success_rate: tenant-wide fraction of attachment decisions
+	// that are unambiguous, non-colliding, and settled at the intended amount.
+	// source: ambiguity.summary projection (successful_decision_count / total_decisions)
+	// formatted as a percentage string (e.g. "64.95%").
+	DecisionSuccessRate string `json:"decision_success_rate"`
+
+	// A9 — by_provider: per-provider breakdown of decision success/quality stats,
+	// sourced from pattern.provider.{provider_id} projections.
+	ByProvider map[string]ProviderDecisionStats `json:"by_provider,omitempty"`
 
 	// P1 — batch_quality_score: composite quality score derived from batch health breakdown
 	BatchQualityScore   float64 `json:"batch_quality_score"`
@@ -177,6 +199,33 @@ func (h *DashboardPatternHandler) GetPatternKPIs(w http.ResponseWriter, r *http.
 			attachedRecords := ambiguity.TotalDecisions - ambiguity.UnresolvedSettlementCount
 			if attachedRecords > 0 {
 				resp.ValueDateMismatchRate = float64(leakage.ValueDateMismatchCount) / float64(attachedRecords)
+			}
+		}
+	}
+
+	// ── A9: decision_success_rate + by_provider ──────────────────────────
+	decisionSuccessRate := 0.0
+	if ambErr == nil && ambiguity != nil {
+		decisionSuccessRate = ambiguity.DecisionSuccessRate
+	}
+	resp.DecisionSuccessRate = fmt.Sprintf("%.2f%%", decisionSuccessRate*100)
+
+	windowStart := time.Now().UTC().Truncate(24 * time.Hour)
+	if providers, provErr := h.projRepo.GetAllProviderQualityProjections(r.Context(), tenantID, windowStart); provErr == nil {
+		for _, p := range providers {
+			if p.TotalDecisions == 0 {
+				continue
+			}
+			if resp.ByProvider == nil {
+				resp.ByProvider = make(map[string]ProviderDecisionStats)
+			}
+			resp.ByProvider[p.ProviderID] = ProviderDecisionStats{
+				TotalDecisions:          p.TotalDecisions,
+				SuccessfulDecisionCount: p.SuccessfulDecisionCount,
+				DecisionSuccessRate:     fmt.Sprintf("%.2f%%", p.DecisionSuccessRate*100),
+				AmbiguityRate:           fmt.Sprintf("%.2f%%", p.AmbiguityRate*100),
+				UnresolvedDecisions:     p.UnresolvedDecisions,
+				OrphanRate:              fmt.Sprintf("%.2f%%", p.OrphanRate*100),
 			}
 		}
 	}

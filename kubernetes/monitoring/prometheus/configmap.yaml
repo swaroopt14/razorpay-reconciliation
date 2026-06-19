@@ -9,6 +9,9 @@ data:
       scrape_interval: 15s
       evaluation_interval: 15s
 
+    rule_files:
+      - /etc/prometheus/rules/*.yml
+
     scrape_configs:
       - job_name: 'prometheus'
         static_configs:
@@ -20,6 +23,7 @@ data:
             namespaces:
               names:
                 - zord
+                - api-gateway
         relabel_configs:
           - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
             action: keep
@@ -48,9 +52,60 @@ data:
           - targets: ['zord-relay.zord.svc.cluster.local:8082']
         metrics_path: /metrics
 
+      - job_name: 'node-exporter'
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - source_labels: [__address__]
+            regex: (.+):(.+)
+            target_label: __address__
+            replacement: $1:9100
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+
+      - job_name: 'kube-state-metrics'
+        static_configs:
+          - targets: ['kube-state-metrics.monitoring.svc.cluster.local:8080']
+
+      - job_name: 'otel-spanmetrics'
+        static_configs:
+          - targets: ['otel-collector.tracing.svc.cluster.local:8889']
+        scrape_interval: 15s
+
+      - job_name: 'postgres-exporter'
+        static_configs:
+          - targets: ['postgres-exporter.monitoring.svc.cluster.local:9187']
+
+      - job_name: 'kafka-exporter'
+        static_configs:
+          - targets: ['kafka-exporter.monitoring.svc.cluster.local:9308']
+
       - job_name: 'kubernetes-nodes'
         kubernetes_sd_configs:
           - role: node
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+
+      - job_name: 'kubernetes-cadvisor'
+        kubernetes_sd_configs:
+          - role: node
+        scheme: https
+        tls_config:
+          insecure_skip_verify: true
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        metrics_path: /metrics/cadvisor
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+
+      - job_name: 'kubernetes-kubelet'
+        kubernetes_sd_configs:
+          - role: node
+        scheme: https
+        tls_config:
+          insecure_skip_verify: true
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
         relabel_configs:
           - action: labelmap
             regex: __meta_kubernetes_node_label_(.+)

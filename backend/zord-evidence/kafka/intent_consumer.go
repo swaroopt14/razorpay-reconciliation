@@ -60,6 +60,11 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			RequiredFieldsStatus:      relayEvt.RequiredFieldsStatus,
 			TokenizationStatus:        relayEvt.TokenizationStatus,
 			GovernanceDecision:        relayEvt.GovernanceDecision,
+
+			// 🆕 Intent financial identity
+			ClientPayoutRef: relayEvt.ClientPayoutRef,
+			Amount:          relayEvt.Amount,
+			Currency:        relayEvt.Currency,
 		}
 
 		// Leaf 7: Governance Decision (Directly from Outbox GovernanceHash)
@@ -81,6 +86,11 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			RequiredFieldsStatus:      relayEvt.RequiredFieldsStatus,
 			TokenizationStatus:        relayEvt.TokenizationStatus,
 			GovernanceDecision:        relayEvt.GovernanceDecision,
+
+			// 🆕 Intent financial identity
+			ClientPayoutRef: relayEvt.ClientPayoutRef,
+			Amount:          relayEvt.Amount,
+			Currency:        relayEvt.Currency,
 		}
 
 		pendingLeaves := []models.PendingLeafCandidate{l6, l7}

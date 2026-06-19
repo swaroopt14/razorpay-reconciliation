@@ -83,6 +83,7 @@ leased AS (
 		COALESCE(o.leased_by, '') as leased_by,
 		o.lease_until,
 		o.batchid,
+		o.source_row_num,
 		o.canonical_hash,
 		o.governance_state,
 		o.governance_hash,
@@ -91,7 +92,8 @@ leased AS (
 		o.tokenization_status,
 		o.governance_decision,
 		o.payment_instruction_received,
-		o.canonical_intent_created
+		o.canonical_intent_created,
+		COALESCE(o.client_payout_ref, '') as client_payout_ref
 )
 SELECT
 	event_id,
@@ -114,6 +116,7 @@ SELECT
 	leased_by,
 	lease_until,
 	batchid,
+	source_row_num,
 	canonical_hash,
 	governance_state,
 	governance_hash,
@@ -122,7 +125,8 @@ SELECT
 	tokenization_status,
 	governance_decision,
 	payment_instruction_received,
-	canonical_intent_created
+	canonical_intent_created,
+	client_payout_ref
 FROM leased
 ORDER BY created_at ASC;
 `
@@ -166,6 +170,7 @@ ORDER BY created_at ASC;
 			&evt.LeasedBy,
 			&lu,
 			&evt.BatchID,
+			&evt.SourceRowNum,
 			&canonicalHash,
 			&governanceState,
 			&governanceHash,
@@ -175,6 +180,7 @@ ORDER BY created_at ASC;
 			&evt.GovernanceDecision,
 			&evt.PaymentInstructionReceived,
 			&evt.CanonicalIntentCreated,
+			&evt.ClientPayoutRef,
 		); err != nil {
 			return "", nil, nil, err
 		}
@@ -227,14 +233,22 @@ ORDER BY created_at ASC;
 
 func (r *OutboxPullRepo) AckOutboxBatch(ctx context.Context, leaseID string, eventIDs []string) (int64, error) {
 	query := `
-UPDATE outbox
+WITH locked AS (
+	SELECT event_id
+	FROM outbox
+	WHERE lease_id = $1::uuid
+	  AND event_id = ANY($2::uuid[])
+	ORDER BY event_id
+	FOR UPDATE
+)
+UPDATE outbox o
 SET status = 'SENT',
     sent_at = NOW(),
     lease_id = NULL,
     leased_by = NULL,
     lease_until = NULL
-WHERE lease_id = $1::uuid
-  AND event_id = ANY($2::uuid[]);
+FROM locked l
+WHERE o.event_id = l.event_id;
 `
 	res, err := r.db.ExecContext(ctx, query, leaseID, pq.Array(eventIDs))
 	if err != nil {
@@ -245,24 +259,32 @@ WHERE lease_id = $1::uuid
 
 func (r *OutboxPullRepo) NackOutboxBatch(ctx context.Context, leaseID string, eventIDs []string) (int64, error) {
 	query := `
-UPDATE outbox
-SET retry_count = retry_count + 1,
+WITH locked AS (
+	SELECT event_id
+	FROM outbox
+	WHERE lease_id = $1::uuid
+	  AND event_id = ANY($2::uuid[])
+	  AND status = 'PENDING'
+	ORDER BY event_id
+	FOR UPDATE
+)
+UPDATE outbox o
+SET retry_count = o.retry_count + 1,
 	status = CASE
-        WHEN retry_count + 1>= $3 OR created_at < NOW() - ($4::int * INTERVAL '1 hour') THEN 'FAILED'
+        WHEN o.retry_count + 1 >= $3 OR o.created_at < NOW() - ($4::int * INTERVAL '1 hour') THEN 'FAILED'
         ELSE 'PENDING'
     END,
     next_attempt_at = CASE
-        WHEN retry_count + 1>= $3 OR created_at < NOW() - ($4::int * INTERVAL '1 hour') THEN NULL
+        WHEN o.retry_count + 1 >= $3 OR o.created_at < NOW() - ($4::int * INTERVAL '1 hour') THEN NULL
         ELSE NOW() + (
-			LEAST(3600, GREATEST(1, POWER(2, retry_count))) * (0.8 + random() * 0.4)
+			LEAST(3600, GREATEST(1, POWER(2, o.retry_count))) * (0.8 + random() * 0.4)
 		) * INTERVAL '1 second'
     END,
     lease_id = NULL,
     leased_by = NULL,
     lease_until = NULL
-WHERE lease_id = $1::uuid
-  AND event_id = ANY($2::uuid[])
-  AND status = 'PENDING';
+FROM locked l
+WHERE o.event_id = l.event_id;
 `
 	res, err := r.db.ExecContext(ctx, query, leaseID, pq.Array(eventIDs), maxOutboxAttempts, maxOutboxAgeHours)
 	if err != nil {

@@ -29,5 +29,13 @@ type DLQEntry struct {
 	IntentContext json.RawMessage `json:"intent_context,omitempty"` // beneficiary_name, amount, idempotency_key
 	TraceID       string          `json:"trace_id,omitempty"`
 
+	// Leasing fields for outbox/relay pull API
+	LeaseID       string     `json:"lease_id,omitempty"`
+	LeasedBy      string     `json:"leased_by,omitempty"`
+	LeaseUntil    *time.Time `json:"lease_until,omitempty"`
+	RetryCount    int        `json:"retry_count"`
+	NextAttemptAt *time.Time `json:"next_attempt_at,omitempty"`
+	DispatchedAt  *time.Time `json:"dispatched_at,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 }

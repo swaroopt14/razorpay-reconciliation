@@ -9,7 +9,7 @@ export const metadata: Metadata = {
 }
 
 const PayoutCommandViewClient = dynamic(
-  () => import('@/app/payout-command-view/today/_components/PayoutCommandViewClient'),
+  () => import('@/features/payout-command/shell/PayoutCommandViewClient'),
   {
     ssr: false,
     loading: () => (
@@ -51,8 +51,10 @@ export default function SandboxPage({
     <PayoutCommandViewClient
       forceMode="sandbox"
       initialDock={resolveInitialDock(searchParams.dock, SANDBOX_DOCK_IDS)}
-      initialJournalBatchId={readQueryParam(searchParams.batch_id)}
-      initialSettlementClientBatchId={readQueryParam(searchParams.client_batch_id)}
+      scope={{
+        batchId: readQueryParam(searchParams.batch_id),
+        clientBatchId: readQueryParam(searchParams.client_batch_id),
+      }}
     />
   )
 }

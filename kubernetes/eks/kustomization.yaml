@@ -9,10 +9,12 @@ labels:
 
 resources:
   - namespace.yaml
+  - shared/priority-classes.yaml
   - shared/serviceaccount.yaml
   - shared/secret-store.yaml
   - shared/external-secret-app-secrets.yaml
   - shared/external-secret-edge-signing-key.yaml
+  - shared/external-secret-evidence-signing-key.yaml
   - shared/relay-config.yaml
   - shared/aws-config.yaml
   - shared/postgres-bootstrap-config.yaml
@@ -22,6 +24,8 @@ resources:
   - infrastructure/kafka/service.yaml
   - infrastructure/kafka/statefulset.yaml
   - infrastructure/kafka/topic-job.yaml
+  - infrastructure/redis/deployment.yaml
+  - infrastructure/redis/service.yaml
   - services/zord-edge/service.yaml
   - services/zord-edge/deployment.yaml
   - services/zord-edge/pdb.yaml
@@ -58,4 +62,3 @@ resources:
   - services/zord-console/deployment.yaml
   - services/zord-console/pdb.yaml
   - services/zord-console/hpa.yaml
-  - ingress/public-alb.yaml

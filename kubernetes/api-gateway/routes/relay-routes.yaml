@@ -1,0 +1,28 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Kong Routes: zord-relay (Event Relay & PSP Dispatch)
+# ─────────────────────────────────────────────────────────────────────────────
+# These routes are defined in kong/configmap.yaml (declarative config).
+# This file serves as documentation and reference.
+#
+# Service: zord-relay
+# Upstream: http://zord-relay.zord.svc.cluster.local:8082
+# Port: 8082
+#
+# Routes:
+#   - name: relay-dispatch
+#     path: /v1/dispatch
+#     description: Dispatch status, manual retry, circuit breaker status
+#     auth: Bearer token / Admin key
+#     rate_limit: 300/min (global)
+#
+#   - name: relay-health
+#     path: /relay/health
+#     description: Health check endpoint
+#     auth: None
+#
+# Notes:
+#   - Relay is primarily an internal service (polls outbox, publishes to Kafka)
+#   - Only dispatch management APIs are exposed through Kong
+#   - The relay loop, retry sweeper, and recovery sweeper run internally
+#   - Metrics endpoint (:8082/metrics) is scraped by Prometheus directly
+# ─────────────────────────────────────────────────────────────────────────────

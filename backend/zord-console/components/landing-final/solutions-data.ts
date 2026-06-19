@@ -57,9 +57,9 @@ export const solutionEntries: SolutionItem[] = [
       'ZORD lets teams move from fragmented bank and payout feeds to a governed data layer that product, operations, and underwriting teams can rely on.',
     audience: 'Best for product teams, lenders, finance platforms, and modern treasury stacks.',
     outcomes: [
-      { label: 'Connected institutions', value: '22+' },
-      { label: 'Normalized payloads', value: '1 schema' },
-      { label: 'Access latency', value: '< 5s' },
+      { label: 'Connected institutions', value: 'Configurable' },
+      { label: 'Normalized payloads', value: 'One schema' },
+      { label: 'Access model', value: 'Governed' },
     ],
     pillars: [
       {
@@ -80,7 +80,7 @@ export const solutionEntries: SolutionItem[] = [
       { step: '02', title: 'Normalize records', body: 'Translate source-specific payloads into a shared operational and financial schema.' },
       { step: '03', title: 'Distribute safely', body: 'Route the right data to products, workflows, and internal teams with permissions built in.' },
     ],
-    relatedProducts: ['Data contracts', 'Reconciliation', 'Proof exports'],
+    relatedProducts: ['Data contracts', 'Reconciliation', 'Evidence Pack exports'],
   },
   {
     slug: 'fraud-risk-prevention',
@@ -97,7 +97,7 @@ export const solutionEntries: SolutionItem[] = [
     outcomes: [
       { label: 'Signal sources', value: '6 layers' },
       { label: 'Velocity watch', value: 'Real time' },
-      { label: 'Case readiness', value: 'T+0' },
+      { label: 'Case readiness', value: 'Workspace' },
     ],
     pillars: [
       {
@@ -116,7 +116,7 @@ export const solutionEntries: SolutionItem[] = [
     workflow: [
       { step: '01', title: 'Watch live movement', body: 'Track suspicious payout or payment patterns as traffic moves through providers and banks.' },
       { step: '02', title: 'Score behavior', body: 'Blend user, beneficiary, callback, and rail-level anomalies into one risk picture.' },
-      { step: '03', title: 'Trigger action', body: 'Hold, reroute, or escalate with context that support, ops, and risk teams can all understand.' },
+      { step: '03', title: 'Trigger action', body: 'Hold, review, or escalate with context that support, ops, and risk teams can all understand.' },
     ],
     relatedProducts: ['Risk scoring', 'Identity checks', 'Bank exposure'],
   },
@@ -134,8 +134,8 @@ export const solutionEntries: SolutionItem[] = [
     audience: 'Best for fintech apps, marketplaces, lending stacks, and regulated onboarding flows.',
     outcomes: [
       { label: 'Approval path', value: '1 workflow' },
-      { label: 'Manual review drop', value: '-42%' },
-      { label: 'Onboarding time', value: '< 3 min' },
+      { label: 'Manual review drop', value: 'Reduced' },
+      { label: 'Onboarding time', value: 'Structured' },
     ],
     pillars: [
       {
@@ -194,7 +194,7 @@ export const solutionEntries: SolutionItem[] = [
       { step: '02', title: 'Evaluate against rules', body: 'Run identity, ownership, and movement checks against configured controls.' },
       { step: '03', title: 'Escalate or clear', body: 'Route the case into the right queue and preserve every decision for proof.' },
     ],
-    relatedProducts: ['Identity workflows', 'Risk case management', 'Proof exports'],
+    relatedProducts: ['Identity workflows', 'Risk case management', 'Evidence Pack exports'],
   },
   {
     slug: 'income-verification-underwriting',
@@ -209,9 +209,9 @@ export const solutionEntries: SolutionItem[] = [
       'Use ZORD to bring banking data, payout history, and cash-flow signals into one underwriting layer that gives lenders faster answers and cleaner proof.',
     audience: 'Best for lenders, credit programs, underwriting teams, and embedded finance stacks.',
     outcomes: [
-      { label: 'Asset verification', value: '< 60 sec' },
-      { label: 'Review handoffs', value: '-35%' },
-      { label: 'Proof sources', value: '4 layers' },
+      { label: 'Asset verification', value: 'Faster' },
+      { label: 'Review handoffs', value: 'Fewer' },
+      { label: 'Proof sources', value: 'Linked' },
     ],
     pillars: [
       {
@@ -238,18 +238,18 @@ export const solutionEntries: SolutionItem[] = [
     slug: 'inbound-bank-payments',
     title: 'Inbound bank payments',
     description: 'Accept more successful bank payments',
-    shortDescription: 'Improve payment success, routing quality, and reconciliation across bank-led inflows.',
+    shortDescription: 'Improve payment success, connector performance, and reconciliation across bank-led inflows.',
     icon: 'inbound',
     views: ['workflow'],
     eyebrow: 'Inbound money movement',
-    heroTitle: 'Accept more successful bank payments with cleaner routing and confirmation handling',
+    heroTitle: 'Accept more successful bank payments with cleaner confirmation and matching handling',
     heroBody:
       'ZORD helps teams improve inbound bank payment performance by reducing failures, improving confirmation clarity, and keeping finance aligned on the final truth.',
     audience: 'Best for recurring billing, collections, consumer finance, and bank-led payment flows.',
     outcomes: [
-      { label: 'Success lift', value: '+4.8%' },
-      { label: 'Confirmation clarity', value: 'T+0' },
-      { label: 'Routing options', value: 'Multi-rail' },
+      { label: 'Success posture', value: 'Observable' },
+      { label: 'Confirmation clarity', value: 'Workspace' },
+      { label: 'Rail coverage', value: 'Multi-rail' },
     ],
     pillars: [
       {
@@ -270,29 +270,29 @@ export const solutionEntries: SolutionItem[] = [
       { step: '02', title: 'Track confirmation', body: 'Watch provider, bank, and callback signals until the state is reliable.' },
       { step: '03', title: 'Close and reconcile', body: 'Pass clean payment truth into finance and follow-up workflows.' },
     ],
-    relatedProducts: ['Routing intelligence', 'Confirmation tracking', 'Reconciliation'],
+    relatedProducts: ['Connector performance', 'Confirmation tracking', 'Reconciliation'],
   },
   {
     slug: 'outbound-bank-payments',
     title: 'Outbound bank payments',
     description: 'Send faster, more reliable bank payouts',
-    shortDescription: 'Run payouts with better routing, stronger finality visibility, and finance-ready proof.',
+    shortDescription: 'Run payouts with stronger connector visibility, finality tracking, and finance-ready proof.',
     icon: 'outbound',
     views: ['workflow'],
     eyebrow: 'Outbound money movement',
     heroTitle: 'Send faster, more reliable bank payouts with one operating truth underneath',
     heroBody:
-      'This is the core ZORD workflow: move payouts through providers and banks with live routing, reliable confirmation, and proof that closes finance questions faster.',
+      'This is the core ZORD workflow: move payouts through providers and banks with connector visibility, reliable confirmation, and Evidence Packs that close finance questions faster.',
     audience: 'Best for marketplaces, NBFCs, fintechs, PSPs, payroll, and treasury-heavy businesses.',
     outcomes: [
-      { label: 'Provider surfaces', value: '14' },
-      { label: 'Bank visibility', value: '22 banks' },
-      { label: 'Proof export', value: '1 click' },
+      { label: 'Connector surfaces', value: 'Workspace' },
+      { label: 'Bank visibility', value: 'Linked' },
+      { label: 'Evidence Pack', value: 'Exportable' },
     ],
     pillars: [
       {
-        title: 'Smarter route selection',
-        description: 'Pick healthier providers and rails before failures become queue pressure.',
+        title: 'Connector posture visibility',
+        description: 'See healthier providers and rails before failures become queue pressure.',
       },
       {
         title: 'Live finality tracking',
@@ -305,10 +305,10 @@ export const solutionEntries: SolutionItem[] = [
     ],
     workflow: [
       { step: '01', title: 'Create payout intent', body: 'Capture the payout request with business, beneficiary, and control context.' },
-      { step: '02', title: 'Route by live posture', body: 'Dispatch through the best provider and rail using current signal quality.' },
+      { step: '02', title: 'Observe connector posture', body: 'Track the payment path using current connector and rail signals in the workspace.' },
       { step: '03', title: 'Confirm and prove', body: 'Track the state to finality and package proof without reopening multiple systems.' },
     ],
-    relatedProducts: ['Switchboard', 'Payout intelligence', 'Proof packs'],
+    relatedProducts: ['Switchboard', 'Payout workspace', 'Evidence Packs'],
   },
   {
     slug: 'personal-financial-management',
@@ -384,7 +384,7 @@ export const solutionEntries: SolutionItem[] = [
       { step: '02', title: 'Resolve exceptions', body: 'Push the right exceptions into the right queue with the proof already attached.' },
       { step: '03', title: 'Close with confidence', body: 'Move into reconciliation, close, and audit with fewer manual rebuilds.' },
     ],
-    relatedProducts: ['Business banking', 'Proof exports', 'Finance operations'],
+    relatedProducts: ['Business banking', 'Evidence Pack exports', 'Finance operations'],
   },
   {
     slug: 'earned-wage-access',
@@ -438,7 +438,7 @@ export const solutionEntries: SolutionItem[] = [
     audience: 'Best for SaaS, subscriptions, utilities, lending repayments, and recurring billing teams.',
     outcomes: [
       { label: 'Retry clarity', value: 'Structured' },
-      { label: 'Payment truth', value: 'T+0' },
+      { label: 'Payment truth', value: 'Workspace' },
       { label: 'Revenue lift', value: 'More success' },
     ],
     pillars: [
@@ -460,7 +460,7 @@ export const solutionEntries: SolutionItem[] = [
       { step: '02', title: 'Retry intelligently', body: 'Adjust retry timing and route based on signal quality and prior failure shape.' },
       { step: '03', title: 'Reconcile reliably', body: 'Confirm the final state quickly and move clean data into finance workflows.' },
     ],
-    relatedProducts: ['Inbound bank payments', 'Routing intelligence', 'Collections proof'],
+    relatedProducts: ['Inbound bank payments', 'Connector performance', 'Collections proof'],
   },
 ]
 

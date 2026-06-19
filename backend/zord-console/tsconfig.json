@@ -27,14 +27,32 @@
       }
     ],
     "paths": {
-      "@/*": [
-        "./src/*"
-      ],
       "@/components/*": [
         "./components/*"
       ],
+      "@/constants": [
+        "./constants/index.ts"
+      ],
       "@/app/*": [
         "./app/*"
+      ],
+      "@/features/*": [
+        "./src/features/*"
+      ],
+      "@/shared/*": [
+        "./src/shared/*"
+      ],
+      "@/server/*": [
+        "./src/server/*"
+      ],
+      "@/styles/*": [
+        "./src/styles/*"
+      ],
+      "@/lib/*": [
+        "./src/shared/lib/*"
+      ],
+      "@/utils": [
+        "./utils/index.ts"
       ],
       "@/types/*": [
         "./types/*"
@@ -60,6 +78,7 @@
     "**/*.tsx",
     ".next/types/**/*.ts",
     "app/**/*",
+    "src/**/*",
     "components/**/*",
     "types/**/*",
     "utils/**/*",

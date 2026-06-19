@@ -69,20 +69,24 @@ type userResponse struct {
 }
 
 type sessionResponse struct {
-	SessionID       string `json:"session_id"`
-	TenantID        string `json:"tenant_id"`
-	WorkspaceCode   string `json:"workspace_code"`
-	Role            string `json:"role"`
-	AccessExpiresAt string `json:"access_expires_at"`
+	SessionID         string `json:"session_id"`
+	TenantID          string `json:"tenant_id"`
+	WorkspaceCode     string `json:"workspace_code"`
+	Role              string `json:"role"`
+	AccessExpiresAt   string `json:"access_expires_at"`
+	IdleExpiresAt     string `json:"idle_expires_at"`
+	AbsoluteExpiresAt string `json:"absolute_expires_at"`
 }
 
 type authEnvelope struct {
-	User            userResponse    `json:"user"`
-	Session         sessionResponse `json:"session"`
-	RequiresMFA     bool            `json:"requires_mfa"`
-	AccessToken     string          `json:"access_token,omitempty"`
-	RefreshToken    string          `json:"refresh_token,omitempty"`
-	AccessExpiresAt string          `json:"access_expires_at"`
+	User              userResponse    `json:"user"`
+	Session           sessionResponse `json:"session"`
+	RequiresMFA       bool            `json:"requires_mfa"`
+	AccessToken       string          `json:"access_token,omitempty"`
+	RefreshToken      string          `json:"refresh_token,omitempty"`
+	AccessExpiresAt   string          `json:"access_expires_at"`
+	IdleExpiresAt     string          `json:"idle_expires_at,omitempty"`
+	AbsoluteExpiresAt string          `json:"absolute_expires_at,omitempty"`
 	// APIKey carries the freshly-issued tenant API key (prefix.secret) on
 	// signup only. zord-edge only ever stores the hash; this is the single
 	// chance for the console to capture the secret. Empty on login/refresh.
@@ -91,31 +95,37 @@ type authEnvelope struct {
 
 func toEnvelope(bundle *services.AuthBundle) authEnvelope {
 	accessExp := bundle.AccessExpiresAt.UTC().Format(time.RFC3339)
+	idleExp := bundle.IdleExpiresAt.UTC().Format(time.RFC3339)
+	absExp := bundle.AbsoluteExpiresAt.UTC().Format(time.RFC3339)
 	ws := workspacecode.FromKeyPrefix(bundle.Tenant.KeyPrefix)
 	return authEnvelope{
 		User: userResponse{
-			ID:              bundle.User.UserID.String(),
-			Email:           bundle.User.Email,
-			Role:            bundle.User.Role,
-			Name:            bundle.User.Name,
-			TenantID:        bundle.User.TenantID.String(),
-			TenantName:      bundle.Tenant.TenantName,
-			WorkspaceCode:   ws,
-			Status:          bundle.User.Status,
-			MFAEnabled:      false,
+			ID:            bundle.User.UserID.String(),
+			Email:         bundle.User.Email,
+			Role:          bundle.User.Role,
+			Name:          bundle.User.Name,
+			TenantID:      bundle.User.TenantID.String(),
+			TenantName:    bundle.Tenant.TenantName,
+			WorkspaceCode: ws,
+			Status:        bundle.User.Status,
+			MFAEnabled:    false,
 		},
 		Session: sessionResponse{
-			SessionID:       uuid.NewString(),
-			TenantID:        bundle.Tenant.TenantID.String(),
-			WorkspaceCode:   ws,
-			Role:            bundle.User.Role,
-			AccessExpiresAt: accessExp,
+			SessionID:         uuid.NewString(), // fallback if none, but ideally matches refresh/access claim
+			TenantID:          bundle.Tenant.TenantID.String(),
+			WorkspaceCode:     ws,
+			Role:              bundle.User.Role,
+			AccessExpiresAt:   accessExp,
+			IdleExpiresAt:     idleExp,
+			AbsoluteExpiresAt: absExp,
 		},
-		RequiresMFA:     false,
-		AccessToken:     bundle.AccessToken,
-		RefreshToken:    bundle.RefreshToken,
-		AccessExpiresAt: accessExp,
-		APIKey:          bundle.Tenant.APIKey,
+		RequiresMFA:       false,
+		AccessToken:       bundle.AccessToken,
+		RefreshToken:      bundle.RefreshToken,
+		AccessExpiresAt:   accessExp,
+		IdleExpiresAt:     idleExp,
+		AbsoluteExpiresAt: absExp,
+		APIKey:            bundle.Tenant.APIKey,
 	}
 }
 

@@ -7,6 +7,9 @@ resources:
   - elasticsearch/statefulset.yaml
   - kibana/deployment.yaml
   - kibana/service.yaml
+  - kibana/init-job.yaml
   - fluentd/rbac.yaml
   - fluentd/configmap.yaml
   - fluentd/daemonset.yaml
+  - fluentd/service.yaml
+  - ingress.yaml

@@ -27,4 +27,10 @@ type CanonicalBatch struct {
 	ScoreBreakdownJSON           json.RawMessage `json:"score_breakdown_json" db:"score_breakdown_json"`
 	CreatedAt                    time.Time       `json:"created_at" db:"created_at"`
 	UpdatedAt                    time.Time       `json:"updated_at" db:"updated_at"`
+	LeaseID                      string          `json:"lease_id,omitempty" db:"lease_id"`
+	LeasedBy                     string          `json:"leased_by,omitempty" db:"leased_by"`
+	LeaseUntil                   *time.Time      `json:"lease_until,omitempty" db:"lease_until"`
+	RetryCount                   int             `json:"retry_count" db:"retry_count"`
+	NextAttemptAt                *time.Time      `json:"next_attempt_at,omitempty" db:"next_attempt_at"`
+	DispatchedAt                 *time.Time      `json:"dispatched_at,omitempty" db:"dispatched_at"`
 }

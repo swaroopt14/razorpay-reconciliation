@@ -3,6 +3,7 @@ import { apiTrimmedString } from './coerceApiField'
 import type {
   AmbiguityHeatmapResponse,
   AmbiguityKpiResponse,
+  BatchContractKpiResponse,
   BatchDetailResponse,
   BatchesListResponse,
   DefensibilityKpiResponse,
@@ -111,5 +112,14 @@ export async function getIntelligenceBatchDetail(batchId: string): Promise<Batch
   if (!bid) return null
   return fetchProdJsonGet<BatchDetailResponse>(
     intelQueryPath(`${INTEL_BASE}/batches/${encodeURIComponent(bid)}`),
+  )
+}
+
+/** Per-batch contract KPIs (variance, orphan, unmatch, reference coverage). */
+export async function getBatchContractKpis(batchId: string): Promise<BatchContractKpiResponse | null> {
+  const bid = apiTrimmedString(batchId)
+  if (!bid) return null
+  return fetchProdJsonGet<BatchContractKpiResponse>(
+    intelQueryPath(`${INTEL_BASE}/batch_contract/${encodeURIComponent(bid)}`),
   )
 }

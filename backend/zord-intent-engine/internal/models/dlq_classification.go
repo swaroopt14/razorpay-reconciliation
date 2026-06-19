@@ -77,6 +77,8 @@ type DLQIntentContext struct {
     Amount          string `json:"amount"`         // "value currency" e.g. "1000.00 INR"
     Currency        string `json:"currency"`
     IdempotencyKey  string `json:"idempotency_key"`
+    IntentID        string `json:"intent_id,omitempty"`
+    SourceSystem    string `json:"source_system,omitempty"`
 }
 
 // BuildIntentContext builds the intent_context JSON from a ParsedIncomingIntent.
@@ -90,6 +92,8 @@ func BuildIntentContext(status string, parsed ParsedIncomingIntent) json.RawMess
         Amount:          parsed.Amount.Value,
         Currency:        parsed.Amount.Currency,
         IdempotencyKey:  parsed.IdempotencyKey,
+        IntentID:        parsed.IntentID,
+        SourceSystem:    parsed.SourceSystem,
     }
     b, _ := json.Marshal(ctx)
     return b

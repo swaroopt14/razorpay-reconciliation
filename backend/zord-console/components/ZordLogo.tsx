@@ -10,6 +10,8 @@ interface ZordLogoProps {
   variant?: 'light' | 'dark'
   /** Max nav height (h-11); full wordmark visible, left-aligned. */
   fitToHeight?: boolean
+  /** Inside a dark chrome bar — skip the extra logo capsule. */
+  embedded?: boolean
 }
 
 const SIZE_PX: Record<NonNullable<ZordLogoProps['size']>, { w: number; h: number }> = {
@@ -24,6 +26,7 @@ export function ZordLogo({
   className = '',
   variant = 'dark',
   fitToHeight,
+  embedded = false,
 }: ZordLogoProps) {
   const dims = fitToHeight ? { w: 212, h: 64 } : SIZE_PX[size]
   const onDark = variant === 'dark'
@@ -31,8 +34,12 @@ export function ZordLogo({
   return (
     <div className={`flex shrink-0 items-center justify-start ${className}`} aria-label="Zord">
       <span
-        className={`inline-flex items-center justify-center overflow-hidden rounded-xl ${
-          onDark ? 'bg-[#0f1419] px-2.5 py-1.5 ring-1 ring-white/10' : 'bg-transparent px-0.5 py-0.5'
+        className={`inline-flex items-center justify-center overflow-hidden ${
+          embedded
+            ? 'bg-transparent px-0 py-0'
+            : onDark
+              ? 'rounded-xl bg-[#0f1419] px-2.5 py-1.5 ring-1 ring-white/10'
+              : 'bg-transparent px-0.5 py-0.5'
         } ${fitToHeight ? 'h-11' : ''}`}
       >
         <Image

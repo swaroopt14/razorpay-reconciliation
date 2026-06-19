@@ -6,6 +6,7 @@ import type { ReactNode } from 'react'
 
 import { FinalLandingAssistantButton } from '@/components/landing-final/FinalLandingAssistantButton'
 import { SolutionsSiteFooter, SolutionsSiteNav } from '@/components/landing-final/SolutionsSiteChrome'
+import type { FinalLandingNavLabel } from '@/components/landing-final/FinalLandingNavbar'
 
 type PageAction = {
   label: string
@@ -14,7 +15,7 @@ type PageAction = {
 }
 
 type FinalLandingPageScaffoldProps = {
-  active: string
+  active: FinalLandingNavLabel
   eyebrow: string
   title: string
   description: string

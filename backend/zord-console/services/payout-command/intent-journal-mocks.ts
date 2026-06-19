@@ -299,14 +299,14 @@ function buildAttachment(rand: () => number, primaryConnector: string, primaryCo
   if (reasons.length === 0) reasons.push('USE_CASE_FIT')
 
   // Two alternatives, declined.
-  const altPool: Array<{ connector: string; connectorType: 'psp' | 'bank'; declineCode: string }> = [
+  const availableAlternatives = ([
     { connector: 'Razorpay', connectorType: 'psp', declineCode: 'LATENCY_OVER_THRESHOLD' },
     { connector: 'PayU', connectorType: 'psp', declineCode: 'AMBIGUITY_RATE_HIGH' },
     { connector: 'ICICI Bank', connectorType: 'bank', declineCode: 'RAIL_NOT_SUPPORTED' },
     { connector: 'SBI', connectorType: 'bank', declineCode: 'COST_TIER_HIGH' },
     { connector: 'Cashfree', connectorType: 'psp', declineCode: 'WEBHOOK_LATENCY_RISING' },
-  ].filter((a) => a.connector !== primaryConnector)
-  const alternatives = [pick(rand, altPool), pick(rand, altPool.filter((x) => x.connector !== altPool[0]?.connector))]
+  ] satisfies Array<{ connector: string; connectorType: 'psp' | 'bank'; declineCode: string }>).filter((a) => a.connector !== primaryConnector)
+  const alternatives: AttachmentDecision['alternatives'] = [pick(rand, availableAlternatives), pick(rand, availableAlternatives.filter((x) => x.connector !== availableAlternatives[0]?.connector))]
     .filter((a, i, arr) => arr.findIndex((x) => x.connector === a.connector) === i)
     .slice(0, 2)
     .map((a) => ({

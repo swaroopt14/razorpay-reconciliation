@@ -24,7 +24,7 @@ export async function GET(
 
   // Generate replay attempts for consumed keys
   const replayCount = status === 'CONSUMED' ? 2 : (status === 'REJECTED' ? Math.floor(Math.random() * 3) + 1 : 0)
-  const replayAttempts: ReplayAttempt[] = replayCount > 0 ? [
+  const replayAttemptPool: ReplayAttempt[] = [
     {
       timestamp: '2026-01-15T11:27:01Z',
       outcome: 'blocked',
@@ -35,7 +35,8 @@ export async function GET(
       outcome: 'blocked',
       source_ip: '10.0.1.45',
     },
-  ].slice(0, replayCount) : []
+  ]
+  const replayAttempts = replayCount > 0 ? replayAttemptPool.slice(0, replayCount) : []
 
   // Build the detailed response
   const detail: IdempotencyKeyDetail = {

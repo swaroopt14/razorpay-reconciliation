@@ -1,6 +1,6 @@
 import type { EmptyKpiResponse, MinorAmountField, Resolved } from './intelligenceTypes'
 
-/** One bubble on the Ambiguity Velocity scatter (7-day window). */
+/** Legacy timeseries row — GET /v1/intelligence/timeseries/ambiguity-velocity */
 export type AmbiguityVelocityScatterRow = {
   /** Calendar date YYYY-MM-DD. */
   date: string
@@ -21,6 +21,24 @@ export type AmbiguityVelocityScatterResolved = Resolved<{
   points: AmbiguityVelocityScatterRow[]
 }>
 
+/** Live bubble-map batch — GET /v1/intelligence/dashboard/bubble-map */
+export type AmbiguityBubbleMapBatch = {
+  batch_id: string
+  /** Total batch value in minor units (paise). */
+  amount_value: MinorAmountField
+  /** Ambiguous / at-risk value in minor units (paise). */
+  amount_at_risk: MinorAmountField
+  /** Optional ISO timestamp for X-axis placement when provided. */
+  observed_at?: string
+}
+
+export type AmbiguityBubbleMapResolved = Resolved<{
+  batches: AmbiguityBubbleMapBatch[]
+  count: number
+  intelligence_mode?: string
+}>
+
 export type AmbiguityVelocityScatterResponse =
   | AmbiguityVelocityScatterResolved
+  | AmbiguityBubbleMapResolved
   | EmptyKpiResponse

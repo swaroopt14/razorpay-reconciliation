@@ -1,6 +1,8 @@
 import type { Metadata } from 'next'
 import { resolveInitialDock } from './_lib/resolveInitialDock'
-import PayoutCommandViewClient from './_components/PayoutCommandViewClient'
+import PayoutCommandViewClient, {
+  type PayoutCommandScope,
+} from '@/features/payout-command/shell/PayoutCommandViewClient'
 
 export const metadata: Metadata = {
   title: 'Payout Command View | Zord',
@@ -21,14 +23,20 @@ export default function PayoutCommandViewTodayPage({
     dock?: string | string[]
     batch_id?: string | string[]
     client_batch_id?: string | string[]
+    accountTab?: string | string[]
   }
 }) {
+  const scope: PayoutCommandScope = {
+    batchId: readBatchIdParam(searchParams.batch_id),
+    clientBatchId: readBatchIdParam(searchParams.client_batch_id),
+    accountTab: readBatchIdParam(searchParams.accountTab),
+  }
+
   return (
     <PayoutCommandViewClient
       forceMode="live"
       initialDock={resolveInitialDock(searchParams.dock)}
-      initialJournalBatchId={readBatchIdParam(searchParams.batch_id)}
-      initialSettlementClientBatchId={readBatchIdParam(searchParams.client_batch_id)}
+      scope={scope}
     />
   )
 }

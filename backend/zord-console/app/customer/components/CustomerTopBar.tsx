@@ -104,7 +104,7 @@ export function CustomerTopBar({ tenant, environment = 'production', onEnvironme
       const detail = (ce.detail || {}) as { title?: unknown; desc?: unknown; type?: unknown }
       const title = typeof detail.title === 'string' ? detail.title : 'Notification'
       const desc = typeof detail.desc === 'string' ? detail.desc : undefined
-      const type =
+      const type: 'success' | 'warning' | 'error' | 'info' =
         detail.type === 'success' || detail.type === 'warning' || detail.type === 'error' || detail.type === 'info'
           ? detail.type
           : 'info'

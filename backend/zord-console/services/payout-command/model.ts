@@ -27,19 +27,22 @@ export type GlyphName =
   | 'lock'
   | 'settlement'
   | 'billing'
+  | 'support'
 
 export type DockId =
   | 'home'
   | 'workspace'
   | 'leakage'
   | 'ambiguity'
+  | 'verification'
+  | 'monitoring'
   | 'grid'
   | 'settlement'
   | 'connectors'
-  | 'sync'
   | 'proof'
   | 'sandbox'
   | 'billing'
+  | 'support'
 
 /** Dock IDs in sandbox top nav: Today → Intent → Settlement → Billing. */
 export const SANDBOX_DOCK_IDS: DockId[] = ['home', 'grid', 'settlement', 'billing']
@@ -51,14 +54,14 @@ export const SANDBOX_DOCK_DISPLAY_LABELS: Partial<Record<DockId, string>> = {
 }
 export type WorkspaceTab =
   | 'Today'
-  | 'Payment Clarity'
+  | 'Value at Risk'
   | 'Proof'
   | 'Sources'
   | 'Actions'
   | 'Routing'
 /** Command center time window. 'Quarter' is set by the `onQuarterChange` handler
  * in PayoutCommandViewClient when the user picks a specific quarter. */
-export type HomeTimeframe = 'Today' | 'Week' | 'Month' | 'Custom' | 'Quarter'
+export type HomeTimeframe = 'Today' | 'Week' | 'Month' | 'Year' | 'Custom' | 'Quarter'
 
 export type HomeSourceFilter = 'All' | 'Loan System' | 'Payment Partner'
 export type HomeMethodFilter = 'All' | 'NACH' | 'LSM' | 'Bank Transfer'
@@ -191,7 +194,7 @@ export const dockItems = [
     navLabel: 'Sandbox',
     title: 'Sandbox',
     breadcrumbLabel: 'Sandbox',
-    summary: 'Test the full Intent Journal flow without touching real funds. Uses the same APIs as live with your sandbox tenant.',
+    summary: 'Test the full Intent Journal flow without touching real funds. Uses the same APIs as live with your sandbox workspace.',
     icon: 'terminal',
   },
   {
@@ -226,12 +229,32 @@ export const dockItems = [
   },
   {
     id: 'ambiguity',
-    label: 'Matching',
-    navLabel: 'Matching',
-    title: 'Matching Confidence',
-    breadcrumbLabel: 'Matching',
+    label: 'Match Review',
+    navLabel: 'Match Review',
+    title: 'Match Review',
+    breadcrumbLabel: 'Match Review',
     summary:
       'See where Zord cannot confidently connect payment instructions to bank, PSP, or settlement outcomes.',
+    icon: 'chart',
+  },
+  {
+    id: 'verification',
+    label: 'Verification',
+    navLabel: 'Verification',
+    title: 'Borrower Verification',
+    breadcrumbLabel: 'Borrower Verification',
+    summary:
+      'Track borrower KYC, bank checks, fraud risk, and proof readiness before disbursal.',
+    icon: 'users',
+  },
+  {
+    id: 'monitoring',
+    label: 'Monitoring',
+    navLabel: 'Monitoring',
+    title: 'Post-Disbursal Monitoring',
+    breadcrumbLabel: 'Post-Disbursal Monitoring',
+    summary:
+      'Monitor confirmation, repayment health, suspicious behavior, and evidence readiness after disbursal.',
     icon: 'chart',
   },
   {
@@ -258,19 +281,11 @@ export const dockItems = [
     id: 'connectors',
     label: 'Connectors',
     navLabel: 'Connectors',
-    title: 'Connector Intelligence',
+    title: 'Connector Performance & Leakage',
     breadcrumbLabel: 'Connectors',
-    summary: 'Per-connector ambiguity, latency, and defensibility exposure — walk into a QBR with the exact ₹ exposure each connector creates per month.',
+    summary:
+      'Performance, leakage exposure, and recommended actions across your connected PSPs, banks, and rails.',
     icon: 'shield',
-  },
-  {
-    id: 'sync',
-    label: 'Systems',
-    navLabel: 'Connections',
-    title: 'Connected Systems',
-    breadcrumbLabel: 'Systems',
-    summary: 'Real-time view of loan system, payment partner, bank, and mandate connections in one place.',
-    icon: 'refresh',
   },
   {
     id: 'proof',
@@ -279,7 +294,7 @@ export const dockItems = [
     title: 'Evidence & Dispute Resolution',
     breadcrumbLabel: 'Evidence',
     summary:
-      'Build, verify, and export proof for payments, settlements, disputes, and audit review — one structured pack instead of screenshots and PSP log chases.',
+      'Build, verify, and export proof for payments, settlements, disputes, and audit review — one structured Evidence Pack instead of screenshots and PSP log chases.',
     icon: 'document',
   },
   {
@@ -290,6 +305,16 @@ export const dockItems = [
     breadcrumbLabel: 'Billing',
     summary: 'Plan, payment method, and invoice history. Sandbox uses test billing — no real charges.',
     icon: 'billing',
+  },
+  {
+    id: 'support',
+    label: 'Support',
+    navLabel: 'Support',
+    title: 'Support requests',
+    breadcrumbLabel: 'Support',
+    summary:
+      'Raise and track production support tickets with Zord. Attach batch context from Intent or Settlement Journal when reporting issues.',
+    icon: 'support',
   },
 ] as const
 
@@ -304,6 +329,7 @@ export const PAYOUT_VIEW_URLS = {
   settingsAccount: '/payout-command-view/settings/account',
   settingsApiKeys: '/payout-command-view/settings/api-keys',
   connectorIntelligence: '/payout-command-view/connector-intelligence',
+  support: '/payout-command-view/today?dock=support',
 } as const
 
 /** One row per dock icon: tooltip label + full page name (matches `dockItems`). */
@@ -341,7 +367,7 @@ export const PAYOUT_STANDALONE_PAGE_NAMES = [
 ] as const
 
 /** Selectable workspace context tabs (Routing is shown disabled separately). */
-export const workspaceTabs: WorkspaceTab[] = ['Today', 'Payment Clarity', 'Proof', 'Sources', 'Actions']
+export const workspaceTabs: WorkspaceTab[] = ['Today', 'Value at Risk', 'Proof', 'Sources', 'Actions']
 
 export const workspaceRoutingTab: WorkspaceTab = 'Routing'
 
@@ -350,7 +376,7 @@ export const workspacePromptCopy = {
   Today: {
     question: 'What should Zord check in this payment data?',
     supporting:
-      'Grounded on payment instructions, settlement outcomes, match confidence, and proof readiness for your signed-in tenant.',
+      'Grounded on payment instructions, settlement outcomes, match confidence, and proof readiness for your signed-in workspace.',
     suggestions: [
       'Which payments need review?',
       'Why is proof incomplete for this period?',
@@ -359,7 +385,7 @@ export const workspacePromptCopy = {
       'What should the accounts team upload next?',
     ],
   },
-  'Payment Clarity': {
+  'Value at Risk': {
     question: 'What payment value is unmatched, short-settled, or at risk?',
     supporting: 'Grounded on leakage KPIs: intended vs observed settlement and review exposure.',
     suggestions: [
@@ -370,17 +396,16 @@ export const workspacePromptCopy = {
     ],
   },
   Proof: {
-    question: 'What proof packs or evidence are ready for finance or audit?',
+    question: 'What evidence packs are ready for finance or audit?',
     supporting: 'Grounded on defensibility, evidence pack rate, and governance coverage.',
     suggestions: [
-      'Why is proof incomplete for this period?',
-      'Which proof packs can finance close now?',
+      'Which evidence packs can finance close now?',
       'What evidence is still missing today?',
       'What is blocking proof export?',
     ],
   },
   Sources: {
-    question: 'Which data sources has Zord received for this tenant?',
+    question: 'Which data sources has Zord received for this workspace?',
     supporting: 'Grounded on ingest status for intent files, settlement files, bank statements, and evidence.',
     suggestions: [
       'What should the accounts team upload next?',
@@ -402,7 +427,7 @@ export const workspacePromptCopy = {
   Routing: {
     question: 'What should Zord check in this payment data?',
     supporting:
-      'Zord is analyzing payment proof and settlement clarity. PSP/bank routing intelligence becomes available after Mode C integration.',
+      'Zord is analyzing payment proof and settlement clarity. PSP/bank routing intelligence becomes available once bank/PSP dispatch is connected.',
     suggestions: [] as readonly string[],
   },
 } as const
@@ -838,7 +863,7 @@ export const workspaceSimulationScenarios: Record<WorkspaceTab, readonly Workspa
       question: 'What is delaying proof export today?',
       supporting: 'Grounded on export queues, callback completion, and finance bundle readiness already visible in the workspace.',
       assistant: 'Proof export is still gated by missing callback attachments and late bank references on a narrow set of intents. The queue is small enough to clear today, but finance should prioritize packets where provider logs and callback proofs are already paired.',
-      heroLabel: 'Proof packs ready',
+      heroLabel: 'Evidence Packs ready',
       heroValue: '142',
       heroBars: [2, 3, 8, 13, 10, 7, 4, 6, 3, 2, 2],
       listTitle: 'Evidence sources',
@@ -851,7 +876,7 @@ export const workspaceSimulationScenarios: Record<WorkspaceTab, readonly Workspa
       compareLabels: ['Audit', 'Close'],
       bottomTitle: 'Export queue',
       bottomValue: '27',
-      bottomMeta: 'Proof packets waiting on final callback or statement cues.',
+      bottomMeta: 'Evidence Packs waiting on final callback or statement cues.',
       moduleBodies: [
         'Read export coverage, callback completion, and finance evidence from one proof lane.',
         'Clarify whether the next move belongs to finance, ops, or engineering trace review.',
@@ -891,12 +916,12 @@ export const workspaceSimulationScenarios: Record<WorkspaceTab, readonly Workspa
   ],
   Proof: [
     {
-      prompt: 'Which proof pack can finance close now?',
+      prompt: 'Which Evidence Pack can finance close now?',
       keywords: ['proof', 'finance', 'close', 'pack'],
       question: 'Which payout packets are closest to close-ready proof right now?',
       supporting: 'Grounded on callbacks, statement cues, export queue state, and finance readiness already visible in the workspace.',
       assistant: 'Finance can close the packets where callback proofs and statement references are already paired. The remaining risk sits in a smaller band of intents still waiting on statement-side confirmation or export assembly.',
-      heroLabel: 'Proof packs ready',
+      heroLabel: 'Evidence Packs ready',
       heroValue: '142',
       heroBars: [2, 3, 8, 13, 10, 7, 4, 6, 3, 2, 2],
       listTitle: 'Proof sources',
@@ -918,18 +943,18 @@ export const workspaceSimulationScenarios: Record<WorkspaceTab, readonly Workspa
       ],
     },
   ],
-  'Payment Clarity': [
+  'Value at Risk': [
     {
       prompt: 'What value is unmatched or short-settled?',
       keywords: ['unmatched', 'short-settled', 'value', 'clarity'],
       question: 'What payment value is unmatched, short-settled, or at risk?',
-      supporting: 'Grounded on leakage KPIs for this tenant period.',
+      supporting: 'Grounded on leakage KPIs for this workspace period.',
       assistant:
-        'Zord compared intended payment value with observed settlement. Unmatched and short-settled amounts are listed in Payment Clarity; upload missing intent or bank data if totals look incomplete.',
+        'Zord compared intended payment value with observed settlement. Unmatched and short-settled amounts are listed in Value at Risk; upload missing intent or bank data if totals look incomplete.',
       heroLabel: 'Value needing review',
       heroValue: '—',
       heroBars: [3, 5, 7, 9, 8, 6, 4, 3, 2, 2, 2],
-      listTitle: 'Payment clarity',
+      listTitle: 'Value at risk',
       listRows: [['Intended', '—'], ['Settled', '—'], ['Unmatched', '—']],
       listFooter: 'Upload missing files to refresh',
       listAction: 'View payment gaps',
@@ -952,10 +977,10 @@ export const workspaceSimulationScenarios: Record<WorkspaceTab, readonly Workspa
     {
       prompt: 'What should the accounts team upload next?',
       keywords: ['upload', 'missing', 'source', 'file'],
-      question: 'Which data sources has Zord received for this tenant?',
+      question: 'Which data sources has Zord received for this workspace?',
       supporting: 'Grounded on ingest status for intent, settlement, bank statement, and evidence.',
       assistant:
-        'Check Connected Sources for what Zord has received. Upload any source marked Missing before expecting full payment clarity or proof readiness.',
+        'Check Connected Sources for what Zord has received. Upload any source marked Missing before expecting full value at risk or proof readiness.',
       heroLabel: 'Connected sources',
       heroValue: '—',
       heroBars: [2, 3, 4, 5, 4, 3, 2, 2, 2, 2, 2],

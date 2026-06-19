@@ -10,6 +10,12 @@ import { DASHBOARD_FONT_STACK } from '@/services/payout-command/model'
 const SECTIONS = [
   { id: 'account', label: 'Account', href: '/payout-command-view/settings/account', enabled: true },
   { id: 'api-keys', label: 'API keys', href: '/payout-command-view/settings/api-keys', enabled: true },
+  {
+    id: 'support',
+    label: 'Support',
+    href: '/payout-command-view/today?dock=support',
+    enabled: true,
+  },
   { id: 'webhooks', label: 'Webhooks', href: '#', enabled: false },
   { id: 'billing', label: 'Billing', href: '#', enabled: false },
   { id: 'team', label: 'Team', href: '#', enabled: false },

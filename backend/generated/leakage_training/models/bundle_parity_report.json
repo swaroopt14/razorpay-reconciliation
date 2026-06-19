@@ -1,0 +1,53 @@
+{
+  "bundle_path": "generated\\leakage_training\\models\\leakage_prediction_bundle.joblib",
+  "cbm_path": "generated\\leakage_training\\models\\leakage_catboost_regressor.cbm",
+  "bundle_version": "leakage_prediction_v1",
+  "datasets": {
+    "combined": {
+      "rows": 378,
+      "max_abs_prediction_delta": 0.0,
+      "mean_abs_prediction_delta": 0.0,
+      "cbm_metrics": {
+        "rate_mae": 0.01266711061152599,
+        "rate_rmse": 0.03210667448174761,
+        "rate_r2": 0.9423174901925315,
+        "amount_mae_minor": 7018.897544189023
+      },
+      "bundle_metrics": {
+        "rate_mae": 0.01266711061152599,
+        "rate_rmse": 0.03210667448174761,
+        "rate_r2": 0.9423174901925315,
+        "amount_mae_minor": 7018.897544189023
+      },
+      "metric_abs_deltas": {
+        "rate_mae": 0.0,
+        "rate_rmse": 0.0,
+        "rate_r2": 0.0,
+        "amount_mae_minor": 0.0
+      }
+    },
+    "real_uploaded_batches": {
+      "rows": 18,
+      "max_abs_prediction_delta": 0.0,
+      "mean_abs_prediction_delta": 0.0,
+      "cbm_metrics": {
+        "rate_mae": 0.08267205957945684,
+        "rate_rmse": 0.11386647350774834,
+        "rate_r2": 0.2785646486002842,
+        "amount_mae_minor": 45568.546529070794
+      },
+      "bundle_metrics": {
+        "rate_mae": 0.08267205957945684,
+        "rate_rmse": 0.11386647350774834,
+        "rate_r2": 0.2785646486002842,
+        "amount_mae_minor": 45568.546529070794
+      },
+      "metric_abs_deltas": {
+        "rate_mae": 0.0,
+        "rate_rmse": 0.0,
+        "rate_r2": 0.0,
+        "amount_mae_minor": 0.0
+      }
+    }
+  }
+}

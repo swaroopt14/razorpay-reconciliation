@@ -43,7 +43,10 @@ services:
       - ML_RESULT_TOPIC=ml.result.events
       - LR_MODEL_PATH=/data/lr_model.json
       - RCA_MODEL_PATH=/data/rca_model.pk
+      - LEAKAGE_MODEL_PATH=/data/leakage_prediction_bundle.joblib
+      - INTELLIGENCE_DATABASE_URL=postgres://zpi:zpi_secret@postgres:5432/zord_intelligence?sslmode=disable
       - RCA_RETRAIN_THRESHOLD=50
+      - LEAKAGE_RETRAIN_THRESHOLD=50
     volumes:
       - ml_model_test_data:/data
     depends_on:

@@ -1,0 +1,37 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Kong Routes: zord-prompt-layer (AI Copilot / LLM Queries)
+# ─────────────────────────────────────────────────────────────────────────────
+# These routes are defined in kong/configmap.yaml (declarative config).
+# This file serves as documentation and reference.
+#
+# Service: zord-prompt-layer
+# Upstream: http://zord-prompt-layer.zord.svc.cluster.local:8086
+# Port: 8086
+#
+# Routes:
+#   - name: prompt-query
+#     path: /v1/query
+#     description: Natural language query over payment data
+#     auth: Bearer token + X-Tenant-Id header
+#     rate_limit: 60/min (stricter — LLM calls are expensive)
+#     timeout: 120s (LLM response time)
+#
+#   - name: prompt-chat
+#     path: /v1/chat
+#     description: Conversational AI interface
+#     auth: Bearer token + X-Tenant-Id header
+#     rate_limit: 60/min (stricter — LLM calls are expensive)
+#     timeout: 120s (LLM response time)
+#
+#   - name: prompt-health
+#     path: /prompt/health
+#     description: Health check endpoint
+#     auth: None
+#
+# Notes:
+#   - Uses Gemini API (GEMINI_API_KEYS secret)
+#   - Reads from all databases (edge, intent, relay, intelligence, evidence)
+#   - Tenant-scoped — X-Tenant-Id header required
+#   - Higher timeouts (120s) for LLM response generation
+#   - Stricter rate limits (60/min) to control API costs
+# ─────────────────────────────────────────────────────────────────────────────

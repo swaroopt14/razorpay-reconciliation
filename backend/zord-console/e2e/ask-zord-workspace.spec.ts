@@ -18,7 +18,7 @@ function installAuthIntelligenceAndPromptMocks(page: Page) {
         contentType: 'application/json',
         body: JSON.stringify({
           session: { tenant_id: SESSION_TENANT },
-          user: { tenant_id: SESSION_TENANT },
+          user: { id: 'e2e-user-1', tenant_id: SESSION_TENANT },
         }),
       })
     }),
@@ -48,7 +48,7 @@ function installAuthIntelligenceAndPromptMocks(page: Page) {
           buckets: [
             { key: '1', label: 'W1', total_amount: 10000, confirmed_amount: 8000, review_amount: 2000, intent_count: 10, confirmed_count: 8 },
           ],
-          source: 'intent_engine_aggregate',
+          source: 'intelligence_leakage_windows',
         }),
       })
     }),
@@ -133,8 +133,8 @@ function installAuthIntelligenceAndPromptMocks(page: Page) {
           evidence_pack_rate: 0.84,
           governance_coverage_pct: 0.88,
           replayability_pct: 0.9,
-          defensibility_score: 88,
-          defensibility_tier: 'GOOD',
+          defensibility_score: 58,
+          defensibility_tier: 'STRONG',
           audit_ready_pct: 0.8,
           dispute_ready_pct: 0.75,
         }
@@ -185,7 +185,7 @@ test.describe('Payment Operations View (Ask Zord workspace)', () => {
 
     await expect(page.getByText('Payments in Scope')).toBeVisible()
     await expect(page.getByText('Connected Sources')).toBeVisible()
-    await expect(page.getByText('Payment Clarity')).toBeVisible()
+    await expect(page.getByText('Value at Risk')).toBeVisible()
     await expect(page.getByText('Items Needing Review')).toBeVisible()
     await expect(page.getByText('Ask Zord About This Payment Data')).toBeVisible()
 
@@ -196,10 +196,10 @@ test.describe('Payment Operations View (Ask Zord workspace)', () => {
 
     await expect(page.getByTestId('workspace-routing-tab-disabled')).toBeVisible()
     await expect(page.getByRole('tab', { name: 'Today' })).toBeVisible()
-    await expect(page.getByRole('tab', { name: 'Payment Clarity' })).toBeVisible()
+    await expect(page.getByRole('tab', { name: 'Value at Risk' })).toBeVisible()
   })
 
-  test('suggested question triggers prompt-layer POST', async ({ page }) => {
+  test('loads initial latest answer from prompt-layer', async ({ page }) => {
     const promptWait = page.waitForRequest(
       (req) => req.method() === 'POST' && req.url().includes('/api/prompt-layer/query'),
       { timeout: 20_000 },
@@ -207,13 +207,28 @@ test.describe('Payment Operations View (Ask Zord workspace)', () => {
 
     await page.goto('/payout-command-view/today?dock=workspace')
 
-    const firstSuggestion = page.getByTestId('workspace-suggested-questions').getByRole('button').first()
-    await firstSuggestion.click()
+    await promptWait
+    await expect(page.getByTestId('workspace-chat-transcript-answer')).toBeVisible()
+    await expect(page.getByText(/18 payments needing review|missing bank references/i)).toBeVisible({
+      timeout: 15_000,
+    })
+  })
+
+  test('typed prompt triggers prompt-layer POST', async ({ page }) => {
+    const promptWait = page.waitForRequest(
+      (req) => req.method() === 'POST' && req.url().includes('/api/prompt-layer/query'),
+      { timeout: 20_000 },
+    )
+
+    await page.goto('/payout-command-view/today?dock=workspace')
+
+    await page.getByPlaceholder('Ask anything or search').fill('Which payments need review?')
+    await page.getByRole('button', { name: 'Send message' }).click()
 
     const req = await promptWait
     const body = req.postDataJSON() as { query?: string; tenant_id?: string }
     expect(body.tenant_id).toBe(SESSION_TENANT)
-    expect(body.query).toMatch(/review|proof|missing|unmatched|upload/i)
+    expect(body.query).toBe('Which payments need review?')
 
     await expect(page.getByText(/payments needing review|missing bank references/i)).toBeVisible({
       timeout: 15_000,

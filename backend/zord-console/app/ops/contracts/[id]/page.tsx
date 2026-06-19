@@ -17,6 +17,7 @@ export default function ContractDetailPage() {
   const [contract, setContract] = useState<ContractInstance | null>(null)
   const [decodedPayload, setDecodedPayload] = useState<DecodedContractPayload | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [payloadExpanded, setPayloadExpanded] = useState(false)
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -94,13 +95,12 @@ export default function ContractDetailPage() {
     )
   }
 
-  const decoded = contract?.contract_payload ? tryDecodeBase64Payload(contract.contract_payload) : null
+  const decoded = contract?.contract_payload ? atob(contract.contract_payload) : null
   let prettyPayload = ''
   if (decoded) {
     try {
       const parsed = JSON.parse(decoded)
-      const redacted = redactPII(parsed)
-      prettyPayload = JSON.stringify(redacted, null, 2)
+      prettyPayload = JSON.stringify(parsed, null, 2)
     } catch {
       // Non-JSON payload: display decoded but still avoid leaking obvious PII-like strings.
       prettyPayload = decoded

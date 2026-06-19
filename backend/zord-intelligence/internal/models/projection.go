@@ -316,6 +316,19 @@ type LeakageValue struct {
 	// This map is updated atomically in Postgres via jsonb_set ARRAY path.
 	BreakdownByType map[string]decimal.Decimal `json:"breakdown_by_type"`
 
+	// ── Pattern Intelligence extensions ───────────────────────────────────
+	// WhitelistedDeductionAmountMinor: sum of variance_amount_minor for all
+	// is_whitelisted=true variance records. Required to separate legitimate PSP
+	// fees from genuine unexplained loss in the Pattern Intelligence layer.
+	// Previously these events were silently skipped; now we track their amount.
+	WhitelistedDeductionAmountMinor decimal.Decimal `json:"whitelisted_deduction_amount_minor"`
+
+	// OverSettlementAmountMinor: sum of variance_amount_minor for all
+	// VarianceType="OVER_SETTLEMENT" records. Previously skipped entirely.
+	// Needed for "over-settlement" pattern detection (unexpected credit risk).
+	OverSettlementAmountMinor decimal.Decimal `json:"over_settlement_amount_minor"`
+	OverSettlementCount       int             `json:"over_settlement_count"`
+
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
@@ -400,11 +413,19 @@ type AmbiguityValue struct {
 	TotalCarrierRecords   int `json:"total_carrier_records"`
 	CarrierCompletenessRate float64 `json:"carrier_completeness_rate"` // recomputed: complete / total
 
+	// ── A9: Successful decisions ──────────────────────────────────────────
+	// A decision is "successful" when it is unambiguous, has a single
+	// (non-colliding) candidate, and the settled amount exactly matches
+	// the intended amount:
+	//   ambiguity_score <= 0.30 && candidate_set_size <= 1 && settled == intended
+	SuccessfulDecisionCount int `json:"successful_decision_count"`
+
 	// ── Derived rates (recomputed after every increment) ─────────────────
 	ProviderRefMissingRate float64 `json:"provider_ref_missing_rate"` // missing_count / total_decisions
 	AmbiguityRate          float64 `json:"ambiguity_rate"`            // ambiguous_count / total_decisions
 	LowConfidenceRate      float64 `json:"low_confidence_rate"`       // low_confidence_count / total_decisions
 	CandidateCollisionRate float64 `json:"candidate_collision_rate"`  // collision_count / total_decisions
+	DecisionSuccessRate    float64 `json:"decision_success_rate"`     // successful_decision_count / total_decisions
 
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -485,6 +506,14 @@ type DefensibilityValue struct {
 	// Stored as a free-form string to avoid a schema migration per Phase 4.
 	// Format: "corridor:{corridor_id}" or "source:{source_system_id}"
 	WeakestProofRef string `json:"weakest_proof_ref,omitempty"`
+
+	// ── Pattern Intelligence extensions: missing leaf tracking ────────────
+	// Required to compute missing_leaf_rate = (total_required_leaves - actual_leaves) / total_required_leaves.
+	// Previously LeafCount and RequiredLeafCount were received but not stored.
+	TotalLeafCount         int     `json:"total_leaf_count"`           // sum of leaf_count across all evidence packs
+	TotalRequiredLeafCount int     `json:"total_required_leaf_count"`  // sum of required_leaf_count across all evidence packs
+	MissingLeafCount       int     `json:"missing_leaf_count"`         // sum of (required - actual) per pack
+	MissingLeafRate        float64 `json:"missing_leaf_rate"`          // missing_leaf_count / total_required_leaf_count
 
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -638,8 +667,23 @@ type PatternTenantSummaryValue struct {
 	// Bounded sample array: stores last min(N, windowSize) delay values so
 	// that p95 can be computed exactly by sorting at snapshot time.
 	// Array is scoped to the current daily window (resets with window).
-	SettlementDelaySamples []int   `json:"settlement_delay_samples"` // bounded list of delay-day values
+	SettlementDelaySamples []int   `json:"settlement_delay_samples"`  // bounded list of delay-day values
 	SettlementDelayP95Days float64 `json:"settlement_delay_p95_days"` // P6 derived: 95th percentile
+	SettlementDelayP50Days float64 `json:"settlement_delay_p50_days"` // P6 derived: 50th percentile (median)
+
+	// ── Pattern Intelligence extensions ───────────────────────────────────
+	// DuplicateRiskAmountMinor: sum of intent amounts where duplicate_risk_flag=true.
+	// Previously only the count was tracked (DuplicateRiskCount). The amount is
+	// required for the "Review Duplicate-Risk Cluster" recommendation card.
+	DuplicateRiskAmountMinor decimal.Decimal `json:"duplicate_risk_amount_minor"`
+
+	// MissingClientRefCount / TotalIntentCount: needed for tenant-level
+	// missing_client_ref_rate (complement to per-source tracking in SourceQualityValue).
+	MissingClientRefCount int `json:"missing_client_ref_count"`
+
+	// CrossPeriodCount: number of variance records with cross_period_flag=true.
+	// Required for cross_period_settlement_rate KPI (Pattern section H).
+	CrossPeriodCount int `json:"cross_period_count"`
 
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -668,8 +712,279 @@ type PatternBatchIntentDensityValue struct {
 	// MaxPairCount: the highest count for any single (fingerprint, amount) pair.
 	// SameBeneficiaryAmountDensity = MaxPairCount / TotalCount.
 	// Range: 0.0 (all unique pairs) → 1.0 (all intents share the same pair — perfect payroll).
-	MaxPairCount                 int     `json:"max_pair_count"`                   // highest pair count
-	SameBeneficiaryAmountDensity float64 `json:"same_beneficiary_amount_density"`  // P3 derived
+	MaxPairCount                 int     `json:"max_pair_count"`                  // highest pair count
+	SameBeneficiaryAmountDensity float64 `json:"same_beneficiary_amount_density"` // P3 derived
 
 	UpdatedAt time.Time `json:"updated_at"`
 }
+
+// ── PATTERN INTELLIGENCE: Multi-Dimensional Projection Value Types ────────────
+//
+// These five new types back the Pattern Intelligence layer introduced by the
+// full Pattern & Recommendation spec. Each is stored in projection_state.value_json
+// under its own keyed family so they can be read independently.
+//
+// Projection key families:
+//   pattern.source.{source_system}              → SourceQualityValue
+//   pattern.provider.{provider_id}              → ProviderQualityValue
+//   pattern.bank.{bank_id}                      → BankQualityValue
+//   pattern.ambiguity.source.{source_system}    → AmbiguityBySourceValue
+//   pattern.variance.source.{source_system}     → VarianceBySourceValue
+//
+// ALL MONEY IS IN MINOR UNITS (paise, cents). NEVER float64 for money.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// SourceQualityValue tracks per-source-system payment file quality signals.
+// Accumulated from IntentCreatedEvent and DLQItemEvent.
+//
+// Answers: "Which source system is creating weak payment records?"
+// Used by Pattern Intelligence section A (source-system traceability patterns)
+// and the "Fix Source Export" / "Escalate Source System" recommendation types.
+//
+// Projection key: "pattern.source.{source_system}"
+// Entity scope:   TENANT
+type SourceQualityValue struct {
+	SourceSystem string `json:"source_system"` // e.g. "tally_branch_a", "sap_vendor_batch"
+
+	// ── Intent volume counters ────────────────────────────────────────────
+	TotalIntentCount      int             `json:"total_intent_count"`       // all intents from this source
+	TotalIntentAmountMinor decimal.Decimal `json:"total_intent_amount_minor"` // sum of intent amounts
+
+	// ── File quality signals (from IntentCreatedEvent) ────────────────────
+	// MissingClientRefCount: intents where client_payout_ref == "".
+	// This is the #1 signal for the "Add stronger references" recommendation.
+	MissingClientRefCount int `json:"missing_client_ref_count"`
+	// LowMatchabilityCount: intents where matchability_score < 0.60.
+	// Indicates the source produces records that are hard to match to settlements.
+	LowMatchabilityCount int `json:"low_matchability_count"`
+	// LowProofReadinessCount: intents where proof_readiness_score < 0.60.
+	// Triggers the "Move flow to Prepare-and-Sign" recommendation.
+	LowProofReadinessCount int `json:"low_proof_readiness_count"`
+	// LowQualityScoreCount: intents where intent_quality_score < 0.60.
+	LowQualityScoreCount int `json:"low_quality_score_count"`
+
+	// ── Duplicate risk signals (from IntentCreatedEvent) ──────────────────
+	DuplicateRiskCount        int             `json:"duplicate_risk_count"`          // intents with duplicate_risk_flag=true
+	DuplicateRiskAmountMinor  decimal.Decimal `json:"duplicate_risk_amount_minor"`   // sum of amounts for risk-flagged intents
+
+	// ── Manual review signals (from DLQItemEvent) ───────────────────────
+	// Incremented per-intent when a payment row is routed to human review.
+	ManualReviewCount       int             `json:"manual_review_count"`        // intents sent to manual review
+	ManualReviewAmountMinor decimal.Decimal `json:"manual_review_amount_minor"` // sum of manual review amounts
+	// ReasonBreakdown: reason_code → count of manual review events with that reason.
+	// Used to surface the dominant failure reason per source system.
+	ReasonBreakdown map[string]int `json:"reason_breakdown"` // reason_code → count
+
+	// ── Batch tracking (approximate unique batches from this source) ─────
+	// Incremented when a new batch_ref differs from the last seen one.
+	// Approximate because concurrent writes may miss some transitions.
+	// Used to populate AffectedBatchCount on recommendation cards.
+	BatchCount    int    `json:"batch_count"`
+	LastBatchRef  string `json:"last_batch_ref"`
+
+	// ── Derived rates (recomputed after every increment) ─────────────────
+	MissingClientRefRate   float64 `json:"missing_client_ref_rate"`   // missing_client_ref_count / total_intent_count
+	LowMatchabilityRate    float64 `json:"low_matchability_rate"`     // low_matchability_count / total_intent_count
+	LowProofReadinessRate  float64 `json:"low_proof_readiness_rate"`  // low_proof_readiness_count / total_intent_count
+	DuplicateRiskRate      float64 `json:"duplicate_risk_rate"`       // duplicate_risk_count / total_intent_count
+	ManualReviewRate       float64 `json:"manual_review_rate"`        // manual_review_count / total_intent_count
+
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// ProviderQualityValue tracks per-PSP/provider settlement quality signals.
+// Accumulated from CanonicalSettlementCreatedEvent and AttachmentDecisionCreatedEvent.
+//
+// Answers: "Which PSP/provider creates uncertainty, delay, or weak references?"
+// Used by Pattern Intelligence section B (bank/PSP reliability patterns).
+//
+// Projection key: "pattern.provider.{provider_id}"
+// Entity scope:   TENANT
+type ProviderQualityValue struct {
+	ProviderID string `json:"provider_id"` // e.g. "razorpay", "payu", "cashfree"
+
+	// ── Settlement volume (from CanonicalSettlementCreatedEvent) ─────────
+	TotalSettlementCount        int             `json:"total_settlement_count"`
+	TotalSettlementAmountMinor  decimal.Decimal `json:"total_settlement_amount_minor"`
+
+	// ── Parse and mapping quality (running sums for averages) ────────────
+	// Stored as sum+count so the average survives incremental updates
+	// without storing all historical scores (Welford's online algorithm).
+	ParseConfidenceSum   float64 `json:"parse_confidence_sum"`
+	ParseConfidenceCount int     `json:"parse_confidence_count"`
+	WeakParseCount       int     `json:"weak_parse_count"` // parse_confidence < 0.70
+
+	MappingConfidenceSum   float64 `json:"mapping_confidence_sum"`
+	MappingConfidenceCount int     `json:"mapping_confidence_count"`
+	WeakMappingCount       int     `json:"weak_mapping_count"` // mapping_confidence < 0.70
+
+	// ── Carrier richness and attachment readiness ─────────────────────────
+	CarrierRichnessSum      float64 `json:"carrier_richness_sum"`
+	CarrierRichnessCount    int     `json:"carrier_richness_count"`
+	AttachmentReadinessSum  float64 `json:"attachment_readiness_sum"`
+	AttachmentReadinessCount int    `json:"attachment_readiness_count"`
+
+	// ── Orphan settlements (attachment_readiness < 0.30 and status = SETTLED) ─
+	OrphanCount int `json:"orphan_count"`
+
+	// ── Missing reference flags ───────────────────────────────────────────
+	// Populated from CanonicalSettlementCreatedEvent carrier fields presence.
+	MissingProviderRefCount int `json:"missing_provider_ref_count"` // provider_ref == ""
+	MissingClientRefCount   int `json:"missing_client_ref_count"`   // client_ref == ""
+
+	// ── Ambiguity signals (from AttachmentDecisionCreatedEvent) ──────────
+	TotalDecisions        int `json:"total_decisions"`         // all decisions for this provider's settlements
+	AmbiguousDecisions    int `json:"ambiguous_decisions"`     // MATCH_AMBIGUOUS decisions
+	UnresolvedDecisions   int `json:"unresolved_decisions"`    // MATCH_UNRESOLVED decisions
+
+	// ── A9: Successful decisions (from AttachmentDecisionCreatedEvent) ───
+	// ambiguity_score <= 0.30 && candidate_set_size <= 1 && settled == intended
+	SuccessfulDecisionCount int `json:"successful_decision_count"`
+
+	// ── Settlement delay samples (from VarianceRecordCreatedEvent) ────────
+	// Bounded array: stores last 500 delay-day values for p50/p95 computation.
+	// Bounded to prevent unbounded memory growth in high-volume tenants.
+	SettlementDelaySamples []int `json:"settlement_delay_samples"`
+
+	// ── Derived rates (recomputed after every increment) ─────────────────
+	AvgParseConfidence      float64 `json:"avg_parse_confidence"`
+	AvgMappingConfidence    float64 `json:"avg_mapping_confidence"`
+	AvgCarrierRichness      float64 `json:"avg_carrier_richness"`
+	AvgAttachmentReadiness  float64 `json:"avg_attachment_readiness"`
+	OrphanRate              float64 `json:"orphan_rate"`               // orphan_count / total_settlement_count
+	AmbiguityRate           float64 `json:"ambiguity_rate"`            // ambiguous_decisions / total_decisions
+	DecisionSuccessRate     float64 `json:"decision_success_rate"`     // successful_decision_count / total_decisions
+	SettlementDelayP95Days  float64 `json:"settlement_delay_p95_days"` // 95th percentile of delay samples
+	SettlementDelayP50Days  float64 `json:"settlement_delay_p50_days"` // 50th percentile of delay samples
+
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// BankQualityValue tracks per-bank settlement quality and timing signals.
+// Accumulated from CanonicalSettlementCreatedEvent.
+//
+// Answers: "Which bank settles late or omits references?"
+// Complements ProviderQualityValue — a bank and a PSP are different dimensions.
+// (e.g. Razorpay PSP, HDFC bank, IMPS rail are three orthogonal groupings.)
+//
+// Projection key: "pattern.bank.{bank_id}"
+// Entity scope:   TENANT
+type BankQualityValue struct {
+	BankID string `json:"bank_id"` // e.g. "HDFC", "ICICI", "SBI"
+
+	TotalSettlementCount int `json:"total_settlement_count"`
+
+	// ── Reference completeness ────────────────────────────────────────────
+	MissingBankRefCount int `json:"missing_bank_ref_count"` // bank_ref == ""
+	MissingUTRCount     int `json:"missing_utr_count"`      // utr == ""
+
+	// ── Settlement delay samples (bounded array, max 500 entries) ────────
+	SettlementDelaySamples []int `json:"settlement_delay_samples"`
+
+	// ── Derived rates ─────────────────────────────────────────────────────
+	MissingBankRefRate      float64 `json:"missing_bank_ref_rate"`       // missing_bank_ref_count / total_settlement_count
+	SettlementDelayP95Days  float64 `json:"settlement_delay_p95_days"`
+	SettlementDelayP50Days  float64 `json:"settlement_delay_p50_days"`
+
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// AmbiguityBySourceValue tracks per-source-system ambiguity signals.
+// Accumulated from AttachmentDecisionCreatedEvent.SourceSystem (new field).
+//
+// Answers: "Which source system is repeatedly producing ambiguous attachments?"
+// Used by Pattern Intelligence section C (ambiguity pattern intelligence).
+//
+// Projection key: "pattern.ambiguity.source.{source_system}"
+// Entity scope:   TENANT
+type AmbiguityBySourceValue struct {
+	SourceSystem string `json:"source_system"`
+
+	// ── Decision counters ─────────────────────────────────────────────────
+	TotalDecisions    int `json:"total_decisions"`     // all attachment decisions for this source's intents
+	AmbiguousCount    int `json:"ambiguous_count"`     // MATCH_AMBIGUOUS decisions
+	UnresolvedCount   int `json:"unresolved_count"`    // MATCH_UNRESOLVED decisions
+	LowConfidenceCount int `json:"low_confidence_count"` // confidence_score < 0.70
+
+	// ── Candidate set collision ───────────────────────────────────────────
+	// Collision = decision where candidate_set_size > 1 (multiple possible intents matched).
+	CollisionCount        int `json:"collision_count"`          // decisions where candidate_set_size > 1
+	CandidateSetSizeSum   int `json:"candidate_set_size_sum"`   // running sum for average
+
+	// ── Value at risk ─────────────────────────────────────────────────────
+	// Sum of intended_amount_minor for MATCH_AMBIGUOUS and MATCH_UNRESOLVED decisions.
+	ValueAtRiskMinor decimal.Decimal `json:"value_at_risk_minor"`
+
+	// ── Derived rates (recomputed after every increment) ─────────────────
+	AmbiguityRate      float64 `json:"ambiguity_rate"`       // ambiguous_count / total_decisions
+	CollisionRate      float64 `json:"collision_rate"`       // collision_count / total_decisions
+	LowConfidenceRate  float64 `json:"low_confidence_rate"`  // low_confidence_count / total_decisions
+	AvgCandidateSetSize float64 `json:"avg_candidate_set_size"` // candidate_set_size_sum / total_decisions
+
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// VarianceBySourceValue tracks per-source-system variance and deduction signals.
+// Accumulated from VarianceRecordCreatedEvent.SourceSystem (new field).
+//
+// Answers: "Which source system drives unexplained settlement gaps?"
+// Used by Pattern Intelligence section D (leakage/variance pattern intelligence).
+//
+// Projection key: "pattern.variance.source.{source_system}"
+// Entity scope:   TENANT
+type VarianceBySourceValue struct {
+	SourceSystem string `json:"source_system"`
+
+	// ── Variance counters ─────────────────────────────────────────────────
+	TotalVarianceCount      int             `json:"total_variance_count"`
+	TotalVarianceAmountMinor decimal.Decimal `json:"total_variance_amount_minor"` // sum of all variance_amount_minor
+
+	// ── Explained vs unexplained split ───────────────────────────────────
+	// Whitelisted = pre-agreed fee/TDS/commission deduction (expected, not leakage).
+	// Unwhitelisted = potentially unexplained loss that requires investigation.
+	WhitelistedVarianceCount   int             `json:"whitelisted_variance_count"`
+	WhitelistedVarianceMinor   decimal.Decimal `json:"whitelisted_variance_minor"`   // legitimate deductions
+	UnexplainedVarianceCount   int             `json:"unexplained_variance_count"`
+	UnexplainedVarianceMinor   decimal.Decimal `json:"unexplained_variance_minor"`   // real leakage candidates
+
+	// ── Reference quality flags (from VarianceRecordCreatedEvent) ─────────
+	MissingProviderRefCount int `json:"missing_provider_ref_count"` // provider_ref_missing_flag=true
+	MissingBankRefCount     int `json:"missing_bank_ref_count"`     // bank_ref_missing_flag=true
+
+	// ── Timing flags ─────────────────────────────────────────────────────
+	CrossPeriodCount int `json:"cross_period_count"` // cross_period_flag=true
+
+	// ── Fee variance (legitimate PSP fee component) ───────────────────────
+	// Tracking fee_variance separately lets ZPI differentiate "expected PSP fee"
+	// from "genuinely unexplained deduction" — avoids false leakage alerts.
+	FeeVarianceTotalMinor decimal.Decimal `json:"fee_variance_total_minor"` // sum of fee_variance
+
+	// ── Variance by type breakdown ────────────────────────────────────────
+	// Key: variance_type string (e.g. "UNDER_SETTLEMENT", "DEDUCTION", "REVERSAL")
+	// Value: cumulative minor-unit amount for that type from this source system.
+	BreakdownByType map[string]decimal.Decimal `json:"breakdown_by_type"`
+
+	// ── Derived rates ─────────────────────────────────────────────────────
+	UnexplainedVarianceRate    float64 `json:"unexplained_variance_rate"`    // unexplained_amount / total_intended (needs cross-ref with SourceQualityValue)
+	MissingProviderRefRate     float64 `json:"missing_provider_ref_rate"`    // missing_provider_ref_count / total_variance_count
+	MissingBankRefRate         float64 `json:"missing_bank_ref_rate"`        // missing_bank_ref_count / total_variance_count
+
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// ── Extensions to existing projection value types ────────────────────────────
+// The following additions extend LeakageValue and PatternTenantSummaryValue
+// with fields required by Pattern Intelligence.
+// These are stored in the same projection_state rows as before —
+// the JSONB column accepts the extra keys transparently.
+
+// LeakageValueExtension documents new fields added to LeakageValue for
+// Pattern Intelligence. These are embedded directly in LeakageValue above;
+// this comment block serves as the authoritative change record.
+//
+// New fields:
+//   WhitelistedDeductionAmountMinor decimal.Decimal — sum of all whitelisted variance amounts.
+//     Required for the "Update Variance Policy" recommendation: separates legitimate
+//     PSP fees from real unexplained leakage so the dashboard does not raise false alerts.
+//   OverSettlementAmountMinor decimal.Decimal — sum of OVER_SETTLEMENT variance amounts.
+//     Previously skipped entirely. Tracked for the "over-settlement pattern" detection.

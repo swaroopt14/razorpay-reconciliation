@@ -15,9 +15,17 @@ spec:
     spec:
       securityContext:
         fsGroup: 1000
+      priorityClassName: infra-critical
+      # Schedule on the stateful on-demand node group
+      tolerations:
+        - key: workload
+          value: stateful
+          effect: NoSchedule
+      nodeSelector:
+        workload: stateful
       containers:
         - name: kafka
-          image: confluentinc/cp-kafka:7.6.0
+          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/cp-kafka:7.6.0
           ports:
             - containerPort: 9092
               name: kafka
@@ -35,7 +43,7 @@ spec:
             - name: KAFKA_LISTENERS
               value: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
             - name: KAFKA_ADVERTISED_LISTENERS
-              value: PLAINTEXT://zord-kafka:9092
+              value: PLAINTEXT://zord-kafka.zord.svc.cluster.local:9092
             - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
               value: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
             - name: KAFKA_INTER_BROKER_LISTENER_NAME
@@ -57,6 +65,7 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/kafka/data
+              subPath: kafka-data
           readinessProbe:
             tcpSocket:
               port: 9092
@@ -72,7 +81,7 @@ spec:
           resources:
             requests:
               cpu: 500m
-              memory: 2Gi
+              memory: 1Gi
             limits:
               cpu: "2"
               memory: 4Gi

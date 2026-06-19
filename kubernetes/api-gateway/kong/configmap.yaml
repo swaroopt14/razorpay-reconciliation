@@ -1,0 +1,779 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kong-declarative-config
+  namespace: api-gateway
+data:
+  kong.yaml: |
+    _format_version: "3.0"
+    _transform: true
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # SERVICES — Each maps to a Kubernetes service in the zord namespace
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    services:
+
+      # ── zord-console (Frontend) ──────────────────────────────────────────────
+      - name: zord-console
+        url: http://zord-console.zord.svc.cluster.local:3000
+        connect_timeout: 10000
+        write_timeout: 60000
+        read_timeout: 60000
+        retries: 3
+        routes:
+          - name: console-root
+            paths:
+              - /
+            strip_path: false
+            preserve_host: true
+            protocols:
+              - http
+              - https
+
+      # ── zord-edge (API Gateway / Ingestion) ──────────────────────────────────
+      - name: zord-edge
+        url: http://zord-edge.zord.svc.cluster.local:8080
+        connect_timeout: 10000
+        write_timeout: 60000
+        read_timeout: 60000
+        retries: 3
+        routes:
+          - name: edge-admin
+            paths:
+              - /v1/admin
+            strip_path: false
+            preserve_host: true
+            protocols:
+              - http
+              - https
+          - name: edge-bulk-ingest
+            paths:
+              - /v1/bulk-ingest
+            strip_path: false
+            preserve_host: true
+            protocols:
+              - http
+              - https
+          - name: edge-ingest
+            paths:
+              - /v1/ingest
+            strip_path: false
+            preserve_host: true
+            protocols:
+              - http
+              - https
+          - name: edge-webhooks
+            paths:
+              - /v1/webhooks
+            strip_path: false
+            preserve_host: true
+            protocols:
+              - http
+              - https
+          - name: edge-tenants
+            paths:
+              - /v1/tenants
+            strip_path: false
+            preserve_host: true
+            protocols:
+              - http
+              - https
+          - name: edge-connectors
+            paths:
+              - /v1/connectors
+            strip_path: false
+            preserve_host: true
+            protocols:
+              - http
+              - https
+          - name: edge-auth
+            paths:
+              - /v1/auth
+            strip_path: false
+            preserve_host: true
+            protocols:
+              - http
+              - https
+          - name: edge-health
+            paths:
+              - /edge/health
+            strip_path: true
+            preserve_host: true
+            protocols:
+              - http
+              - https
+
+      # ── zord-intent-engine (Validation & Canonicalization) ───────────────────
+      - name: zord-intent-engine
+        url: http://zord-intent-engine.zord.svc.cluster.local:8083
+        connect_timeout: 10000
+        write_timeout: 60000
+        read_timeout: 60000
+        retries: 3
+        routes:
+          - name: intent-api
+            paths:
+              - /v1/intents
+            strip_path: false
+            preserve_host: true
+            protocols:
+              - http
+              - https
+          - name: intent-dlq
+            paths:
+              - /v1/dlq
+            strip_path: false
+            preserve_host: true
+            protocols:
+              - http
+              - https
+          - name: intent-etl
+            paths:
+              - /v1/etl
+            strip_path: false
+            preserve_host: true
+            protocols:
+              - http
+              - https
+          - name: intent-health
+            paths:
+              - /intent/health
+            strip_path: true
+            preserve_host: true
+            protocols:
+              - http
+              - https
+
+      # ── zord-relay (Event Relay & Dispatch) ──────────────────────────────────
+      - name: zord-relay
+        url: http://zord-relay.zord.svc.cluster.local:8082
+        connect_timeout: 10000
+        write_timeout: 30000
+        read_timeout: 30000
+        retries: 2
+        routes:
+          - name: relay-dispatch
+            paths:
+              - /v1/dispatch
+            strip_path: false
+            preserve_host: true
+            protocols:
+              - http
+              - https
+          - name: relay-health
+            paths:
+              - /relay/health
+            strip_path: true
+            preserve_host: true
+            protocols:
+              - http
+              - https
+
+      # ── zord-outcome-engine (Settlement & Reconciliation) ───────────────────
+      - name: zord-outcome-engine
+        url: http://zord-outcome-engine.zord.svc.cluster.local:8081
+        connect_timeout: 10000
+        write_timeout: 120000
+        read_timeout: 120000
+        retries: 3
+        routes:
+          - name: outcome-settlement
+            paths:
+              - /v1/settlement
+            strip_path: false
+            preserve_host: true
+            protocols:
+              - http
+              - https
+          - name: outcome-reconciliation
+            paths:
+              - /v1/reconciliation
+            strip_path: false
+            preserve_host: true
+            protocols:
+              - http
+              - https
+          - name: outcome-health
+            paths:
+              - /outcome/health
+            strip_path: true
+            preserve_host: true
+            protocols:
+              - http
+              - https
+
+      # ── zord-evidence (Evidence Packs & Merkle Proofs) ──────────────────────
+      - name: zord-evidence
+        url: http://zord-evidence.zord.svc.cluster.local:8088
+        connect_timeout: 10000
+        write_timeout: 60000
+        read_timeout: 60000
+        retries: 3
+        routes:
+          - name: evidence-packs
+            paths:
+              - /v1/evidence
+            strip_path: false
+            preserve_host: true
+            protocols:
+              - http
+              - https
+          - name: evidence-verify
+            paths:
+              - /v1/verify
+            strip_path: false
+            preserve_host: true
+            protocols:
+              - http
+              - https
+          - name: evidence-health
+            paths:
+              - /evidence/health
+            strip_path: true
+            preserve_host: true
+            protocols:
+              - http
+              - https
+
+      # ── zord-intelligence (Policies, Projections, RCA) ─────────────────────
+      - name: zord-intelligence
+        url: http://zord-intelligence.zord.svc.cluster.local:8089
+        connect_timeout: 10000
+        write_timeout: 60000
+        read_timeout: 60000
+        retries: 3
+        routes:
+          - name: intelligence-projections
+            paths:
+              - /v1/projections
+            strip_path: false
+            preserve_host: true
+            protocols:
+              - http
+              - https
+          - name: intelligence-policies
+            paths:
+              - /v1/policies
+            strip_path: false
+            preserve_host: true
+            protocols:
+              - http
+              - https
+          - name: intelligence-rca
+            paths:
+              - /v1/intelligence/rca
+            strip_path: false
+            preserve_host: true
+            protocols:
+              - http
+              - https
+          - name: intelligence-health
+            paths:
+              - /intelligence/health
+            strip_path: true
+            preserve_host: true
+            protocols:
+              - http
+              - https
+
+      # ── zord-prompt-layer (AI Copilot / LLM Queries) ───────────────────────
+      - name: zord-prompt-layer
+        url: http://zord-prompt-layer.zord.svc.cluster.local:8086
+        connect_timeout: 10000
+        write_timeout: 120000
+        read_timeout: 120000
+        retries: 2
+        routes:
+          - name: prompt-query
+            paths:
+              - /v1/query
+            strip_path: false
+            preserve_host: true
+            protocols:
+              - http
+              - https
+          - name: prompt-chat
+            paths:
+              - /v1/chat
+            strip_path: false
+            preserve_host: true
+            protocols:
+              - http
+              - https
+          - name: prompt-health
+            paths:
+              - /prompt/health
+            strip_path: true
+            preserve_host: true
+            protocols:
+              - http
+              - https
+
+      # ── zord-token-enclave (Internal Only — limited exposure) ──────────────
+      - name: zord-token-enclave
+        url: http://zord-token-enclave.zord.svc.cluster.local:8087
+        connect_timeout: 5000
+        write_timeout: 15000
+        read_timeout: 15000
+        retries: 2
+        routes:
+          - name: token-enclave-health
+            paths:
+              - /token/health
+            strip_path: true
+            preserve_host: true
+            protocols:
+              - http
+              - https
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # PLUGINS — Global plugins applied to all routes
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    plugins:
+
+      # ── CORS (Cross-Origin Resource Sharing) ────────────────────────────────
+      - name: cors
+        config:
+          origins:
+            - "https://zordnet.com"
+            - "https://www.zordnet.com"
+            - "http://localhost:3000"
+          methods:
+            - GET
+            - POST
+            - PUT
+            - PATCH
+            - DELETE
+            - OPTIONS
+            - HEAD
+          headers:
+            - Accept
+            - Authorization
+            - Content-Type
+            - X-Zord-ADMIN-KEY
+            - X-Zord-Source-Type
+            - X-Zord-Source-Class
+            - X-Zord-Tenant-Type
+            - X-Tenant-Id
+            - Batch-Id
+          exposed_headers:
+            - X-Request-Id
+            - X-Kong-Upstream-Latency
+            - X-Kong-Proxy-Latency
+          credentials: true
+          max_age: 3600
+          preflight_continue: false
+
+      # ── Rate Limiting (Global — per IP) ─────────────────────────────────────
+      - name: rate-limiting
+        config:
+          minute: 1000
+          hour: 30000
+          policy: local
+          fault_tolerant: true
+          hide_client_headers: false
+          error_code: 429
+          error_message: "Rate limit exceeded. Please slow down."
+
+      # ── Prometheus Metrics ──────────────────────────────────────────────────
+      - name: prometheus
+        config:
+          status_code_metrics: true
+          latency_metrics: true
+          bandwidth_metrics: true
+          upstream_health_metrics: true
+          per_consumer: false
+
+      # ── Request ID (Correlation) ────────────────────────────────────────────
+      - name: correlation-id
+        config:
+          header_name: X-Request-Id
+          generator: uuid#counter
+          echo_downstream: true
+
+      # ── Request Size Limiting ───────────────────────────────────────────────
+      - name: request-size-limiting
+        config:
+          allowed_payload_size: 50
+          size_unit: megabytes
+          require_content_length: false
+
+      # ── Response Transformer (Security Headers) ─────────────────────────────
+      - name: response-transformer
+        config:
+          add:
+            headers:
+              - "X-Content-Type-Options: nosniff"
+              - "X-Frame-Options: DENY"
+              - "X-XSS-Protection: 1; mode=block"
+              - "Strict-Transport-Security: max-age=31536000; includeSubDomains"
+              - "Referrer-Policy: strict-origin-when-cross-origin"
+          remove:
+            headers:
+              - Server
+              - X-Powered-By
+
+      # ── IP Restriction (Admin routes only) ──────────────────────────────────
+      # Applied specifically to admin route below
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # ROUTE-SPECIFIC PLUGINS
+    # ═══════════════════════════════════════════════════════════════════════════
+
+      # ── Rate Limiting: Bulk Ingest (stricter) ───────────────────────────────
+      - name: rate-limiting
+        route: edge-bulk-ingest
+        config:
+          minute: 30
+          hour: 500
+          policy: local
+          fault_tolerant: true
+          hide_client_headers: false
+          error_code: 429
+          error_message: "Bulk ingest rate limit exceeded."
+
+      # ── Rate Limiting: Settlement Upload (stricter) ─────────────────────────
+      - name: rate-limiting
+        route: outcome-settlement
+        config:
+          minute: 20
+          hour: 200
+          policy: local
+          fault_tolerant: true
+          hide_client_headers: false
+          error_code: 429
+          error_message: "Settlement upload rate limit exceeded."
+
+      # ── Rate Limiting: AI Query (prevent abuse) ─────────────────────────────
+      - name: rate-limiting
+        route: prompt-query
+        config:
+          minute: 60
+          hour: 1000
+          policy: local
+          fault_tolerant: true
+          hide_client_headers: false
+          error_code: 429
+          error_message: "AI query rate limit exceeded."
+
+      # ── Rate Limiting: AI Chat (prevent abuse) ──────────────────────────────
+      - name: rate-limiting
+        route: prompt-chat
+        config:
+          minute: 60
+          hour: 1000
+          policy: local
+          fault_tolerant: true
+          hide_client_headers: false
+          error_code: 429
+          error_message: "AI chat rate limit exceeded."
+
+      # ── Request Logging: Admin routes ───────────────────────────────────────
+      - name: file-log
+        route: edge-admin
+        config:
+          path: /dev/stdout
+          reopen: false
+
+      # ── Request Logging: Bulk Ingest ────────────────────────────────────────
+      - name: file-log
+        route: edge-bulk-ingest
+        config:
+          path: /dev/stdout
+          reopen: false
+
+      # ── Request Logging: Settlement ─────────────────────────────────────────
+      - name: file-log
+        route: outcome-settlement
+        config:
+          path: /dev/stdout
+          reopen: false
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # JWT AUTHENTICATION — Applied per-route to all protected endpoints
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Public routes (NO JWT required):
+    #   - edge-auth (/v1/auth/*) — login, signup, refresh, MFA
+    #   - edge-health, intent-health, relay-health, etc. — health checks
+    #   - edge-webhooks (/v1/webhooks) — external provider callbacks
+    #   - console-root (/) — frontend static assets
+    #   - token-enclave-health — internal health only
+    #
+    # Protected routes (JWT REQUIRED):
+    #   - All data endpoints below
+    #
+    # How it works:
+    #   1. zord-edge issues a JWT (access_token) on login
+    #   2. Client sends: Authorization: Bearer <access_token>
+    #   3. Kong validates signature + expiry before forwarding
+    #   4. If invalid/missing → Kong returns 401 (request never hits backend)
+    #
+    # JWT signing config:
+    #   - Algorithm: HS256 (shared secret between zord-edge and Kong)
+    #   - The secret is stored in the consumer jwt_secrets below
+    #   - Claim "iss" identifies the consumer
+    #   - Claim "exp" is verified for token expiry
+    # ═══════════════════════════════════════════════════════════════════════════
+
+      # ── JWT: zord-edge protected routes ─────────────────────────────────────
+      # edge-admin requires BOTH JWT + X-Zord-ADMIN-KEY (double auth).
+      # Kong validates the JWT, zord-edge validates the admin key internally.
+      - name: jwt
+        route: edge-admin
+        config:
+          key_claim_name: iss
+          claims_to_verify:
+            - exp
+          header_names:
+            - Authorization
+          uri_param_names: []
+          cookie_names: []
+          run_on_preflight: false
+          maximum_expiration: 3600
+
+      - name: jwt
+        route: edge-bulk-ingest
+        config:
+          key_claim_name: iss
+          claims_to_verify:
+            - exp
+          header_names:
+            - Authorization
+          uri_param_names: []
+          cookie_names: []
+          run_on_preflight: false
+          maximum_expiration: 3600
+
+      - name: jwt
+        route: edge-ingest
+        config:
+          key_claim_name: iss
+          claims_to_verify:
+            - exp
+          header_names:
+            - Authorization
+          uri_param_names: []
+          cookie_names: []
+          run_on_preflight: false
+          maximum_expiration: 3600
+
+      - name: jwt
+        route: edge-tenants
+        config:
+          key_claim_name: iss
+          claims_to_verify:
+            - exp
+          header_names:
+            - Authorization
+          uri_param_names: []
+          cookie_names: []
+          run_on_preflight: false
+          maximum_expiration: 3600
+
+      - name: jwt
+        route: edge-connectors
+        config:
+          key_claim_name: iss
+          claims_to_verify:
+            - exp
+          header_names:
+            - Authorization
+          uri_param_names: []
+          cookie_names: []
+          run_on_preflight: false
+          maximum_expiration: 3600
+
+      # ── JWT: zord-intent-engine protected routes ────────────────────────────
+      - name: jwt
+        route: intent-api
+        config:
+          key_claim_name: iss
+          claims_to_verify:
+            - exp
+          header_names:
+            - Authorization
+          uri_param_names: []
+          cookie_names: []
+          run_on_preflight: false
+          maximum_expiration: 3600
+
+      - name: jwt
+        route: intent-dlq
+        config:
+          key_claim_name: iss
+          claims_to_verify:
+            - exp
+          header_names:
+            - Authorization
+          uri_param_names: []
+          cookie_names: []
+          run_on_preflight: false
+          maximum_expiration: 3600
+
+      - name: jwt
+        route: intent-etl
+        config:
+          key_claim_name: iss
+          claims_to_verify:
+            - exp
+          header_names:
+            - Authorization
+          uri_param_names: []
+          cookie_names: []
+          run_on_preflight: false
+          maximum_expiration: 3600
+
+      # ── JWT: zord-relay protected routes ────────────────────────────────────
+      - name: jwt
+        route: relay-dispatch
+        config:
+          key_claim_name: iss
+          claims_to_verify:
+            - exp
+          header_names:
+            - Authorization
+          uri_param_names: []
+          cookie_names: []
+          run_on_preflight: false
+          maximum_expiration: 3600
+
+      # ── JWT: zord-outcome-engine protected routes ───────────────────────────
+      - name: jwt
+        route: outcome-settlement
+        config:
+          key_claim_name: iss
+          claims_to_verify:
+            - exp
+          header_names:
+            - Authorization
+          uri_param_names: []
+          cookie_names: []
+          run_on_preflight: false
+          maximum_expiration: 3600
+
+      - name: jwt
+        route: outcome-reconciliation
+        config:
+          key_claim_name: iss
+          claims_to_verify:
+            - exp
+          header_names:
+            - Authorization
+          uri_param_names: []
+          cookie_names: []
+          run_on_preflight: false
+          maximum_expiration: 3600
+
+      # ── JWT: zord-evidence protected routes ─────────────────────────────────
+      - name: jwt
+        route: evidence-packs
+        config:
+          key_claim_name: iss
+          claims_to_verify:
+            - exp
+          header_names:
+            - Authorization
+          uri_param_names: []
+          cookie_names: []
+          run_on_preflight: false
+          maximum_expiration: 3600
+
+      - name: jwt
+        route: evidence-verify
+        config:
+          key_claim_name: iss
+          claims_to_verify:
+            - exp
+          header_names:
+            - Authorization
+          uri_param_names: []
+          cookie_names: []
+          run_on_preflight: false
+          maximum_expiration: 3600
+
+      # ── JWT: zord-intelligence protected routes ─────────────────────────────
+      - name: jwt
+        route: intelligence-projections
+        config:
+          key_claim_name: iss
+          claims_to_verify:
+            - exp
+          header_names:
+            - Authorization
+          uri_param_names: []
+          cookie_names: []
+          run_on_preflight: false
+          maximum_expiration: 3600
+
+      - name: jwt
+        route: intelligence-policies
+        config:
+          key_claim_name: iss
+          claims_to_verify:
+            - exp
+          header_names:
+            - Authorization
+          uri_param_names: []
+          cookie_names: []
+          run_on_preflight: false
+          maximum_expiration: 3600
+
+      - name: jwt
+        route: intelligence-rca
+        config:
+          key_claim_name: iss
+          claims_to_verify:
+            - exp
+          header_names:
+            - Authorization
+          uri_param_names: []
+          cookie_names: []
+          run_on_preflight: false
+          maximum_expiration: 3600
+
+      # ── JWT: zord-prompt-layer protected routes ─────────────────────────────
+      - name: jwt
+        route: prompt-query
+        config:
+          key_claim_name: iss
+          claims_to_verify:
+            - exp
+          header_names:
+            - Authorization
+          uri_param_names: []
+          cookie_names: []
+          run_on_preflight: false
+          maximum_expiration: 3600
+
+      - name: jwt
+        route: prompt-chat
+        config:
+          key_claim_name: iss
+          claims_to_verify:
+            - exp
+          header_names:
+            - Authorization
+          uri_param_names: []
+          cookie_names: []
+          run_on_preflight: false
+          maximum_expiration: 3600
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # CONSUMERS — JWT credentials for token validation
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Kong needs a consumer with a JWT secret to validate tokens.
+    # The "key" must match the "iss" claim in tokens issued by zord-edge.
+    # The "secret" must match the signing key used by zord-edge.
+    #
+    # IMPORTANT: Replace the secret below with your actual JWT signing secret
+    # from zord-edge. In production, use a Kubernetes Secret + env variable.
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    consumers:
+      - username: zord-edge-issuer
+        jwt_secrets:
+          - key: "zord-edge"
+            algorithm: "HS256"
+            secret: "KONG_JWT_SECRET_PLACEHOLDER"

@@ -44,6 +44,9 @@ func EnsureTables(ctx context.Context, d *sql.DB) error {
 			hash           TEXT        NOT NULL,
 			schema_version TEXT        NOT NULL DEFAULT 'v1',
 			source_topic   TEXT        NOT NULL,
+			client_payout_ref            TEXT,
+			amount                       NUMERIC,
+			currency                     TEXT,
 			payment_instruction_received TIMESTAMPTZ,
 			canonical_intent_created    TIMESTAMPTZ,
 			mapping_profile_used        TEXT,
@@ -83,6 +86,9 @@ func EnsureTables(ctx context.Context, d *sql.DB) error {
 			intent_id             TEXT,
 			contract_id           TEXT,
 			batch_id              TEXT,
+			client_payout_ref     TEXT,
+			amount                NUMERIC,
+			currency         TEXT,
 			mode                  TEXT NOT NULL,
 			pack_status           TEXT NOT NULL DEFAULT 'ACTIVE',
 			merkle_root           TEXT NOT NULL,
@@ -125,6 +131,7 @@ func EnsureTables(ctx context.Context, d *sql.DB) error {
 			proof_components_json         JSONB,
 			cryptographic_signatures_json JSONB,
 			proof_score_breakdown_json    JSONB,
+			zord_signature                TEXT,
 
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -141,7 +148,7 @@ func EnsureTables(ctx context.Context, d *sql.DB) error {
 
 		`CREATE UNIQUE INDEX IF NOT EXISTS evidence_packs_batch_unique_idx
 			ON evidence_packs(tenant_id, batch_id)
-			WHERE intent_id IS NULL AND batch_id IS NOT NULL;`,
+			WHERE intent_id IS NULL AND batch_id IS NOT NULL AND pack_status = 'ACTIVE';`,
 
 		`CREATE INDEX IF NOT EXISTS evidence_packs_proof_status_idx
 			ON evidence_packs(proof_status)`,
@@ -276,5 +283,21 @@ func EnsureTables(ctx context.Context, d *sql.DB) error {
 			return fmt.Errorf("ensure table: %w (stmt: %.80s)", err, s)
 		}
 	}
+
+	// ── Schema migrations (add columns that may be missing on older DBs) ──────
+	// Add new ALTER TABLE statements here when columns are added to existing tables.
+	// These are idempotent — safe to run on every startup.
+	migrations := []string{
+		// Add future column migrations here, e.g.:
+		// `ALTER TABLE evidence_packs ADD COLUMN IF NOT EXISTS new_column TEXT;`,
+		`ALTER TABLE pending_leaf_candidates ADD COLUMN IF NOT EXISTS client_payout_ref TEXT;`,
+		`ALTER TABLE evidence_packs ADD COLUMN IF NOT EXISTS client_payout_ref TEXT;`,
+	}
+	for _, m := range migrations {
+		if _, err := d.ExecContext(ctx, m); err != nil {
+			return fmt.Errorf("migration: %w (stmt: %.80s)", err, m)
+		}
+	}
+
 	return nil
 }

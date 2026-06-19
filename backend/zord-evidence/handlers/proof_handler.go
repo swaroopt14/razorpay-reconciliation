@@ -142,12 +142,91 @@ func (h *ProofHandler) VerifyPack(c *gin.Context) {
 	})
 }
 
+// GET /v1/dispute/export/preview
+// Returns the structured JSON view for a given export_type without producing a file.
+// Query params: export_type, payment_reference (or evidence_pack_id), tenant_id.
+func (h *ProofHandler) ExportPreview(c *gin.Context) {
+	req := models.DisputeExportRequest{
+		ExportType:       strings.ToUpper(c.Query("export_type")),
+		PaymentReference: c.Query("payment_reference"),
+		TenantID:         c.Query("tenant_id"),
+		EvidencePackID:   c.Query("evidence_pack_id"),
+		DisputeReason:    c.Query("dispute_reason"),
+	}
+
+	if req.ExportType == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "export_type query param is required"})
+		return
+	}
+	if req.ExportType == models.ExportTypeRawJSON {
+		c.JSON(http.StatusForbidden, gin.H{"error": "RAW_JSON does not support preview"})
+		return
+	}
+	if req.TenantID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "tenant_id query param is required"})
+		return
+	}
+
+	var pack *models.EvidencePack
+	var err error
+
+	if req.EvidencePackID != "" {
+		pack, err = h.svc.GetPack(c.Request.Context(), req.EvidencePackID)
+	} else if req.PaymentReference != "" {
+		resp, listErr := h.svc.ListPacksByIntentID(c.Request.Context(), req.TenantID, req.PaymentReference)
+		if listErr != nil || len(resp.Packs) == 0 {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error":             "no evidence pack found for payment_reference",
+				"payment_reference": req.PaymentReference,
+			})
+			return
+		}
+		activeID := ""
+		for _, p := range resp.Packs {
+			if strings.ToUpper(p.PackStatus) == "ACTIVE" {
+				activeID = p.EvidencePackID
+				break
+			}
+		}
+		if activeID == "" {
+			activeID = resp.Packs[0].EvidencePackID
+		}
+		pack, err = h.svc.GetPack(c.Request.Context(), activeID)
+	} else {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "either evidence_pack_id or payment_reference query param is required"})
+		return
+	}
+
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "evidence pack not found: " + err.Error()})
+		return
+	}
+
+	preview, err := services.BuildExportPreview(pack, req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, preview)
+}
+
 // POST /v1/dispute/export
 // Spec §6 — multi-tier dispute export engine.
 func (h *ProofHandler) DisputeExport(c *gin.Context) {
 	var req models.DisputeExportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Override or set ExportType from query parameter if provided
+	if qType := c.Query("export_type"); qType != "" {
+		req.ExportType = strings.ToUpper(qType)
+	}
+
+	if req.ExportType == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "export_type is required (as query param or in JSON body)"})
 		return
 	}
 

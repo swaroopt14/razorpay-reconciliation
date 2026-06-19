@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import './globals.css'
 import { AuthSessionBootstrap } from '@/components/auth/AuthSessionBootstrap'
+import { SessionManager } from '@/components/auth/SessionManager'
 
 export const metadata: Metadata = {
   title: 'Zord Ingestion Console',
@@ -22,6 +23,7 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body suppressHydrationWarning>
         <AuthSessionBootstrap />
+        <SessionManager />
         {children}
       </body>
     </html>

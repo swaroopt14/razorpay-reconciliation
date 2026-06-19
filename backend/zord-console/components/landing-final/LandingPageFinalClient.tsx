@@ -8,6 +8,9 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 
 import { FinalLandingAssistantButton } from '@/components/landing-final/FinalLandingAssistantButton'
 import { FinalLandingNavbar } from '@/components/landing-final/FinalLandingNavbar'
+import { PAYOUT_COMMAND_HOLY_GRAIL as H } from '@/components/landing-final/copy/landingHolyGrailCopy'
+import { buyerPersonas, landingPricingCopy } from '@/components/landing-final/copy/landingPagesCopy'
+import { landingHomeCopy } from '@/components/landing-final/copy/landingHomeCopy'
 import { ZordLogo } from '@/components/ZordLogo'
 
 type GlyphName =
@@ -90,176 +93,39 @@ function Glyph({ name, className = '' }: { name: GlyphName; className?: string }
   }
 }
 
-const impactStats = [
-  { value: '₹14.8T+', label: 'Annual payout value visibility' },
-  { value: '14M+', label: 'Payout events tracked every month' },
-  { value: '99.95%', label: 'Signal availability across workflows' },
-  { value: '6+', label: 'Provider, rail, and bank layers unified' },
-] as const
-
-const heroBrands = [
-  { type: 'image', name: 'Amazon India', src: '/sources/Amazon_India_Logo.svg', width: 150, height: 36, className: 'h-7 w-auto' },
-  { type: 'image', name: 'Flipkart', src: '/sources/flipkart-logo-png-transparent.png', width: 136, height: 36, className: 'h-8 w-auto' },
-  { type: 'image', name: 'AJIO', src: '/sources/ajio-clean.png', width: 116, height: 28, className: 'h-6 w-auto' },
-  { type: 'text', name: 'bookmyshow' },
-  { type: 'text', name: 'OLA' },
-  { type: 'image', name: 'Zomato', src: '/sources/zomato-clean.png', width: 126, height: 30, className: 'h-6 w-auto' },
-  { type: 'text', name: 'Blinkit' },
-  { type: 'text', name: 'Zepto' },
-  { type: 'image', name: 'Swiggy', src: '/sources/Swiggy_logo_(old).svg.png', width: 132, height: 36, className: 'h-7 w-auto' },
-] as const
-
-const heroBaseActions = [
-  { label: 'Control Layer', icon: 'layers' as GlyphName },
-  { label: 'Marketplace Ops', icon: 'users' as GlyphName },
-  { label: 'NBFC Disbursals', icon: 'wallet' as GlyphName },
-  { label: 'Provider Ops', icon: 'shield' as GlyphName },
-  { label: 'Proof Exports', icon: 'book' as GlyphName },
-  { label: 'Explore More', icon: 'arrow-up-right' as GlyphName },
-] as const
-
-const heroSlides = [
-  {
-    id: 'control',
-    tab: 'Control layer',
-    icon: 'layers' as GlyphName,
-    eyebrow: 'Unified payout control',
-    headlineLead: 'Control payouts before',
-    headlineTail: 'failures become finance fire drills',
-    copy: 'Give operations, finance, and engineering one payout truth for routing, tracking, reconciliation, and proof instead of fragmented workflows.',
-    highlights: ['Ops command center', 'Finance-ready evidence', 'Engineering context'],
-    trustSignals: [
-      ['₹14.8T+', 'tracked visibility'],
-      ['14M', 'events / month'],
-      ['99.95%', 'uptime'],
-    ],
+const heroSlideVisuals = {
+  control: {
     image: '/final-landing/hero/control-layer.png',
     imageAlt: 'Cross-functional payout operator monitoring the control layer from mobile and desktop surfaces',
     imageClassName: 'object-cover object-[62%_center]',
-    imageFrameClassName: 'bottom-7',
     panelWidthClassName: 'w-[38%] max-w-[244px]',
-    sideCardsClassName: 'bottom-24 right-7 w-[70%] grid-cols-2',
-    panelLabel: 'Cross-functional visibility',
-    panelTitle: 'Shared payout truth',
-    panelCopy: 'Routing decisions, confirmation state, and close-ready evidence stay aligned while live payout volume keeps moving.',
-    panelStats: [
-      ['₹1.84T', 'tracked today'],
-      ['14M events', 'monthly'],
-      ['99.95%', 'uptime'],
-      ['142 proofs', 'ready'],
-    ],
-    sideCards: [
-      ['Recovery layer', '₹7.52L saved this cycle'],
-      ['Proof queue', '142 exports ready for finance'],
-    ],
-    footer: 'Routing, confirmation, and proof in one working view',
   },
-  {
-    id: 'marketplace',
-    tab: 'Marketplace',
-    icon: 'users' as GlyphName,
-    eyebrow: 'Seller payout operations',
-    headlineLead: 'Keep seller payouts',
-    headlineTail: 'predictable through sale spikes',
-    copy: 'Protect seller experience by spotting provider drift, callback delays, and bank-side confirmation issues before tickets and reconciliations pile up.',
-    highlights: ['Seller ticket prevention', 'Peak-day payout control', 'Provider fallback signals'],
-    trustSignals: [
-      ['2.1L', 'active sellers'],
-      ['98.7%', 'clean confirms'],
-      ['41 min', 'faster resolve'],
-    ],
+  marketplace: {
     image: '/final-landing/hero/icp-marketplaces.png',
     imageAlt: 'Marketplace payout operators reviewing seller exceptions and payout batches together',
     imageClassName: 'object-cover object-[66%_center]',
-    imageFrameClassName: 'bottom-7',
     panelWidthClassName: 'w-[36%] max-w-[232px]',
-    sideCardsClassName: 'bottom-28 right-7 w-[66%] grid-cols-1 xl:grid-cols-2',
-    panelLabel: 'Marketplace payout pulse',
-    panelTitle: 'Seller-facing control',
-    panelCopy: 'Support, ops, and finance work from the same payout truth when sale traffic surges or a provider starts degrading.',
-    panelStats: [
-      ['2.1L sellers', 'active'],
-      ['98.7%', 'clean confirms'],
-      ['41 min', 'faster resolve'],
-      ['3 banks', 'under watch'],
-    ],
-    sideCards: [
-      ['Seller queue', '84 high-priority payouts protected'],
-      ['Provider watch', 'Cashfree degraded, fallback active'],
-    ],
-    footer: 'Seller support, ops, and finance aligned before tickets stack',
   },
-  {
-    id: 'nbfc',
-    tab: 'NBFC',
-    icon: 'wallet' as GlyphName,
-    eyebrow: 'Disbursals + treasury',
-    headlineLead: 'Run disbursals with',
-    headlineTail: 'treasury and close-ready control',
-    copy: 'Track high-value NBFC disbursals across provider handoff, bank movement, pending finality, and proof so treasury and finance do not wait on manual answers.',
-    highlights: ['High-value disbursal watch', 'Treasury confidence', 'Month-end proof'],
-    trustSignals: [
-      ['₹642Cr', 'monthly run'],
-      ['22 banks', 'visible'],
-      ['1 click', 'proof export'],
-    ],
+  nbfc: {
     image: '/final-landing/hero/icp-nbfc-lenders.png',
     imageAlt: 'NBFC leader reviewing disbursal audit, compliance, and bank confirmation posture',
     imageClassName: 'object-cover object-[63%_center]',
-    imageFrameClassName: 'bottom-7',
     panelWidthClassName: 'w-[38%] max-w-[244px]',
-    sideCardsClassName: 'bottom-24 right-7 w-[70%] grid-cols-2',
-    panelLabel: 'Disbursal confidence',
-    panelTitle: 'High-value run control',
-    panelCopy: 'Track bank posture, pending finality, and proof readiness before treasury reviews and month-end close become manual chase work.',
-    panelStats: [
-      ['₹642Cr', 'monthly run'],
-      ['22 banks', 'visible'],
-      ['₹7.2L', 'risk watch'],
-      ['1 click', 'proof export'],
-    ],
-    sideCards: [
-      ['Pending finality', '₹7.2L under watch before close'],
-      ['Finance pack', 'T+0 export ready for treasury'],
-    ],
-    footer: 'Disbursals, treasury, and finance aligned before close',
   },
-  {
-    id: 'psp',
-    tab: 'Payment Service Provider',
-    icon: 'shield' as GlyphName,
-    eyebrow: 'Provider + proof loop',
-    headlineLead: 'Run fintech and PSP operations',
-    headlineTail: 'with callback and proof clarity',
-    copy: 'Monitor provider switching, callback trust, bank acknowledgements, and replay-ready evidence while live payout traffic scales across rails and partners.',
-    highlights: ['Callback trust layer', 'Provider failover view', 'Replay-ready evidence'],
-    trustSignals: [
-      ['14 PSPs', 'surfaces'],
-      ['99.95%', 'signal uptime'],
-      ['0 blind spots', 'handoffs'],
-    ],
+  psp: {
     image: '/final-landing/hero/icp-fintech-psps.png',
-    imageAlt: 'Payment service provider team reviewing provider performance, payout health, and live callback posture',
+    imageAlt: 'Payment service provider team reviewing connector performance, payout health, and confirmation posture',
     imageClassName: 'object-cover object-center',
-    imageFrameClassName: 'bottom-7',
     panelWidthClassName: 'w-[36%] max-w-[232px]',
-    sideCardsClassName: 'bottom-28 right-7 w-[66%] grid-cols-1 xl:grid-cols-2',
-    panelLabel: 'Forensic payout layer',
-    panelTitle: 'Callback and proof ops',
-    panelCopy: 'Move from provider ack to bank movement to replay-ready evidence without losing the payout trail between PSP ops, finance, and engineering.',
-    panelStats: [
-      ['14 PSPs', 'surfaces'],
-      ['99.95%', 'signal uptime'],
-      ['6 near SLA', 'active watch'],
-      ['0 blind spots', 'handoffs'],
-    ],
-    sideCards: [
-      ['Callback SLA', '99.2% within provider band'],
-      ['Callback watch', 'Replay and ack path visible live'],
-    ],
-    footer: 'Provider control, callback trust, and proof in one operating loop',
   },
-] as const
+} as const
+
+const heroSlides = landingHomeCopy.hero.slides.map((slide) => ({
+  ...slide,
+  ...heroSlideVisuals[slide.id],
+}))
+
+const heroBaseActions = landingHomeCopy.hero.exploreActions
 
 const problemStacks = [
   {
@@ -274,7 +140,7 @@ const problemStacks = [
   },
   {
     team: 'Engineering',
-    view: 'Sees logs, retries, and webhooks without close context.',
+    view: 'Sees technical logs and retries without close-ready context.',
     icon: 'grid' as GlyphName,
   },
 ] as const
@@ -291,17 +157,17 @@ const solutionPoints = [
     icon: 'chart' as GlyphName,
   },
   {
-    title: 'Export proof packs fast',
+    title: 'Export Evidence Packs fast',
     description: 'Hand finance and audit a defensible payout timeline without hunting across systems.',
     icon: 'book' as GlyphName,
   },
 ] as const
 
 const switchboardViews = [
-  { id: 'psp', label: 'PSP Status' },
-  { id: 'rails', label: 'Rail Status' },
-  { id: 'provider', label: 'Provider Health' },
-  { id: 'banks', label: 'Bank Exposure' },
+  { id: 'psp', label: 'Connector status' },
+  { id: 'rails', label: 'Payment rails' },
+  { id: 'provider', label: 'Connector performance' },
+  { id: 'banks', label: 'Bank exposure' },
 ] as const
 
 const dashboardDockItems = [
@@ -312,7 +178,7 @@ const dashboardDockItems = [
     surfaceMode: 'analytics' as const,
     heading: 'Home overview',
     breadcrumb: 'Home',
-    summary: 'A guided entry point into live payout posture, movement, and proof readiness.',
+    summary: 'A guided entry point into live payout posture, movement, and Proof Readiness.',
     defaultView: 'psp' as (typeof switchboardViews)[number]['id'],
     promptPlaceholder: 'Ask about the overall payout picture, recovery posture, or where to look first',
     promptIntro: 'How can I help with today’s payout overview?',
@@ -334,23 +200,23 @@ const dashboardDockItems = [
     icon: 'folder' as GlyphName,
     label: 'Workspace',
     surfaceMode: 'prompt' as const,
-    heading: 'Payout command view',
+    heading: H.paymentOperationsView.title,
     breadcrumb: 'Overview',
-    summary: 'The main operating workspace for routed value, live recovery, and finance-ready evidence.',
+    summary: H.paymentOperationsView.subtitle,
     defaultView: 'psp' as (typeof switchboardViews)[number]['id'],
-    promptPlaceholder: 'Ask anything about routed value, callback drift, owner handoff, or proof readiness',
-    promptIntro: 'What should the intelligence layer analyze inside the payout command view?',
-    promptTabs: ['Today', 'Routing', 'Proof', 'Banks'],
+    promptPlaceholder: 'Ask about payment gaps, missing references, proof readiness, and review items',
+    promptIntro: 'What should Zord check in this payment data?',
+    promptTabs: ['Today', 'Connectors', 'Evidence', 'Banks'],
     promptSuggestions: [
-      'Show where routed value is concentrating right now',
+      'Show where payment value is concentrating right now',
       'Clarify which issue belongs to bank-side operations',
-      'What is delaying proof export today?',
+      'What is delaying Evidence Pack export today?',
     ],
     promptTiles: [
-      { icon: 'folder' as GlyphName, title: 'Intelligence workspace', body: 'Read routed value, live exceptions, and finance evidence from one operating surface.' },
-      { icon: 'users' as GlyphName, title: 'Ownership routing', body: 'Clarify whether the next move belongs to ops, finance, engineering, or bank-side follow-up.' },
-      { icon: 'bank' as GlyphName, title: 'Bank coordination', body: 'Surface callback lag and bank-side drift before they begin blocking clean confirmation.' },
-      { icon: 'shield' as GlyphName, title: 'Provider guardrail', body: 'Keep route posture visible while traffic shifts around degraded providers and overflow lanes.' },
+      { icon: 'folder' as GlyphName, title: 'Payout workspace', body: 'Read processed payment value, live exceptions, and finance evidence from one operating surface.' },
+      { icon: 'users' as GlyphName, title: 'Ownership handoff', body: 'Clarify whether the next move belongs to ops, finance, engineering, or bank-side follow-up.' },
+      { icon: 'bank' as GlyphName, title: 'Bank coordination', body: 'Surface confirmation delays and bank-side drift before they block clean settlement.' },
+      { icon: 'shield' as GlyphName, title: 'Connector guardrail', body: 'Keep connector posture visible while volume shifts around underperforming partners.' },
     ],
   },
   {
@@ -358,22 +224,22 @@ const dashboardDockItems = [
     icon: 'document' as GlyphName,
     label: 'Proof',
     surfaceMode: 'prompt' as const,
-    heading: 'Proof exports desk',
-    breadcrumb: 'Proof',
-    summary: 'Track export readiness, close packets, and evidence quality from one dashboard surface.',
+    heading: H.evidence.pageTitle,
+    breadcrumb: 'Evidence',
+    summary: 'Build, verify, and export proof for payments, settlements, disputes, and audit review.',
     defaultView: 'provider' as (typeof switchboardViews)[number]['id'],
-    promptPlaceholder: 'Ask which proof packs are ready, what evidence is missing, or what finance can close now',
-    promptIntro: 'How can I help with proof exports today?',
-    promptTabs: ['Today', 'Proof', 'Audit', 'Close'],
+    promptPlaceholder: 'Ask which Evidence Packs are ready, what evidence is missing, or what finance can close now',
+    promptIntro: 'What evidence packs are ready for finance or audit?',
+    promptTabs: ['Today', 'Evidence', 'Audit', 'Close'],
     promptSuggestions: [
-      'Which proof packs are ready now?',
+      'Which Evidence Packs are ready now?',
       'What evidence is still missing?',
       'Can finance close this cycle today?',
     ],
     promptTiles: [
-      { icon: 'document' as GlyphName, title: 'Proof exports', body: 'Track finance-ready packets, delayed exports, and evidence completeness.' },
+      { icon: 'document' as GlyphName, title: H.evidence.exportAction, body: 'Download evidence summary for the selected period.' },
       { icon: 'book' as GlyphName, title: 'Audit defense', body: 'See which payout timelines are fully defensible for audit and review.' },
-      { icon: 'grid' as GlyphName, title: 'Evidence map', body: 'Follow how confirmations, callbacks, and statements assemble into one packet.' },
+      { icon: 'grid' as GlyphName, title: 'Evidence map', body: 'Follow how confirmations, bank signals, and statements assemble into one Evidence Pack.' },
       { icon: 'check-circle' as GlyphName, title: 'Close signal', body: 'Separate ready-to-close intents from the set still waiting on supporting proof.' },
     ],
   },
@@ -408,19 +274,19 @@ const dashboardDockItems = [
     surfaceMode: 'analytics' as const,
     heading: 'Bank exception view',
     breadcrumb: 'Banks',
-    summary: 'Focus bank-side lag, callback variance, and hotspot concentration inside the active queue.',
+    summary: 'Focus bank-side lag, confirmation timing drift, and hotspot concentration inside the active queue.',
     defaultView: 'banks' as (typeof switchboardViews)[number]['id'],
-    promptPlaceholder: 'Ask which bank cluster is slowing confirmation, what callbacks are lagging, or where escalation should start',
+    promptPlaceholder: 'Ask which bank cluster is slowing confirmation, where delays are building, or where escalation should start',
     promptIntro: 'How can I help with bank exceptions today?',
-    promptTabs: ['Today', 'Banks', 'Callbacks', 'Escalations'],
+    promptTabs: ['Today', 'Banks', 'Confirmations', 'Escalations'],
     promptSuggestions: [
       'Which bank cluster is the hotspot?',
-      'What is causing callback lag?',
+      'What is causing confirmation delay?',
       'Where should bank escalation start?',
     ],
     promptTiles: [
       { icon: 'bank' as GlyphName, title: 'Bank hotspots', body: 'Pinpoint which bank clusters are adding delay into the live exception set.' },
-      { icon: 'refresh' as GlyphName, title: 'Callback variance', body: 'Measure how callback timing shifts across banks, rails, and time windows.' },
+      { icon: 'refresh' as GlyphName, title: 'Confirmation timing', body: 'See how bank confirmation timing shifts across banks, rails, and review windows.' },
       { icon: 'shield' as GlyphName, title: 'Escalation path', body: 'Open the cleanest escalation path when bank-side behavior starts drifting.' },
       { icon: 'chart' as GlyphName, title: 'Concentration view', body: 'Track how much failure share is concentrated in the top bank-side hotspots.' },
     ],
@@ -469,7 +335,7 @@ const switchboardRailStatus = [
   {
     rail: 'NEFT',
     status: 'Batch watch',
-    note: 'Cashfree callbacks are stable, but confirmation windows are stretching past expected batch close.',
+    note: 'Cashfree confirmations are stable, but settlement windows are stretching past expected batch close.',
     tone: 'warn',
   },
   {
@@ -495,11 +361,11 @@ const switchboardBankRows = [
 
 const switchboardLensDashboard = {
   psp: {
-    title: 'Payout income',
-    metric: '$1,651,045,139',
-    summary: 'Payout income accelerated after overflow moved away from degraded PSP lanes and into healthier routes.',
-    beforeLabel: 'Without reroute',
-    afterLabel: 'Recovered after reroute',
+    title: 'Processed volume',
+    metric: 'Preview',
+    summary: 'Illustrative view of intended vs bank-confirmed value and connector performance in the workspace.',
+    beforeLabel: 'Before review',
+    afterLabel: 'After matching',
     beforeColor: '#d6b1dc',
     afterColor: '#13161d',
     points: [
@@ -511,37 +377,37 @@ const switchboardLensDashboard = {
     ],
     listTitle: 'Provider queue watch',
     listItems: [
-      { label: switchboardPspStatus[0].name, value: '+7.5k clean', note: switchboardPspStatus[0].metric, tone: switchboardPspStatus[0].tone },
-      { label: switchboardPspStatus[1].name, value: '+4.6k stable', note: switchboardPspStatus[1].metric, tone: switchboardPspStatus[1].tone },
-      { label: switchboardPspStatus[2].name, value: '+3.4k shifted', note: switchboardPspStatus[2].metric, tone: switchboardPspStatus[2].tone },
+      { label: switchboardPspStatus[0].name, value: 'Stable', note: switchboardPspStatus[0].metric, tone: switchboardPspStatus[0].tone },
+      { label: switchboardPspStatus[1].name, value: 'Watch', note: switchboardPspStatus[1].metric, tone: switchboardPspStatus[1].tone },
+      { label: switchboardPspStatus[2].name, value: 'Review', note: switchboardPspStatus[2].metric, tone: switchboardPspStatus[2].tone },
     ],
     listFooter: '+2 more providers',
     listAction: 'View all',
-    statTitle: 'Recovery lane impact',
-    statValue: '$115k',
-    statUnit: 'income growth',
-    statChange: '+32%',
-    statNote: 'Income growth to end the half-year.',
+    statTitle: 'Matching confidence',
+    statValue: 'Preview',
+    statUnit: 'illustrative',
+    statChange: 'Sample',
+    statNote: 'Sandbox workspace preview — not production metrics.',
     statBars: [8, 10, 9, 11, 13, 14, 12, 13, 15, 16, 17, 18, 16, 15, 17, 18, 20, 19, 21, 20, 22, 24],
     splitTitle: 'Issue ownership',
     splits: [
       ['32%', 'provider-side'],
       ['68%', 'bank-side'],
     ],
-    prompt: 'Summarize what changed after shifting traffic away from PayU today.',
+    prompt: 'Summarize connector performance and unconfirmed exposure for this batch.',
     responses: [
-      'Recovery lift is up 24.7% versus the pre-reroute baseline.',
-      'Cashfree absorbed most overflow cleanly, but PayU remains critical at 12.4% errors and 4.2s latency.',
-      '142 proof packs are ready for finance review; 6 intents are still near SLA because bank movement is pending.',
+      'PayU shows elevated errors in this preview — finance should review unmatched settlements before close.',
+      'Cashfree and Razorpay remain stable in the illustrative connector grid.',
+      'Evidence Packs are available for export when matching and settlement data are connected.',
     ],
-    chips: ['PayU critical', 'Cashfree stable', '142 proof packs ready'],
+    chips: ['PayU needs review', 'Cashfree stable', 'Evidence Packs preview'],
   },
   rails: {
-    title: 'Protected income',
-    metric: '$1,204,118,406',
-    summary: 'Protected income held steady after NEFT windows were shielded and high-value traffic stayed on healthier rails.',
+    title: 'Rail posture',
+    metric: 'Preview',
+    summary: 'Illustrative view of rail status, batch timing, and bank-side delays in the workspace preview.',
     beforeLabel: 'Scheduled batch',
-    afterLabel: 'Protected live lane',
+    afterLabel: 'Observed lane',
     beforeColor: '#b9bed2',
     afterColor: '#13161d',
     points: [
@@ -557,33 +423,33 @@ const switchboardLensDashboard = {
       { label: switchboardRailStatus[1].rail, value: switchboardRailStatus[1].status, note: switchboardRailStatus[1].note, tone: switchboardRailStatus[1].tone },
       { label: switchboardRailStatus[2].rail, value: switchboardRailStatus[2].status, note: switchboardRailStatus[2].note, tone: switchboardRailStatus[2].tone },
     ],
-    listFooter: 'Batch close at 17:30',
+    listFooter: 'Product preview',
     listAction: 'Open rail view',
-    statTitle: 'RTGS protected',
-    statValue: '$94k',
-    statUnit: 'income lift',
-    statChange: '+18%',
-    statNote: 'Protected income growth through the selected rail window.',
+    statTitle: 'Batch watch',
+    statValue: 'Preview',
+    statUnit: 'illustrative',
+    statChange: 'Sample',
+    statNote: 'Sandbox workspace preview — not production metrics.',
     statBars: [6, 7, 8, 8, 10, 12, 11, 13, 14, 13, 15, 16, 17, 17, 18, 19, 18, 20, 21, 22, 22, 23],
     splitTitle: 'Lane mix',
     splits: [
-      ['61%', 'IMPS'],
-      ['39%', 'NEFT + RTGS'],
+      ['IMPS', 'primary lane'],
+      ['NEFT + RTGS', 'batch lanes'],
     ],
     prompt: 'Which rail needs attention before the afternoon batch closes?',
     responses: [
-      'NEFT still needs active watch because callback windows are stretching past expected batch close.',
+      'NEFT still needs active watch because confirmation windows are stretching past expected batch close.',
       'IMPS remains the cleanest lane for priority traffic, while RTGS is protected but slightly elevated on response time.',
-      'No action is needed on IMPS right now; focus follow-up on NEFT batch timing and proof exports for delayed confirmations.',
+      'Focus follow-up on NEFT batch timing and Evidence Pack exports for delayed confirmations.',
     ],
     chips: ['NEFT batch watch', 'RTGS protected', 'IMPS stable'],
   },
   provider: {
-    title: 'Provider-routed income',
-    metric: '$1,328,404,912',
-    summary: 'Provider-routed income improved after traffic shifted by latency, error rate, and webhook trust.',
-    beforeLabel: 'At risk before failover',
-    afterLabel: 'Clean after route shift',
+    title: 'Connector performance',
+    metric: 'Preview',
+    summary: 'Illustrative connector health, confirmation trust, and leakage signals from the workspace preview.',
+    beforeLabel: 'Before review',
+    afterLabel: 'After review',
     beforeColor: '#c4c8d8',
     afterColor: '#13161d',
     points: [
@@ -593,39 +459,39 @@ const switchboardLensDashboard = {
       { label: '22 Jan', before: 3, after: 7 },
       { label: '29 Jan', before: 2, after: 8 },
     ],
-    listTitle: 'Provider health table',
+    listTitle: 'Connector health table',
     listItems: [
-      { label: switchboardProviderRows[0].provider, value: switchboardProviderRows[0].success, note: `${switchboardProviderRows[0].route} · ${switchboardProviderRows[0].latency}`, tone: switchboardProviderRows[0].tone },
-      { label: switchboardProviderRows[1].provider, value: switchboardProviderRows[1].success, note: `${switchboardProviderRows[1].route} · ${switchboardProviderRows[1].latency}`, tone: switchboardProviderRows[1].tone },
-      { label: switchboardProviderRows[2].provider, value: switchboardProviderRows[2].success, note: `${switchboardProviderRows[2].route} · ${switchboardProviderRows[2].latency}`, tone: switchboardProviderRows[2].tone },
+      { label: switchboardProviderRows[0].provider, value: switchboardProviderRows[0].severity, note: switchboardProviderRows[0].route, tone: switchboardProviderRows[0].tone },
+      { label: switchboardProviderRows[1].provider, value: switchboardProviderRows[1].severity, note: switchboardProviderRows[1].route, tone: switchboardProviderRows[1].tone },
+      { label: switchboardProviderRows[2].provider, value: switchboardProviderRows[2].severity, note: switchboardProviderRows[2].route, tone: switchboardProviderRows[2].tone },
     ],
-    listFooter: '+1 more provider',
+    listFooter: 'Product preview',
     listAction: 'View table',
-    statTitle: 'Webhook trust',
-    statValue: '$102k',
-    statUnit: 'income lift',
-    statChange: '+11%',
-    statNote: 'Income growth driven by cleaner callbacks on the primary provider lane.',
+    statTitle: 'Confirmation trust',
+    statValue: 'Preview',
+    statUnit: 'illustrative',
+    statChange: 'Sample',
+    statNote: 'Sandbox workspace preview — not production metrics.',
     statBars: [7, 8, 10, 11, 11, 12, 13, 13, 14, 15, 16, 17, 17, 18, 18, 19, 20, 20, 21, 22, 21, 23],
-    splitTitle: 'Route concentration',
+    splitTitle: 'Connector mix',
     splits: [
-      ['46%', 'Razorpay'],
-      ['54%', 'other lanes'],
+      ['Razorpay', 'primary'],
+      ['Other lanes', 'overflow'],
     ],
-    prompt: 'Which provider is still creating risk after the route shift?',
+    prompt: 'Which connector still needs review in this batch?',
     responses: [
-      'PayU is still the highest-risk provider because errors remain at 12.4% and latency is above 4 seconds.',
-      'Razorpay and Stripe are both clean enough to keep handling priority traffic, while Cashfree can support overflow.',
-      'If this continues through the next cycle, move PayU into limited-overflow mode and keep webhook monitoring elevated.',
+      'PayU remains the highest-risk connector in this preview because failures and slow responses are elevated.',
+      'Razorpay and Stripe are stable enough for priority traffic, while Cashfree can support overflow.',
+      'Keep confirmation monitoring elevated and review PayU exposure before finance close.',
     ],
-    chips: ['PayU at risk', 'Razorpay healthy', 'Webhook trust 99.6%'],
+    chips: ['PayU needs review', 'Razorpay stable', 'Evidence Packs preview'],
   },
   banks: {
-    title: 'Bank-managed income',
-    metric: '$936,512,280',
-    summary: 'Bank-managed income still faces drag from ICICI and SBI statement and callback clusters.',
+    title: 'Bank exposure',
+    metric: 'Preview',
+    summary: 'Illustrative bank-side delays, statement lag, and confirmation clusters in the workspace preview.',
     beforeLabel: 'Statement lag',
-    afterLabel: 'Recovered callbacks',
+    afterLabel: 'Recovered confirmations',
     beforeColor: '#cab9d9',
     afterColor: '#13161d',
     points: [
@@ -641,189 +507,115 @@ const switchboardLensDashboard = {
       { label: switchboardBankRows[1].bank, value: switchboardBankRows[1].failed, note: switchboardBankRows[1].trend, tone: switchboardBankRows[1].tone },
       { label: switchboardBankRows[2].bank, value: switchboardBankRows[2].failed, note: switchboardBankRows[2].trend, tone: switchboardBankRows[2].tone },
     ],
-    listFooter: 'Escalation path open',
+    listFooter: 'Product preview',
     listAction: 'Open bank view',
-    statTitle: 'Hotspot concentration',
-    statValue: '$57k',
-    statUnit: 'income lift',
-    statChange: '+9%',
-    statNote: 'Income recovery improved after callbacks returned inside the selected bank window.',
+    statTitle: 'Hotspot watch',
+    statValue: 'Preview',
+    statUnit: 'illustrative',
+    statChange: 'Sample',
+    statNote: 'Sandbox workspace preview — not production metrics.',
     statBars: [5, 6, 7, 8, 8, 9, 10, 11, 11, 12, 13, 14, 13, 14, 15, 16, 17, 18, 19, 18, 20, 21],
     splitTitle: 'Pending source',
     splits: [
-      ['68%', 'bank-side delay'],
-      ['32%', 'provider retry'],
+      ['Bank-side delay', 'primary'],
+      ['Provider retry', 'secondary'],
     ],
     prompt: 'What is driving the current bank-side exception spike?',
     responses: [
       'ICICI still accounts for the largest active cluster, while SBI is adding NEFT statement lag into the same exception set.',
-      'Most pending confirmations are now bank-side rather than provider-side, so routing changes alone will not clear the queue.',
-      'Focus next action on bank escalation and proof packaging for the delayed intents that are approaching SLA.',
+      'Most pending confirmations are bank-side rather than provider-side in this preview.',
+      'Focus next action on bank escalation and Evidence Pack packaging for delayed intents.',
     ],
-    chips: ['ICICI hotspot', 'SBI lag building', 'Bank-side 68%'],
+    chips: ['ICICI hotspot', 'SBI lag building', 'Bank-side review'],
   },
 } as const
 
-const pricingFamilies = [
+type PricingFamily = {
+  id: string
+  label: string
+  eyebrow: string
+  kicker: string
+  metric: string
+  detail: string
+  subdetail: string
+  highlights: readonly string[]
+  stats: readonly (readonly [string, string])[]
+  footnote?: string
+}
+
+type PricingPlan = {
+  title: string
+  subtitle: string
+  metric: string
+  detail: string
+  points: readonly string[]
+  ctaLabel: string
+  href: string
+  featured?: boolean
+  badge?: string
+}
+
+const pricingFamilies: readonly PricingFamily[] = [
   {
-    id: 'payments',
-    label: 'Payments',
-    eyebrow: 'Payments',
-    kicker: 'Start accepting payments at just',
-    metric: '2%',
-    detail: 'Applicable on standard online transactions with custom and standard reporting included at no additional cost.',
-    subdetail: 'If monthly revenue is above ₹5 lakh, move into custom commercials with the sales team.',
-    highlights: [
-      'Cards, UPI, netbanking, wallets, links, subscriptions, and standard checkout flows',
-      'Custom and standard reports included',
-      'Faster buying motion for teams that want to launch before deeper negotiation',
-    ],
-    stats: [
-      ['Pricing model', 'Standard online rate'],
-      ['Reporting', 'Included'],
-      ['Custom threshold', '₹5L+ / month'],
-    ],
-    footnote: '* 18% GST applicable where relevant.',
-  },
-  {
-    id: 'banking',
-    label: 'Business Banking',
-    eyebrow: 'Banking+',
-    kicker: 'Banking that helps save time and money',
-    metric: 'Custom',
-    detail: 'Business Banking pricing is shaped around workflow depth across current accounts, vendor payments, tax runs, scheduled payouts, and approvals.',
-    subdetail: 'Best for teams that want banking operations, payout visibility, and finance controls in one workspace.',
-    highlights: [
-      'Current accounts, vendor payments, tax payments, and scheduled payout workflows',
-      'Priority support and guided account opening',
-      'Commercials shaped around real banking usage instead of generic account access',
-    ],
-    stats: [
-      ['Commercial model', 'Custom bands'],
-      ['Current account setup', 'Guided'],
-      ['Banking ops', 'Priority support'],
-    ],
-  },
-  {
-    id: 'payroll',
-    label: 'Payroll',
-    eyebrow: 'Payroll',
-    kicker: '3 clicks. Payroll fixed.',
-    metric: '₹2,499',
-    detail: 'Subscriptions start at ₹2,499 for payroll automation, salary transfers, and recurring compliance workflows.',
-    subdetail: 'Bundle with Banking+ to unlock one month free and 20% off on subscription pricing.',
-    highlights: [
-      'Salary transfers, TDS, PF, ESI, PT, and compliance filing support',
-      'Employee benefits, insurance, and salary account workflows',
-      'Monthly subscription built for finance and people-ops teams',
-    ],
-    stats: [
-      ['Starting plan', '₹2,499 / month'],
-      ['Bundle offer', '1 month free'],
-      ['Discount', '20% with Banking+'],
-    ],
-  },
-  {
-    id: 'credit',
-    label: 'Credit Solutions',
-    eyebrow: 'Credit Solutions',
-    kicker: 'Custom programs for lending, underwriting, and disbursal rails',
-    metric: 'Custom',
-    detail: 'Talk to sales for commercial design across disbursals, underwriting, settlement-linked lending, and regulated program rollouts.',
-    subdetail: 'Built for teams that need implementation support, bank coordination, and custom economics.',
-    highlights: [
-      'Program pricing aligned to underwriting, disbursal, and settlement realities',
-      'Support for regulated flows and enterprise review',
-      'Better fit for high-touch commercial and rollout conversations',
-    ],
-    stats: [
-      ['Commercial model', 'Program-based'],
-      ['Rollout support', 'Included'],
-      ['Best for', 'Enterprise / regulated'],
-    ],
+    id: landingPricingCopy.product.id,
+    label: landingPricingCopy.product.label,
+    eyebrow: landingPricingCopy.product.eyebrow,
+    kicker: landingPricingCopy.product.kicker,
+    metric: landingPricingCopy.product.metric,
+    detail: landingPricingCopy.product.detail,
+    subdetail: landingPricingCopy.product.subdetail,
+    highlights: landingPricingCopy.product.highlights,
+    stats: landingPricingCopy.product.stats,
   },
 ] as const
 
-const pricingPlans = [
+const pricingPlans: readonly PricingPlan[] = [
   {
-    title: 'Pay as You Go',
-    subtitle: 'Best for individuals and developers',
-    metric: 'Month-to-month',
-    detail: 'Unlimited usage with no upfront commitment. Best when teams want to test, launch, and pay only for what they use.',
-    points: ['Access to GA products', 'Unlimited live API calls', 'Sandbox to production path', 'Standard onboarding'],
-    ctaLabel: 'Start self-serve',
-    href: '/signup',
+    title: landingPricingCopy.plans[0].title,
+    subtitle: landingPricingCopy.plans[0].subtitle,
+    metric: landingPricingCopy.plans[0].metric,
+    detail: landingPricingCopy.plans[0].detail,
+    points: landingPricingCopy.plans[0].points,
+    ctaLabel: 'Start in sandbox',
+    href: '/signin/tenant',
   },
   {
-    title: 'Growth',
-    subtitle: 'Best for small teams and startups',
-    metric: '12-month commitment',
-    detail: 'Unlock better commercials, platform support, and account management once payment or payout volume becomes an operating priority.',
-    points: ['Everything in Pay as You Go', 'Discounted product rates', 'Platform support package', 'Commercial review cadence'],
+    title: landingPricingCopy.plans[1].title,
+    subtitle: landingPricingCopy.plans[1].subtitle,
+    metric: landingPricingCopy.plans[1].metric,
+    detail: landingPricingCopy.plans[1].detail,
+    points: landingPricingCopy.plans[1].points,
     featured: true,
     badge: 'Most popular',
     ctaLabel: 'Talk to sales',
     href: 'mailto:hello@arelais.com?subject=Growth%20plan%20for%20ZORD',
   },
   {
-    title: 'Custom',
-    subtitle: 'Best for businesses that need to scale',
-    metric: 'Volume-led',
-    detail: 'Flexible plans for regulated industries, enterprise security review, bundled product commercials, and premium support.',
-    points: ['Everything in Growth', 'Volume discounts', 'Implementation assistance', 'Premium support and account coverage'],
+    title: landingPricingCopy.plans[2].title,
+    subtitle: landingPricingCopy.plans[2].subtitle,
+    metric: landingPricingCopy.plans[2].metric,
+    detail: landingPricingCopy.plans[2].detail,
+    points: landingPricingCopy.plans[2].points,
     ctaLabel: 'Contact sales',
     href: 'mailto:hello@arelais.com?subject=Custom%20pricing%20for%20ZORD',
   },
 ] as const
 
-const pricingFaqs = [
-  {
-    question: 'How does Payments pricing work?',
-    answer:
-      'Payments starts with standard online pricing for common acceptance flows. Once volume, reporting, or settlement requirements deepen, teams can move into custom commercial bands.',
-  },
-  {
-    question: 'When should I contact sales?',
-    answer:
-      'Reach sales when monthly revenue is above ₹5 lakh, when you need bundled commercials across products, or when rollout support and security review matter to the buying decision.',
-  },
-  {
-    question: 'Can I start in sandbox first?',
-    answer:
-      'Yes. Teams can begin in sandbox, validate implementation, and then move into the right commercial plan once product and engineering are ready for production.',
-  },
-  {
-    question: 'Can Payroll and Banking+ be bundled?',
-    answer:
-      'Yes. Payroll and Banking+ can be bundled into one commercial motion, including subscription offers, support alignment, and a cleaner finance buying path.',
-  },
-] as const
+const pricingFaqs = landingPricingCopy.faqs
 
-const capabilityBuckets = [
-  {
-    title: 'Routing Intelligence',
-    description: 'Choose the healthiest provider path before payout quality drops.',
-    bullets: ['Route through the best provider', 'Failover handling by live posture'],
-    icon: 'refresh' as GlyphName,
-  },
-  {
-    title: 'Visibility & Risk',
-    description: 'Watch confirmation, SLA drift, and finality risk on one timeline.',
-    bullets: ['Confirmation tracking', 'SLA drift and delay detection'],
-    icon: 'eye' as GlyphName,
-  },
-  {
-    title: 'Proof & Finance',
-    description: 'Close with evidence, not screenshots and scattered exports.',
-    bullets: ['Audit-ready proof packs', 'Reconciliation clarity for finance'],
-    icon: 'book' as GlyphName,
-  },
-] as const
+const capabilityBuckets = landingHomeCopy.capabilities
+
+const orchestrationStages = landingHomeCopy.howItWorks.stages
+
+const resultsShowcaseStats = landingHomeCopy.infrastructure.stats
+
+/** Retired scale-stats section — kept empty so exported MetricsSection stays honest if mounted elsewhere. */
+const impactStats: Array<{ value: string; label: string }> = []
 
 const whyAdoptCards = [
   {
     title: 'Prevent failures early',
-    description: 'Teams reroute sooner because provider quality, bank exposure, and confirmation drift show up in one place.',
+    description: 'Teams review connector drift sooner because provider quality, bank exposure, and confirmation gaps show up in one workspace.',
   },
   {
     title: 'Track everything in one place',
@@ -836,61 +628,20 @@ const whyAdoptCards = [
 ] as const
 
 const commandTiles = [
-  { label: 'Live intents', value: '14,712', change: '+12%', accent: 'sky' },
-  { label: 'Confirmed cleanly', value: '98.88%', change: '+0.24%', accent: 'blue' },
-  { label: 'Proof packs generated', value: '4,286', change: '+19%', accent: 'indigo' },
-  { label: 'Pending finality', value: '₹76.5L', change: '6 near SLA', accent: 'slate' },
-  { label: 'Provider watch', value: '5 surfaces', change: 'PayU critical', accent: 'cyan' },
-  { label: 'Recovery savings', value: '₹7.52L', change: 'this cycle', accent: 'sky' },
+  { label: 'Payment instructions', value: 'Sample batch', change: 'Intent Journal', accent: 'sky' },
+  { label: 'Fully Matched Value', value: 'Illustrative', change: 'Match Confidence', accent: 'blue' },
+  { label: 'Evidence Packs', value: 'Preview', change: 'dispute-ready', accent: 'indigo' },
+  { label: 'Unconfirmed exposure', value: 'Sample', change: 'value at risk', accent: 'slate' },
+  { label: 'Connector watch', value: 'PSP view', change: 'performance', accent: 'cyan' },
+  { label: 'Recommended actions', value: 'Preview', change: 'finance ops', accent: 'sky' },
 ] as const
 
-const operatingStories = [
-  {
-    name: 'Priya Menon',
-    role: 'Head of Payout Ops, Marketplace',
-    initial: 'P',
-    colors: 'from-sky-500 to-indigo-600',
-    quote:
-      'Zord gave our ops, finance, and engineering teams the same payout truth. We now catch provider and bank drift before sellers escalate.',
-  },
-  {
-    name: 'Raghav Shah',
-    role: 'Finance Controller, Lending Platform',
-    initial: 'R',
-    colors: 'from-sky-500 to-cyan-600',
-    quote:
-      'The proof layer changed month-end close. Instead of asking three teams for evidence, finance gets one defensible payout timeline.',
-  },
-  {
-    name: 'Aditi Rao',
-    role: 'Payments Engineering Manager',
-    initial: 'A',
-    colors: 'from-slate-500 to-blue-600',
-    quote:
-      'We stopped building payout visibility in spreadsheets and internal dashboards. Zord became the command layer we were missing.',
-  },
-  {
-    name: 'Manoj Khanna',
-    role: 'Risk and Reconciliation Lead',
-    initial: 'M',
-    colors: 'from-indigo-500 to-blue-600',
-    quote:
-      'Routing, bank failures, statement lag, and proof readiness all show up in one place. That is the difference between reacting and controlling.',
-  },
-  {
-    name: 'Neha Kapoor',
-    role: 'CX Operations Director',
-    initial: 'N',
-    colors: 'from-blue-500 to-sky-600',
-    quote:
-      'Support no longer works blind. When a payout is late, we already know whether the issue is provider-side, bank-side, or just pending finality.',
-  },
-] as const
+const operatingStories = buyerPersonas
 
 const resourceCards = [
   {
     eyebrow: 'Product walkthrough',
-    title: 'See how ZORD operates across routing, confirmation, and proof',
+    title: 'See how ZORD operates across confirmation, matching, and proof',
     body: 'Start with the operating model if your team needs the fastest explanation of how ZORD works in production.',
     href: '/final-landing/how-it-works',
     cta: 'Open how it works',
@@ -971,8 +722,8 @@ const arealisTeam = [
 
 const featureCards = [
   {
-    title: 'Control routing before failure spikes spread',
-    desc: 'Watch provider quality and rail posture in one command layer so ops can reroute before payout volume starts leaking.',
+    title: 'Review connector posture before failure spikes spread',
+    desc: 'Watch provider quality and rail posture in one command layer so ops can intervene before payout volume starts leaking.',
     icon: 'shield' as GlyphName,
   },
   {
@@ -982,7 +733,7 @@ const featureCards = [
   },
   {
     title: 'Prove what happened for finance and audit',
-    desc: 'Export clear proof packs with the exact signals, timestamps, and state transitions behind every payout outcome.',
+    desc: 'Export clear Evidence Packs with the signals, timestamps, and state transitions behind every payout outcome.',
     icon: 'book' as GlyphName,
   },
 ] as const
@@ -991,20 +742,13 @@ const modelBullets = [
   'Route through the healthiest provider and rail.',
   'Monitor provider, bank, and statement signals continuously.',
   'See risk, latency, and confirmation drift before the close is at risk.',
-  'Export proof packs and hand finance a clean answer faster.',
-] as const
-
-const orchestrationStages = [
-  { step: '01', label: 'Intent capture', detail: 'Validate amount, beneficiary, rule-set, and payout objective.', pct: '100%' },
-  { step: '02', label: 'Provider decision', detail: 'Pick the best provider path using live quality and failover posture.', pct: '96%' },
-  { step: '03', label: 'Bank confirmation', detail: 'Track provider ack, bank movement, and finality without blind spots.', pct: '91%' },
-  { step: '04', label: 'Proof export', detail: 'Package webhooks, statement cues, and audit evidence into one record.', pct: '1 click' },
+  'Export Evidence Packs and hand finance a clean answer faster.',
 ] as const
 
 const footerColumns = [
   {
     title: 'Product',
-    links: ['ZORD Platform', 'Operations Switchboard', 'Payout Intelligence', 'Proof Packs'],
+    links: ['ZORD Platform', 'Operations Switchboard', 'Payout workspace', 'Evidence Packs'],
   },
   {
     title: 'Solutions',
@@ -1025,10 +769,10 @@ const footerColumns = [
 ] as const
 
 const heroDashboardMetrics = [
-  { label: 'Live intents', value: '14,712', chip: '+12% today', icon: 'grid' as GlyphName, tone: 'sky' },
-  { label: 'Clean confirmations', value: '98.88%', chip: '3 queues stable', icon: 'shield' as GlyphName, tone: 'slate' },
-  { label: 'Risk under watch', value: '₹1.04Cr', chip: '6 near SLA', icon: 'wallet' as GlyphName, tone: 'indigo' },
-  { label: 'Proof packs ready', value: '142', chip: 'close-ready', icon: 'book' as GlyphName, tone: 'blue' },
+  { label: 'Payment instructions', value: 'Preview', chip: 'Intent Journal', icon: 'grid' as GlyphName, tone: 'sky' },
+  { label: 'Fully Matched Value', value: 'Preview', chip: 'Match Confidence', icon: 'shield' as GlyphName, tone: 'slate' },
+  { label: 'Unconfirmed exposure', value: 'Preview', chip: 'value at risk', icon: 'wallet' as GlyphName, tone: 'indigo' },
+  { label: 'Evidence Packs', value: 'Preview', chip: 'audit-ready', icon: 'book' as GlyphName, tone: 'blue' },
 ] as const
 
 const heroDashboardBars = [
@@ -1039,33 +783,6 @@ const heroDashboardBars = [
   { label: '16', dispatched: 63, confirmed: 49 },
   { label: '20', dispatched: 47, confirmed: 34 },
   { label: '24', dispatched: 36, confirmed: 24 },
-] as const
-
-const resultsShowcaseStats = [
-  {
-    eyebrow: 'Provider mesh',
-    value: '14 PSPs',
-    label: 'Provider posture',
-    detail: 'Primary, fallback, and failover posture across live payout paths.',
-  },
-  {
-    eyebrow: 'Bank intelligence',
-    value: '22 banks',
-    label: 'Bank response visibility',
-    detail: 'Callback trust, confirmation drift, and hotspot monitoring from the same control layer.',
-  },
-  {
-    eyebrow: 'Shared workspace',
-    value: 'Ops + Finance',
-    label: 'Shared payout context',
-    detail: 'Operations and finance work from one payout record for action, close, and reconciliation.',
-  },
-  {
-    eyebrow: 'Evidence layer',
-    value: '1-click',
-    label: 'Proof readiness',
-    detail: 'Export finance-ready proof packs without stitching screenshots, logs, and callbacks across tools.',
-  },
 ] as const
 
 const surfaceCardStyle = {
@@ -1241,16 +958,6 @@ function Hero() {
                       ))}
                     </div>
 
-                    <div className="mt-6 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-[15px] font-medium text-slate-400 lg:justify-start">
-                      {slide.trustSignals.map(([value, label], index) => (
-                        <div key={`${slide.id}-${label}`} className="flex items-center gap-3">
-                          <span className="font-semibold text-white">{value}</span>
-                          <span>{label}</span>
-                          {index < slide.trustSignals.length - 1 ? <span className="text-white/20">|</span> : null}
-                        </div>
-                      ))}
-                    </div>
-
                     <div className="mt-10 flex flex-col items-center gap-4 sm:flex-row lg:items-start">
                       <a
                         href="mailto:hello@arelais.com?subject=Book%20Demo%20for%20Zord"
@@ -1302,13 +1009,13 @@ function Hero() {
                         </p>
 
                         <div className="mt-3 rounded-[0.95rem] border border-white/10 bg-white/[0.04] px-3 py-2">
-                          {slide.panelStats.map(([value, label]) => (
+                          {slide.panelCapabilities.map((capability) => (
                             <div
-                              key={`${slide.id}-${value}`}
-                              className="flex items-end justify-between gap-3 border-b border-white/8 py-2 last:border-b-0 last:pb-0 first:pt-0"
+                              key={`${slide.id}-${capability}`}
+                              className="flex items-start gap-2 border-b border-white/8 py-2 last:border-b-0 last:pb-0 first:pt-0"
                             >
-                              <div className="text-[15px] font-semibold text-white">{value}</div>
-                              <div className="text-right text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">{label}</div>
+                              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[#94A7AE]" />
+                              <div className="text-[13px] leading-5 text-slate-200">{capability}</div>
                             </div>
                           ))}
                         </div>
@@ -1403,43 +1110,6 @@ function Hero() {
             </div>
           </div>
         </div>
-
-        <div className="mt-6 rounded-[1.8rem] border border-white/10 bg-white/5 px-6 py-5 shadow-[0_24px_50px_rgba(0,0,0,0.22)] backdrop-blur-sm">
-          <div className="flex flex-col gap-4">
-            <div className="text-center text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-              Trusted by teams across commerce, mobility, and consumer platforms
-            </div>
-
-            <div className="relative overflow-hidden mask-horizontal-faded">
-              <div className="flex w-max animate-marquee items-center gap-12 py-1 grayscale">
-                {[1, 2].map((group) => (
-                  <div key={group} className="flex items-center gap-12">
-                    {heroBrands.map((brand) =>
-                      brand.type === 'image' ? (
-                        <div key={`${group}-${brand.name}`} className="shrink-0 opacity-65 transition hover:opacity-100">
-                          <Image
-                            src={brand.src}
-                            alt={brand.name}
-                            width={brand.width}
-                            height={brand.height}
-                            className={brand.className}
-                          />
-                        </div>
-                      ) : (
-                        <div
-                          key={`${group}-${brand.name}`}
-                          className="shrink-0 text-[2rem] font-semibold tracking-[-0.05em] text-slate-300 opacity-70 transition hover:opacity-100"
-                        >
-                          {brand.name}
-                        </div>
-                      ),
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
     </main>
   )
@@ -1464,23 +1134,19 @@ function ProductHeroVisualSection() {
                 <div className="absolute inset-x-0 bottom-0 p-6 sm:p-8">
                   <div className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-black/20 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/72 backdrop-blur-md">
                     <span className="h-2 w-2 rounded-full bg-[#c6efcf]" />
-                    Control surface
+                    {landingHomeCopy.productHero.badge}
                   </div>
                   <h2 className="mt-5 max-w-xl text-3xl font-semibold tracking-[-0.05em] text-white sm:text-4xl">
-                    One operating view for routing, escalation, and proof readiness.
+                    {landingHomeCopy.productHero.title}
                   </h2>
                 </div>
               </div>
 
               <div className="grid gap-3 sm:grid-cols-3">
-                {[
-                  ['₹14.8T+', 'tracked visibility'],
-                  ['14M', 'events / month'],
-                  ['99.95%', 'signal uptime'],
-                ].map(([value, label]) => (
+                {landingHomeCopy.productHero.capabilityLabels.map((label) => (
                   <div key={label} className="rounded-[1.2rem] border border-white/10 bg-white/[0.03] px-4 py-4">
-                    <div className="text-2xl font-semibold tracking-tight text-white">{value}</div>
-                    <div className="mt-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">{label}</div>
+                    <div className="text-[15px] font-semibold tracking-tight text-white">{label}</div>
+                    <div className="mt-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Console capability</div>
                   </div>
                 ))}
               </div>
@@ -1503,18 +1169,14 @@ function ProductHeroVisualSection() {
                 Working surface
               </div>
               <h2 className="relative mt-4 text-3xl font-semibold tracking-tight text-white">
-                Start from the screen teams actually use when payout quality starts drifting.
+                {landingHomeCopy.productHero.workingTitle}
               </h2>
               <p className="relative mt-5 text-[16px] leading-8 text-slate-400">
-                This is where operators spot provider degradation, finance sees whether proof is ready, and engineering understands whether the issue is route, callback, or bank-side movement.
+                {landingHomeCopy.productHero.workingBody}
               </p>
 
               <div className="relative mt-8 space-y-4">
-                {[
-                  'Provider posture, SLA pressure, and recovery recommendations stay visible in one frame.',
-                  'The same operating record supports action, reconciliation, and audit defense.',
-                  'Teams do not need to stitch dashboards, exports, and callback logs to explain one payout state.',
-                ].map((point) => (
+                {landingHomeCopy.productHero.bullets.map((point) => (
                   <div key={point} className="flex items-start gap-3 text-sm leading-7 text-slate-300">
                     <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-[#c6efcf]" />
                     <span>{point}</span>
@@ -1529,7 +1191,7 @@ function ProductHeroVisualSection() {
   )
 }
 
-export function LiveMetricStrip({ formattedVolume }: { formattedVolume: string }) {
+export function LiveMetricStrip({ formattedVolume: _formattedVolume }: { formattedVolume: string }) {
   return (
     <section className="relative z-10 px-2 pb-12 md:px-3">
       <div className="mx-auto max-w-6xl">
@@ -1541,21 +1203,21 @@ export function LiveMetricStrip({ formattedVolume }: { formattedVolume: string }
             <div className="grid items-end gap-6 lg:grid-cols-[1.2fr_0.8fr]">
               <div>
                 <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
-                  Live payout value tracked today
+                  Workspace preview
                 </div>
                 <div className="mt-3 text-4xl font-semibold tracking-[-0.05em] text-white md:text-6xl">
-                  {formattedVolume}
+                  Illustrative
                 </div>
                 <p className="mt-3 max-w-2xl text-base leading-relaxed text-slate-400 md:text-lg">
-                  Real-time value across routing, confirmation, reconciliation, and proof readiness.
+                  Product preview data — not production volume, uptime, or customer metrics.
                 </p>
               </div>
 
               <div className="grid grid-cols-3 gap-3">
                 {[
-                  ['14M+', 'events / month'],
-                  ['99.95%', 'uptime'],
-                  ['6+', 'provider layers'],
+                  ['4', 'workspace views'],
+                  ['Evidence Packs', 'export path'],
+                  ['Sandbox', 'evaluate first'],
                 ].map(([value, label]) => (
                   <div key={label} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4 shadow-[0_12px_26px_rgba(0,0,0,0.16)]">
                     <div className="text-2xl font-semibold tracking-tight text-white">{value}</div>
@@ -1607,7 +1269,7 @@ export function ProblemSection() {
             <div className="mt-8 space-y-4">
               {[
                 ['Delayed confirmations', 'Support load rises while teams still debate where the payout is stuck.'],
-                ['SLA breaches', 'Routing decisions happen too late because the risk signal is fragmented.'],
+                ['SLA breaches', 'Connector drift is noticed too late because the risk signal is fragmented across systems.'],
                 ['Audit chaos', 'Finance and compliance ask for proof after the incident instead of during it.'],
               ].map(([title, detail]) => (
                 <div key={title} className="rounded-2xl border border-white/10 bg-white/5 px-5 py-4 shadow-[0_12px_24px_rgba(0,0,0,0.14)]">
@@ -1701,28 +1363,28 @@ function ProductExperience() {
   const chartDomainMax = 150000
   const bottomPanels = {
     psp: {
-      routedValue: '₹141.7Cr',
-      exceptionLoad: '17.2k',
-      exposureForecast: '₹57.6L',
-      insightFigure: '93.5k',
+      routedValue: 'Processed volume',
+      exceptionLoad: 'Sample batch',
+      exposureForecast: 'Unconfirmed exposure',
+      insightFigure: 'Connector view',
     },
     rails: {
-      routedValue: '₹128.4Cr',
-      exceptionLoad: '12.8k',
-      exposureForecast: '₹48.2L',
-      insightFigure: '81.2k',
+      routedValue: 'Processed volume',
+      exceptionLoad: 'Sample batch',
+      exposureForecast: 'Unconfirmed exposure',
+      insightFigure: 'Rail view',
     },
     provider: {
-      routedValue: '₹152.8Cr',
-      exceptionLoad: '9.4k',
-      exposureForecast: '₹61.3L',
-      insightFigure: '96.1k',
+      routedValue: 'Processed volume',
+      exceptionLoad: 'Sample batch',
+      exposureForecast: 'Unconfirmed exposure',
+      insightFigure: 'Provider view',
     },
     banks: {
-      routedValue: '₹92.1Cr',
-      exceptionLoad: '21.6k',
-      exposureForecast: '₹93.5L',
-      insightFigure: '68.4k',
+      routedValue: 'Processed volume',
+      exceptionLoad: 'Sample batch',
+      exposureForecast: 'Unconfirmed exposure',
+      insightFigure: 'Bank view',
     },
   }[activeView]
   const handleDockSelect = (dockId: (typeof dashboardDockItems)[number]['id']) => {
@@ -1758,80 +1420,80 @@ function ProductExperience() {
   ] as const
   const promptSurfaceContent = {
     workspace: {
-      heroLabel: 'Command scope clean payouts',
-      heroValue: '1,231',
+      heroLabel: 'Command scope',
+      heroValue: 'Preview',
       heroBars: [3, 3, 11, 18, 9, 6, 2, 4, 3, 3, 3],
-      listTitle: 'Provider posture',
+      listTitle: 'Connector posture',
       listRows: [
-        ['Razorpay', '99.1%'],
-        ['Cashfree', '98.4%'],
-        ['PayU', '91.6%'],
+        ['Razorpay', 'Stable'],
+        ['Cashfree', 'Watch'],
+        ['PayU', 'Review'],
       ],
-      listFooter: '+19 more routes',
-      listAction: 'View all providers',
-      statTitle: 'Recovery intelligence',
-      statValue: '+65.5%',
-      compareLabels: ['Previous cycle', 'Current cycle'],
+      listFooter: 'Product preview',
+      listAction: 'View connectors',
+      statTitle: 'Matching confidence',
+      statValue: 'Preview',
+      compareLabels: ['Before review', 'After review'],
       bottomTitle: 'Escalations ready',
-      bottomValue: '459',
-      bottomMeta: 'Provider and bank-side issues packaged for operator review.',
+      bottomValue: 'Sample',
+      bottomMeta: 'Illustrative connector and bank-side issues for operator review.',
     },
     proof: {
-      heroLabel: 'Proof packs ready',
-      heroValue: '142',
+      heroLabel: 'Evidence Packs',
+      heroValue: 'Preview',
       heroBars: [2, 3, 8, 13, 10, 7, 4, 6, 3, 2, 2],
       listTitle: 'Evidence sources',
       listRows: [
-        ['Statements', '41'],
-        ['Callbacks', '62'],
-        ['Exports', '39'],
+        ['Statements', 'Linked'],
+        ['Confirmations', 'Linked'],
+        ['Exports', 'Pending'],
       ],
-      listFooter: '+8 pending bundles',
+      listFooter: 'Product preview',
       listAction: 'Review proof queue',
       statTitle: 'Close confidence',
-      statValue: '84.2%',
+      statValue: 'Preview',
       compareLabels: ['Audit', 'Close'],
       bottomTitle: 'Export queue',
-      bottomValue: '27',
-      bottomMeta: 'Packets still waiting on final assembly',
+      bottomValue: 'Sample',
+      bottomMeta: 'Illustrative packets waiting on final assembly.',
     },
     grid: {
       heroLabel: 'Shared work queues',
-      heroValue: '84',
+      heroValue: 'Preview',
       heroBars: [3, 5, 7, 10, 12, 9, 8, 6, 4, 3, 2],
       listTitle: 'Team workload',
       listRows: [
-        ['Support', '18'],
-        ['Finance', '21'],
-        ['Engineering', '9'],
+        ['Support', 'Sample'],
+        ['Finance', 'Sample'],
+        ['Engineering', 'Sample'],
       ],
-      listFooter: '+4 shared queues',
+      listFooter: 'Product preview',
       listAction: 'Open handoff view',
       statTitle: 'Cross-team alignment',
-      statValue: '+42%',
+      statValue: 'Preview',
       compareLabels: ['Today', 'Next'],
       bottomTitle: 'Blocked handoffs',
-      bottomValue: '9',
-      bottomMeta: 'Cases still waiting for clear ownership',
+      bottomValue: 'Sample',
+      bottomMeta: 'Illustrative cases still waiting for clear ownership',
     },
     sync: {
-      heroLabel: 'Live sync cycles',
-      heroValue: '24',
+      heroLabel: 'Workspace sync',
+      heroValue: 'Preview',
       heroBars: [2, 4, 5, 7, 12, 11, 9, 6, 4, 3, 2],
       listTitle: 'Freshness checks',
       listRows: [
-        ['Board sync', '99.2%'],
-        ['Delta ingest', '97.4%'],
-        ['Proof refresh', '95.8%'],
+        ['Board sync', 'Linked'],
+        ['Data refresh', 'Linked'],
+        ['Evidence refresh', 'Pending'],
       ],
-      listFooter: 'Last sync 48s ago',
+      listFooter: 'Product preview',
       listAction: 'Inspect freshness',
       statTitle: 'Delta resolved',
-      statValue: '+18.4%',
+      statValue: 'Preview',
       compareLabels: ['Before', 'After'],
       bottomTitle: 'Stale panels',
-      bottomValue: '3',
-      bottomMeta: 'Surfaces still waiting on the next refresh cycle',
+      bottomValue: 'Sample',
+      bottomMeta: 'Illustrative surfaces waiting on the next refresh cycle',
     },
   } as const
   const activePromptSurface =
@@ -1889,10 +1551,10 @@ function ProductExperience() {
             <div className="mb-5 flex flex-col gap-3 border-b border-black/8 pb-5 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-[#8a8a86]">
-                  AI Intelligence Layer
+                  Ask Zord
                 </div>
                 <div className="mt-2 text-[1.15rem] font-medium tracking-[-0.03em] text-[#111111]">
-                  Operator context, route posture, and proof readiness in one reasoning layer.
+                  Operator context, connector posture, and Proof Readiness in one reasoning layer.
                 </div>
               </div>
               <div className="inline-flex rounded-full bg-[#eef1f5] px-3 py-2 text-[12px] font-medium text-[#111111]">
@@ -1921,7 +1583,7 @@ function ProductExperience() {
 
           {isWorkspacePromptSurface ? (
             <div className="mt-5 text-[12px] leading-5 text-[#8a8a86]">
-              Grounded on routed value, callback timing, bank-side movement, and export readiness already visible in the workspace.
+              Grounded on processed payment value, confirmation timing, bank-side movement, and Evidence Pack readiness already visible in the workspace.
             </div>
           ) : null}
 
@@ -2012,10 +1674,10 @@ function ProductExperience() {
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="max-w-[28rem]">
               <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-white/32">
-                AI Intelligence Layer
+                Ask Zord
               </div>
               <div className="mt-2 text-[1.1rem] font-medium tracking-[-0.03em] text-white">
-                Route posture, owner handoff, and proof readiness in one reasoning layer.
+                Connector posture, ownership handoff, and Proof Readiness in one reasoning layer.
               </div>
             </div>
             <div className="inline-flex items-center gap-2 rounded-full border border-[#4ADE80]/20 bg-[#4ADE80]/10 px-3 py-2 text-[12px] font-medium text-white shadow-[0_8px_24px_rgba(74,222,128,0.08)]">
@@ -2036,7 +1698,7 @@ function ProductExperience() {
               <span className="text-[#4ADE80]">11:32 AM</span>
               <span className="h-1 w-1 rounded-full bg-[#4ADE80]" />
               <span className="max-w-[33rem] text-white/48">
-                Grounded on routed value, callback timing, bank-side movement, and export readiness already visible in the workspace.
+              {H.askZord.processedSupporting}
               </span>
             </div>
           </div>
@@ -2099,9 +1761,9 @@ function ProductExperience() {
             <Glyph name="zap" className="h-5 w-5" />
           </div>
           <div className="min-w-0 flex-1 text-center">
-            <div className="text-[15px] text-white/90">Ask anything or search</div>
+            <div className="text-[15px] text-white/90">{H.askZord.composerPlaceholder}</div>
             <div className="mt-1 text-[11px] text-white/42">
-              Route posture, bank coordination, and proof readiness
+              Connector posture, bank coordination, and Proof Readiness
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -2185,7 +1847,7 @@ function ProductExperience() {
             <div className="mt-5 text-[3.6rem] font-light tracking-[-0.06em] text-[#111111]">
               {activePromptSurface.statValue}
             </div>
-            <div className="mt-2 text-[13px] leading-6 text-[#8a8a86]">Routed value recovered this cycle</div>
+            <div className="mt-2 text-[13px] leading-6 text-[#8a8a86]">Illustrative workspace metric</div>
           </article>
 
           <div className="grid grid-cols-2 gap-4">
@@ -2365,12 +2027,12 @@ function ProductExperience() {
       <div className="mt-6 grid gap-4 xl:grid-cols-4">
         <article className="rounded-[1.6rem] border border-black/10 bg-white p-5 shadow-[0_10px_24px_rgba(0,0,0,0.04)]">
           <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-[#8b8a86]">
-            Routed value forecast
+            Processed volume
           </div>
           <div className="mt-4 text-[2.5rem] font-light tracking-[-0.04em] text-[#111111]">
             {bottomPanels.routedValue}
           </div>
-          <div className="mt-1 text-sm text-[#6f716d]">Projected cleared payout volume this month.</div>
+          <div className="mt-1 text-sm text-[#6f716d]">Illustrative workspace preview — not live customer data.</div>
           <div className="mt-5 flex items-center gap-3 text-[12px] text-[#8b8a86]">
             <span>Week</span>
             <span className="border-b border-[#111111] pb-0.5 text-[#111111]">Month</span>
@@ -2421,7 +2083,7 @@ function ProductExperience() {
           <div className="mt-4 text-[2.5rem] font-light tracking-[-0.04em] text-[#111111]">
             {bottomPanels.exposureForecast}
           </div>
-          <div className="mt-1 text-sm text-[#6f716d]">Expected value still exposed to callback lag and bank-side drift.</div>
+          <div className="mt-1 text-sm text-[#6f716d]">Expected value still exposed to confirmation delay and bank-side drift.</div>
           <div className="mt-6 flex items-end gap-2">
             {dashboardChartData.slice(8, 16).map((entry) => (
               <span
@@ -2461,8 +2123,8 @@ function ProductExperience() {
         <div className="rounded-[1.35rem] bg-[#1F1F1F] p-3 shadow-[0_8px_32px_rgba(0,0,0,0.10)]">
           <div className="mb-3 flex flex-wrap gap-2">
             {[
-              'What changed across routed payout quality?',
-              'Why did proof readiness shift this cycle?',
+              'What changed across processed payout quality?',
+              'Why did Proof Readiness shift this cycle?',
             ].map((prompt) => (
               <div
                 key={`home-command-${prompt}`}
@@ -2611,13 +2273,16 @@ function ProductExperience() {
         <Reveal className="mb-16 text-center">
           <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-300 shadow-[0_10px_20px_rgba(0,0,0,0.12)]">
             <Glyph name="grid" className="h-4 w-4 text-[#3ba6f7]" />
-            <span>Operations Switchboard</span>
+            <span>{landingHomeCopy.switchboard.eyebrow}</span>
           </div>
           <h2 className="mt-6 text-4xl font-semibold tracking-tight text-white md:text-6xl">
-            A premium control surface for payout posture
+            {landingHomeCopy.switchboard.title}
           </h2>
           <p className="mx-auto mt-5 max-w-3xl text-lg leading-relaxed text-slate-400 md:text-xl">
-            Scan provider health, rail posture, bank hotspots, and the recommended next move before failures spread into support, finance, and engineering.
+            {landingHomeCopy.switchboard.subcopy}
+          </p>
+          <p className="mx-auto mt-3 max-w-2xl text-sm font-medium uppercase tracking-[0.14em] text-slate-500">
+            {landingHomeCopy.productPreviewLabel}
           </p>
         </Reveal>
 
@@ -2831,10 +2496,10 @@ function HowItWorksSection() {
             <span>How it works</span>
           </div>
           <h2 className="mt-6 text-4xl font-semibold tracking-tight text-white md:text-6xl">
-            The operating model behind control
+            {landingHomeCopy.howItWorks.title}
           </h2>
           <p className="mt-5 max-w-xl text-lg leading-relaxed text-slate-400 md:text-xl">
-            Every payout moves through four simple stages so teams know where it is, what changed, and what proof exists.
+            {landingHomeCopy.howItWorks.body}
           </p>
         </Reveal>
 
@@ -2845,7 +2510,7 @@ function HowItWorksSection() {
                 <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-lg font-semibold text-white">
                   {stage.step}
                 </div>
-                <div className={`text-sm font-semibold ${index === 3 ? 'text-[#3ba6f7]' : 'text-slate-300'}`}>{stage.pct}</div>
+                <div className={`text-sm font-semibold ${index === 3 ? 'text-[#3ba6f7]' : 'text-slate-300'}`}>{stage.footnote}</div>
               </div>
               <h3 className="mt-6 text-2xl font-semibold tracking-tight text-white">{stage.label}</h3>
               <p className="mt-3 text-base leading-7 text-slate-400">{stage.detail}</p>
@@ -2927,10 +2592,10 @@ function InfrastructureSection() {
             <span>Infrastructure depth</span>
           </div>
           <h2 className="mt-6 text-4xl font-semibold tracking-tight text-white md:text-6xl">
-            The infrastructure layer buyers validate before rollout
+            {landingHomeCopy.infrastructure.title}
           </h2>
           <p className="mx-auto mt-5 max-w-3xl text-lg leading-relaxed text-slate-400 md:text-xl">
-            Provider coverage, bank signal quality, and proof readiness are what move a strong demo into an enterprise decision.
+            {landingHomeCopy.infrastructure.subtitle}
           </p>
         </Reveal>
 
@@ -2956,11 +2621,11 @@ function InfrastructureSection() {
               </div>
 
               <h3 className="mt-6 max-w-3xl text-4xl font-semibold tracking-[-0.06em] text-white sm:text-5xl lg:text-[3.6rem] lg:leading-[0.96]">
-                Provider posture, bank response, and proof readiness in one layer.
+                {landingHomeCopy.infrastructure.headline}
               </h3>
 
               <p className="mt-5 max-w-2xl text-[17px] leading-8 text-slate-300 sm:text-[18px]">
-                ZORD connects payout intent, provider outcomes, bank-side movement, and finance-ready evidence so teams operate from one trusted payout record.
+                {landingHomeCopy.infrastructure.body}
               </p>
               </div>
 
@@ -2979,7 +2644,7 @@ function InfrastructureSection() {
                   <div className="max-w-md rounded-[1.3rem] border border-white/10 bg-[linear-gradient(180deg,rgba(16,20,27,0.72),rgba(10,12,16,0.52))] px-5 py-4 shadow-[0_18px_36px_rgba(0,0,0,0.24)] backdrop-blur-xl">
                     <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#94A7AE]">Shared payout truth</div>
                     <p className="mt-3 text-[15px] leading-7 text-white/86">
-                      The same control layer teams use for routing action, confirmation confidence, reconciliation, and proof export.
+                      The same control layer teams use for connector review, confirmation confidence, reconciliation, and Evidence Pack export.
                     </p>
                   </div>
                 </div>
@@ -3016,7 +2681,7 @@ function InfrastructureSection() {
 }
 
 export function PricingTeaserSection() {
-  const [activePricingFamily, setActivePricingFamily] = useState<(typeof pricingFamilies)[number]['id']>('payments')
+  const [activePricingFamily, setActivePricingFamily] = useState<(typeof pricingFamilies)[number]['id']>('payment-command-center')
   const [openPricingFaq, setOpenPricingFaq] = useState<number | null>(0)
 
   const activeFamily = pricingFamilies.find((family) => family.id === activePricingFamily) ?? pricingFamilies[0]
@@ -3030,10 +2695,10 @@ export function PricingTeaserSection() {
             <span>Pricing</span>
           </div>
           <h2 className="mt-6 text-4xl font-semibold tracking-tight text-white md:text-5xl">
-            Clear fintech pricing paths, not vague enterprise copy
+            {H.productName} commercials — sandbox first, custom with sales
           </h2>
           <p className="mx-auto mt-5 max-w-3xl text-lg leading-relaxed text-slate-400 md:text-xl">
-            Take the clarity of Razorpay and Plaid, then adapt it to ZORD: product-family pricing up front, clear commercial models, and answers to the buying questions teams actually ask.
+            This is the V1 payout workspace commercial model: evaluate in sandbox, then work with Arealis on production pricing. Payments, payroll, and banking SKUs are not listed here.
           </p>
         </Reveal>
 
@@ -3271,26 +2936,26 @@ export function TestimonialsSection() {
             <span>Customers</span>
           </div>
           <h2 className="mt-6 text-4xl font-semibold tracking-tight text-white md:text-5xl">
-            Why operators bring ZORD into live payout environments
+            Who evaluates ZORD in live payout environments
           </h2>
           <p className="mx-auto mt-5 max-w-3xl text-lg leading-relaxed text-slate-400 md:text-xl">
-            ZORD is the payout control product inside the broader Arealis platform. These stories reflect the teams that adopt it when payouts, finance close, and operational accountability need one shared truth.
+            Buyer lenses — not customer logos or outcome statistics. Teams evaluate ZORD when payout accountability spans operations, finance, engineering, and risk at the same time.
           </p>
         </Reveal>
 
         <div className="grid gap-6 md:grid-cols-2">
-          {operatingStories.slice(0, 4).map((story) => (
-            <div key={story.name} className="rounded-[2rem] border border-white/10 p-8" style={surfaceCardStyle}>
-              <div className="mb-6 flex items-center gap-4">
-                <div className={`flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-gradient-to-br ${story.colors} text-lg font-semibold text-white shadow-inner`}>
-                  {story.initial}
-                </div>
-                <div>
-                  <h4 className="text-lg font-semibold tracking-tight text-white">{story.name}</h4>
-                  <p className="text-base text-slate-400">{story.role}</p>
-                </div>
+          {operatingStories.slice(0, 4).map((persona) => (
+            <div key={persona.title} className="rounded-[2rem] border border-white/10 p-8" style={surfaceCardStyle}>
+              <div className="text-lg font-semibold tracking-tight text-white">{persona.title}</div>
+              <p className="mt-1 text-base text-[#c6efcf]">{persona.role}</p>
+              <p className="mt-5 text-lg leading-relaxed text-slate-300">{persona.body}</p>
+              <div className="mt-6 flex flex-wrap gap-2">
+                {persona.tags.map((tag) => (
+                  <span key={tag} className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-[12px] font-semibold text-slate-300">
+                    {tag}
+                  </span>
+                ))}
               </div>
-              <p className="text-lg leading-relaxed text-slate-300">{story.quote}</p>
             </div>
           ))}
         </div>
@@ -3375,7 +3040,7 @@ export function CompanySection() {
               <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Products</div>
               <div className="mt-3 text-lg font-semibold text-white">ZORD + Gateway</div>
               <p className="mt-2 text-sm leading-6 text-slate-400">
-                ZORD focuses on payout and compliance orchestration, while Arealis continues building broader enterprise intelligence infrastructure.
+                ZORD focuses on payout operations and compliance-ready evidence, while Arealis continues building broader enterprise intelligence infrastructure.
               </p>
             </div>
             <div className="rounded-[1.3rem] border border-white/10 bg-white/[0.03] p-5">
@@ -3446,10 +3111,10 @@ function FinalCTA() {
           <div className="pointer-events-none absolute left-1/2 top-0 h-80 w-80 -translate-x-1/2 rounded-full blur-[110px]" style={{ backgroundColor: 'rgba(59, 166, 247, 0.12)' }} />
           <div className="relative z-10 mx-auto max-w-3xl">
             <h2 className="text-4xl font-semibold tracking-tight text-white md:text-6xl md:leading-tight">
-              Move payouts with control, not guesswork
+              {landingHomeCopy.finalCta.title}
             </h2>
             <p className="mt-6 text-lg leading-relaxed text-slate-400 md:text-xl">
-              Book a ZORD walkthrough and see how routing, visibility, reconciliation, and proof can sit in one enterprise operating layer.
+              {landingHomeCopy.finalCta.body}
             </p>
             <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
               <a
@@ -3482,7 +3147,7 @@ function SiteFooter() {
           <div>
             <ZordLogo size="md" variant="dark" className="!w-auto max-w-[9rem]" />
             <p className="mt-6 max-w-[320px] text-[14px] leading-7 text-slate-400">
-              ZORD by Arealis helps businesses route payouts reliably, track every state, and stay proof-ready when money movement gets messy.
+              {landingHomeCopy.footer.body}
             </p>
             <p className="mt-4 text-[14px] text-slate-400">Contact: hello@arelais.com</p>
           </div>

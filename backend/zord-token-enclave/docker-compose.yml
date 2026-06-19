@@ -27,6 +27,7 @@ services:
 
       # Crypto
       - MASTER_KEY=W2MSQaooUlXVmVxGB7NgU06keCyKgQ+NlbdaDHCERAE=
+      - ENCLAVE_INTERNAL_TOKEN=${ENCLAVE_INTERNAL_TOKEN}
 
        # -------- KAFKA --------
      # -------- KAFKA --------

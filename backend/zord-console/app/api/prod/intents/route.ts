@@ -37,10 +37,19 @@ export async function GET(request: NextRequest) {
       instrument: intent.beneficiary_type || 'BANK',
       status: intent.status,
       confidence_score: intent.confidence_score,
+      aggregate_confidence_score: intent.aggregate_confidence_score,
+      intent_quality_score: intent.intent_quality_score,
       created_at: intent.created_at,
       envelope_id: intent.envelope_id,
       tenant_id: intent.tenant_id,
       batch_id: intent.batch_id,
+      source_row_num: intent.source_row_num,
+      client_payout_ref: intent.client_payout_ref,
+      client_batch_ref: intent.client_batch_ref,
+      provider_hint: intent.provider_hint,
+      beneficiary_type: intent.beneficiary_type,
+      beneficiary: intent.beneficiary,
+      constraints: intent.constraints,
     }))
 
     const res = NextResponse.json({

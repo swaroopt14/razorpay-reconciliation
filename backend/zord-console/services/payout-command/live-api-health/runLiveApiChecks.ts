@@ -7,6 +7,7 @@ import type {
   PatternsKpiResponse,
   RecommendationsKpiResponse,
 } from '../prod-api/intelligenceTypes'
+import type { PatternDetailResponse, PatternHistoryResponse } from '../prod-api/intelligencePatternTypes'
 import type { DisbursementTrendResponse } from '../prod-api/disbursementTrendTypes'
 import type { ListPacksResponse } from '../prod-api/evidenceTypes'
 
@@ -93,6 +94,28 @@ export async function runLiveApiChecks(options: RunLiveApiChecksOptions = {}): P
       summarize: (d) => summarizeDataAvailable(d as PatternsKpiResponse | null, true),
     },
     {
+      id: 'pattern-detail',
+      label: 'Intelligence · pattern detail',
+      url: '/api/prod/intelligence/pattern',
+      summarize: (d) => {
+        const payload = d as PatternDetailResponse | null
+        if (!payload) return { status: 'error', detail: 'No response' }
+        if (payload.data_available === true) return { status: 'ok', detail: 'pattern snapshot available' }
+        return { status: 'empty', detail: payload.reason?.trim() || 'data_available: false' }
+      },
+    },
+    {
+      id: 'pattern-history',
+      label: 'Intelligence · pattern history',
+      url: '/api/prod/intelligence/pattern/history?limit=5',
+      summarize: (d) => {
+        const payload = d as PatternHistoryResponse | null
+        if (!payload) return { status: 'error', detail: 'No response' }
+        const n = payload.snapshots?.length ?? payload.count ?? 0
+        return { status: n > 0 ? 'ok' : 'empty', detail: n > 0 ? `${n} snapshot(s)` : 'empty history' }
+      },
+    },
+    {
       id: 'defensibility',
       label: 'Intelligence · defensibility',
       url: '/api/prod/intelligence/defensibility',
@@ -151,7 +174,7 @@ export async function runLiveApiChecks(options: RunLiveApiChecksOptions = {}): P
     },
     {
       id: 'disbursement-trend',
-      label: 'Home · disbursement trend',
+      label: 'Home · payment trend (leakage windows)',
       url: '/api/prod/home/disbursement-trend?range=month',
       summarize: (d) => {
         const trend = d as DisbursementTrendResponse | null

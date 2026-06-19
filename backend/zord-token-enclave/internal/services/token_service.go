@@ -18,12 +18,11 @@ import (
 type TokenService struct {
 	repo        *repository.TokenRepository
 	keyManager  keymanager.KeyManager
-	tokenSecret []byte             // ✅ FIX: for deterministic tokenization
-	tenantGroup singleflight.Group // ✅ NEW: for per-tenant concurrency control
-	tokenSem    chan struct{}      // ✅ NEW: limit global tokenization concurrency
+	tokenSecret []byte            // for deterministic tokenization
+	tenantGroup singleflight.Group // per-tenant concurrency control
+	tokenSem    chan struct{}       // limit global tokenization concurrency
 }
 
-// ✅ Constructor (UPDATED)
 func NewTokenService(r *repository.TokenRepository, km keymanager.KeyManager, secret []byte) *TokenService {
 	return &TokenService{
 		repo:        r,
@@ -34,30 +33,43 @@ func NewTokenService(r *repository.TokenRepository, km keymanager.KeyManager, se
 	}
 }
 
-// ✅ Single field tokenize (STATEFUL)
+// DetokenizeContext carries caller identity for every detokenize call.
+// All fields except CorrelationID are required — the handler enforces this.
+type DetokenizeContext struct {
+	TenantID      string
+	Caller        string // service principal: header X-Zord-Caller-ID
+	PurposeCode   string // declared purpose
+	ObjectRef     string // intent_id or transaction reference
+	CorrelationID string
+}
+
+// Tokenize encrypts a single plaintext value and stores it.
+// actor and traceID are forwarded to the audit row.
 func (s *TokenService) Tokenize(
 	ctx context.Context,
 	tenantID,
 	kind string,
 	plaintext []byte,
+	actor string,
+	traceID string,
 ) (string, error) {
 
-	// ✅ Semaphore acquisition
+	// Semaphore acquisition
 	s.tokenSem <- struct{}{}
 	defer func() { <-s.tokenSem }()
 
-	//  Ensure key exists (ADD THIS HERE)
+	// Ensure key exists
 	if err := s.EnsureInitialKey(ctx, tenantID); err != nil {
 		return "", err
 	}
 
-	// 🔥 1. Get ACTIVE key
+	// 1. Get ACTIVE key
 	key, err := s.keyManager.GetActiveKey(ctx, tenantID)
 	if err != nil {
 		return "", err
 	}
 
-	// 🔥 2. Encrypt using key
+	// 2. Encrypt using key
 	cryptoSvc := crypto.NewCrypto(key.RawKey)
 
 	ciphertext, nonce, err := cryptoSvc.Encrypt(plaintext)
@@ -65,12 +77,11 @@ func (s *TokenService) Tokenize(
 		return "", err
 	}
 
-	// // FIX: deterministic tokenization
-	// // UPDATED: replaced UUID with HMAC
+	// 3. Deterministic token ID — scoped to tenant + kind
 	normalized := crypto.NormalizeValue(string(plaintext))
-	tokenID := "zrd_" + crypto.GenerateDeterministicToken(s.tokenSecret, normalized) // FIX: tok_ prefix
+	tokenID := "zrd_" + crypto.GenerateDeterministicToken(s.tokenSecret, tenantID, kind, normalized)
 
-	// 🔥 3. Store in DB with key reference (handles ON CONFLICT)
+	// 4. Store in DB with key reference and actor context
 	rec := models.TokenRecord{
 		TokenID:         tokenID,
 		TenantID:        tenantID,
@@ -80,6 +91,8 @@ func (s *TokenService) Tokenize(
 		EncryptionKeyID: key.KeyID,
 		KeyVersion:      key.Version,
 		Status:          "ACTIVE",
+		Actor:           actor,
+		TraceID:         traceID,
 	}
 
 	if err := s.repo.Insert(ctx, rec); err != nil {
@@ -89,11 +102,13 @@ func (s *TokenService) Tokenize(
 	return tokenID, nil
 }
 
-// ✅ Bulk tokenize (UNCHANGED logic)
+// TokenizePII tokenizes a map of PII fields for a tenant.
+// actor identifies the service principal making the request (for audit).
 func (s *TokenService) TokenizePII(
 	ctx context.Context,
 	tenantID string,
 	traceID string,
+	actor string,
 	pii map[string]string,
 ) (map[string]string, error) {
 
@@ -105,7 +120,7 @@ func (s *TokenService) TokenizePII(
 			continue
 		}
 
-		token, err := s.Tokenize(ctx, tenantID, field, []byte(value))
+		token, err := s.Tokenize(ctx, tenantID, field, []byte(value), actor, traceID)
 		if err != nil {
 			return nil, err
 		}
@@ -116,9 +131,11 @@ func (s *TokenService) TokenizePII(
 	return result, nil
 }
 
-// ✅ Bulk detokenize (STATEFUL)
+// DetokenizeFields decrypts a map of token IDs back to plaintext values.
+// dctx carries mandatory caller identity for audit logging.
 func (s *TokenService) DetokenizeFields(
 	ctx context.Context,
+	dctx DetokenizeContext,
 	tokens map[string]string,
 ) (map[string]string, error) {
 
@@ -130,19 +147,19 @@ func (s *TokenService) DetokenizeFields(
 			continue
 		}
 
-		// 🔥 1. Fetch token from DB
-		rec, err := s.repo.Get(ctx, tokenID)
+		// 1. Fetch token from DB — audit write is inside Get (fail closed)
+		rec, err := s.repo.Get(ctx, tokenID, dctx.TenantID, dctx.Caller, dctx.PurposeCode, dctx.ObjectRef, dctx.CorrelationID)
 		if err != nil {
 			return nil, err
 		}
 
-		// 🔥 2. Get correct key
+		// 2. Get correct key
 		key, err := s.keyManager.GetKeyByID(ctx, rec.EncryptionKeyID)
 		if err != nil {
 			return nil, err
 		}
 
-		// 🔥 3. Decrypt
+		// 3. Decrypt
 		cryptoSvc := crypto.NewCrypto(key.RawKey)
 
 		plain, err := cryptoSvc.Decrypt(rec.Ciphertext, rec.Nonce)
@@ -159,7 +176,7 @@ func (s *TokenService) DetokenizeFields(
 func (s *TokenService) RotateKey(ctx context.Context, tenantID string, createdBy string) error {
 
 	_, err, _ := s.tenantGroup.Do("rotate:"+tenantID, func() (interface{}, error) {
-		// 🔐 Generate new AES-256 key (32 bytes)
+		// Generate new AES-256 key (32 bytes)
 		newKey := make([]byte, 32)
 		if _, err := rand.Read(newKey); err != nil {
 			return nil, err
@@ -274,14 +291,17 @@ func (s *TokenService) AutoRotateKeys(ctx context.Context) error {
 			continue
 		}
 
-		// 🔥 ROTATION POLICY (example: 90 days)
-		// if time.Since(key.ActiveFrom) > 90*24*time.Hour {
 		if time.Now().After(key.ActiveFrom.AddDate(0, 10, 0)) {
 			log.Printf("🔐 Rotating key for tenant %s", tenantID)
 
 			err := s.RotateKey(ctx, tenantID, "auto-rotation")
 			if err != nil {
 				log.Println("❌ Rotation failed:", err)
+				continue
+			}
+			// Migrate tokens for this tenant after rotation
+			if err := s.MigrateKeys(ctx, tenantID); err != nil {
+				log.Println("❌ Migration failed after rotation:", err)
 			}
 		}
 	}
@@ -297,11 +317,16 @@ func (s *TokenService) EnsureInitialKey(ctx context.Context, tenantID string) er
 			return nil, nil // already exists
 		}
 
-		// 🔐 create first key
+		// create first key
 		log.Printf("🔐 Creating initial key for tenant %s", tenantID)
 
 		return nil, s.RotateKey(ctx, tenantID, "bootstrap")
 	})
 
 	return err
+}
+
+// GetAllTenants delegates to the repository — used by the migration goroutine.
+func (s *TokenService) GetAllTenants(ctx context.Context) ([]string, error) {
+	return s.repo.GetAllTenants(ctx)
 }

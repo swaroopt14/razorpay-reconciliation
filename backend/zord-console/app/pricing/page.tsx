@@ -6,24 +6,67 @@ import { useEffect, useState } from 'react'
 
 import { ZordLogo } from '@/components/ZordLogo'
 
-const topNav = [
+type TopNavMenuItem = {
+  label: string
+  href: string
+  note: string
+}
+
+type TopNavItem = {
+  label: string
+  href: string
+  menu?: readonly TopNavMenuItem[]
+}
+
+type PricingCard = {
+  title: string
+  value: string
+  note: string
+  accent?: boolean
+}
+
+type PricingFamily = {
+  id: string
+  label: string
+  eyebrow: string
+  title: string
+  description: string
+  detail: string
+  pricingLabel: string
+  pricingNote: string
+  bullets: readonly string[]
+  cards: readonly PricingCard[]
+  footnote?: string
+}
+
+type EngagementPlan = {
+  title: string
+  eyebrow: string
+  metric: string
+  description: string
+  features: readonly string[]
+  cta: string
+  href: string
+  featured?: boolean
+}
+
+const topNav: readonly TopNavItem[] = [
   {
     label: 'Product',
     href: '#product-families',
     menu: [
-      { label: 'Payments', href: '#payments', note: 'Acceptance, reporting, and commercial bands.' },
-      { label: 'Business Banking', href: '#banking', note: 'Accounts, payouts, vendor runs, and approvals.' },
-      { label: 'Payroll', href: '#payroll', note: 'Salary, compliance, and employee operations.' },
-      { label: 'Credit Solutions', href: '#credit', note: 'Custom underwriting and disbursal programs.' },
+      { label: 'Payment Command Center', href: '#payment-command-center', note: 'Workspace, Evidence Packs, and connector views.' },
+      { label: 'Sandbox', href: '#plans', note: 'Evaluate before production commercials.' },
+      { label: 'Enterprise', href: '#sales', note: 'Custom rollouts, security review, and account coverage.' },
     ],
   },
   {
     label: 'Solutions',
     href: '#plans',
     menu: [
-      { label: 'Startups', href: '#plans', note: 'Self-serve entry with monthly flexibility.' },
-      { label: 'Growth Teams', href: '#plans', note: 'Committed pricing with better commercials.' },
-      { label: 'Enterprise', href: '#sales', note: 'Custom rollouts, security review, and account coverage.' },
+      { label: 'Sandbox', href: '#plans', note: 'Evaluate the operating model first.' },
+      { label: 'Growth', href: '#plans', note: 'Production workspace with support.' },
+      { label: 'Enterprise', href: '#sales', note: 'Custom commercials and rollout help.' },
     ],
   },
   { label: 'Pricing', href: '#top' },
@@ -32,238 +75,129 @@ const topNav = [
     label: 'Resources',
     href: '#support',
     menu: [
-      { label: 'API docs', href: '#support', note: 'Quickstart, references, and onboarding help.' },
+      { label: 'How it works', href: '/final-landing/how-it-works', note: 'Operating model walkthrough.' },
       { label: 'Support', href: '#support', note: 'Talk to sales or request implementation guidance.' },
-      { label: 'FAQs', href: '#faqs', note: 'Commercials, billing, bundling, and go-live answers.' },
+      { label: 'FAQs', href: '#faqs', note: 'Commercials, sandbox, and go-live answers.' },
     ],
   },
   {
     label: 'Company',
     href: '#footer',
     menu: [
-      { label: 'About Zord', href: '#footer', note: 'Platform, team, and company overview.' },
+      { label: 'About Zord', href: '/final-landing/company', note: 'Platform, team, and company overview.' },
       { label: 'Security', href: '#support', note: 'Review support, controls, and implementation help.' },
       { label: 'Contact', href: '#sales', note: 'Talk to commercial, product, or onboarding teams.' },
     ],
   },
 ] as const
 
-const pricingFamilies = [
+const pricingFamilies: readonly PricingFamily[] = [
   {
-    id: 'payments',
-    label: 'Payments',
-    eyebrow: 'Payments',
-    title: 'Acceptance pricing that stays simple at launch and flexible at scale',
+    id: 'payment-command-center',
+    label: 'Payment Command Center',
+    eyebrow: 'Payment Command Center',
+    title: 'Commercial clarity for the payout operations workspace',
     description:
-      'Use standard pricing to go live quickly, then move into custom commercial bands as volume, settlement needs, and reporting depth increase.',
+      'ZORD is priced as a payout control product — sandbox to evaluate, then custom commercials for production rollout. This page does not list Payments, Payroll, or Banking SKUs.',
     detail:
-      'Cards, UPI, netbanking, wallets, links, and recurring flows stay under one commercial layer with reporting already built in.',
-    pricingLabel: 'From 2.0%',
-    pricingNote: 'Standard online transactions*',
+      'Commercials are shaped around workspace depth, connector coverage, Evidence Pack workflows, and rollout support.',
+    pricingLabel: 'Contact sales',
+    pricingNote: 'Custom / volume-led commercials',
     bullets: [
-      'Platform fees start at 2.0% on standard online payment flows.',
-      'Custom and standard reports are included at no additional cost.',
-      'Monthly revenue above ₹5 lakh can move to custom commercial bands.',
-      'Built for checkout, payment links, subscriptions, and high-volume collections.',
-    ],
-    cards: [
-      {
-        title: 'Standard online pricing',
-        value: '2.0%',
-        note: 'Platform fee on standard online transactions*',
-        accent: true,
-      },
-      {
-        title: 'Reporting',
-        value: '₹0',
-        note: 'Custom and standard reports included',
-      },
-      {
-        title: 'Custom commercials',
-        value: '₹5L+',
-        note: 'Monthly revenue threshold for volume-led pricing',
-      },
-    ],
-    footnote: '* 18% GST applicable where relevant.',
-  },
-  {
-    id: 'banking',
-    label: 'Business Banking',
-    eyebrow: 'Business Banking',
-    title: 'Banking operations priced around workflow depth, not just account access',
-    description:
-      'Bring current accounts, tax payments, vendor runs, approvals, and scheduled payouts into one operating layer that finance teams can actually use every day.',
-    detail:
-      'Best for teams that want banking visibility, payout controls, and finance-ready movement in one place instead of stitching bank panels and ops tools together.',
-    pricingLabel: 'Custom',
-    pricingNote: 'Aligned to payout volume and banking workflow depth',
-    bullets: [
-      'Guided account setup with payout-ready operations from day one.',
-      'Vendor payments, tax runs, and scheduled disbursals in a shared workspace.',
-      'Corporate card and spend-control workflows for eligible teams.',
-      'Priority support for payout recovery, approvals, and bank operations.',
+      'Payment Command Center, Value at Risk, and Connector Performance views.',
+      'Evidence Packs for finance close, disputes, and audit questions.',
+      'Sandbox preview before production commercials.',
+      'Implementation and security review support for enterprise rollouts.',
     ],
     cards: [
       {
         title: 'Commercial model',
         value: 'Custom',
-        note: 'Matched to approvals, banking ops, and payout throughput',
+        note: 'Volume-led pricing for production workspace access',
         accent: true,
       },
       {
-        title: 'Current account setup',
-        value: 'Guided',
-        note: 'Onboarding support with account and payout configuration',
+        title: 'Entry path',
+        value: 'Sandbox',
+        note: 'Evaluate the operating model before buying',
       },
       {
-        title: 'Banking operations',
-        value: '24x7',
-        note: 'Vendor, tax, and scheduled payout coverage',
-      },
-    ],
-  },
-  {
-    id: 'payroll',
-    label: 'Payroll',
-    eyebrow: 'Payroll',
-    title: 'Subscription pricing for payroll teams that need salary and compliance fixed',
-    description:
-      'Run salary transfers, automate recurring compliance tasks, and centralize employee operations without a payroll stack that keeps expanding into side tools.',
-    detail:
-      'Ideal for operations and finance teams managing salary disbursals, PF, ESI, PT, TDS, reimbursements, and employee benefits in one workflow.',
-    pricingLabel: 'From ₹2,499',
-    pricingNote: 'Monthly subscription for payroll automation',
-    bullets: [
-      'Salary transfers and payroll runs in one managed control surface.',
-      'Automated payment and filing workflows for TDS, PF, ESI, and PT.',
-      'Employee benefits, insurance, and salary account workflows supported.',
-      'Bundle with Banking+ for better commercials and smoother finance ops.',
-    ],
-    cards: [
-      {
-        title: 'Subscriptions start at',
-        value: '₹2,499',
-        note: 'Per month for core payroll automation',
-        accent: true,
-      },
-      {
-        title: 'Bundle offer',
-        value: '1 month free',
-        note: 'Plus 20% off when bundled with Banking+',
-      },
-      {
-        title: 'Compliance layer',
-        value: 'Auto',
-        note: 'Salary, filings, benefits, and payroll operations',
-      },
-    ],
-  },
-  {
-    id: 'credit',
-    label: 'Credit Solutions',
-    eyebrow: 'Credit Solutions',
-    title: 'Custom pricing for disbursal, underwriting, and program-level credit rails',
-    description:
-      'Structure commercials around lending operations, settlement-led disbursals, and program design instead of forcing credit workflows into generic payment pricing.',
-    detail:
-      'Best for teams that need underwriting review, bank-side coordination, disbursal support, and custom program economics.',
-    pricingLabel: 'Talk to sales',
-    pricingNote: 'Custom underwriting, disbursal, and support design',
-    bullets: [
-      'Volume-led pricing for credit, underwriting, and disbursal programs.',
-      'Custom setup for merchant advances, settlement-linked credit, and risk review.',
-      'Implementation support for regulated operations and enterprise controls.',
-      'Commercials shaped around program risk, bank movement, and reconciliation.',
-    ],
-    cards: [
-      {
-        title: 'Commercial model',
-        value: 'Custom',
-        note: 'Program-based pricing for credit-led workflows',
-        accent: true,
-      },
-      {
-        title: 'Use cases',
-        value: 'Working capital',
-        note: 'Merchant advances, settlement-linked flows, and custom rails',
-      },
-      {
-        title: 'Implementation',
-        value: 'Managed',
-        note: 'Commercial, product, and ops support through rollout',
+        title: 'Best for',
+        value: 'Ops + Finance',
+        note: 'Teams carrying payout accountability across functions',
       },
     ],
   },
 ] as const
 
-const engagementPlans = [
+const engagementPlans: readonly EngagementPlan[] = [
   {
-    title: 'Pay as you go',
-    eyebrow: 'Best for lean teams and new builds',
-    metric: 'Monthly',
+    title: 'Sandbox',
+    eyebrow: 'Best for evaluation and pilot teams',
+    metric: 'No commitment',
     description:
-      'Use live products without an annual commitment. Best when you want speed to launch and a clean path to production before deeper commercial negotiation.',
-    features: ['Unlimited sandbox testing', 'Live API access', 'Standard onboarding', 'Usage-based billing'],
-    cta: 'Start with sandbox',
-    href: '/console/login',
+      'Explore the payout workspace, connector views, and Evidence Pack flows with illustrative data before production rollout.',
+    features: ['Workspace preview', 'Product walkthrough', 'Technical fit review', 'Standard onboarding docs'],
+    cta: 'Start in sandbox',
+    href: '/signin/tenant',
   },
   {
     title: 'Growth',
-    eyebrow: 'Best for scaling teams with committed volume',
-    metric: '12-month commitment',
+    eyebrow: 'Best for teams moving into production',
+    metric: 'Annual agreement',
     description:
-      'Unlock better commercials, support packages, and more structured rollout support once payment or payout volume starts becoming an operating concern.',
-    features: ['Discounted product rates', 'Priority onboarding', 'Custom reporting support', 'Commercial review cadence'],
+      'Unlock production workspace access, implementation support, and a commercial review cadence once payout volume becomes an operating concern.',
+    features: ['Production workspace', 'Implementation support', 'Commercial review cadence', 'Priority onboarding'],
     cta: 'Talk to sales',
     href: '#sales',
     featured: true,
   },
   {
-    title: 'Custom',
-    eyebrow: 'Best for enterprise and regulated programs',
-    metric: 'Volume-led',
+    title: 'Enterprise',
+    eyebrow: 'Best for regulated and high-volume programs',
+    metric: 'Custom',
     description:
-      'Flexible plans for teams that need custom security review, implementation help, premium support, or regulated workflow coverage across multiple products.',
-    features: ['Volume discounts', 'Implementation assistance', 'Security review support', 'Account management'],
+      'Flexible commercials for security review, multi-team rollout, custom Evidence Pack workflows, and dedicated account coverage.',
+    features: ['Volume-led pricing', 'Security review support', 'White-glove rollout', 'Dedicated account coverage'],
     cta: 'Request enterprise pricing',
     href: '#sales',
   },
 ] as const
 
 const comparisonRows = [
-  { label: 'Commercial model', starter: 'Usage based', growth: 'Committed pricing', enterprise: 'Custom bands' },
-  { label: 'Payments pricing', starter: 'Standard rates', growth: 'Discounted standard rates', enterprise: 'Custom commercials' },
-  { label: 'Banking + Payroll bundling', starter: 'Available', growth: 'Commercial bundle support', enterprise: 'Fully custom packaging' },
-  { label: 'Custom reporting', starter: 'Standard exports', growth: 'Expanded report support', enterprise: 'Custom reporting design' },
+  { label: 'Commercial model', starter: 'Sandbox evaluation', growth: 'Annual agreement', enterprise: 'Custom bands' },
+  { label: 'Workspace access', starter: 'Preview data', growth: 'Production workspace', enterprise: 'Production + custom workflows' },
+  { label: 'Evidence Packs', starter: 'Preview flows', growth: 'Production exports', enterprise: 'Custom export design' },
+  { label: 'Implementation support', starter: 'Docs + demo', growth: 'Priority onboarding', enterprise: 'White-glove rollout' },
   { label: 'Security review support', starter: 'Self-serve docs', growth: 'Guided responses', enterprise: 'Dedicated review help' },
-  { label: 'Implementation support', starter: 'Basic onboarding', growth: 'Priority onboarding', enterprise: 'White-glove rollout' },
+  { label: 'Account coverage', starter: 'Standard', growth: 'Commercial cadence', enterprise: 'Dedicated account team' },
 ] as const
 
 const faqs = [
   {
-    question: 'How does Payments pricing work?',
+    question: 'How is Payment Command Center priced?',
     answer:
-      'Payments starts with standard online pricing for common acceptance flows. Once your monthly volume or routing needs increase, we can structure custom commercial bands through the sales process.',
+      'Pricing is custom and based on workspace usage, connector coverage, rollout depth, and support needs. Teams start in sandbox and move to commercials with sales — there is no self-serve checkout rate on this product.',
   },
   {
-    question: 'When should I talk to sales for custom pricing?',
+    question: 'When should I talk to sales?',
     answer:
-      'Talk to sales when monthly revenue crosses ₹5 lakh, when you need Banking+ or Payroll bundled into one commercial agreement, or when security review and implementation support matter to the rollout.',
+      'Talk to sales when you want a guided demo, production rollout planning, security review, or a commercial discussion after sandbox evaluation.',
   },
   {
     question: 'Can I test the platform before committing?',
     answer:
-      'Yes. Start in sandbox to validate APIs, flows, and operational states before moving into live billing. Teams usually begin there before choosing Growth or Custom plans.',
+      'Yes. Start in sandbox to validate the operating model, workspace fit, and Evidence Pack workflows before choosing Growth or Enterprise plans.',
   },
   {
-    question: 'How is Payroll billed?',
+    question: 'Does this page include Payments, Payroll, or Banking pricing?',
     answer:
-      'Payroll is billed as a monthly subscription, with plans starting from ₹2,499 for core automation. Bundled commercials are available when Payroll is paired with Banking+.',
+      'No. This page covers Payment Command Center only. Payments acceptance, payroll subscriptions, and banking products are not part of the V1 payout console commercial model.',
   },
   {
-    question: 'Can I bundle multiple products into one agreement?',
+    question: 'Can multiple teams share one workspace rollout?',
     answer:
-      'Yes. Teams often combine Payments, Business Banking, Payroll, and Credit Solutions into one commercial package so implementation, support, and reporting stay aligned.',
+      'Yes. Ops, finance, engineering, and risk can evaluate and adopt against the same workspace record instead of separate dashboards and manual proof rebuilds.',
   },
 ] as const
 
@@ -273,7 +207,7 @@ const supportCards = [
     eyebrow: 'Talk to sales',
     title: 'Choose the right commercial path with a human in the loop',
     copy:
-      'Discuss payment volume, custom commercials, security review, enterprise rollout, or a bundled plan across Payments, Banking+, Payroll, and Credit Solutions.',
+      'Discuss sandbox fit, production rollout, security review, enterprise commercials, or implementation support for Payment Command Center.',
     cta: 'Contact sales',
     href: 'mailto:hello@arelais.com?subject=Zord%20pricing%20conversation',
   },
@@ -292,10 +226,10 @@ const footerColumns = [
   {
     title: 'Product',
     links: [
-      { label: 'Payments', href: '#payments' },
-      { label: 'Business Banking', href: '#banking' },
-      { label: 'Payroll', href: '#payroll' },
-      { label: 'Credit Solutions', href: '#credit' },
+      { label: 'Payment Command Center', href: '#payment-command-center' },
+      { label: 'Sandbox', href: '#plans' },
+      { label: 'How it works', href: '/final-landing/how-it-works' },
+      { label: 'Final landing pricing', href: '/final-landing/pricing' },
     ],
   },
   {
@@ -336,7 +270,7 @@ const footerColumns = [
   },
 ] as const
 
-const trustLabels = ['Commerce', 'Mobility', 'SaaS', 'Consumer platforms', 'Marketplaces', 'Finance operations']
+const trustLabels = ['Marketplaces', 'NBFCs', 'PSPs', 'Treasury teams', 'Finance ops', 'Payout platforms']
 
 const navShellStyle = {
   background: 'linear-gradient(180deg, rgba(17,20,21,0.92) 0%, rgba(9,11,12,0.97) 100%)',
@@ -634,10 +568,10 @@ export default function PricingPage() {
             <motion.div initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}>
               <SectionTag>Pricing</SectionTag>
               <h1 className="mt-7 max-w-4xl text-5xl font-semibold tracking-[-0.06em] text-white sm:text-6xl lg:text-[4.5rem] lg:leading-[0.95]">
-                Pricing that feels like a fintech buying flow, not a spreadsheet.
+                Payment Command Center pricing — sandbox first, custom with sales.
               </h1>
               <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-300/82 sm:text-xl">
-                Choose product-led pricing for Payments, Business Banking, Payroll, and Credit Solutions, then move into committed or enterprise commercials as your workflow depth grows.
+                Evaluate the payout workspace in sandbox, then work with Arealis on production commercials. Payments, payroll, and banking SKUs are not listed on this page.
               </p>
 
               <div className="mt-8 flex flex-col gap-4 sm:flex-row sm:items-center">
@@ -711,7 +645,7 @@ export default function PricingPage() {
                 <div className="rounded-[22px] border border-white/10 bg-white/[0.04] p-5">
                   <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Scope</div>
                   <div className="mt-3 text-2xl font-semibold tracking-[-0.04em] text-white">Bundled</div>
-                  <div className="mt-2 text-[13px] leading-6 text-slate-400">Payments, banking, payroll, and credit on one agreement.</div>
+                  <div className="mt-2 text-[13px] leading-6 text-slate-400">Sandbox, growth, and enterprise paths on one payout product.</div>
                 </div>
               </div>
             </motion.div>
@@ -755,9 +689,9 @@ export default function PricingPage() {
           <div className="mx-auto max-w-7xl rounded-[30px] border border-white/10 px-6 py-7 sm:px-8" style={cardStyle}>
             <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Trusted buying pattern</div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Buyer lenses</div>
                 <h2 className="mt-3 text-2xl font-semibold tracking-[-0.04em] text-white md:text-3xl">
-                  Pricing built for teams across commerce, mobility, SaaS, and consumer platforms
+                  Built for teams carrying payout accountability across operations, finance, and engineering
                 </h2>
               </div>
               <div className="flex flex-wrap gap-3">
@@ -1029,7 +963,7 @@ export default function PricingPage() {
                   Put pricing, rollout, and support into one clean conversation
                 </h2>
                 <p className="mt-5 max-w-3xl text-lg leading-8 text-slate-300/82">
-                  Start in sandbox, talk through commercial bands, or bring Banking+, Payroll, and Credit Solutions into one enterprise motion. The point is clarity, not negotiation theatre.
+                  Start in sandbox, talk through production commercials, or plan an enterprise rollout with security review and implementation support.
                 </p>
               </div>
               <div className="flex flex-col gap-4 sm:flex-row lg:flex-col">

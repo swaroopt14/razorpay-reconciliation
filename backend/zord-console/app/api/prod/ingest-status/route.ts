@@ -38,9 +38,9 @@ export async function GET(request: NextRequest) {
   const intelBase = BACKEND_SERVICES.INTELLIGENCE.BASE_URL
   const evidenceBase = BACKEND_SERVICES.EVIDENCE.BASE_URL
 
-  const [intentBatches, settlement, evidencePacks, defensibility] = await Promise.all([
-    probeJson<{ items?: unknown[]; batches?: unknown[] }>(
-      `${intentBase}/v1/batches?page=1&page_size=5&tenant_id=${encodeURIComponent(tenantId)}`,
+  const [intentProbe, settlement, evidencePacks, defensibility, patterns] = await Promise.all([
+    probeJson<{ pagination?: { total?: number }; items?: unknown[] }>(
+      `${intentBase}/v1/intents?page=1&page_size=1&tenant_id=${encodeURIComponent(tenantId)}`,
       tenantId,
     ),
     probeJson<{ items?: unknown[]; observations?: unknown[] }>(
@@ -55,9 +55,16 @@ export async function GET(request: NextRequest) {
       `${intelBase}${BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.DEFENSIBILITY}?tenant_id=${encodeURIComponent(tenantId)}`,
       tenantId,
     ),
+    probeJson<{ data_available?: boolean; total_count?: number }>(
+      `${intelBase}${BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.PATTERNS}?tenant_id=${encodeURIComponent(tenantId)}`,
+      tenantId,
+    ),
   ])
 
-  const intentCount = intentBatches?.items?.length ?? intentBatches?.batches?.length ?? 0
+  const intentCount =
+    intentProbe?.pagination?.total ??
+    intentProbe?.items?.length ??
+    (patterns?.data_available === true ? (patterns.total_count ?? 0) : 0)
   const settlementCount = settlement?.items?.length ?? settlement?.observations?.length ?? 0
   const packCount = evidencePacks?.packs?.length ?? 0
   const bankHint =
@@ -68,7 +75,7 @@ export async function GET(request: NextRequest) {
       id: 'intent_file',
       label: 'Payment instructions',
       status: intentCount > 0 ? 'received' : 'missing',
-      detail: intentCount > 0 ? `${intentCount} batch(es)` : undefined,
+      detail: intentCount > 0 ? `${intentCount} instruction(s)` : undefined,
     },
     {
       id: 'settlement_file',

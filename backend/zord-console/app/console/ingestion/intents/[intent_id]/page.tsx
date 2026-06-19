@@ -669,31 +669,29 @@ export default function IntentDetailAdminPage() {
                         </tr>
                       </thead>
                       <tbody className="bg-white divide-y divide-gray-200">
-                        {intentDetail.lifecycle.map((event, index) => (
+                        {intentDetail.lifecycle.map((event, index) => {
+                          const displayStep =
+                            event.step === 'VALIDATED'
+                              ? 'PRE_ACC_GUARDS_PASSED'
+                              : event.step === 'PUBLISHED'
+                              ? 'OUTBOX_PUBLISHED'
+                              : event.step
+
+                          return (
                           <tr key={index}>
                             <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                              {event.step === 'VALIDATED'
-                                ? 'PRE_ACC_GUARDS_PASSED'
-                                : event.step === 'PUBLISHED'
-                                ? 'OUTBOX_PUBLISHED'
-                                : event.step}
+                              {displayStep}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-600">
                               {format(new Date(event.time), 'HH:mm:ss.SSS')}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm">
-                              {event.step !== 'VALIDATED' &&
-                              event.step !== 'PRE_ACC_GUARDS_PASSED' ? (
+                              {displayStep !== 'PRE_ACC_GUARDS_PASSED' ? (
                                 <button
                                   onClick={e => {
                                     e.stopPropagation()
                                     setSelectedEvidence({
-                                      step:
-                                        event.step === 'VALIDATED'
-                                          ? 'PRE_ACC_GUARDS_PASSED'
-                                          : event.step === 'PUBLISHED'
-                                          ? 'OUTBOX_PUBLISHED'
-                                          : event.step,
+                                      step: displayStep,
                                       time: event.time,
                                       hash: event.hash,
                                     })
@@ -708,7 +706,8 @@ export default function IntentDetailAdminPage() {
                               )}
                             </td>
                           </tr>
-                        ))}
+                          )
+                        })}
                       </tbody>
                     </table>
                   </div>

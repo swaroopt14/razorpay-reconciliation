@@ -103,6 +103,41 @@ func (r *MLFeatureStoreRepo) Insert(ctx context.Context, row MLFeatureRow) error
 	return nil
 }
 
+// Upsert replaces the current feature payload for a deterministic feature row ID.
+// Used for long-lived scope rows such as one evolving BATCH leakage feature row.
+func (r *MLFeatureStoreRepo) Upsert(ctx context.Context, row MLFeatureRow) error {
+	sql := `
+		INSERT INTO ml_feature_store
+			(feature_row_id, tenant_id, scope_type, scope_ref, feature_family,
+			 window_start, window_end, features_json, label_json, model_version, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		ON CONFLICT (feature_row_id) DO UPDATE SET
+			window_start = EXCLUDED.window_start,
+			window_end = EXCLUDED.window_end,
+			features_json = EXCLUDED.features_json,
+			label_json = COALESCE(ml_feature_store.label_json, EXCLUDED.label_json),
+			model_version = EXCLUDED.model_version,
+			created_at = EXCLUDED.created_at
+	`
+	if _, err := r.pool.Exec(ctx, sql,
+		row.FeatureRowID,
+		row.TenantID,
+		row.ScopeType,
+		row.ScopeRef,
+		row.FeatureFamily,
+		row.WindowStart,
+		row.WindowEnd,
+		row.FeaturesJSON,
+		row.LabelJSON,
+		row.ModelVersion,
+		row.CreatedAt,
+	); err != nil {
+		return fmt.Errorf("ml_feature_store_repo.Upsert row_id=%s family=%s: %w",
+			row.FeatureRowID, row.FeatureFamily, err)
+	}
+	return nil
+}
+
 // SetLabel attaches a ground-truth label to an existing feature row.
 //
 // Called when the outcome of the entity is finally known.

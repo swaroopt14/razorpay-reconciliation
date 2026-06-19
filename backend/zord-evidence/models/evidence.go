@@ -3,6 +3,8 @@ package models
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 const (
@@ -49,38 +51,43 @@ const ZeroVarianceHash = "399c0a6a570f78a707a3363575916057a66710682f6e9196328639
 
 // PendingLeafCandidate represents a buffered leaf waiting for the full set.
 type PendingLeafCandidate struct {
-	ID            string    `json:"id" db:"id"`
-	TenantID      string    `json:"tenant_id" db:"tenant_id"`
-	IntentID      *string   `json:"intent_id" db:"intent_id"`     // null for edge events
-	EnvelopeID    *string   `json:"envelope_id" db:"envelope_id"` // used to correlate edge
-	ContractID    *string   `json:"contract_id" db:"contract_id"` // buffered contract_id
-	ClientBatchID *string   `json:"batch_id" db:"batch_id"`
-	LeafType      string    `json:"leaf_type" db:"leaf_type"`
-	ItemRef       string    `json:"item_ref" db:"item_ref"`
-	Hash          string    `json:"hash" db:"hash"`
-	SchemaVersion string    `json:"schema_version" db:"schema_version"`
-	SourceTopic   string    `json:"source_topic" db:"source_topic"`
+	ID            string  `json:"id" db:"id"`
+	TenantID      string  `json:"tenant_id" db:"tenant_id"`
+	IntentID      *string `json:"intent_id" db:"intent_id"`     // null for edge events
+	EnvelopeID    *string `json:"envelope_id" db:"envelope_id"` // used to correlate edge
+	ContractID    *string `json:"contract_id" db:"contract_id"` // buffered contract_id
+	ClientBatchID *string `json:"batch_id" db:"batch_id"`
+	LeafType      string  `json:"leaf_type" db:"leaf_type"`
+	ItemRef       string  `json:"item_ref" db:"item_ref"`
+	Hash          string  `json:"hash" db:"hash"`
+	SchemaVersion string  `json:"schema_version" db:"schema_version"`
+	SourceTopic   string  `json:"source_topic" db:"source_topic"`
 
 	// 🆕 Metadata carried from RelayEvent
 	PaymentInstructionReceived *time.Time `json:"payment_instruction_received,omitempty" db:"payment_instruction_received"`
-	CanonicalIntentCreated    *time.Time `json:"canonical_intent_created,omitempty" db:"canonical_intent_created"`
-	MappingProfileUsed        *string    `json:"mapping_profile_used,omitempty" db:"mapping_profile_used"`
-	RequiredFieldsStatus      *bool      `json:"required_fields_status,omitempty" db:"required_fields_status"`
-	TokenizationStatus        *bool      `json:"tokenization_status,omitempty" db:"tokenization_status"`
-	GovernanceDecision        *string    `json:"governance_decision,omitempty" db:"governance_decision"`
+	CanonicalIntentCreated     *time.Time `json:"canonical_intent_created,omitempty" db:"canonical_intent_created"`
+	MappingProfileUsed         *string    `json:"mapping_profile_used,omitempty" db:"mapping_profile_used"`
+	RequiredFieldsStatus       *bool      `json:"required_fields_status,omitempty" db:"required_fields_status"`
+	TokenizationStatus         *bool      `json:"tokenization_status,omitempty" db:"tokenization_status"`
+	GovernanceDecision         *string    `json:"governance_decision,omitempty" db:"governance_decision"`
+
+	// 🆕 Intent financial identity
+	ClientPayoutRef *string          `json:"client_payout_ref,omitempty" db:"client_payout_ref"`
+	Amount          decimal.Decimal `json:"amount,omitempty"           db:"amount"`
+	Currency        string          `json:"currency,omitempty"         db:"currency"`
 
 	// 🆕 Settlement Metadata
 	SettlementRecordReceived   *time.Time `json:"settlement_record_received,omitempty" db:"settlement_record_received"`
 	CanonicalSettlementCreated *time.Time `json:"canonical_settlement_created,omitempty" db:"canonical_settlement_created"`
 	BankReference              *string    `json:"bank_reference,omitempty" db:"bank_reference"`
 	ClientReference            *string    `json:"client_reference,omitempty" db:"client_reference"`
-	AttachmentDecision        *string    `json:"attachment_decision,omitempty" db:"attachment_decision"`
-	MatchConfidence           *float64   `json:"match_confidence,omitempty" db:"match_confidence"`
-	ValueDateCheck            *bool      `json:"value_date_check,omitempty" db:"value_date_check"`
-	AmountMatch               *bool      `json:"amount_match,omitempty" db:"amount_match"`
+	AttachmentDecision         *string    `json:"attachment_decision,omitempty" db:"attachment_decision"`
+	MatchConfidence            *float64   `json:"match_confidence,omitempty" db:"match_confidence"`
+	ValueDateCheck             *bool      `json:"value_date_check,omitempty" db:"value_date_check"`
+	AmountMatch                *bool      `json:"amount_match,omitempty" db:"amount_match"`
 
-	CreatedAt     time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at" db:"updated_at"`
+	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }
 
 // RelayEvent is a compatible subset of the normalized outbox event
@@ -103,22 +110,27 @@ type RelayEvent struct {
 	FileContentHash      string          `json:"file_content_hash,omitempty"`
 	ClientBatchID        string          `json:"batchid,omitempty"`
 	MappingProfileID     *string         `json:"mapping_profile_used,omitempty"`
-	RequiredFieldsStatus *bool            `json:"required_fields_status,omitempty"`
-	TokenizationStatus   *bool            `json:"tokenization_status,omitempty"`
-	GovernanceDecision   *string          `json:"governance_decision,omitempty"`
+	RequiredFieldsStatus *bool           `json:"required_fields_status,omitempty"`
+	TokenizationStatus   *bool           `json:"tokenization_status,omitempty"`
+	GovernanceDecision   *string         `json:"governance_decision,omitempty"`
 
 	PaymentInstructionReceived *time.Time `json:"payment_instruction_received,omitempty"`
-	CanonicalIntentCreated    *time.Time `json:"canonical_intent_created,omitempty"`
+	CanonicalIntentCreated     *time.Time `json:"canonical_intent_created,omitempty"`
+
+	// 🆕 Intent financial identity
+	ClientPayoutRef *string         `json:"client_payout_ref,omitempty"`
+	Amount          decimal.Decimal `json:"amount,omitempty"`
+	Currency        string          `json:"currency,omitempty"`
 
 	// 🆕 Settlement Metadata
 	SettlementRecordReceived   *time.Time `json:"settlement_record_received,omitempty"`
 	CanonicalSettlementCreated *time.Time `json:"canonical_settlement_created,omitempty"`
 	BankReference              *string    `json:"bank_reference,omitempty"`
 	ClientReference            *string    `json:"client_reference,omitempty"`
-	AttachmentDecision        *string    `json:"attachment_decision,omitempty"`
-	MatchConfidence           *float64   `json:"match_confidence,omitempty"`
-	ValueDateCheck            *bool      `json:"value_date_check,omitempty"`
-	AmountMatch               *bool      `json:"amount_match,omitempty"`
+	AttachmentDecision         *string    `json:"attachment_decision,omitempty"`
+	MatchConfidence            *float64   `json:"match_confidence,omitempty"`
+	ValueDateCheck             *bool      `json:"value_date_check,omitempty"`
+	AmountMatch                *bool      `json:"amount_match,omitempty"`
 }
 
 // EvidenceItem is one proof artifact that becomes a typed leaf in the Merkle tree.
@@ -159,26 +171,32 @@ type EvidencePack struct {
 	RequiredLeafCount                 int               `json:"required_leaf_count"`
 	SettlementLeafPresentFlag         bool              `json:"settlement_leaf_present_flag"`
 	AttachmentDecisionLeafPresentFlag bool              `json:"attachment_decision_leaf_present_flag"`
+	ZordSignature                     string            `json:"zord_signature,omitempty" db:"zord_signature"`
 
 	// 🆕 Traceability & Status Fields
 	PaymentInstructionReceived *time.Time `json:"payment_instruction_received,omitempty"`
-	CanonicalIntentCreated    *time.Time `json:"canonical_intent_created,omitempty"`
-	MappingProfileUsed        *string    `json:"mapping_profile_used,omitempty"`
-	RequiredFieldsStatus      *bool      `json:"required_fields_status,omitempty"`
-	TokenizationStatus        *bool      `json:"tokenization_status,omitempty"`
-	GovernanceDecision        *string    `json:"governance_decision,omitempty"`
+	CanonicalIntentCreated     *time.Time `json:"canonical_intent_created,omitempty"`
+	MappingProfileUsed         *string    `json:"mapping_profile_used,omitempty"`
+	RequiredFieldsStatus       *bool      `json:"required_fields_status,omitempty"`
+	TokenizationStatus         *bool      `json:"tokenization_status,omitempty"`
+	GovernanceDecision         *string    `json:"governance_decision,omitempty"`
+
+	// 🆕 Intent financial identity
+	ClientPayoutRef *string         `json:"client_payout_ref,omitempty"`
+	Amount          decimal.Decimal `json:"amount,omitempty"`
+	Currency        string          `json:"currency,omitempty"`
 
 	// 🆕 Settlement Metadata
 	SettlementRecordReceived   *time.Time `json:"settlement_record_received,omitempty"`
 	CanonicalSettlementCreated *time.Time `json:"canonical_settlement_created,omitempty"`
 	BankReference              *string    `json:"bank_reference,omitempty"`
 	ClientReference            *string    `json:"client_reference,omitempty"`
-	AttachmentDecision        *string    `json:"attachment_decision,omitempty"`
-	MatchConfidence           *float64   `json:"match_confidence,omitempty"`
-	ValueDateCheck            *bool      `json:"value_date_check,omitempty"`
-	AmountMatch               *bool      `json:"amount_match,omitempty"`
+	AttachmentDecision         *string    `json:"attachment_decision,omitempty"`
+	MatchConfidence            *float64   `json:"match_confidence,omitempty"`
+	ValueDateCheck             *bool      `json:"value_date_check,omitempty"`
+	AmountMatch                *bool      `json:"amount_match,omitempty"`
 
-	CreatedAt                         time.Time         `json:"created_at"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 func (p *EvidencePack) ComputeCompletenessMetadata() {
@@ -246,23 +264,28 @@ type GenerateEvidenceRequest struct {
 
 	// 🆕 Traceability & Status Fields
 	PaymentInstructionReceived *time.Time `json:"payment_instruction_received,omitempty"`
-	CanonicalIntentCreated    *time.Time `json:"canonical_intent_created,omitempty"`
-	MappingProfileUsed        *string    `json:"mapping_profile_used,omitempty"`
-	RequiredFieldsStatus      *bool      `json:"required_fields_status,omitempty"`
+	CanonicalIntentCreated     *time.Time `json:"canonical_intent_created,omitempty"`
+	MappingProfileUsed         *string    `json:"mapping_profile_used,omitempty"`
+	RequiredFieldsStatus       *bool      `json:"required_fields_status,omitempty"`
 	TokenizationStatus         *bool      `json:"tokenization_status,omitempty"`
 	GovernanceDecision         *string    `json:"governance_decision,omitempty"`
+
+	// 🆕 Intent financial identity
+	ClientPayoutRef *string         `json:"client_payout_ref,omitempty"`
+	Amount          decimal.Decimal `json:"amount,omitempty"`
+	Currency        string          `json:"currency,omitempty"`
 
 	// 🆕 Settlement Metadata
 	SettlementRecordReceived   *time.Time `json:"settlement_record_received,omitempty"`
 	CanonicalSettlementCreated *time.Time `json:"canonical_settlement_created,omitempty"`
 	BankReference              *string    `json:"bank_reference,omitempty"`
 	ClientReference            *string    `json:"client_reference,omitempty"`
-	AttachmentDecision        *string    `json:"attachment_decision,omitempty"`
-	MatchConfidence           *float64   `json:"match_confidence,omitempty"`
-	ValueDateCheck            *bool      `json:"value_date_check,omitempty"`
-	AmountMatch               *bool      `json:"amount_match,omitempty"`
+	AttachmentDecision         *string    `json:"attachment_decision,omitempty"`
+	MatchConfidence            *float64   `json:"match_confidence,omitempty"`
+	ValueDateCheck             *bool      `json:"value_date_check,omitempty"`
+	AmountMatch                *bool      `json:"amount_match,omitempty"`
 
-	Items            []EvidenceItem    `json:"items" binding:"required"`
+	Items []EvidenceItem `json:"items" binding:"required"`
 }
 
 // ReplayRequest instructs Service 6 to rebuild the pack from the same inputs
@@ -312,41 +335,46 @@ type ListPacksResponse struct {
 }
 
 type EvidencePackSummary struct {
-	EvidencePackID                    string    `json:"evidence_pack_id"`
-	TenantID                          string    `json:"tenant_id"`
-	IntentID                          string    `json:"intent_id"`
-	ContractID                        string    `json:"contract_id"`
-	ClientBatchID                     string    `json:"batch_id,omitempty"`
-	Mode                              string    `json:"mode"`
-	PackStatus                        string    `json:"pack_status"`
-	MerkleRoot                        string    `json:"merkle_root"`
-	RulesetVersion                    string    `json:"ruleset_version"`
-	SupersedesPackID                  string    `json:"supersedes_pack_id,omitempty"`
-	PackCompletenessScore             float64   `json:"pack_completeness_score"`
-	LeafCount                         int       `json:"leaf_count"`
-	RequiredLeafCount                 int       `json:"required_leaf_count"`
-	SettlementLeafPresentFlag         bool      `json:"settlement_leaf_present_flag"`
-	AttachmentDecisionLeafPresentFlag bool      `json:"attachment_decision_leaf_present_flag"`
+	EvidencePackID                    string  `json:"evidence_pack_id"`
+	TenantID                          string  `json:"tenant_id"`
+	IntentID                          string  `json:"intent_id"`
+	ContractID                        string  `json:"contract_id"`
+	ClientBatchID                     string  `json:"batch_id,omitempty"`
+	Mode                              string  `json:"mode"`
+	PackStatus                        string  `json:"pack_status"`
+	MerkleRoot                        string  `json:"merkle_root"`
+	RulesetVersion                    string  `json:"ruleset_version"`
+	SupersedesPackID                  string  `json:"supersedes_pack_id,omitempty"`
+	PackCompletenessScore             float64 `json:"pack_completeness_score"`
+	LeafCount                         int     `json:"leaf_count"`
+	RequiredLeafCount                 int     `json:"required_leaf_count"`
+	SettlementLeafPresentFlag         bool    `json:"settlement_leaf_present_flag"`
+	AttachmentDecisionLeafPresentFlag bool    `json:"attachment_decision_leaf_present_flag"`
 
 	// 🆕 Traceability & Status Fields
 	PaymentInstructionReceived *time.Time `json:"payment_instruction_received,omitempty"`
-	CanonicalIntentCreated    *time.Time `json:"canonical_intent_created,omitempty"`
-	MappingProfileUsed        *string    `json:"mapping_profile_used,omitempty"`
-	RequiredFieldsStatus      *bool      `json:"required_fields_status,omitempty"`
-	TokenizationStatus        *bool      `json:"tokenization_status,omitempty"`
-	GovernanceDecision        *string    `json:"governance_decision,omitempty"`
+	CanonicalIntentCreated     *time.Time `json:"canonical_intent_created,omitempty"`
+	MappingProfileUsed         *string    `json:"mapping_profile_used,omitempty"`
+	RequiredFieldsStatus       *bool      `json:"required_fields_status,omitempty"`
+	TokenizationStatus         *bool      `json:"tokenization_status,omitempty"`
+	GovernanceDecision         *string    `json:"governance_decision,omitempty"`
+
+	// 🆕 Intent financial identity
+	ClientPayoutRef *string         `json:"client_payout_ref,omitempty"`
+	Amount          decimal.Decimal `json:"amount,omitempty"`
+	Currency        string          `json:"currency,omitempty"`
 
 	// 🆕 Settlement Metadata
 	SettlementRecordReceived   *time.Time `json:"settlement_record_received,omitempty"`
 	CanonicalSettlementCreated *time.Time `json:"canonical_settlement_created,omitempty"`
 	BankReference              *string    `json:"bank_reference,omitempty"`
 	ClientReference            *string    `json:"client_reference,omitempty"`
-	AttachmentDecision        *string    `json:"attachment_decision,omitempty"`
-	MatchConfidence           *float64   `json:"match_confidence,omitempty"`
-	ValueDateCheck            *bool      `json:"value_date_check,omitempty"`
-	AmountMatch               *bool      `json:"amount_match,omitempty"`
+	AttachmentDecision         *string    `json:"attachment_decision,omitempty"`
+	MatchConfidence            *float64   `json:"match_confidence,omitempty"`
+	ValueDateCheck             *bool      `json:"value_date_check,omitempty"`
+	AmountMatch                *bool      `json:"amount_match,omitempty"`
 
-	CreatedAt                         time.Time `json:"created_at"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // ReplayJob is the §14.5 evidence_replay_jobs row.

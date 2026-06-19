@@ -57,7 +57,8 @@ func main() {
 
 	intelligenceDB := mustOpenReadOnlyDB("intelligence", cfg.IntelligenceReadDSN)
 	evidenceDB := mustOpenReadOnlyDB("evidence", cfg.EvidenceReadDSN)
-	retriever := repositories.NewLiveSQLRetriever(edgeDB, intentDB, relayDB, intelligenceDB, evidenceDB)
+	outcomeDB := mustOpenReadOnlyDB("outcome", cfg.OutcomeReadDSN)
+	retriever := repositories.NewLiveSQLRetriever(edgeDB, intentDB, relayDB, intelligenceDB, evidenceDB, outcomeDB)
 	ragService := services.NewDefaultRAGService(cfg.GeminiModel, cfg.DefaultTopK, retriever, llmService, intelligenceClient, memoryStore)
 	queryHandler := handler.NewQueryHandler(ragService)
 

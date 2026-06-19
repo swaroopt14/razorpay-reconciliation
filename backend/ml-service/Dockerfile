@@ -30,6 +30,7 @@ COPY main.py .
 COPY app/ app/
 COPY healthcheck.py .
 COPY scripts/ scripts/
+COPY model_artifacts/ model_artifacts/
 
 # Copy entrypoint (auto-trains RCA model on first deploy if no .pkl exists)
 COPY entrypoint.sh /entrypoint.sh

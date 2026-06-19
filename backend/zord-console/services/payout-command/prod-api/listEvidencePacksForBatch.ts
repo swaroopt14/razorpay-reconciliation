@@ -1,12 +1,13 @@
 import { apiTrimmedString } from './coerceApiField'
 import type { EvidencePackSummaryRow } from './evidenceTypes'
+import { getEvidencePacksForBatchIntents } from './getEvidencePacksForBatchIntents'
 import { listEvidencePacks } from './getEvidencePacks'
+import { getIntentJournalBatchIdsForSession } from './intentJournalApi'
 import {
-  getIntentJournalBatchIdsForSession,
-  getIntentJournalPaymentIntentsForSession,
-} from './intentJournalApi'
-
-const MAX_INTENT_PACK_QUERIES = 32
+  batchPackSummaryFromLineage,
+  isBatchEvidencePack,
+} from './resolveBatchEvidencePack'
+import { getEvidenceBatchLineageGraph } from './getEvidenceBatchLineageGraph'
 
 /** Session-scoped batch ids from intent-engine BFF (tenant injected server-side). */
 export async function getEvidenceBatchIdsForSession(): Promise<string[]> {
@@ -23,41 +24,83 @@ export async function getEvidenceBatchIdsForSession(): Promise<string[]> {
   return out
 }
 
-/**
- * Batch-scoped packs plus per-intent packs for intents in the batch (deduped by evidence_pack_id).
- */
-export async function listEvidencePacksForBatch(batchId: string): Promise<EvidencePackSummaryRow[]> {
-  const bid = apiTrimmedString(batchId)
-  if (!bid) return []
+export type ListEvidencePacksForBatchResult = {
+  packs: EvidencePackSummaryRow[]
+  /** Non-fatal upstream errors (401/502/empty) for UI diagnostics. */
+  errors: string[]
+}
 
-  const [batchList, intentsRes] = await Promise.all([
+function mergePackRows(
+  bid: string,
+  intentPacks: EvidencePackSummaryRow[],
+  batchScoped: Awaited<ReturnType<typeof listEvidencePacks>>,
+  batchLineage: Awaited<ReturnType<typeof getEvidenceBatchLineageGraph>>,
+): EvidencePackSummaryRow[] {
+  const byId = new Map<string, EvidencePackSummaryRow>()
+  const upsert = (row: EvidencePackSummaryRow) => {
+    const id = apiTrimmedString(row.evidence_pack_id)
+    if (!id) return
+    const prev = byId.get(id)
+    byId.set(id, prev ? { ...prev, ...row } : row)
+  }
+
+  for (const row of batchScoped?.packs ?? []) upsert(row)
+  for (const row of intentPacks) upsert(row)
+  if (batchLineage.data) {
+    const fromLineage = batchPackSummaryFromLineage(bid, batchLineage.data)
+    if (fromLineage) upsert(fromLineage)
+  }
+
+  const rows = [...byId.values()]
+  rows.sort((a, b) => {
+    const aIsBatch = isBatchEvidencePack(a)
+    const bIsBatch = isBatchEvidencePack(b)
+    if (aIsBatch !== bIsBatch) return aIsBatch ? -1 : 1
+    return (a.created_at ?? '').localeCompare(b.created_at ?? '')
+  })
+  return rows
+}
+
+/**
+ * Packs for one batch: intent-level list + batch-scoped list + batch lineage graph
+ * (GET /v1/evidence/batch/:batchId/lineage-graph exposes the batch pack id).
+ */
+export async function listEvidencePacksForBatch(batchId: string): Promise<ListEvidencePacksForBatchResult> {
+  const bid = apiTrimmedString(batchId)
+  if (!bid) return { packs: [], errors: [] }
+
+  const [intentRes, batchScoped, batchLineage] = await Promise.all([
+    getEvidencePacksForBatchIntents(bid),
     listEvidencePacks({ batchId: bid }),
-    getIntentJournalPaymentIntentsForSession(bid),
+    getEvidenceBatchLineageGraph(bid),
   ])
 
-  const byId = new Map<string, EvidencePackSummaryRow>()
-  for (const pack of batchList?.packs ?? []) {
-    const id = apiTrimmedString(pack.evidence_pack_id)
-    if (id) byId.set(id, pack)
-  }
+  const errors: string[] = []
+  if (intentRes.error) errors.push(`batch/intents: ${intentRes.error}`)
+  if (!batchScoped) errors.push('packs list: no response (check session / evidence service)')
+  if (batchLineage.error) errors.push(`batch/lineage-graph: ${batchLineage.error}`)
 
-  const intentIds = [
-    ...new Set(
-      (intentsRes.data?.items ?? [])
-        .map((item) => apiTrimmedString(item.intent_id))
-        .filter((id): id is string => Boolean(id)),
-    ),
-  ].slice(0, MAX_INTENT_PACK_QUERIES)
+  const packs = mergePackRows(bid, intentRes.packs, batchScoped, batchLineage)
+  return { packs, errors }
+}
 
-  if (intentIds.length) {
-    const intentLists = await Promise.all(intentIds.map((intentId) => listEvidencePacks({ intentId })))
-    for (const list of intentLists) {
-      for (const pack of list?.packs ?? []) {
-        const id = apiTrimmedString(pack.evidence_pack_id)
-        if (id && !byId.has(id)) byId.set(id, pack)
-      }
+/** Try multiple batch ids (intent journal + intelligence) until packs are found. */
+export async function listEvidencePacksForFirstBatchWithData(
+  batchIds: string[],
+): Promise<ListEvidencePacksForBatchResult & { resolvedBatchId: string | null }> {
+  const seen = new Set<string>()
+  const errors: string[] = []
+  for (const raw of batchIds) {
+    const bid = apiTrimmedString(raw)
+    if (!bid || seen.has(bid)) continue
+    seen.add(bid)
+    const result = await listEvidencePacksForBatch(bid)
+    if (result.packs.length > 0) {
+      return { ...result, resolvedBatchId: bid }
+    }
+    if (result.errors.length) {
+      errors.push(...result.errors.map((e) => `[${bid}] ${e}`))
     }
   }
-
-  return [...byId.values()]
+  return { packs: [], errors, resolvedBatchId: null }
 }

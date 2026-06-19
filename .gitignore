@@ -309,6 +309,7 @@ cython_debug/
 
 # Cursor
 
+.cursor/
 .cursorignore
 .cursorindexingignore
 

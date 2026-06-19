@@ -14,7 +14,7 @@ import (
 
 type IntentQueryRepository interface {
 	ListIntents(ctx context.Context, filter IntentFilter) ([]models.CanonicalIntent, int, error)
-	GetIntentByID(ctx context.Context, intentID string) (models.CanonicalIntent, error)
+	GetIntentByID(ctx context.Context, tenantID, intentID string) (models.CanonicalIntent, error)
 	ListBatchIDsByTenant(ctx context.Context, tenantID string) ([]models.BatchIDItem, error)
 	ListPaymentIntentLiteByBatch(ctx context.Context, tenantID, batchID string) ([]models.PaymentIntentLite, error)
 	ListDLQItemsByBatchSimple(ctx context.Context, tenantID, batchID string) ([]models.DLQEntry, error)
@@ -28,6 +28,7 @@ type IntentFilter struct {
 	TenantID   string
 	Status     string
 	IntentType string
+	BatchID    string
 	Page       int
 	PageSize   int
 }
@@ -70,6 +71,12 @@ func (r *IntentQueryRepo) ListIntents(
 	if filter.IntentType != "" {
 		conditions = append(conditions, fmt.Sprintf("intent_type = $%d", argPosition))
 		args = append(args, filter.IntentType)
+		argPosition++
+	}
+
+	if filter.BatchID != "" {
+		conditions = append(conditions, fmt.Sprintf("batchid = $%d", argPosition))
+		args = append(args, filter.BatchID)
 		argPosition++
 	}
 
@@ -195,7 +202,7 @@ func (r *IntentQueryRepo) ListIntents(
 // GET BY ID
 func (r *IntentQueryRepo) GetIntentByID(
 	ctx context.Context,
-	intentID string,
+	tenantID, intentID string,
 ) (models.CanonicalIntent, error) {
 
 	query := `
@@ -229,12 +236,13 @@ func (r *IntentQueryRepo) GetIntentByID(
 		payment_instruction_received,
 		canonical_intent_created
 	FROM payment_intents
-	WHERE intent_id = $1
+	WHERE tenant_id = $1
+	AND intent_id=$2
 `
 
 	var intent models.CanonicalIntent
 
-	err := r.db.QueryRowContext(ctx, query, intentID).Scan(
+	err := r.db.QueryRowContext(ctx, query, tenantID, intentID).Scan(
 		&intent.IntentID,
 		&intent.EnvelopeID,
 		&intent.TenantID,
@@ -583,11 +591,12 @@ func (r *IntentQueryRepo) ListBatchIDsByTenant(
 	tenantID string,
 ) ([]models.BatchIDItem, error) {
 	const q = `
-		SELECT DISTINCT batchid
+		SELECT batchid, COALESCE(SUM(amount), 0) as total_amount
 		FROM payment_intents
 		WHERE tenant_id = $1
 		  AND batchid IS NOT NULL
 		  AND batchid <> ''
+		GROUP BY batchid
 		ORDER BY batchid
 	`
 
@@ -600,7 +609,7 @@ func (r *IntentQueryRepo) ListBatchIDsByTenant(
 	items := make([]models.BatchIDItem, 0)
 	for rows.Next() {
 		var it models.BatchIDItem
-		if err := rows.Scan(&it.BatchID); err != nil {
+		if err := rows.Scan(&it.BatchID, &it.TotalAmount); err != nil {
 			return nil, fmt.Errorf("failed to scan batch id: %w", err)
 		}
 		items = append(items, it)
@@ -623,11 +632,17 @@ func (r *IntentQueryRepo) ListPaymentIntentLiteByBatch(
 			currency,
 			intended_execution_at,
 			COALESCE(provider_hint, '') AS provider_hint,
-			intent_quality_score
+			intent_quality_score,
+			aggregate_confidence_score,
+			intent_id::text,
+			COALESCE(client_payout_ref, '') AS client_payout_ref,
+			source_row_num,
+			COALESCE(beneficiary_type, '') AS beneficiary_type,
+			COALESCE(beneficiary, '{}'::jsonb) AS beneficiary
 		FROM payment_intents
 		WHERE tenant_id = $1
 		  AND batchid = $2
-		ORDER BY created_at DESC, intent_id DESC
+		ORDER BY source_row_num ASC NULLS LAST, created_at ASC, intent_id ASC
 	`
 
 	rows, err := r.db.QueryContext(ctx, q, tenantID, batchID)
@@ -641,6 +656,8 @@ func (r *IntentQueryRepo) ListPaymentIntentLiteByBatch(
 		var row models.PaymentIntentLite
 		var execAt sql.NullTime
 		var quality sql.NullFloat64
+		var aggregate sql.NullFloat64
+		var sourceRow sql.NullInt64
 
 		if err := rows.Scan(
 			&row.TenantID,
@@ -649,6 +666,12 @@ func (r *IntentQueryRepo) ListPaymentIntentLiteByBatch(
 			&execAt,
 			&row.ProviderHint,
 			&quality,
+			&aggregate,
+			&row.IntentID,
+			&row.ClientPayoutRef,
+			&sourceRow,
+			&row.BeneficiaryType,
+			&row.Beneficiary,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan payment intent lite row: %w", err)
 		}
@@ -660,6 +683,14 @@ func (r *IntentQueryRepo) ListPaymentIntentLiteByBatch(
 		if quality.Valid {
 			v := quality.Float64
 			row.IntentQualityScore = &v
+		}
+		if aggregate.Valid {
+			v := aggregate.Float64
+			row.AggregateConfidenceScore = &v
+		}
+		if sourceRow.Valid {
+			n := int(sourceRow.Int64)
+			row.SourceRowNum = &n
 		}
 
 		items = append(items, row)
@@ -679,18 +710,20 @@ func (r *IntentQueryRepo) ListDLQItemsByBatchSimple(
 		SELECT
 			dlq_id,
 			tenant_id::text,
-			envelope_id::text,
 			stage,
 			reason_code,
 			COALESCE(error_detail, '') AS error_detail,
 			replayable,
 			COALESCE(client_batch_ref, '') AS client_batch_ref,
 			created_at,
-			COALESCE(batch_id, '') AS batch_id
+			COALESCE(batch_id, '') AS batch_id,
+			source_row_num,
+			COALESCE(dlq_status, '') AS dlq_status,
+			intent_context
 		FROM dlq_items
 		WHERE tenant_id = $1
 		  AND (client_batch_ref = $2 OR batch_id = $2)
-		ORDER BY created_at DESC, dlq_id DESC
+		ORDER BY source_row_num ASC NULLS LAST, created_at ASC, dlq_id ASC
 	`
 
 	rows, err := r.db.QueryContext(ctx, q, tenantID, batchID)
@@ -702,10 +735,11 @@ func (r *IntentQueryRepo) ListDLQItemsByBatchSimple(
 	items := make([]models.DLQEntry, 0)
 	for rows.Next() {
 		var e models.DLQEntry
+		var sourceRow sql.NullInt64
+		var intentContext []byte
 		if err := rows.Scan(
 			&e.DLQID,
 			&e.TenantID,
-			&e.EnvelopeID,
 			&e.Stage,
 			&e.ReasonCode,
 			&e.ErrorDetail,
@@ -713,8 +747,18 @@ func (r *IntentQueryRepo) ListDLQItemsByBatchSimple(
 			&e.ClientBatchRef,
 			&e.CreatedAt,
 			&e.BatchID,
+			&sourceRow,
+			&e.DLQStatus,
+			&intentContext,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan dlq row: %w", err)
+		}
+		if sourceRow.Valid {
+			n := int(sourceRow.Int64)
+			e.SourceRowNum = &n
+		}
+		if len(intentContext) > 0 {
+			e.IntentContext = intentContext
 		}
 		items = append(items, e)
 	}

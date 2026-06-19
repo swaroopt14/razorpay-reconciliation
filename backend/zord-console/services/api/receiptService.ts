@@ -487,7 +487,7 @@ export async function createReceipt(source: string, payload: unknown): Promise<R
   
   mockFiles.set(`/${dateStr}/${timeStr}/raw-envelope.json`, {
     path: `/${dateStr}/${timeStr}/raw-envelope.json`,
-    content: payload,
+    content: typeof payload === 'object' && payload !== null ? payload : String(payload),
     contentType: 'application/json',
     createdAt: date.toISOString(),
     hash: Math.random().toString(36).substr(2, 8),

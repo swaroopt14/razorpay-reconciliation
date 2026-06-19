@@ -1,0 +1,31 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Kong Routes: zord-console (Frontend)
+# ─────────────────────────────────────────────────────────────────────────────
+# These routes are defined in kong/configmap.yaml (declarative config).
+# This file serves as documentation and reference.
+#
+# Service: zord-console
+# Upstream: http://zord-console.zord.svc.cluster.local:3000
+# Port: 3000
+#
+# Routes:
+#   - name: console-root
+#     path: /
+#     description: All frontend traffic (Next.js app)
+#     strip_path: false
+#     preserve_host: true
+#
+# Notes:
+#   - This is the catch-all route (lowest priority due to "/" path)
+#   - All /v1/* routes match first (more specific), so API traffic
+#     never hits the console
+#   - Next.js API routes (/api/*) are handled internally by the console
+#     and proxied to backend services via server-side calls
+#   - Static assets (_next/static/*) are served directly by Next.js
+#
+# Plugins applied:
+#   - Global CORS
+#   - Global rate limiting (300/min)
+#   - Global security headers
+#   - Global request-id correlation
+# ─────────────────────────────────────────────────────────────────────────────

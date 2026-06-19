@@ -54,6 +54,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // NewRouter creates and returns the fully wired HTTP router.
@@ -70,15 +71,18 @@ func NewRouter(
 	patternH *PatternHandler,
 	recommendationH *RecommendationHandler,
 	batchH *BatchHandler,
+	leakageTimeseriesH *LeakageTimeseriesHandler,
 	historyH *HistoryHandler,
 	explanationH *ExplanationHandler,
 	// Dashboard handlers — frontend-facing endpoints (always contain /dashboard/ in path)
-	dashLeakageH        *DashboardLeakageHandler,
-	dashAmbiguityH      *DashboardAmbiguityHandler,
-	dashDefensibilityH  *DashboardDefensibilityHandler,
-	dashPatternH        *DashboardPatternHandler,
+	dashLeakageH *DashboardLeakageHandler,
+	dashAmbiguityH *DashboardAmbiguityHandler,
+	dashDefensibilityH *DashboardDefensibilityHandler,
+	dashPatternH *DashboardPatternHandler,
 	dashRecommendationH *DashboardRecommendationHandler,
-	dashRCAH            *DashboardRCAHandler,
+	dashRCAH *DashboardRCAHandler,
+	dashBubbleMapH *DashboardBubbleMapHandler,
+	dashBatchContractH *DashboardBatchContractHandler,
 ) http.Handler {
 
 	r := chi.NewRouter()
@@ -146,6 +150,7 @@ func NewRouter(
 		r.Get("/rca/clusters", rcaH.GetRCAClusters)
 		r.Get("/pattern", patternH.GetPattern)
 		r.Get("/recommendation", recommendationH.GetRecommendation)
+		r.Get("/timeseries/leakage-exposure", leakageTimeseriesH.GetLeakageExposure)
 
 		// ── PHASE 6: Batch intelligence endpoints ─────────────────────────
 		//
@@ -192,6 +197,8 @@ func NewRouter(
 			r.Get("/patterns", dashPatternH.GetPatternKPIs)
 			r.Get("/recommendations", dashRecommendationH.GetRecommendationKPIs)
 			r.Get("/rca", dashRCAH.GetRCAKPIs)
+			r.Get("/bubble-map", dashBubbleMapH.GetBubbleMap)
+			r.Get("/batch_contract/{batch_id}", dashBatchContractH.GetBatchContract)
 		})
 
 		// ── Policy endpoints ───────────────────────────────────────────────
@@ -231,5 +238,5 @@ func NewRouter(
 		})
 	})
 
-	return r
+	return otelhttp.NewHandler(r, "zord-intelligence")
 }

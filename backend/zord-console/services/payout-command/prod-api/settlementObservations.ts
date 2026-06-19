@@ -5,8 +5,15 @@ export type SettlementObservationBatchListItem = {
   client_batch_id: string
 }
 
+export type SettlementPagination = {
+  page?: number
+  page_size?: number
+  total?: number
+}
+
 export type SettlementObservationBatchListResponse = {
   items: SettlementObservationBatchListItem[]
+  pagination?: SettlementPagination
 }
 
 /** Canonical settlement observation row (mode 2) — mirrors outcome-engine JSON. */
@@ -49,7 +56,7 @@ export type CanonicalSettlementObservation = {
   mapping_profile_version?: string
   client_batch_id?: string
   parse_confidence?: number
-  mapping_confidence?: number
+  mapping_confidence?: number | string
   carrier_richness_score?: number
   attachment_readiness_score?: number
   score_breakdown_json?: unknown
@@ -71,10 +78,22 @@ export type CanonicalSettlementObservation = {
 
 export type SettlementObservationDetailResponse = {
   items: CanonicalSettlementObservation[]
+  pagination?: SettlementPagination
 }
 
-/** Mode-2 rows from outcome-engine (subset of canonical columns). */
+export type SettlementObservationsForBatchResult = {
+  items: CanonicalSettlementObservation[]
+  total: number | null
+}
+
+export type SettlementParseErrorsResult = {
+  items: SettlementParseErrorRow[]
+  total: number | null
+}
+
+/** Mode-2 rows from outcome-engine (canonical columns needed by Settlement Journal). */
 export type SettlementObservationBatchDetailItem = {
+  settlement_observation_id?: string
   settlement_batch_id?: string
   source_row_ref?: string
   source_system?: string
@@ -84,6 +103,8 @@ export type SettlementObservationBatchDetailItem = {
   deduction_amount?: string | number | null
   currency_code?: string
   settlement_status?: string
+  client_reference_candidate?: string | null
+  provider_reference?: string | null
   bank_reference?: string | null
   provider_status_code?: string | null
   failure_reason_code?: string | null
@@ -93,8 +114,19 @@ export type SettlementObservationBatchDetailItem = {
   observation_timestamp?: string
   value_date?: string | null
   source_system_id?: string
+  parse_confidence?: number
+  mapping_confidence?: number | string
+  attachment_readiness_score?: number
+  matched_intent_id?: string | null
   created_at?: string
   updated_at?: string
+}
+
+export type SettlementParseErrorRow = {
+  source_row_ref?: string
+  error_stage?: string
+  reason_code?: string
+  severity?: string
 }
 
 function isBatchIdListItem(
@@ -122,12 +154,28 @@ export function extractClientBatchIdsFromListResponse(
 }
 
 export const SETTLEMENT_OBSERVATIONS_BFF_PATH = '/api/prod/settlement/observations/batches'
+export const SETTLEMENT_PARSE_ERRORS_BFF_PATH = '/api/prod/settlement/errors'
 
-function observationsUrl(clientBatchId?: string) {
+/** Outcome-engine max page size for settlement observation detail mode. */
+export const SETTLEMENT_OBSERVATIONS_FETCH_PAGE_SIZE = 100
+
+function observationsUrl(
+  clientBatchId?: string,
+  opts?: { page?: number; pageSize?: number },
+) {
   const params = new URLSearchParams()
   if (clientBatchId?.trim()) params.set('client_batch_id', clientBatchId.trim())
+  if (opts?.page != null) params.set('page', String(opts.page))
+  if (opts?.pageSize != null) params.set('page_size', String(opts.pageSize))
   const qs = params.toString()
   return qs ? `${SETTLEMENT_OBSERVATIONS_BFF_PATH}?${qs}` : SETTLEMENT_OBSERVATIONS_BFF_PATH
+}
+
+function settlementParseErrorsUrl(clientBatchId?: string) {
+  const params = new URLSearchParams()
+  if (clientBatchId?.trim()) params.set('batch_id', clientBatchId.trim())
+  const qs = params.toString()
+  return qs ? `${SETTLEMENT_PARSE_ERRORS_BFF_PATH}?${qs}` : SETTLEMENT_PARSE_ERRORS_BFF_PATH
 }
 
 export async function getSettlementObservationBatchesForSession(): Promise<
@@ -136,14 +184,89 @@ export async function getSettlementObservationBatchesForSession(): Promise<
   return fetchProdJsonGetWithMeta<SettlementObservationBatchListResponse>(observationsUrl())
 }
 
-export async function getSettlementObservationsForClientBatch(
+export async function getSettlementObservationsPageForClientBatch(
   clientBatchId: string,
-): Promise<ProdJsonGetResult<SettlementObservationDetailResponse>> {
+  opts: { page: number; pageSize: number },
+): Promise<ProdJsonGetResult<SettlementObservationsForBatchResult>> {
   const bid = clientBatchId.trim()
   if (!bid) {
-    return { data: { items: [] }, ok: true, status: 200, url: observationsUrl() }
+    return { data: { items: [], total: null }, ok: true, status: 200, url: observationsUrl() }
   }
-  return fetchProdJsonGetWithMeta<SettlementObservationDetailResponse>(observationsUrl(bid))
+
+  const page = Math.max(1, opts.page)
+  const pageSize = Math.max(1, Math.min(100, opts.pageSize))
+  const url = observationsUrl(bid, { page, pageSize })
+  const res = await fetchProdJsonGetWithMeta<SettlementObservationDetailResponse>(url)
+  if (!res.ok || !res.data) {
+    return { ...res, data: { items: [], total: null } }
+  }
+
+  const items = res.data.items ?? []
+  const total = res.data.pagination?.total ?? null
+  return { ...res, data: { items, total } }
+}
+
+export async function getSettlementObservationsForClientBatch(
+  clientBatchId: string,
+): Promise<ProdJsonGetResult<SettlementObservationsForBatchResult>> {
+  const bid = clientBatchId.trim()
+  if (!bid) {
+    return { data: { items: [], total: null }, ok: true, status: 200, url: observationsUrl() }
+  }
+
+  const pageSize = SETTLEMENT_OBSERVATIONS_FETCH_PAGE_SIZE
+  const allItems: CanonicalSettlementObservation[] = []
+  let total: number | null = null
+  let lastUrl = observationsUrl(bid, { page: 1, pageSize })
+  let lastStatus = 200
+  let ok = true
+
+  for (let page = 1; page <= 500; page += 1) {
+    lastUrl = observationsUrl(bid, { page, pageSize })
+    const res = await fetchProdJsonGetWithMeta<SettlementObservationDetailResponse>(lastUrl)
+    lastStatus = res.status
+    if (!res.ok || !res.data) {
+      ok = false
+      if (page === 1) {
+        return { ...res, data: { items: [], total: null } }
+      }
+      break
+    }
+
+    const batch = res.data.items ?? []
+    if (res.data.pagination?.total != null) {
+      total = res.data.pagination.total
+    }
+    allItems.push(...batch)
+
+    if (batch.length === 0) break
+    if (total != null && allItems.length >= total) break
+    if (batch.length < pageSize) break
+  }
+
+  return {
+    ok,
+    status: lastStatus,
+    url: lastUrl,
+    data: { items: allItems, total: total ?? allItems.length },
+  }
+}
+
+export async function getSettlementParseErrorsForClientBatch(
+  clientBatchId: string,
+): Promise<ProdJsonGetResult<SettlementParseErrorsResult>> {
+  const bid = clientBatchId.trim()
+  if (!bid) {
+    return { data: { items: [], total: null }, ok: true, status: 200, url: settlementParseErrorsUrl() }
+  }
+  const res = await fetchProdJsonGetWithMeta<
+    SettlementParseErrorRow[] | { items?: SettlementParseErrorRow[]; pagination?: SettlementPagination }
+  >(settlementParseErrorsUrl(bid))
+  if (!res.ok) return { ...res, data: { items: [], total: null } }
+  const payload = res.data
+  const items = Array.isArray(payload) ? payload : payload?.items ?? []
+  const total = Array.isArray(payload) ? items.length : (payload?.pagination?.total ?? null)
+  return { ...res, data: { items, total } }
 }
 
 export type SettlementObservationTableRow = {
@@ -209,9 +332,10 @@ function parseMoney(raw: string | number | null | undefined): number {
 }
 
 function formatObsTime(iso: string | undefined): string {
-  if (!apiTrimmedString(iso)) return '—'
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
+  const safeIso = apiTrimmedString(iso)
+  if (!safeIso) return '—'
+  const d = new Date(safeIso)
+  if (Number.isNaN(d.getTime())) return safeIso
   return d.toLocaleString('en-IN', {
     day: '2-digit',
     month: 'short',
@@ -226,7 +350,7 @@ function displayOrDash(value: string | null | undefined): string {
   return v ? v : '—'
 }
 
-/** Use 1-based row index when API source_row_ref is missing or implausible. */
+/** Use 1-based row index only when API source_row_ref is missing or invalid. */
 function resolveSourceRowRef(
   raw: string | null | undefined,
   rowIndex: number | undefined,
@@ -235,9 +359,10 @@ function resolveSourceRowRef(
   if (!v) {
     return rowIndex != null ? String(rowIndex + 1) : '—'
   }
-  if (/^\d+$/.test(v)) {
-    const n = Number.parseInt(v, 10)
-    if (n >= 1000 && rowIndex != null) return String(rowIndex + 1)
+  const signed = /^-?\d+$/.test(v) ? Number.parseInt(v, 10) : Number.NaN
+  if (Number.isFinite(signed)) {
+    if (signed <= 0 && rowIndex != null) return String(rowIndex + 1)
+    return String(signed)
   }
   return v
 }
@@ -254,6 +379,7 @@ export function mapObservationToTableRow(
   const createdAt = formatObsTime(full.created_at ?? slim.created_at)
   const observationId =
     full.settlement_observation_id?.trim() ||
+    slim.settlement_observation_id?.trim() ||
     `${settlementBatchId}:${sourceRowRef}:${opts?.rowIndex ?? 0}:${createdAt}`
 
   return {
@@ -263,8 +389,8 @@ export function mapObservationToTableRow(
     clientBatchId: displayOrDash(full.client_batch_id ?? opts?.clientBatchId),
     sourceRowRef,
     sourceFileRef: displayOrDash(full.source_file_ref),
-    clientRef: displayOrDash(full.client_reference_candidate),
-    providerRef: displayOrDash(full.provider_reference),
+    clientRef: displayOrDash(full.client_reference_candidate ?? slim.client_reference_candidate),
+    providerRef: displayOrDash(full.provider_reference ?? slim.provider_reference),
     bankRef: displayOrDash(full.bank_reference ?? slim.bank_reference),
     amount: parseMoney(full.amount ?? slim.amount),
     settledAmount: parseMoney(full.settled_amount ?? slim.settled_amount),
@@ -287,12 +413,29 @@ export function mapObservationToTableRow(
     retryFlag: Boolean(full.retry_flag ?? slim.retry_flag),
     reversalFlag: Boolean(full.reversal_flag ?? slim.reversal_flag),
     returnFlag: Boolean(full.return_flag ?? slim.return_flag),
-    parseConfidence: typeof full.parse_confidence === 'number' ? full.parse_confidence : null,
-    mappingConfidence: typeof full.mapping_confidence === 'number' ? full.mapping_confidence : null,
+    parseConfidence:
+      typeof full.parse_confidence === 'number'
+        ? full.parse_confidence
+        : typeof slim.parse_confidence === 'number'
+          ? slim.parse_confidence
+          : null,
+    mappingConfidence: (() => {
+      const raw = full.mapping_confidence ?? slim.mapping_confidence
+      if (typeof raw === 'number' && Number.isFinite(raw)) return raw
+      if (typeof raw === 'string' && raw.trim()) {
+        const n = Number.parseFloat(raw)
+        return Number.isFinite(n) ? n : null
+      }
+      return null
+    })(),
     carrierRichnessScore:
       typeof full.carrier_richness_score === 'number' ? full.carrier_richness_score : null,
     attachmentReadinessScore:
-      typeof full.attachment_readiness_score === 'number' ? full.attachment_readiness_score : null,
+      typeof full.attachment_readiness_score === 'number'
+        ? full.attachment_readiness_score
+        : typeof slim.attachment_readiness_score === 'number'
+          ? slim.attachment_readiness_score
+          : null,
     traceId: displayOrDash(full.trace_id ?? undefined),
     settlementEnvelopeId: displayOrDash(full.settlement_envelope_id),
     connectorId: displayOrDash(full.connector_id ?? undefined),

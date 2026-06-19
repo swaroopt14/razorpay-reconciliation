@@ -19,6 +19,7 @@ import (
 
 	"zord-outcome-engine/models"
 
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
 
@@ -160,7 +161,8 @@ type ScoreBreakdown struct {
 
 // CandidateScore is the intermediate result returned by ScoreCandidate.
 type CandidateScore struct {
-	IntentID         interface{} // uuid.UUID
+	SettlementObservationID uuid.UUID
+	IntentID                uuid.UUID
 	Breakdown        ScoreBreakdown
 	BreakdownJSON    []byte
 	Total            float64
@@ -221,12 +223,12 @@ func ScoreCandidate(
 	}
 
 	// batch_id + source_row_ref exact match: +90
-	if intent.ClientBatchRef != nil && obs.BatchReference != nil &&
-		strings.EqualFold(*intent.ClientBatchRef, *obs.BatchReference) && *intent.ClientBatchRef != "" {
-		bd.BatchContextScore += 90
-		cs.BatchMatch = true
-		cs.ExactRefMatch = true
-	}
+	// if intent.ClientBatchRef != nil && obs.BatchReference != nil &&
+	// 	strings.EqualFold(*intent.ClientBatchRef, *obs.BatchReference) && *intent.ClientBatchRef != "" {
+	// 	bd.BatchContextScore += 90
+	// 	cs.BatchMatch = true
+	// 	cs.ExactRefMatch = true
+	// }
 
 	// ── NOTE: Provider Reference and Bank Reference matching are currently disabled.
 	// CanonicalIntent does not store ProviderReference or BankReference (these are
@@ -665,6 +667,30 @@ func ComputeConfidenceScore(
 	}
 
 	return math.Min(score, 1.0)
+}
+
+// ComputeMatchConfidence calculates the native similarity between the observation and intent
+// without environmental modifiers (like parse confidence or source strength).
+func ComputeMatchConfidence(cs CandidateScore) float64 {
+	// Sum only the specific components requested.
+	// Note: CurrencyMatch (+10) is already included inside PartyAmountScore.
+	nativeScore := cs.Breakdown.BusinessReferenceScore +
+		cs.Breakdown.PartyAmountScore +
+		cs.Breakdown.BatchContextScore +
+		cs.Breakdown.TimingScore
+
+	// Theoretical max based on current scoring weights for a perfect match:
+	// ClientRef(100) + Amount(30) + Batch(15) + Time(20) = 165
+	const maxTheoreticalScore = 165.0
+
+	matchConfidence := nativeScore / maxTheoreticalScore
+	if matchConfidence > 1.0 {
+		return 1.0
+	}
+	if matchConfidence < 0.0 {
+		return 0.0
+	}
+	return matchConfidence
 }
 
 // abs64 is a simple absolute value for int64.

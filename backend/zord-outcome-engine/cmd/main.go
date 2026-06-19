@@ -19,6 +19,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
 func main() {
@@ -28,6 +29,7 @@ func main() {
 	gin.SetMode(gin.ReleaseMode)
 	server := gin.New()
 	server.Use(gin.Recovery())
+	server.Use(otelgin.Middleware("zord-outcome-engine"))
 	ctx := context.Background()
 	config.InitDB()
 	if db.DB == nil {

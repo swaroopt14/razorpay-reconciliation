@@ -57,6 +57,12 @@ func ensureAuthSchema(ctx context.Context, db *sql.DB) error {
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 			created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`,
+		// Session-management columns — added safely after initial table creation.
+		// Each ALTER is idempotent on Postgres 9.6+ via IF NOT EXISTS.
+		`ALTER TABLE auth_refresh_tokens
+			ADD COLUMN IF NOT EXISTS idle_expires_at TIMESTAMPTZ NOT NULL DEFAULT (now() + INTERVAL '15 minutes'),
+			ADD COLUMN IF NOT EXISTS absolute_expires_at TIMESTAMPTZ NOT NULL DEFAULT (now() + INTERVAL '8 hours'),
+			ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ NOT NULL DEFAULT now()`,
 		`CREATE TABLE IF NOT EXISTS auth_audit_events (
 			event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 			tenant_id UUID NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
@@ -94,20 +100,25 @@ type AuthTenant struct {
 }
 
 type AuthBundle struct {
-	User             AuthUser
-	Tenant           AuthTenant
-	AccessToken      string
-	AccessExpiresAt  time.Time
-	RefreshToken     string
-	RefreshExpiresAt time.Time
+	User              AuthUser
+	Tenant            AuthTenant
+	AccessToken       string
+	AccessExpiresAt   time.Time
+	RefreshToken      string
+	RefreshExpiresAt  time.Time
+	IdleExpiresAt     time.Time // now + 15 min; reset on activity
+	AbsoluteExpiresAt time.Time // login + 8 h; never extended
 }
 
+// Session timeout sentinel errors.
 var (
-	ErrInvalidCredentials = errors.New("invalid email or password")
-	ErrAccountLocked      = errors.New("account temporarily locked due to failed login attempts")
-	ErrAccountDisabled    = errors.New("account is disabled")
-	ErrEmailTaken         = errors.New("email already registered")
-	ErrTenantNameTaken    = errors.New("tenant name already in use")
+	ErrInvalidCredentials     = errors.New("invalid email or password")
+	ErrAccountLocked          = errors.New("account temporarily locked due to failed login attempts")
+	ErrAccountDisabled        = errors.New("account is disabled")
+	ErrEmailTaken             = errors.New("email already registered")
+	ErrTenantNameTaken        = errors.New("tenant name already in use")
+	ErrSessionIdleExpired     = errors.New("session expired due to inactivity")
+	ErrSessionAbsoluteExpired = errors.New("session absolute lifetime exceeded")
 )
 
 const (
@@ -115,6 +126,8 @@ const (
 	statusActive      = "ACTIVE"
 	lockoutThreshold  = 5
 	lockoutDuration   = 15 * time.Minute
+	// idleWindow is the server-side idle timeout; must match accessTokenTTL.
+	idleWindow = 15 * time.Minute
 )
 
 func hashRefreshToken(raw string) string {
@@ -183,7 +196,7 @@ func SignupNewTenant(ctx context.Context, db *sql.DB, tenantName, name, email, p
 		return nil, err
 	}
 
-	tokens, err := IssueTokens(tenantID, userID, email, roleCustomerAdmin)
+	tokens, err := IssueTokens(tenantID, userID, email, roleCustomerAdmin, time.Time{})
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +289,7 @@ func LoginUser(ctx context.Context, db *sql.DB, email, password, ip, userAgent s
 		return nil, ErrInvalidCredentials
 	}
 
-	tokens, err := IssueTokens(tenantID, userID, email, role)
+	tokens, err := IssueTokens(tenantID, userID, email, role, time.Time{})
 	if err != nil {
 		return nil, err
 	}
@@ -322,7 +335,8 @@ func LoginUser(ctx context.Context, db *sql.DB, email, password, ip, userAgent s
 	}, nil
 }
 
-// RefreshSession validates a refresh token, rotates it, and issues fresh access + refresh tokens.
+// RefreshSession validates a refresh token, enforces idle and absolute session
+// timeouts, rotates the token, and issues fresh access + refresh tokens.
 func RefreshSession(ctx context.Context, db *sql.DB, refreshTokenStr, ip, userAgent string) (*AuthBundle, error) {
 	if err := ensureAuthSchema(ctx, db); err != nil {
 		return nil, err
@@ -334,18 +348,34 @@ func RefreshSession(ctx context.Context, db *sql.DB, refreshTokenStr, ip, userAg
 
 	tokenHash := hashRefreshToken(refreshTokenStr)
 	var (
-		revokedAt sql.NullTime
-		expiresAt time.Time
+		revokedAt       sql.NullTime
+		expiresAt       time.Time
+		idleExpiresAt   time.Time
+		absoluteExpires time.Time
 	)
 	err = db.QueryRowContext(ctx,
-		`SELECT revoked_at, expires_at FROM auth_refresh_tokens WHERE token_id = $1 AND token_hash = $2`,
+		`SELECT revoked_at, expires_at, idle_expires_at, absolute_expires_at
+		 FROM auth_refresh_tokens
+		 WHERE token_id = $1 AND token_hash = $2`,
 		claims.TokenID, tokenHash,
-	).Scan(&revokedAt, &expiresAt)
+	).Scan(&revokedAt, &expiresAt, &idleExpiresAt, &absoluteExpires)
 	if err != nil {
 		return nil, ErrInvalidCredentials
 	}
-	if revokedAt.Valid || expiresAt.Before(time.Now().UTC()) {
+	if revokedAt.Valid {
 		return nil, ErrInvalidCredentials
+	}
+	// Backend-authoritative timeout checks (OWASP mandatory server-side enforcement).
+	now := time.Now().UTC()
+	if idleExpiresAt.Before(now) {
+		return nil, ErrSessionIdleExpired
+	}
+	if absoluteExpires.Before(now) {
+		return nil, ErrSessionAbsoluteExpired
+	}
+	// Also honour the JWT exp claim as a belt-and-suspenders check.
+	if expiresAt.Before(now) {
+		return nil, ErrSessionAbsoluteExpired
 	}
 
 	var (
@@ -369,7 +399,14 @@ func RefreshSession(ctx context.Context, db *sql.DB, refreshTokenStr, ip, userAg
 		return nil, ErrAccountDisabled
 	}
 
-	tokens, err := IssueTokens(claims.TenantID, claims.UserID, email, role)
+	// Carry the original session creation time forward so the absolute wall is preserved.
+	sessionCreatedAt := time.Unix(claims.SessionCreatedAt, 0).UTC()
+	if sessionCreatedAt.IsZero() {
+		// Older tokens (before this field was added) fall back to absolute_expires_at - 8 h.
+		sessionCreatedAt = absoluteExpires.Add(-refreshTokenTTL)
+	}
+
+	tokens, err := IssueTokens(claims.TenantID, claims.UserID, email, role, sessionCreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -381,7 +418,9 @@ func RefreshSession(ctx context.Context, db *sql.DB, refreshTokenStr, ip, userAg
 	defer tx.Rollback()
 
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE auth_refresh_tokens SET revoked_at = now(), replaced_by_token_id = $1, updated_at = now() WHERE token_id = $2`,
+		`UPDATE auth_refresh_tokens
+		 SET revoked_at = now(), replaced_by_token_id = $1, updated_at = now()
+		 WHERE token_id = $2`,
 		tokens.RefreshTokenID.String(), claims.TokenID,
 	); err != nil {
 		return nil, err
@@ -412,6 +451,8 @@ func RefreshSession(ctx context.Context, db *sql.DB, refreshTokenStr, ip, userAg
 		AccessExpiresAt:  tokens.AccessExpiresAt,
 		RefreshToken:     tokens.RefreshToken,
 		RefreshExpiresAt: tokens.RefreshExpiresAt,
+		IdleExpiresAt:    tokens.AccessExpiresAt.Add(idleWindow - accessTokenTTL), // idle = now+15m
+		AbsoluteExpiresAt: sessionCreatedAt.Add(refreshTokenTTL),
 	}, nil
 }
 
@@ -431,6 +472,20 @@ func RevokeRefreshToken(ctx context.Context, db *sql.DB, refreshTokenStr, ip, us
 	writeAuditEvent(ctx, db, claims.TenantID, &claims.UserID, "LOGOUT", ip, userAgent)
 	return nil
 }
+
+// RevokeAllUserSessions marks all refresh tokens for a user as revoked (logout everywhere).
+func RevokeAllUserSessions(ctx context.Context, db *sql.DB, tenantID, userID uuid.UUID, ip, userAgent string) error {
+	if err := ensureAuthSchema(ctx, db); err != nil {
+		return err
+	}
+	_, err := db.ExecContext(ctx,
+		`UPDATE auth_refresh_tokens SET revoked_at = now(), updated_at = now() WHERE user_id = $1 AND revoked_at IS NULL`,
+		userID,
+	)
+	writeAuditEvent(ctx, db, tenantID, &userID, "LOGOUT_ALL_SESSIONS", ip, userAgent)
+	return err
+}
+
 
 // GetUserByID returns user + tenant details for /me.
 func GetUserByID(ctx context.Context, db *sql.DB, userID uuid.UUID) (*AuthUser, *AuthTenant, error) {
@@ -472,10 +527,18 @@ func GetUserByID(ctx context.Context, db *sql.DB, userID uuid.UUID) (*AuthUser, 
 }
 
 func storeRefreshTokenTx(ctx context.Context, tx *sql.Tx, tokens *IssuedTokens, tenantID, userID uuid.UUID, ip, userAgent string) error {
+	now := time.Now().UTC()
+	idleExp := now.Add(idleWindow)
+	absoluteExp := tokens.SessionCreatedAt.Add(refreshTokenTTL)
 	_, err := tx.ExecContext(ctx,
-		`INSERT INTO auth_refresh_tokens (token_id, user_id, tenant_id, session_id, token_hash, expires_at, created_ip, created_user_agent)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		tokens.RefreshTokenID, userID, tenantID, tokens.SessionID, hashRefreshToken(tokens.RefreshToken), tokens.RefreshExpiresAt, nullableString(ip), nullableString(userAgent),
+		`INSERT INTO auth_refresh_tokens
+			(token_id, user_id, tenant_id, session_id, token_hash, expires_at,
+			 created_ip, created_user_agent, idle_expires_at, absolute_expires_at, last_activity_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		tokens.RefreshTokenID, userID, tenantID, tokens.SessionID,
+		hashRefreshToken(tokens.RefreshToken), tokens.RefreshExpiresAt,
+		nullableString(ip), nullableString(userAgent),
+		idleExp, absoluteExp, now,
 	)
 	return err
 }

@@ -18,6 +18,11 @@ export const BACKEND_SERVICES = {
       AUTH_LOGOUT: '/v1/auth/logout',
       AUTH_ME: '/v1/auth/me',
       AUTH_PRINCIPAL: '/v1/auth/principal',
+      AUTH_ADMIN_USERS: '/v1/auth/admin/users',
+      AUTH_ADMIN_USER_STATUS: (id: string) => `/v1/auth/admin/users/${encodeURIComponent(id)}/status`,
+      SESSION_STATUS: '/v1/session/status',
+      SESSION_REFRESH: '/v1/session/refresh',
+      SESSION_LOGOUT_ALL: '/v1/session/logout-all',
     },
   },
 
@@ -40,6 +45,8 @@ export const BACKEND_SERVICES = {
       INTENTS: '/v1/intents',
       INTENT_BY_ID: (id: string) => `/v1/intents/${id}`,
       DLQ: '/v1/dlq',
+      DLQ_MANUAL_REVIEW: '/v1/dlq/manual-review',
+      DLQ_TERMINAL_COUNT: '/v1/dlq/terminal/count',
       DLQ_BY_ID: (id: string) => `/v1/dlq/${id}`,
     },
   },
@@ -79,14 +86,21 @@ export const BACKEND_SERVICES = {
     BASE_URL: process.env.ZORD_INTELLIGENCE_URL || 'http://localhost:8089',
     ENDPOINTS: {
       LEAKAGE: '/v1/intelligence/dashboard/leakage',
+      LEAKAGE_EXPOSURE: '/v1/intelligence/timeseries/leakage-exposure',
       AMBIGUITY: '/v1/intelligence/dashboard/ambiguity',
       AMBIGUITY_HEATMAP: '/v1/intelligence/dashboard/ambiguity/heatmap',
+      BUBBLE_MAP: '/v1/intelligence/dashboard/bubble-map',
       DEFENSIBILITY: '/v1/intelligence/dashboard/defensibility',
       PATTERNS: '/v1/intelligence/dashboard/patterns',
+      PATTERN: '/v1/intelligence/pattern',
+      PATTERN_HISTORY: '/v1/intelligence/pattern/history',
+      RECOMMENDATION: '/v1/intelligence/recommendation',
+      RECOMMENDATION_HISTORY: '/v1/intelligence/recommendation/history',
       RECOMMENDATIONS: '/v1/intelligence/dashboard/recommendations',
       RCA: '/v1/intelligence/dashboard/rca',
       BATCHES: '/v1/intelligence/batches',
       BATCH_BY_ID: (id: string) => `/v1/intelligence/batches/${id}`,
+      BATCH_CONTRACT: (id: string) => `/v1/intelligence/dashboard/batch_contract/${id}`,
     },
   },
 
@@ -96,6 +110,16 @@ export const BACKEND_SERVICES = {
     ENDPOINTS: {
       PACKS: '/v1/evidence/packs',
       PACK_BY_ID: (packId: string) => `/v1/evidence/packs/${encodeURIComponent(packId)}`,
+      BATCH_INTENTS: (batchId: string) =>
+        `/v1/evidence/batch/${encodeURIComponent(batchId)}/intents`,
+      BATCH_LINEAGE_GRAPH: (batchId: string) =>
+        `/v1/evidence/batch/${encodeURIComponent(batchId)}/lineage-graph`,
+      PACK_TIMELINE: (packId: string) =>
+        `/v1/evidence/packs/${encodeURIComponent(packId)}/timeline`,
+      PACK_LINEAGE_GRAPH: (packId: string) =>
+        `/v1/evidence/packs/${encodeURIComponent(packId)}/lineage-graph`,
+      PACK_VERIFY: (packId: string) =>
+        `/v1/evidence/packs/${encodeURIComponent(packId)}/verify`,
     },
   },
 } as const

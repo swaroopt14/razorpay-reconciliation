@@ -41,6 +41,14 @@ data:
         auth_token: "dev-dummy-token-123"
         http_timeout: 15s
         default_topic: payments.outcome.events.v1
+        topic_map:
+          canonical.settlement.created: canonical.settlement.created
+          canonical.settlement.batch_ready: canonical.settlement.created
+          attachment.decision.created: attachment.decision.created
+          variance.record.created: variance.record.created
+          attachment.batch.updated: batch.summary.updated
+          attachment.unresolved.flagged: batch.summary.updated
+          outcome.leaf_bundle.created: evidence.pack.ready
 
     tracing:
       enabled: false
@@ -66,6 +74,7 @@ data:
       timeout_seconds: 10
 
     dispatch:
+      enabled: false
       consumer_group_id: "dispatch-loop-group"
       topic: "payments.intent.events.v1"
       poll_timeout: 200ms

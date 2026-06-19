@@ -25,9 +25,9 @@ func AttachmentRoutes(router *gin.Engine, h *handlers.Handler) {
 
 	// ── Read endpoints ────────────────────────────────────────────────────
 	//
-	// GET /v1/attachment/decision/:observation_id?tenant_id=uuid
-	//   Fetch the latest attachment decision + variance for one canonical observation.
-	router.GET("/v1/attachment/decision/:observation_id", h.GetAttachmentDecisionHandler)
+	// GET /v1/attachment/decision/intent/:intent_id?tenant_id=uuid
+	//   Fetch the latest attachment decision + variance for one canonical intent.
+	router.GET("/v1/attachment/decision/intent/:intent_id", h.GetAttachmentDecisionByIntentHandler)
 
 	// GET /v1/attachment/batch/:batch_ref?tenant_id=uuid
 	//   Fetch the aggregated batch attachment summary for a settlement batch.

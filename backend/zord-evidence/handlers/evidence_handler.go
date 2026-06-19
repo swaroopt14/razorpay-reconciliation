@@ -104,6 +104,52 @@ func (h *EvidenceHandler) ListIntentPacksByBatch(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+// GET /v1/evidence/batch/:batchID — fetch the batch-level summary pack
+func (h *EvidenceHandler) GetBatchEvidencePack(c *gin.Context) {
+	tenantID := strings.TrimSpace(c.Query("tenant_id"))
+	batchID := c.Param("batchID")
+
+	if tenantID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "tenant_id query param is required"})
+		return
+	}
+	if batchID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "batchID path param is required"})
+		return
+	}
+
+	pack, err := h.svc.GetPackForBatch(c.Request.Context(), tenantID, batchID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "batch evidence pack not found: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, pack)
+}
+
+// GET /v1/evidence/batch/:batchID/lineage-graph — fetch the batch-level lineage graph
+func (h *EvidenceHandler) GetBatchLineageGraph(c *gin.Context) {
+	tenantID := strings.TrimSpace(c.Query("tenant_id"))
+	batchID := c.Param("batchID")
+
+	if tenantID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "tenant_id query param is required"})
+		return
+	}
+	if batchID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "batchID path param is required"})
+		return
+	}
+
+	pack, err := h.svc.GetPackForBatch(c.Request.Context(), tenantID, batchID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "batch evidence pack not found: " + err.Error()})
+		return
+	}
+
+	graph := services.BuildLineageGraph(pack)
+	c.JSON(http.StatusOK, graph)
+}
+
 // GET /v1/evidence/packs/:packID/views/:viewType — role-specific projection (spec §18)
 func (h *EvidenceHandler) GetEvidencePackView(c *gin.Context) {
 	packID := c.Param("packID")

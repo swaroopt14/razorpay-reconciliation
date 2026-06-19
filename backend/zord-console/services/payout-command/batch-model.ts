@@ -14,6 +14,7 @@ export type BatchRowTimelineStep = {
 
 export type BatchRow = {
   refId: string
+  invoiceNo?: string
   amount: number
   beneficiary: string
   status: BatchRowStatus
@@ -504,6 +505,9 @@ function parseMatrixToBatchRows(matrix: string[][]): BatchRow[] {
   const headers = headerRow.map((h) => h.toLowerCase())
 
   const refIdx = headers.findIndex((header) => header.includes('ref') || header.includes('request'))
+  const invoiceIdx = headers.findIndex(
+    (header) => header.includes('invoice') || header === 'inv' || header.includes('invoice_id'),
+  )
   const amountIdx = headers.findIndex((header) => header.includes('amount'))
   const beneficiaryIdx = headers.findIndex((header) => header.includes('beneficiary') || header.includes('account'))
   const statusIdx = headers.findIndex((header) => header.includes('status'))
@@ -529,6 +533,8 @@ function parseMatrixToBatchRows(matrix: string[][]): BatchRow[] {
     return {
       ...base,
       refId: refIdx >= 0 && cells[refIdx] ? cells[refIdx] : base.refId,
+      invoiceNo:
+        invoiceIdx >= 0 && cells[invoiceIdx]?.trim() ? cells[invoiceIdx].trim() : undefined,
       amount: Number.isFinite(amountValue) && amountValue > 0 ? amountValue : base.amount,
       beneficiary: beneficiaryIdx >= 0 && cells[beneficiaryIdx] ? cells[beneficiaryIdx] : base.beneficiary,
       status,

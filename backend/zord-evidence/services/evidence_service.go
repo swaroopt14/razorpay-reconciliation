@@ -17,6 +17,7 @@ import (
 	"zord-evidence/utils"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 // validModes are the three lifecycle operating modes defined in spec §3.2
@@ -182,7 +183,16 @@ func (s *EvidenceService) HandleLeafUpdate(ctx context.Context, tenantID, envelo
 	var mc *float64
 	var vdc, am *bool
 
+	var clientPayoutRef *string
+	var amount decimal.Decimal
+	var currency string
+
 	for _, l := range leaves {
+		if l.ClientPayoutRef != nil {
+			clientPayoutRef = l.ClientPayoutRef
+			amount = l.Amount
+			currency = l.Currency
+		}
 		if l.PaymentInstructionReceived != nil {
 			pir = l.PaymentInstructionReceived
 			cic = l.CanonicalIntentCreated
@@ -230,6 +240,10 @@ func (s *EvidenceService) HandleLeafUpdate(ctx context.Context, tenantID, envelo
 		MatchConfidence:            mc,
 		ValueDateCheck:             vdc,
 		AmountMatch:                am,
+
+		ClientPayoutRef:            clientPayoutRef,
+		Amount:                     amount,
+		Currency:                   currency,
 	}
 
 	_, err = s.GeneratePack(ctx, req)
@@ -315,7 +329,16 @@ func (s *EvidenceService) HandleBatchLeafUpdate(ctx context.Context, tenantID, b
 	var mc *float64
 	var vdc, am *bool
 
+	var clientPayoutRef *string
+	var amount decimal.Decimal
+	var currency string
+
 	for _, l := range leaves {
+		if l.ClientPayoutRef != nil {
+			clientPayoutRef = l.ClientPayoutRef
+			amount = l.Amount
+			currency = l.Currency
+		}
 		if l.PaymentInstructionReceived != nil {
 			pir = l.PaymentInstructionReceived
 			cic = l.CanonicalIntentCreated
@@ -360,6 +383,10 @@ func (s *EvidenceService) HandleBatchLeafUpdate(ctx context.Context, tenantID, b
 		MatchConfidence:            mc,
 		ValueDateCheck:             vdc,
 		AmountMatch:                am,
+
+		ClientPayoutRef:            clientPayoutRef,
+		Amount:                     amount,
+		Currency:                   currency,
 	}
 
 	_, err = s.GenerateBatchPack(ctx, req)
@@ -452,6 +479,7 @@ func (s *EvidenceService) GeneratePack(ctx context.Context, req models.GenerateE
 			Sig:      sig,
 			SignedAt: now,
 		}},
+		ZordSignature:              sig,
 		PaymentInstructionReceived: req.PaymentInstructionReceived,
 		CanonicalIntentCreated:     req.CanonicalIntentCreated,
 		MappingProfileUsed:         req.MappingProfileUsed,
@@ -467,6 +495,10 @@ func (s *EvidenceService) GeneratePack(ctx context.Context, req models.GenerateE
 		MatchConfidence:            req.MatchConfidence,
 		ValueDateCheck:             req.ValueDateCheck,
 		AmountMatch:                req.AmountMatch,
+
+		ClientPayoutRef:            req.ClientPayoutRef,
+		Amount:                     req.Amount,
+		Currency:                   req.Currency,
 
 		CreatedAt: now,
 	}
@@ -696,7 +728,11 @@ func (s *EvidenceService) GenerateBatchPack(ctx context.Context, req models.Gene
 			Sig:      sig,
 			SignedAt: now,
 		}},
-		CreatedAt: now,
+		ZordSignature:   sig,
+		ClientPayoutRef: req.ClientPayoutRef,
+		Amount:          req.Amount,
+		Currency:        req.Currency,
+		CreatedAt:       now,
 	}
 
 	pack.ComputeCompletenessMetadata()

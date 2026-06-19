@@ -32,6 +32,7 @@ func JWTAuthenticate() gin.HandlerFunc {
 		c.Set("tenant_id", claims.TenantID)
 		c.Set("email", claims.Email)
 		c.Set("role", claims.Role)
+		c.Set("session_id", claims.SessionID)
 		c.Next()
 	}
 }

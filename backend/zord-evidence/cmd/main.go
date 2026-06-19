@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 	"zord-evidence/config"
@@ -18,6 +19,7 @@ import (
 	"zord-evidence/tracing"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
 func main() {
@@ -38,7 +40,11 @@ func main() {
 		log.Fatalf("ensure tables failed: %v", err)
 	}
 
-	signer, err := services.NewSigner(cfg.SigningPrivateKey)
+	signingKeyPath := os.Getenv("SIGNING_KEY_PATH")
+	if signingKeyPath == "" {
+		signingKeyPath = "signing_key.pem"
+	}
+	signer, err := services.NewSigner(signingKeyPath)
 	if err != nil {
 		log.Fatalf("signer init failed: %v", err)
 	}
@@ -49,31 +55,25 @@ func main() {
 	}
 
 	var s3store storage.S3Store
-	if strings.TrimSpace(cfg.S3Bucket) != "" && strings.TrimSpace(cfg.S3Region) != "" {
-		s3store, err = storage.NewAWSStore(ctx, cfg.S3Region, cfg.S3Bucket)
-		if err != nil {
-			log.Fatalf("aws s3 store init failed: %v", err)
-		}
-	} else {
-		log.Printf("S3 config not provided, using in-memory S3 adapter for local/dev only")
-		s3store = storage.NewInMemoryS3Store("local-evidence")
+	if strings.TrimSpace(cfg.S3Bucket) == "" || strings.TrimSpace(cfg.S3Region) == "" {
+		log.Fatalf("S3_BUCKET and AWS_REGION must be configured for production")
+	}
+	s3store, err = storage.NewAWSStore(ctx, cfg.S3Region, cfg.S3Bucket)
+	if err != nil {
+		log.Fatalf("aws s3 store init failed: %v", err)
 	}
 
 	// --- Kafka publisher for §13 step 11 events (evidence.pack.*) ---
 	var publisher kafka.EventPublisher
-	if len(cfg.KafkaBrokers) > 0 && cfg.KafkaBrokers[0] != "" {
-		pub, err := kafka.NewPublisher(cfg.KafkaBrokers, kafka.TopicEvidencePack)
-		if err != nil {
-			log.Printf("warn: kafka publisher init failed (noop fallback): %v", err)
-			publisher = kafka.NoopPublisher{}
-		} else {
-			publisher = pub
-			defer pub.Close()
-		}
-	} else {
-		log.Printf("Kafka brokers not configured, using noop publisher")
-		publisher = kafka.NoopPublisher{}
+	if len(cfg.KafkaBrokers) == 0 || cfg.KafkaBrokers[0] == "" {
+		log.Fatalf("KAFKA_BROKERS must be configured for production")
 	}
+	pub, err := kafka.NewPublisher(cfg.KafkaBrokers, kafka.TopicEvidencePack)
+	if err != nil {
+		log.Fatalf("kafka publisher init failed: %v", err)
+	}
+	publisher = pub
+	defer pub.Close()
 
 	repo := repositories.NewEvidenceRepository(database)
 	pendingLeafRepo := repositories.NewPendingLeafRepository(database)
@@ -132,6 +132,7 @@ func main() {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(otelgin.Middleware("zord-evidence"))
 	routes.Register(r, h, outboxHandler)
 	routes.RegisterProofRoutes(r, proofHandler)
 

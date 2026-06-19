@@ -1,13 +1,12 @@
 import type { Metadata } from 'next'
-import ConnectorIntelligenceClient from './ConnectorIntelligenceClient'
+import ConnectorIntelligenceClient from '@/features/payout-command/connectors/ConnectorIntelligenceClient'
 
 export const metadata: Metadata = {
-  title: 'Connector Intelligence | Zord',
+  title: 'Connector Performance & Leakage | Zord',
   description:
-    'Which connectors are performing, which are failing, and what ambiguity costs in defensibility exposure — for ops, CTO, and PSP negotiation.',
+    'Connector performance, leakage exposure, and recommended actions across connected PSPs, banks, and rails.',
 }
 
 export default function ConnectorIntelligencePage() {
   return <ConnectorIntelligenceClient />
 }
-

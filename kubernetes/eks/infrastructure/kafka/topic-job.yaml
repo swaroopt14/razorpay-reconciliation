@@ -9,7 +9,14 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: kafka-topics
-          image: confluentinc/cp-kafka:7.6.0
+          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/cp-kafka:7.6.0
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
           command:
             - /bin/bash
             - -ec

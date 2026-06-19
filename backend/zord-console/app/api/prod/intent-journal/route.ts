@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { BACKEND_SERVICES } from '@/config/api.endpoints'
-import { fetchDLQItems } from '@/services/backend/dlq'
+import { fetchDLQItems, fetchDLQManualReviewItems } from '@/services/backend/dlq'
+import { mapBackendDlqForClient } from '@/services/backend/dlqBffTransform'
 import type { BackendDLQItem } from '@/services/backend/dlq'
 import { fetchIntents } from '@/services/backend/intents'
 import {
@@ -27,6 +28,23 @@ async function fetchIntelligenceJson(url: string, tenantId: string): Promise<unk
   }
 }
 
+function mergeDlqRows(primary: BackendDLQItem[], manualReview: BackendDLQItem[]): BackendDLQItem[] {
+  const merged = new Map<string, BackendDLQItem>()
+  const keyOf = (item: BackendDLQItem): string => {
+    if (item.dlq_id && item.dlq_id.trim()) return `id:${item.dlq_id.trim()}`
+    const envelope = item.envelope_id?.trim() || 'na'
+    const stage = item.stage?.trim() || 'na'
+    const reason = item.reason_code?.trim() || 'na'
+    const created = item.created_at?.trim() || 'na'
+    return `row:${envelope}:${stage}:${reason}:${created}`
+  }
+
+  for (const item of [...primary, ...manualReview]) {
+    merged.set(keyOf(item), item)
+  }
+  return Array.from(merged.values())
+}
+
 /**
  * Composed feed for the payout Intent Journal: intelligence batches (+ optional
  * batch detail), scoped intents from intent-engine, and DLQ rows for the tenant.
@@ -43,9 +61,10 @@ export async function GET(request: NextRequest) {
     const intelBase = BACKEND_SERVICES.INTELLIGENCE.BASE_URL
     const batchesUrl = `${intelBase}${BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.BATCHES}?tenant_id=${encodeURIComponent(tenantId)}&limit=100`
 
-    const [intentsRes, dlqRaw, batchesJson] = await Promise.all([
+    const [intentsRes, dlqRaw, dlqManualRaw, batchesJson] = await Promise.all([
       fetchIntents({ tenant_id: tenantId, batch_id: batchId }),
       fetchDLQItems({ tenant_id: tenantId }),
+      fetchDLQManualReviewItems({ tenant_id: tenantId }),
       fetchIntelligenceJson(batchesUrl, tenantId),
     ])
 
@@ -55,17 +74,11 @@ export async function GET(request: NextRequest) {
       batch_detail = await fetchIntelligenceJson(detailUrl, tenantId)
     }
 
-    const dlqList: BackendDLQItem[] = Array.isArray(dlqRaw) ? dlqRaw : []
-    const dlqItems = dlqList.map((item) => ({
-      dlq_id: item.dlq_id,
-      envelope_id: item.envelope_id,
-      stage: item.stage,
-      reason_code: item.reason_code,
-      error_detail: item.error_detail,
-      replayable: item.replayable,
-      created_at: item.created_at,
-      tenant_id: item.tenant_id,
-    }))
+    const dlqList: BackendDLQItem[] = mergeDlqRows(
+      Array.isArray(dlqRaw) ? dlqRaw : [],
+      Array.isArray(dlqManualRaw) ? dlqManualRaw : [],
+    )
+    const dlqItems = dlqList.map(mapBackendDlqForClient)
 
     const items = (intentsRes.items ?? []).map((intent) => ({
       intent_id: intent.intent_id,

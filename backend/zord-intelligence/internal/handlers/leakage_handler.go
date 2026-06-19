@@ -2,16 +2,28 @@ package handlers
 
 import (
 	"net/http"
+
+	"github.com/shopspring/decimal"
+	"github.com/zord/zord-intelligence/internal/persistence"
 )
 
 // LeakageHandler serves the GET /v1/intelligence/leakage endpoint.
 type LeakageHandler struct {
-	base *IntelligenceBase
+	base     *IntelligenceBase
+	projRepo *persistence.ProjectionRepo
 }
 
 // NewLeakageHandler creates a LeakageHandler.
-func NewLeakageHandler(base *IntelligenceBase) *LeakageHandler {
-	return &LeakageHandler{base: base}
+func NewLeakageHandler(base *IntelligenceBase, projRepo *persistence.ProjectionRepo) *LeakageHandler {
+	return &LeakageHandler{base: base, projRepo: projRepo}
+}
+
+// leakageResponse wraps the standard intelligence response and promotes
+// total_amount_minor from projection_state.value_json (leakage.total) to the
+// top level so callers do not need to parse the data blob to get this figure.
+type leakageResponse struct {
+	intelligenceResponse
+	TotalAmountMinor decimal.Decimal `json:"total_amount_minor"`
 }
 
 // GetLeakage handles GET /v1/intelligence/leakage?tenant_id=X
@@ -21,6 +33,16 @@ func (h *LeakageHandler) GetLeakage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "tenant_id is required")
 		return
 	}
-	resp := h.base.buildSnapshotResponse(r, tenantID, "LEAKAGE", "TENANT", nil)
-	writeJSON(w, http.StatusOK, resp)
+
+	snap := h.base.buildSnapshotResponse(r, tenantID, "LEAKAGE", "TENANT", nil)
+
+	var totalAmountMinor decimal.Decimal
+	if lv, err := h.projRepo.GetLeakageSummary(r.Context(), tenantID); err == nil && lv != nil {
+		totalAmountMinor = lv.TotalAmountMinor
+	}
+
+	writeJSON(w, http.StatusOK, leakageResponse{
+		intelligenceResponse: snap,
+		TotalAmountMinor:     totalAmountMinor,
+	})
 }

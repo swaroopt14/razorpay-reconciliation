@@ -35,6 +35,8 @@ export interface BackendAuthSession {
   workspace_code: string
   role: string
   access_expires_at: string
+  idle_expires_at: string
+  absolute_expires_at: string
 }
 
 export interface BackendAuthEnvelope {
@@ -44,6 +46,8 @@ export interface BackendAuthEnvelope {
   access_token?: string
   refresh_token?: string
   access_expires_at: string
+  idle_expires_at?: string
+  absolute_expires_at?: string
   /** Present only on signup — full tenant API key (`prefix.secret`). The
    * backend stores only the hash, so this is the one chance to capture it. */
   api_key?: string

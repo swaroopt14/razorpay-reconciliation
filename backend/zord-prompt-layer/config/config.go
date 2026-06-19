@@ -22,6 +22,7 @@ type AppConfig struct {
 
 	IntelligenceReadDSN     string
 	EvidenceReadDSN         string
+	OutcomeReadDSN          string
 	GeminiAPIKeys           []string
 	IntelligenceAPIBaseURL  string
 	IntelligenceAPITimeoutS int
@@ -100,6 +101,7 @@ func Load() AppConfig {
 
 		IntelligenceReadDSN:     os.Getenv("INTELLIGENCE_READ_DSN"),
 		EvidenceReadDSN:         os.Getenv("EVIDENCE_READ_DSN"),
+		OutcomeReadDSN:          os.Getenv("OUTCOME_READ_DSN"),
 		IntelligenceAPIBaseURL:  getAny([]string{"INTELLIGENCE_API_BASE_URL", "INTELLIGENCE_BASE_URL"}, "http://zord-intelligence:8089"),
 		IntelligenceAPITimeoutS: intelTimeout,
 		RedisURL:                get("REDIS_URL", "redis://zord-prompt-layer-redis:6379/0"),

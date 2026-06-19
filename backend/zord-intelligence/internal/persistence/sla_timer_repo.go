@@ -127,6 +127,25 @@ func (r *SLATimerRepo) MarkBreached(ctx context.Context, id int64) error {
 	return nil
 }
 
+// CountSLAForTenant returns (active, breached, total) timer counts for a tenant.
+// Used by PatternIntelligenceService to compute pending_beyond_sla_rate.
+// active  = ACTIVE timers past their sla_deadline (pending beyond SLA)
+// breached = already marked BREACHED
+// total   = all ACTIVE + BREACHED timers for tenant
+func (r *SLATimerRepo) CountSLAForTenant(ctx context.Context, tenantID string) (beyondSLA, total int, err error) {
+	err = r.pool.QueryRow(ctx, `
+		SELECT
+			COUNT(*) FILTER (WHERE status = 'ACTIVE' AND sla_deadline < now()),
+			COUNT(*) FILTER (WHERE status IN ('ACTIVE','BREACHED'))
+		FROM sla_timers
+		WHERE tenant_id = $1
+	`, tenantID).Scan(&beyondSLA, &total)
+	if err != nil {
+		err = fmt.Errorf("sla_timer_repo.CountSLAForTenant tenant=%s: %w", tenantID, err)
+	}
+	return
+}
+
 // SLATimerRow mirrors one row from the sla_timers table.
 // Moved here from sla_worker.go — both the repo and the worker use this type.
 type SLATimerRow struct {

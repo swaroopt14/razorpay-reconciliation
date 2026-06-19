@@ -17,6 +17,9 @@ type OutboxEvent struct {
 	AggregateType string    `json:"aggregate_type" db:"aggregate_type"`
 	AggregateID   uuid.UUID `json:"aggregate_id" db:"aggregate_id"`
 	EventType     string    `json:"event_type" db:"event_type"`
+	BankID        *string   `json:"bank_id,omitempty" db:"bank_id"`
+	SourceSystem  *string   `json:"source_system,omitempty" db:"source_system"`
+	CorridorID    *string   `json:"corridor_id,omitempty" db:"corridor_id"`
 
 	SchemaVersion string          `json:"schema_version" db:"schema_version"`
 	Amount        decimal.Decimal `json:"amount" db:"amount"`
@@ -38,8 +41,8 @@ type OutboxEvent struct {
 	CanonicalSettlementCreated *time.Time `json:"canonical_settlement_created,omitempty" db:"canonical_settlement_created"`
 	BankReference              *string    `json:"bank_reference,omitempty" db:"bank_reference"`
 	ClientReference            *string    `json:"client_reference,omitempty" db:"client_reference"`
-	AttachmentDecision        *string    `json:"attachment_decision,omitempty" db:"attachment_decision"`
-	MatchConfidence           *float64   `json:"match_confidence,omitempty" db:"match_confidence"`
-	ValueDateCheck            *bool      `json:"value_date_check,omitempty" db:"value_date_check"`
-	AmountMatch               *bool      `json:"amount_match,omitempty" db:"amount_match"`
+	AttachmentDecision         *string    `json:"attachment_decision,omitempty" db:"attachment_decision"`
+	MatchConfidence            *float64   `json:"match_confidence,omitempty" db:"match_confidence"`
+	ValueDateCheck             *bool      `json:"value_date_check,omitempty" db:"value_date_check"`
+	AmountMatch                *bool      `json:"amount_match,omitempty" db:"amount_match"`
 }

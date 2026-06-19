@@ -83,12 +83,12 @@ export async function fetchSessionTenantId(options?: {
       const tid = parseAuthMeTenant(data)
       if (tid) {
         persistTenantId(tid)
-        return { tenantId: tid, ok: true, message: 'Tenant loaded from your session (/api/auth/me).', source: 'auth_me' }
+        return { tenantId: tid, ok: true, message: 'Tenant loaded from your session.', source: 'auth_me' }
       }
       return {
         tenantId: '',
         ok: false,
-        message: 'Signed in, but /api/auth/me did not include tenant_id. Enter Batch-Id and fetch again, or sign in with a tenant workspace.',
+        message: 'Signed in, but tenant_id was not found. Enter a Batch-Id and click Fetch tenant id, or sign in with a tenant workspace.',
         source: 'none',
       }
     }

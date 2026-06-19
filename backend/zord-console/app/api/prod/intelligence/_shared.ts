@@ -11,8 +11,37 @@ function isKpiDashboardPath(path: string): boolean {
   return path.includes('/v1/intelligence/dashboard/')
 }
 
+function isPatternDetailPath(path: string): boolean {
+  return path === BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.PATTERN
+    || path === BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.PATTERN_HISTORY
+}
+
 function isBatchesListPath(path: string): boolean {
   return path === BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.BATCHES
+}
+
+function emptyPatternResponse(reason: string) {
+  return NextResponse.json(
+    {
+      data_available: false as const,
+      reason,
+      data: null,
+    },
+    { status: 200, headers: JSON_NO_STORE },
+  )
+}
+
+function emptyPatternHistoryResponse(tenantId: string) {
+  return NextResponse.json(
+    {
+      tenant_id: tenantId,
+      intelligence_mode: 'offline',
+      snapshot_type: 'PATTERN',
+      snapshots: [] as const,
+      count: 0,
+    },
+    { status: 200, headers: JSON_NO_STORE },
+  )
 }
 
 function emptyKpiResponse(reason: string) {
@@ -68,6 +97,17 @@ export async function forwardIntelligence(request: NextRequest, path: string): P
         applyRefreshedSessionCookies(res, gate.refreshedPayload)
         return res
       }
+      if (isPatternDetailPath(path)) {
+        const reason =
+          upstream.status === 404
+            ? 'Pattern intelligence not available (service or route missing).'
+            : `Intelligence upstream returned HTTP ${upstream.status}.`
+        const res = path === BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.PATTERN_HISTORY
+          ? emptyPatternHistoryResponse(tenantId)
+          : emptyPatternResponse(reason)
+        applyRefreshedSessionCookies(res, gate.refreshedPayload)
+        return res
+      }
       if (isBatchesListPath(path)) {
         const res = emptyBatchesResponse(tenantId, request)
         applyRefreshedSessionCookies(res, gate.refreshedPayload)
@@ -89,6 +129,15 @@ export async function forwardIntelligence(request: NextRequest, path: string): P
       const res = emptyKpiResponse(
         `Intelligence service unreachable (${error instanceof Error ? error.message : 'unknown'}).`,
       )
+      applyRefreshedSessionCookies(res, gate.refreshedPayload)
+      return res
+    }
+    if (isPatternDetailPath(path)) {
+      const res = path === BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.PATTERN_HISTORY
+        ? emptyPatternHistoryResponse(tenantId)
+        : emptyPatternResponse(
+            `Pattern intelligence unreachable (${error instanceof Error ? error.message : 'unknown'}).`,
+          )
       applyRefreshedSessionCookies(res, gate.refreshedPayload)
       return res
     }

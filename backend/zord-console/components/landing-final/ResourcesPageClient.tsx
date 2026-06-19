@@ -5,7 +5,7 @@ import { FinalLandingPageScaffold } from '@/components/landing-final/FinalLandin
 const resourceCards = [
   {
     eyebrow: 'Product walkthrough',
-    title: 'See how ZORD operates across routing, confirmation, and proof',
+    title: 'See how ZORD operates across confirmation, matching, and proof',
     body:
       'Start with the operating model if your team needs the fastest explanation of how ZORD works in production.',
     href: '/final-landing/how-it-works',
@@ -41,7 +41,7 @@ const learningPaths = [
   {
     title: 'For operators',
     body:
-      'Focus on payout posture, route quality, queue ownership, and the decision patterns teams use when something starts to drift.',
+      'Focus on payout posture, connector performance, queue ownership, and the decision patterns teams use when something starts to drift.',
   },
   {
     title: 'For finance',
@@ -79,7 +79,7 @@ export default function ResourcesPageClient() {
         stats: [
           { value: '3', label: 'buyer paths' },
           { value: '1', label: 'operating model' },
-          { value: 'T+0', label: 'support path' },
+          { value: 'Demo', label: 'support path' },
         ],
         imagePosition: 'right',
         imageClassName: 'object-cover object-center',

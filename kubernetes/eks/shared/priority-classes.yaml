@@ -1,0 +1,15 @@
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: infra-critical
+value: 1000000
+globalDefault: false
+description: "Infrastructure pods (Kafka, Postgres, Redis) — must always be scheduled first"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: app-high
+value: 100000
+globalDefault: false
+description: "Application services — scheduled after infra but before defaults"

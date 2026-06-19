@@ -57,4 +57,13 @@ func Routes(router *gin.Engine, h *handler.Handler) {
 		h.BulkIntentHandler,
 	)
 
+	// Console / JWT-protected routes (e.g. Session check, Session status)
+	jwtProtected := router.Group("/v1")
+	jwtProtected.Use(
+		middleware.JWTAuthenticate(),
+		middleware.SessionActivityMiddleware(),
+	)
+	{
+		handler.RegisterSessionRoutes(jwtProtected)
+	}
 }

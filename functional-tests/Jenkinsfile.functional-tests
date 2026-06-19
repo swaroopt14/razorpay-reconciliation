@@ -1,0 +1,159 @@
+pipeline {
+  agent any
+
+  options {
+    timestamps()
+    timeout(time: 10, unit: 'MINUTES')
+  }
+
+  parameters {
+    string(name: 'BASE_URL', defaultValue: 'https://api.zordnet.com', description: 'API base URL')
+    string(name: 'ADMIN_KEY', defaultValue: 'zord123', description: 'Admin key (X-Zord-ADMIN-KEY)')
+    booleanParam(name: 'NOTIFY_SLACK', defaultValue: true, description: 'Send results to Slack')
+  }
+
+  environment {
+    RESULTS_DIR = "functional-tests/results/${BUILD_NUMBER}"
+    SLACK_WEBHOOK_URL = credentials('slack-webhook-functional')
+  }
+
+  stages {
+    stage('Checkout') {
+      steps { checkout scm }
+    }
+
+    stage('Run Functional Tests') {
+      steps {
+        sh """
+          mkdir -p "${RESULTS_DIR}"
+          chmod +x functional-tests/run-tests.sh
+          bash functional-tests/run-tests.sh "${params.BASE_URL}" "${params.ADMIN_KEY}" "${RESULTS_DIR}" 2>&1 | tee "${RESULTS_DIR}/full-output.txt"
+        """
+      }
+    }
+
+    stage('Notify Slack') {
+      when { expression { return params.NOTIFY_SLACK } }
+      steps {
+        script {
+          // Use shell + jq to parse JSON — ensure jq is in PATH
+          def passCount = sh(script: "export PATH=\$(pwd):\$PATH; jq -r '.passed' ${env.RESULTS_DIR}/results.json", returnStdout: true).trim()
+          def failCount = sh(script: "export PATH=\$(pwd):\$PATH; jq -r '.failed' ${env.RESULTS_DIR}/results.json", returnStdout: true).trim()
+          def totalCount = sh(script: "export PATH=\$(pwd):\$PATH; jq -r '.total' ${env.RESULTS_DIR}/results.json", returnStdout: true).trim()
+
+          def overallStatus = (failCount == '0') ? ':white_check_mark: ALL FUNCTIONAL TESTS PASSED' : ":x: ${failCount}/${totalCount} FAILED"
+          def color = (failCount == '0') ? '#2eb886' : '#dc2626'
+
+          // Build table using shell script
+          sh """
+            export PATH=\$(pwd):\$PATH
+            jq -r '.tests[] | "\\(.num)  \\(.name)  \\(.status)  \\(if .status == "PASS" then .detail else .error end)"' ${env.RESULTS_DIR}/results.json > ${env.RESULTS_DIR}/table.txt 2>/dev/null || echo "No data" > ${env.RESULTS_DIR}/table.txt
+            jq -r '.tests[] | select(.status == "FAIL") | "\\(.name): \\(.error)"' ${env.RESULTS_DIR}/results.json > ${env.RESULTS_DIR}/failures.txt 2>/dev/null || true
+          """
+          def tableBody = readFile("${env.RESULTS_DIR}/table.txt").trim()
+          def fullTable = "```${tableBody}```"
+
+          // Build failure details with root cause + who fixes
+          def failSection = ''
+          if (failCount != '0') {
+            // Generate detailed failure analysis using shell
+            sh """
+              export PATH=\$(pwd):\$PATH
+              jq -r '.tests[] | select(.status == "FAIL") | .name + "|" + .error' ${env.RESULTS_DIR}/results.json > ${env.RESULTS_DIR}/fail-names.txt 2>/dev/null || true
+            """
+            def failLines = readFile("${env.RESULTS_DIR}/fail-names.txt").trim()
+
+            if (failLines) {
+              def detailedFailures = []
+              failLines.split('\n').each { line ->
+                def parts = line.split('\\|', 2)
+                def testName = parts[0] ?: 'Unknown'
+                def error = parts.size() > 1 ? parts[1] : 'Unknown error'
+
+                // Map each failure to root cause + who fixes
+                def rootCause = ''
+                def whoFixes = ''
+                if (testName.contains('Settlement job')) {
+                  rootCause = "outcome-engine DB query crashes when reading job. Likely `settlement_ingest_runs` table issue or DB connection lost."
+                  whoFixes = "*Dev* (DB migration) or *DevOps* (OUTCOME_DB_PASSWORD)"
+                } else if (testName.contains('Settlement observations')) {
+                  rootCause = "Background parsing never completed — no rows written to `canonical_settlement_observations` table."
+                  whoFixes = "*Dev* (parser code) or *DevOps* (S3/DB connection)"
+                } else if (testName.contains('Reconciliation')) {
+                  rootCause = "Kong route `/v1/reconciliation` exists but handler returns 404. Route registered but endpoint not implemented."
+                  whoFixes = "*Dev* (add reconciliation handler)"
+                } else if (testName.contains('Evidence')) {
+                  rootCause = "Evidence service crashes on query. DB connection or missing table (`evidence_packs`)."
+                  whoFixes = "*DevOps* (check evidence DB secret) or *Dev* (migration)"
+                } else if (testName.contains('RCA') || testName.contains('Intelligence RCA')) {
+                  rootCause = "Kong route `/v1/rca` exists but intelligence service returns 404. Handler not registered at that path."
+                  whoFixes = "*Dev* (route/handler mismatch in intelligence service)"
+                } else if (testName.contains('Settlement errors')) {
+                  rootCause = "Endpoint needs query params (tenant_id or job_id). 400 = working but needs params."
+                  whoFixes = "*Test fix* (add required query params)"
+                } else if (testName.contains('ingest') || testName.contains('Ingest')) {
+                  rootCause = "Edge accepted but data not reaching intent-engine. Kafka consumer may be stuck."
+                  whoFixes = "*DevOps* (check KAFKA_BROKERS, consumer lag)"
+                } else if (testName.contains('health') || testName.contains('Health')) {
+                  rootCause = "Pod not running or crashed. Check pod status and resource limits."
+                  whoFixes = "*DevOps* (kubectl get pods -n zord)"
+                } else {
+                  rootCause = error
+                  whoFixes = "Check console log for details"
+                }
+
+                detailedFailures.add(":x: *${testName}*\n      Error: `${error}`\n      Root cause: ${rootCause}\n      Who fixes: ${whoFixes}")
+              }
+
+              failSection = "\n\n:rotating_light: *What's broken (${failCount} FAIL):*\n\n" + detailedFailures.join('\n\n')
+            }
+          }
+
+          def duration = currentBuild.durationString.replace(' and counting', '')
+          def timestamp = new Date().format("MMM d, yyyy 'at' h:mm a z")
+
+          // Message 1: Summary + table
+          def payload = groovy.json.JsonOutput.toJson([
+            text: ":test_tube: Functional Tests #${env.BUILD_NUMBER} — ${overallStatus}",
+            attachments: [[
+              color: color,
+              blocks: [
+                [type: 'header', text: [type: 'plain_text', text: "Functional Tests — Build #${env.BUILD_NUMBER}", emoji: true]],
+                [type: 'context', elements: [[type: 'mrkdwn', text: ":calendar: ${timestamp}  |  :stopwatch: ${duration}  |  :globe_with_meridians: `${params.BASE_URL}`"]]],
+                [type: 'section', text: [type: 'mrkdwn', text: "*${overallStatus}*\n${passCount}/${totalCount} checks passed"]],
+                [type: 'section', text: [type: 'mrkdwn', text: fullTable]],
+                [type: 'context', elements: [[type: 'mrkdwn', text: ":link: <${env.BUILD_URL}console|:mag: Console>  |  <${env.BUILD_URL}artifact/${env.RESULTS_DIR}/results.json|:page_facing_up: Report>  |  <https://grafana.zordnet.com/d/zord-platform-health?orgId=1&from=now-30m&to=now|:chart_with_downwards_trend: Grafana>  |  <https://kibana.zordnet.com|:ledger: Kibana>"]]]
+              ]
+            ]]
+          ])
+
+          writeFile file: "${env.RESULTS_DIR}/slack-payload.json", text: payload
+          sh """curl -s -X POST -H 'Content-type: application/json' --data @"${env.RESULTS_DIR}/slack-payload.json" '${env.SLACK_WEBHOOK_URL}' || true"""
+
+          // Message 2: Detailed failure analysis (separate message so it's not truncated)
+          if (failSection) {
+            sleep 2
+            def payload2 = groovy.json.JsonOutput.toJson([
+              text: ":rotating_light: Failures — Build #${env.BUILD_NUMBER}",
+              attachments: [[
+                color: '#dc2626',
+                blocks: [
+                  [type: 'section', text: [type: 'mrkdwn', text: failSection]],
+                  [type: 'context', elements: [[type: 'mrkdwn', text: "_Share this with your dev team — each failure shows root cause and who should fix it_"]]]
+                ]
+              ]]
+            ])
+            writeFile file: "${env.RESULTS_DIR}/slack-payload2.json", text: payload2
+            sh """curl -s -X POST -H 'Content-type: application/json' --data @"${env.RESULTS_DIR}/slack-payload2.json" '${env.SLACK_WEBHOOK_URL}' || true"""
+          }
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      archiveArtifacts artifacts: "functional-tests/results/${BUILD_NUMBER}/**", allowEmptyArchive: true
+    }
+  }
+}

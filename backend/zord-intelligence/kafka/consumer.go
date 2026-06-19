@@ -83,6 +83,11 @@ type EventHandler interface {
 	HandleVarianceRecord(ctx context.Context, e models.VarianceRecordCreatedEvent) error
 	HandleBatchSummaryUpdated(ctx context.Context, e models.BatchSummaryUpdatedEvent) error
 	HandleGovernanceDecision(ctx context.Context, e models.GovernanceDecisionCreatedEvent) error
+
+	// ── Pattern Intelligence method ───────────────────────────────────────────
+	// Handles per-intent manual review events from Service 2.
+	// Used to compute manual_review_rate_by_source and trigger source-fix recommendations.
+	HandleDLQItem(ctx context.Context, e models.DLQItemEvent) error
 }
 
 // CorridorHealthTickHandler is a separate optional interface.
@@ -279,6 +284,7 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 			e.EventID = re.EventID
 			e.TenantID = re.TenantID
 			e.TraceID = re.TraceID
+	
 			return handler.HandleSettlementCreated(ctx, e)
 		})
 
@@ -345,6 +351,20 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 			e.TenantID = re.TenantID
 			e.TraceID = re.TraceID
 			return handler.HandleGovernanceDecision(ctx, e)
+		})
+
+	// ── Pattern Intelligence: manual review DLQ handler ──────────────────────
+	// payments.intent.dlq is published by zord-relay's PublishDLQItem function
+	// as a DIRECT flat JSON object (NOT a RelayEvent envelope).
+	// The relay maps DLQItemEvent fields directly: event_id, tenant_id, trace_id,
+	// occurred_at, intent_id, batch_id, source_system, amount, reason_code.
+	wireHandler(topicHandlers, cfg.TopicDLQItem,
+		func(msg kafka.Message) error {
+			var e models.DLQItemEvent
+			if err := json.Unmarshal(msg.Value, &e); err != nil {
+				return err
+			}
+			return handler.HandleDLQItem(ctx, e)
 		})
 
 	// ── Optional tick handlers (interface type assertion) ─────────────────────
@@ -468,6 +488,8 @@ func consumeSingleTopic(
 			continue
 		}
 
+		// ── [DIAGNOSTIC] Log every raw Kafka message before dispatch ────────────
+		
 		if err := handle(msg); err != nil {
 			log.Printf("kafka: handler error topic=%s partition=%d offset=%d: %v",
 				msg.Topic, msg.Partition, msg.Offset, err)

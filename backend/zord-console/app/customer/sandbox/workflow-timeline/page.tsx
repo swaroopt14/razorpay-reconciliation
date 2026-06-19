@@ -59,7 +59,7 @@ export default function WorkflowTimelinePage() {
       }))
     }
 
-    const mapped = activeIntent.timeline.map((step, index) => {
+    const mapped: WorkflowNode[] = activeIntent.timeline.map((step, index) => {
       const meta = STAGE_META[step.status] || { service: 'sandbox-simulator', version: 'v1.0.0', zone: 'ap-south-1a' }
       return {
         id: `n${index + 1}`,

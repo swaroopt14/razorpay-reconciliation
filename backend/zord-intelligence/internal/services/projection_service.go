@@ -49,6 +49,7 @@ type ProjectionService struct {
 
 	// ── Phase 4: Six intelligence layer services ──────────────────────────
 	leakageSvc        *LeakageIntelligenceService
+	leakagePredSvc    *LeakagePredictionService
 	ambiguitySvc      *AmbiguityIntelligenceService
 	defensibilitySvc  *DefensibilityIntelligenceService
 	rcaSvc            *RCAIntelligenceService
@@ -72,6 +73,7 @@ func NewProjectionService(
 	policyService *PolicyService,
 	slaRepo *persistence.SLATimerRepo,
 	leakageSvc *LeakageIntelligenceService,
+	leakagePredSvc *LeakagePredictionService,
 	ambiguitySvc *AmbiguityIntelligenceService,
 	defensibilitySvc *DefensibilityIntelligenceService,
 	rcaSvc *RCAIntelligenceService,
@@ -89,6 +91,7 @@ func NewProjectionService(
 		policyService:     policyService,
 		slaRepo:           slaRepo,
 		leakageSvc:        leakageSvc,
+		leakagePredSvc:    leakagePredSvc,
 		ambiguitySvc:      ambiguitySvc,
 		defensibilitySvc:  defensibilitySvc,
 		rcaSvc:            rcaSvc,
@@ -141,14 +144,18 @@ func (s *ProjectionService) HandleIntentCreated(
 		corridorID = "UNKNOWN"
 	}
 
+	log.Printf("[intent.created] RECEIVED event_id=%s tenant=%s intent=%s source=%s amount=%s corridor=%s dup_risk=%v",
+		e.EventID, e.TenantID, e.IntentID, e.SourceSystem, e.Amount, e.CorridorID, e.DuplicateRiskFlag)
+
 	processed, err := s.projRepo.IsProcessed(ctx, e.TenantID, e.EventID)
 	if err != nil {
 		return fmt.Errorf("HandleIntentCreated IsProcessed event_id=%s: %w", e.EventID, err)
 	}
 	if processed {
+		log.Printf("[intent.created] SKIPPED duplicate event_id=%s tenant=%s intent=%s",
+			e.EventID, e.TenantID, e.IntentID)
 		return nil
 	}
-	log.Printf("HandleIntentCreated: event_id=%s tenant=%s", e.EventID, e.TenantID)
 	window := todayWindow(e.CreatedAt)
 
 	if intendedMinor, err := decimal.NewFromString(e.Amount); err != nil {
@@ -169,7 +176,7 @@ func (s *ProjectionService) HandleIntentCreated(
 		return fmt.Errorf("HandleIntentCreated pending corridor=%s: %w", corridorID, err)
 	}
 
-	// ── L7: Duplicate risk exposure ───────────────────────────────────────────
+	// ── L7: Duplicate risk exposure (tenant-level) ────────────────────────────
 	if e.DuplicateRiskFlag {
 		if amt, parseErr := decimal.NewFromString(e.Amount); parseErr == nil && amt.IsPositive() {
 			if err := s.projRepo.AtomicIncrementLeakageDuplicateRisk(
@@ -178,15 +185,26 @@ func (s *ProjectionService) HandleIntentCreated(
 				log.Printf("HandleIntentCreated: AtomicIncrementLeakageDuplicateRisk failed intent=%s: %v",
 					e.IntentID, err)
 			}
+			// Per-batch attribution: duplicate risk exposure
+			if e.ClientBatchRef != "" {
+				if batchErr := s.batchRepo.AtomicAddBatchDuplicateRiskExposure(
+					ctx, e.ClientBatchRef, e.TenantID, amt,
+				); batchErr != nil {
+					log.Printf("HandleIntentCreated: AtomicAddBatchDuplicateRiskExposure failed intent=%s batch=%s: %v",
+						e.IntentID, e.ClientBatchRef, batchErr)
+				}
+			}
 		}
 	}
 
-	// ── P2: Duplicate risk rate denominator (all intents) ─────────────────────
-	if err := s.projRepo.AtomicIncrementPatternP2(
-		ctx, e.TenantID, e.DuplicateRiskFlag, window.start, window.end,
-	); err != nil {
-		log.Printf("HandleIntentCreated: AtomicIncrementPatternP2 failed intent=%s: %v",
-			e.IntentID, err)
+	// Per-batch attribution: missing client reference
+	if e.ClientPayoutRef == "" && e.ClientBatchRef != "" {
+		if batchErr := s.batchRepo.AtomicIncrementBatchMissingRef(
+			ctx, e.ClientBatchRef, e.TenantID, 1,
+		); batchErr != nil {
+			log.Printf("HandleIntentCreated: AtomicIncrementBatchMissingRef failed intent=%s batch=%s: %v",
+				e.IntentID, e.ClientBatchRef, batchErr)
+		}
 	}
 
 	// ── P3: Same-beneficiary-amount density per merchant batch ────────────────
@@ -197,6 +215,71 @@ func (s *ProjectionService) HandleIntentCreated(
 		); err != nil {
 			log.Printf("HandleIntentCreated: AtomicUpsertBatchIntentDensity failed intent=%s batch=%s: %v",
 				e.IntentID, e.ClientBatchRef, err)
+		}
+	}
+
+	// ── Pattern Intelligence: Source quality projection ───────────────────────
+	// Extract intent quality signals and group by source_system.
+	// These fields were previously received but not materialised into projections.
+	if e.SourceSystem != "" {
+		intendedMinorForSource := decimal.Zero
+		if amt, err := decimal.NewFromString(e.Amount); err == nil {
+			intendedMinorForSource = amt
+		}
+		srcDelta := persistence.SourceQualityDelta{
+			IntentCount:            1,
+			IntentAmountMinor:      intendedMinorForSource,
+			MissingClientRefCount:  boolToInt(e.ClientPayoutRef == ""),
+			LowMatchabilityCount:   boolToInt(e.MatchabilityScore > 0 && e.MatchabilityScore < 0.60),
+			LowProofReadinessCount: boolToInt(e.ProofReadinessScore > 0 && e.ProofReadinessScore < 0.60),
+			LowQualityScoreCount:   boolToInt(e.IntentQualityScore > 0 && e.IntentQualityScore < 0.60),
+			BatchRef:               e.ClientBatchRef,
+		}
+		if e.DuplicateRiskFlag {
+			srcDelta.DuplicateRiskCount = 1
+			srcDelta.DuplicateRiskAmountMinor = intendedMinorForSource
+		}
+		if err := s.projRepo.AtomicUpsertSourceQuality(
+			ctx, e.TenantID, e.SourceSystem, srcDelta, window.start, window.end,
+		); err != nil {
+			log.Printf("HandleIntentCreated: AtomicUpsertSourceQuality failed intent=%s source=%s: %v",
+				e.IntentID, e.SourceSystem, err)
+		}
+	}
+
+	// ── Pattern Intelligence: extended P2 (duplicate risk amount + missing ref) ─
+	// Replace the existing AtomicIncrementPatternP2 call below with the extended version.
+	// The old call is removed; this one tracks the amount and missing client ref too.
+	if intendedAmt, parseErr := decimal.NewFromString(e.Amount); parseErr == nil {
+		if err := s.projRepo.AtomicIncrementPatternP2WithAmount(
+			ctx, e.TenantID,
+			e.DuplicateRiskFlag,
+			intendedAmt,
+			e.ClientPayoutRef == "",
+			window.start, window.end,
+		); err != nil {
+			log.Printf("HandleIntentCreated: AtomicIncrementPatternP2WithAmount failed intent=%s: %v",
+				e.IntentID, err)
+		}
+
+		if e.ClientBatchRef != "" {
+			providerKey, rail := deriveLeakageProviderAndRail(corridorID, e.ProviderHint, e.SourceSystem)
+			if err := s.batchRepo.AtomicAccumulateIntentFeatures(
+				ctx,
+				e.ClientBatchRef,
+				e.TenantID,
+				intendedAmt,
+				e.Currency,
+				e.SourceSystem,
+				rail,
+				e.IntentType,
+				providerKey,
+				e.CreatedAt,
+				e.ClientPayoutRef != "",
+			); err != nil {
+				log.Printf("HandleIntentCreated: AtomicAccumulateIntentFeatures failed intent=%s batch=%s: %v",
+					e.IntentID, e.ClientBatchRef, err)
+			}
 		}
 	}
 
@@ -224,7 +307,8 @@ func (s *ProjectionService) HandleIntentCreated(
 	if err := s.projRepo.MarkProcessed(ctx, e.TenantID, e.EventID); err != nil {
 		return fmt.Errorf("HandleIntentCreated MarkProcessed event_id=%s: %w", e.EventID, err)
 	}
-
+	log.Printf("[intent.created] STORED OK event_id=%s tenant=%s intent=%s source=%s batch=%s",
+		e.EventID, e.TenantID, e.IntentID, e.SourceSystem, e.ClientBatchRef)
 	return nil
 }
 
@@ -608,14 +692,18 @@ func (s *ProjectionService) HandleEvidencePackReady(
 		return nil
 	}
 
+	log.Printf("[evidence.pack.created] RECEIVED event_id=%s tenant=%s pack=%s intent=%s completeness=%.2f leaves=%d/%d",
+		e.EventID, e.TenantID, e.EvidencePackID, e.IntentID, e.PackCompletenessScore, e.LeafCount, e.RequiredLeafCount)
+
 	processed, err := s.projRepo.IsProcessed(ctx, e.TenantID, e.EventID)
 	if err != nil {
 		return fmt.Errorf("HandleEvidencePackReady IsProcessed event_id=%s: %w", e.EventID, err)
 	}
 	if processed {
+		log.Printf("[evidence.pack.created] SKIPPED duplicate event_id=%s tenant=%s pack=%s",
+			e.EventID, e.TenantID, e.EvidencePackID)
 		return nil
 	}
-	log.Printf("HandleEvidencePackReady tenant=%s event_id=%s evidence_pack_id=%s intent_id=%s contract_id=%s merkle_root=%s occurred_at=%s", e.TenantID, e.EventID, e.EvidencePackID, e.IntentID, e.ContractID, e.MerkleRoot, e.OccurredAt)
 	window := todayWindow(e.OccurredAt)
 
 	// Update legacy evidence_readiness projection (existing behaviour)
@@ -651,10 +739,95 @@ func (s *ProjectionService) HandleEvidencePackReady(
 		}
 	}
 
+	// ── Pattern Intelligence: Missing leaf rate tracking ──────────────────────
+	// LeafCount and RequiredLeafCount were previously received but never stored.
+	// Required to compute missing_leaf_rate = (required - actual) / required.
+	if e.RequiredLeafCount > 0 {
+		if err := s.projRepo.AtomicRecordEvidenceLeafCoverage(
+			ctx, e.TenantID, e.LeafCount, e.RequiredLeafCount, window.start, window.end,
+		); err != nil {
+			log.Printf("HandleEvidencePackReady: AtomicRecordEvidenceLeafCoverage failed tenant=%s pack=%s: %v",
+				e.TenantID, e.EvidencePackID, err)
+		}
+	}
+
 	if err := s.projRepo.MarkProcessed(ctx, e.TenantID, e.EventID); err != nil {
 		return fmt.Errorf("HandleEvidencePackReady MarkProcessed event_id=%s: %w", e.EventID, err)
 	}
+	log.Printf("[evidence.pack.created] STORED OK event_id=%s tenant=%s pack=%s intent=%s completeness=%.2f missing_leaves=%d",
+		e.EventID, e.TenantID, e.EvidencePackID, e.IntentID, e.PackCompletenessScore,
+		e.RequiredLeafCount-e.LeafCount)
+	return nil
+}
 
+// HandleDLQItem processes a per-intent manual review event from Service 2.
+//
+// This event fires when a payment row is routed to human review before dispatch.
+// ZPI uses it to compute manual_review_rate_by_source, which powers the
+// "Fix Source Export" and "Escalate Source System" recommendation types.
+//
+// Processing order:
+//  1. Idempotency check (prevent double-counting on Kafka retries)
+//  2. Update source quality projection with manual review signal
+//  3. Trigger recommendation recompute (pattern data changed)
+func (s *ProjectionService) HandleDLQItem(
+	ctx context.Context,
+	e models.DLQItemEvent,
+) error {
+	if e.TenantID == "" || e.EventID == "" {
+		log.Printf("HandleDLQItem: missing required fields tenant=%s event_id=%s",
+			e.TenantID, e.EventID)
+		return nil
+	}
+
+	log.Printf("[payments.intent.dlq] RECEIVED event_id=%s tenant=%s intent=%s batch=%s source=%s amount=%s reason=%s",
+		e.EventID, e.TenantID, e.IntentID, e.BatchID, e.SourceSystem, e.AmountMinor, e.ReasonCode)
+
+	processed, err := s.projRepo.IsProcessed(ctx, e.TenantID, e.EventID)
+	if err != nil {
+		return fmt.Errorf("HandleDLQItem IsProcessed event_id=%s: %w", e.EventID, err)
+	}
+	if processed {
+		log.Printf("[payments.intent.dlq] SKIPPED duplicate event_id=%s tenant=%s intent=%s source=%s",
+			e.EventID, e.TenantID, e.IntentID, e.SourceSystem)
+		return nil
+	}
+
+	window := todayWindow(e.OccurredAt)
+
+	// Update source quality projection with manual review signal.
+	// This is the primary intelligence input for the "Fix Source Export" recommendation.
+	if e.SourceSystem != "" {
+		dlqDelta := persistence.SourceQualityDelta{
+			ManualReviewCount:       1,
+			ManualReviewAmountMinor: e.AmountMinor,
+			ManualReviewReasonCode:  e.ReasonCode,
+		}
+		if err := s.projRepo.AtomicUpsertSourceQuality(
+			ctx, e.TenantID, e.SourceSystem, dlqDelta, window.start, window.end,
+		); err != nil {
+			log.Printf("HandleDLQItem: AtomicUpsertSourceQuality failed intent=%s source=%s: %v",
+				e.IntentID, e.SourceSystem, err)
+		}
+	}
+
+	// Recompute tenant-level Pattern snapshot so manual review data appears immediately.
+	// DLQItem events may arrive after the last BatchSummary-triggered snapshot;
+	// without this call the PatternSnapshot.TenantManualReviewRate would stay stale.
+	if err := s.patternSvc.RecomputeTenantKPIs(ctx, e.TenantID, window.start, window.end); err != nil {
+		log.Printf("HandleDLQItem: patternSvc.RecomputeTenantKPIs failed intent=%s: %v", e.IntentID, err)
+	}
+
+	// Trigger recommendation recompute — manual review data affects source-fix recommendations.
+	if err := s.recommendationSvc.ComputeAndSave(ctx, e.TenantID, window.start, window.end); err != nil {
+		log.Printf("HandleDLQItem: recommendationSvc failed intent=%s: %v", e.IntentID, err)
+	}
+
+	if err := s.projRepo.MarkProcessed(ctx, e.TenantID, e.EventID); err != nil {
+		return fmt.Errorf("HandleDLQItem MarkProcessed event_id=%s: %w", e.EventID, err)
+	}
+	log.Printf("[payments.intent.dlq] STORED OK event_id=%s tenant=%s intent=%s source=%s reason=%s amount=%s — manual_review projection updated, pattern snapshot recomputed",
+		e.EventID, e.TenantID, e.IntentID, e.SourceSystem, e.ReasonCode, e.AmountMinor)
 	return nil
 }
 
@@ -810,16 +983,21 @@ func (s *ProjectionService) HandleSettlementCreated(
 		return nil
 	}
 
+	log.Printf("[canonical.settlement.created] RECEIVED event_id=%s tenant=%s settlement=%s batch=%s provider=%s bank=%s rail=%s amount=%s status=%s",
+		e.EventID, e.TenantID, e.SettlementID, e.BatchID, e.ProviderID, e.BankID, e.PaymentRail, e.SettledAmountMinor, e.StatusObservation)
+
 	processed, err := s.projRepo.IsProcessed(ctx, e.TenantID, e.EventID)
 	if err != nil {
 		return fmt.Errorf("HandleSettlementCreated IsProcessed event_id=%s: %w", e.EventID, err)
 	}
 	if processed {
+		log.Printf("[canonical.settlement.created] SKIPPED duplicate event_id=%s tenant=%s settlement=%s",
+			e.EventID, e.TenantID, e.SettlementID)
 		return nil
 	}
-	log.Printf("HandleSettlementCreated: tenant=%s event_id=%s trace_id=%s occurred_at=%s settlement_id=%s batch_id=%s source_type=%s source_strength=%s source_system=%s parse_conf=%.2f amount=%s currency=%s date=%s utr=%s rrn=%s bank_ref=%s provider_ref=%s client_ref=%s richness=%.2f readiness=%.2f status=%s ingest_run_id=%s",
+	log.Printf("HandleSettlementCreated: tenant=%s event_id=%s trace_id=%s occurred_at=%s settlement_id=%s batch_id=%s payment_rail=%s source_type=%s source_strength=%s provider_id=%s source_system_id=%s bank_id=%s parse_conf=%.2f amount=%s currency=%s date=%s utr=%s rrn=%s bank_ref=%s provider_ref=%s client_ref=%s richness=%.2f readiness=%.2f status=%s ingest_run_id=%s",
 		e.TenantID, e.EventID, e.TraceID, e.OccurredAt,
-		e.SettlementID, e.BatchID, e.SourceType, e.SourceStrength, e.SourceSystemID, e.ParseConfidence,
+		e.SettlementID, e.BatchID, e.PaymentRail, e.SourceType, e.SourceStrength, e.ProviderID, e.SourceSystemID, e.BankID, e.ParseConfidence,
 		e.SettledAmountMinor, e.Currency, e.SettlementDate,
 		e.UTR, e.RRN, e.BankRef, e.ProviderRef, e.ClientRef,
 		e.CarrierRichness, e.AttachmentReadiness, e.StatusObservation, e.IngestRunID)
@@ -856,8 +1034,6 @@ func (s *ProjectionService) HandleSettlementCreated(
 			e.SettledAmountMinor, // orphanMinor = settled amount
 			window.start, window.end,
 		); err != nil {
-			// Log but don't fail — the event is still marked processed below.
-			// A transient DB error here must not cause infinite Kafka redelivery.
 			log.Printf("HandleSettlementCreated: AtomicRecordLeakage failed settlement=%s: %v",
 				e.SettlementID, err)
 		} else {
@@ -865,6 +1041,15 @@ func (s *ProjectionService) HandleSettlementCreated(
 			if err := s.leakageSvc.ComputeAndSave(ctx, e.TenantID, window.start, window.end); err != nil {
 				log.Printf("HandleSettlementCreated: leakageSvc.ComputeAndSave failed tenant=%s: %v",
 					e.TenantID, err)
+			}
+		}
+		// Per-batch attribution: orphan settlement amount
+		if e.BatchID != "" && e.SettledAmountMinor.IsPositive() {
+			if batchErr := s.batchRepo.AtomicAddBatchOrphanAmount(
+				ctx, e.BatchID, e.TenantID, e.SettledAmountMinor,
+			); batchErr != nil {
+				log.Printf("HandleSettlementCreated: AtomicAddBatchOrphanAmount failed settlement=%s batch=%s: %v",
+					e.SettlementID, e.BatchID, batchErr)
 			}
 		}
 	}
@@ -926,9 +1111,62 @@ func (s *ProjectionService) HandleSettlementCreated(
 		}
 	}
 
+	// ── Pattern Intelligence: Provider quality projection ─────────────────────
+	// Groups parse/mapping/carrier/attachment quality metrics by PSP provider.
+	// ProviderID, BankID, PaymentRail are new fields from Service 5B (upstream contract).
+	if e.ProviderID != "" {
+		isOrphan := e.StatusObservation == "SETTLED" && readiness == "POOR"
+		provDelta := persistence.ProviderQualityDelta{
+			SettlementCount:         1,
+			SettlementAmountMinor:   e.SettledAmountMinor,
+			ParseConfidence:         e.ParseConfidence,
+			MappingConfidence:       e.MappingConfidence,
+			CarrierRichness:         e.CarrierRichness,
+			AttachmentReadiness:     e.AttachmentReadiness,
+			OrphanCount:             boolToInt(isOrphan),
+			MissingProviderRefCount: boolToInt(e.ProviderRef == ""),
+			MissingClientRefCount:   boolToInt(e.ClientRef == ""),
+		}
+		if err := s.projRepo.AtomicUpsertProviderQuality(
+			ctx, e.TenantID, e.ProviderID, provDelta, window.start, window.end,
+		); err != nil {
+			log.Printf("HandleSettlementCreated: AtomicUpsertProviderQuality failed settlement=%s provider=%s: %v",
+				e.SettlementID, e.ProviderID, err)
+		}
+	}
+
+	// ── Pattern Intelligence: Bank quality projection ──────────────────────────
+	if e.BankID != "" {
+		bankDelta := persistence.BankQualityDelta{
+			SettlementCount:     1,
+			MissingBankRefCount: boolToInt(e.BankRef == "" && e.UTR == "" && e.RRN == ""),
+			MissingUTRCount:     boolToInt(e.UTR == ""),
+		}
+		if err := s.projRepo.AtomicUpsertBankQuality(
+			ctx, e.TenantID, e.BankID, bankDelta, window.start, window.end,
+		); err != nil {
+			log.Printf("HandleSettlementCreated: AtomicUpsertBankQuality failed settlement=%s bank=%s: %v",
+				e.SettlementID, e.BankID, err)
+		}
+	}
+
+	// ── Pattern Intelligence: Bank reference coverage (per-batch) ─────────────
+	// Tracks how many settlement observations for this batch carried a
+	// bank-side reference (BankRef, UTR, or RRN), regardless of match status.
+	// bank_reference_coverage = bank_ref_present_count / settlement_ref_count.
+	if e.BatchID != "" {
+		hasBankRef := e.BankRef != "" || e.UTR != "" || e.RRN != ""
+		if err := s.batchRepo.AtomicAddBatchBankRefStats(ctx, e.BatchID, e.TenantID, hasBankRef); err != nil {
+			log.Printf("HandleSettlementCreated: AtomicAddBatchBankRefStats failed settlement=%s batch=%s: %v",
+				e.SettlementID, e.BatchID, err)
+		}
+	}
+
 	if err := s.projRepo.MarkProcessed(ctx, e.TenantID, e.EventID); err != nil {
 		return fmt.Errorf("HandleSettlementCreated MarkProcessed event_id=%s: %w", e.EventID, err)
 	}
+	log.Printf("[canonical.settlement.created] STORED OK event_id=%s tenant=%s settlement=%s provider=%s bank=%s amount=%s carrier_richness=%.2f",
+		e.EventID, e.TenantID, e.SettlementID, e.ProviderID, e.BankID, e.SettledAmountMinor, e.CarrierRichness)
 	return nil
 }
 
@@ -960,32 +1198,37 @@ func (s *ProjectionService) HandleAttachmentDecision(
 		return nil
 	}
 
+	log.Printf("[attachment.decision.created] RECEIVED event_id=%s tenant=%s decision=%s intent=%s batch=%s confidence=%.2f candidate_set=%d provider_id=%s client_refernce=%s",
+		e.EventID, e.TenantID, e.DecisionType, e.IntentID, e.BatchID, e.ConfidenceScore, e.CandidateSetSize, e.ProviderID, e.ClientReference)
+
 	processed, err := s.projRepo.IsProcessed(ctx, e.TenantID, e.EventID)
 	if err != nil {
 		return fmt.Errorf("HandleAttachmentDecision IsProcessed event_id=%s:%w", e.EventID, err)
 	}
-
-	eventJSON, _ := json.Marshal(e)
-	log.Printf("[attachment.decision.created] RECEIVED FULL_EVENT: %s", string(eventJSON))
-
 	if processed {
+		log.Printf("[attachment.decision.created] SKIPPED duplicate event_id=%s tenant=%s decision=%s",
+			e.EventID, e.TenantID, e.DecisionType)
 		return nil
 	}
 
 	window := todayWindow(e.OccurredAt)
 	supportingCarriers := supportingCarrierNames(e.SupportingCarriers)
+	batchIDForAttribution := e.BatchID
+	isUnresolvedDecision := strings.EqualFold(e.DecisionType, "MATCH_UNRESOLVED")
+	isAmbiguousDecision := strings.EqualFold(e.DecisionType, "MATCH_AMBIGUOUS")
+	intendedAmountMinor := e.IntendedAmountMinor
 
 	// ── Step 1: Update LEAKAGE projection for MATCH_UNRESOLVED ───────────
 	// A MATCH_UNRESOLVED decision means a settlement observation exists but
 	// Service 5C could not find any matching intent for it — or an intent
 	// exists with no matching settlement. The full intended amount is at risk.
-	if strings.EqualFold(e.DecisionType, "MATCH_UNRESOLVED") {
+	if isUnresolvedDecision {
 		if err := s.projRepo.AtomicRecordLeakage(
 			ctx,
 			e.TenantID,
 			"UNMATCHED_INTENT",
-			e.IntendedAmountMinor, // intended amount at risk
-			decimal.Zero,          // no orphan amount (that comes from HandleSettlementCreated)
+			intendedAmountMinor,
+			decimal.Zero,
 			window.start, window.end,
 		); err != nil {
 			return fmt.Errorf("HandleAttachmentDecision AtomicRecordLeakage decision=%s: %w",
@@ -993,10 +1236,23 @@ func (s *ProjectionService) HandleAttachmentDecision(
 		}
 	}
 
+	// Per-batch attribution: unmatched_amount_minor.
+	// Both MATCH_UNRESOLVED (no settlement found) and MATCH_AMBIGUOUS (settlement
+	// could not be confidently attached) leave the intended amount unconfirmed —
+	// money at risk — so both contribute to this batch's unmatched amount.
+	if (isUnresolvedDecision || isAmbiguousDecision) && batchIDForAttribution != "" && intendedAmountMinor.IsPositive() {
+		if batchErr := s.batchRepo.AtomicAddBatchUnmatchedAmount(
+			ctx, batchIDForAttribution, e.TenantID, intendedAmountMinor,
+		); batchErr != nil {
+			log.Printf("HandleAttachmentDecision: AtomicAddBatchUnmatchedAmount failed decision=%s batch=%s: %v",
+				e.DecisionID, batchIDForAttribution, batchErr)
+		}
+	}
+
 	// ── L7b: Confirmed duplicate exposure for MATCH_DUPLICATE ────────────
 	if strings.EqualFold(e.DecisionType, "MATCH_DUPLICATE") {
 		if err := s.projRepo.AtomicIncrementLeakageConfirmedDuplicate(
-			ctx, e.TenantID, e.IntendedAmountMinor, window.start, window.end,
+			ctx, e.TenantID, intendedAmountMinor, window.start, window.end,
 		); err != nil {
 			log.Printf("HandleAttachmentDecision: AtomicIncrementLeakageConfirmedDuplicate failed decision=%s: %v",
 				e.DecisionID, err)
@@ -1011,20 +1267,49 @@ func (s *ProjectionService) HandleAttachmentDecision(
 	// A7: ScoreMargin is pre-computed upstream as WinningScore - RunnerUpScore
 	isLowConfidence := e.ConfidenceScore < 0.70
 	hasCollision := e.CandidateSetSize > 1
+	// A9: a decision is "successful" when it is unambiguous, has a single
+	// (non-colliding) candidate, and the settled amount exactly matches the
+	// intended amount.
+	isSuccessfulDecision := e.AmbiguityScore <= 0.30 &&
+		e.CandidateSetSize <= 1 &&
+		e.SettledAmountMinor.Equal(e.IntendedAmountMinor)
 	if err := s.projRepo.AtomicRecordAttachmentDecision(
 		ctx,
 		e.TenantID,
 		e.DecisionType,
 		e.ConfidenceScore,
-		e.IntendedAmountMinor,
+		intendedAmountMinor,
 		supportingCarriers,
 		isLowConfidence,
 		hasCollision,
 		e.ScoreMargin,
+		isSuccessfulDecision,
 		window.start, window.end,
 	); err != nil {
 		return fmt.Errorf("HandleAttachmentDecision AtomicRecordAttachmentDecision decision=%s: %w",
 			e.DecisionID, err)
+	}
+
+	// ── Step 2a: Update PROVIDER QUALITY projection (decision-side stats) ──
+	// Merges decision-derived counts (total_decisions, successful_decision_count,
+	// ambiguous/unresolved) into the same pattern.provider.{id} projection that
+	// HandleSettlementCreated populates with settlement-side stats (e.g. orphan_rate).
+	if e.ProviderID != "" {
+		isAmbiguous := e.DecisionType == "MATCH_AMBIGUOUS"
+		isUnresolved := e.DecisionType == "MATCH_UNRESOLVED"
+		if err := s.projRepo.AtomicUpsertProviderQuality(
+			ctx, e.TenantID, e.ProviderID,
+			persistence.ProviderQualityDelta{
+				DecisionCount:           1,
+				AmbiguousDecisionCount:  boolToInt(isAmbiguous),
+				UnresolvedDecisionCount: boolToInt(isUnresolved),
+				SuccessfulDecisionCount: boolToInt(isSuccessfulDecision),
+			},
+			window.start, window.end,
+		); err != nil {
+			log.Printf("HandleAttachmentDecision: AtomicUpsertProviderQuality failed decision=%s provider=%s: %v",
+				e.DecisionID, e.ProviderID, err)
+		}
 	}
 
 	// ── Step 2b: Increment DEFENSIBILITY denominator (Grade A path) ──────
@@ -1069,21 +1354,41 @@ func (s *ProjectionService) HandleAttachmentDecision(
 	}
 
 	// Accumulate attachment signals into RCA fragment for this intent.
-	if e.BatchID != "" && e.IntentID != "" {
+	if batchIDForAttribution != "" && e.IntentID != "" {
 		sigA := AttachmentSignals{
 			DecisionType:    e.DecisionType,
 			AmbiguityScore:  e.AmbiguityScore,
 			ConfidenceScore: e.ConfidenceScore,
 			CandidateCount:  e.CandidateSetSize,
 		}
-		if err := s.rcaSvc.AccumulateAttachmentFragment(ctx, e.TenantID, e.BatchID, e.IntentID, sigA); err != nil {
+		if err := s.rcaSvc.AccumulateAttachmentFragment(ctx, e.TenantID, batchIDForAttribution, e.IntentID, sigA); err != nil {
 			log.Printf("HandleAttachmentDecision: AccumulateAttachmentFragment failed decision=%s: %v", e.DecisionID, err)
+		}
+	}
+
+	// NOTE: AttachmentDecisionCreatedEvent (5C) carries ProviderID (source_system),
+	// which feeds the decision-side counters (total_decisions, ambiguous_decisions,
+	// unresolved_decisions, successful_decision_count) into pattern.provider.{id}
+	// via Step 2a above. Settlement-side stats (e.g. orphan_rate) for the same
+	// provider key come from CanonicalSettlementCreatedEvent (5B) via HandleSettlementCreated.
+
+	// ── Pattern Intelligence: Client reference coverage (per-batch) ───────────
+	// Tracks how many attachment decisions for this batch carried a
+	// client-side reference (ClientReference), regardless of decision type.
+	// client_reference_coverage = client_ref_present_count / decision_ref_count.
+	if e.BatchID != "" {
+		hasClientRef := e.ClientReference != ""
+		if err := s.batchRepo.AtomicAddBatchClientRefStats(ctx, e.BatchID, e.TenantID, hasClientRef); err != nil {
+			log.Printf("HandleAttachmentDecision: AtomicAddBatchClientRefStats failed decision=%s batch=%s: %v",
+				e.DecisionID, e.BatchID, err)
 		}
 	}
 
 	if err := s.projRepo.MarkProcessed(ctx, e.TenantID, e.EventID); err != nil {
 		return fmt.Errorf("HandleAttachmentDecision MarkProcessed event_id=%s: %w", e.EventID, err)
 	}
+	log.Printf("[attachment.decision.created] STORED OK event_id=%s tenant=%s decision=%s intent=%s batch=%s confidence=%.2f",
+		e.EventID, e.TenantID, e.DecisionType, e.IntentID, e.BatchID, e.ConfidenceScore)
 	return nil
 }
 
@@ -1110,6 +1415,42 @@ func supportingCarrierNames(raw json.RawMessage) []string {
 	}
 
 	return nil
+}
+
+func extractClientPayoutRefCandidate(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+
+	var carrierMap map[string]interface{}
+	if err := json.Unmarshal(raw, &carrierMap); err != nil {
+		return ""
+	}
+	for _, key := range []string{
+		"client_reference_candidate",
+		"client_payout_ref",
+		"client_ref",
+		"client_reference",
+	} {
+		if ref := normalizeCarrierString(carrierMap[key]); ref != "" {
+			return ref
+		}
+	}
+	return ""
+}
+
+func normalizeCarrierString(value interface{}) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case map[string]interface{}:
+		for _, nestedKey := range []string{"value", "candidate", "reference", "ref"} {
+			if nested := normalizeCarrierString(typed[nestedKey]); nested != "" {
+				return nested
+			}
+		}
+	}
+	return ""
 }
 
 // HandleVarianceRecord processes a financial variance record from Service 5C.
@@ -1150,19 +1491,56 @@ func (s *ProjectionService) HandleVarianceRecord(
 		return nil
 	}
 
+	log.Printf("[variance.record.created] RECEIVED event_id=%s tenant=%s variance=%s type=%s amount=%s batch=%s intent=%s whitelisted=%v provider_id=%s",
+		e.EventID, e.TenantID, e.VarianceID, e.VarianceType, e.VarianceAmountMinor, e.BatchID, e.IntentID, e.IsWhitelisted, e.ProviderID)
+
 	processed, err := s.projRepo.IsProcessed(ctx, e.TenantID, e.EventID)
 	if err != nil {
 		return fmt.Errorf("HandleVarianceRecord IsProcessed event_id=%s: %w", e.EventID, err)
 	}
-
-	eventJSON, _ := json.Marshal(e)
-	log.Printf("[variance.record.created] RECEIVED FULL_EVENT: %s", string(eventJSON))
-
 	if processed {
+		log.Printf("[variance.record.created] SKIPPED duplicate event_id=%s tenant=%s variance=%s",
+			e.EventID, e.TenantID, e.VarianceID)
 		return nil
 	}
 
 	window := todayWindow(e.OccurredAt)
+	batchIDForAttribution := e.BatchID
+
+	// ── Per-batch attribution: reversal exposure ─────────────────────────────
+	if e.VarianceType == "REVERSAL" && batchIDForAttribution != "" {
+		if batchErr := s.batchRepo.AtomicAddBatchReversalExposure(
+			ctx, batchIDForAttribution, e.TenantID, e.VarianceAmountMinor.Abs(),
+		); batchErr != nil {
+			log.Printf("HandleVarianceRecord: AtomicAddBatchReversalExposure failed variance=%s batch=%s: %v",
+				e.VarianceID, batchIDForAttribution, batchErr)
+		}
+	}
+
+	// ── Per-batch attribution: variance breakdown (explained vs unexplained) + missing refs
+	if e.VarianceType != "OVER_SETTLEMENT" && e.VarianceType != "REVERSAL" && batchIDForAttribution != "" {
+		missingRef := e.ProviderRefMissingFlag || e.BankRefMissingFlag
+		if batchErr := s.batchRepo.AtomicAddBatchVarianceBreakdown(
+			ctx, batchIDForAttribution, e.TenantID,
+			e.VarianceAmountMinor.Abs(),
+			e.IsWhitelisted,
+			missingRef,
+		); batchErr != nil {
+			log.Printf("HandleVarianceRecord: AtomicAddBatchVarianceBreakdown failed variance=%s batch=%s: %v",
+				e.VarianceID, batchIDForAttribution, batchErr)
+		}
+	}
+
+	// ── Pattern Intelligence: Track OVER_SETTLEMENT separately ───────────────
+	// Previously skipped entirely; now recorded for over-settlement pattern detection.
+	if e.VarianceType == "OVER_SETTLEMENT" {
+		if err := s.projRepo.AtomicRecordOverSettlement(
+			ctx, e.TenantID, e.VarianceAmountMinor.Abs(), window.start, window.end,
+		); err != nil {
+			log.Printf("HandleVarianceRecord: AtomicRecordOverSettlement failed variance=%s: %v",
+				e.VarianceID, err)
+		}
+	}
 
 	// Skip OVER_SETTLEMENT — it's not leakage (we received more, not less).
 	// Also skip OVER_SETTLEMENT in the ML features to avoid label contamination.
@@ -1223,15 +1601,42 @@ func (s *ProjectionService) HandleVarianceRecord(
 			}
 		}
 
-		// ── P6: Settlement delay P95 accumulation ─────────────────────────────
+		// ── P6: Settlement delay P95 + P50 accumulation ──────────────────────
+		// Extended to also compute P50 (median) alongside the existing P95.
 		if e.SettlementDelayDays > 0 {
-			if err := s.projRepo.AtomicAppendPatternP6(
+			if err := s.projRepo.AtomicAppendPatternP6WithP50(
 				ctx, e.TenantID, e.SettlementDelayDays, window.start, window.end,
 			); err != nil {
-				log.Printf("HandleVarianceRecord: AtomicAppendPatternP6 failed variance=%s: %v",
+				log.Printf("HandleVarianceRecord: AtomicAppendPatternP6WithP50 failed variance=%s: %v",
 					e.VarianceID, err)
 			}
 		}
+
+		// ── Pattern Intelligence: Cross-period tracking ───────────────────────
+		if e.CrossPeriodFlag {
+			if err := s.projRepo.AtomicIncrementCrossPeriod(
+				ctx, e.TenantID, window.start, window.end,
+			); err != nil {
+				log.Printf("HandleVarianceRecord: AtomicIncrementCrossPeriod failed variance=%s: %v",
+					e.VarianceID, err)
+			}
+		}
+
+		// ── Pattern Intelligence: Whitelisted deduction tracking ─────────────
+		// Record whitelisted deduction amounts separately so the dashboard can
+		// distinguish "expected PSP fees" from genuine unexplained leakage.
+		if e.IsWhitelisted && varianceMinor.IsPositive() {
+			if err := s.projRepo.AtomicRecordWhitelistedDeduction(
+				ctx, e.TenantID, varianceMinor, window.start, window.end,
+			); err != nil {
+				log.Printf("HandleVarianceRecord: AtomicRecordWhitelistedDeduction failed variance=%s: %v",
+					e.VarianceID, err)
+			}
+		}
+
+		// NOTE: Provider/source grouping for variance patterns comes exclusively from
+		// CanonicalSettlementCreatedEvent (5B) via HandleSettlementCreated.
+		// VarianceRecordCreatedEvent (5C) does not carry provider/source fields.
 	}
 
 	// Trigger policy evaluation for P_LEAKAGE_UNDER_SETTLEMENT
@@ -1246,14 +1651,14 @@ func (s *ProjectionService) HandleVarianceRecord(
 		e.VarianceID, e.VarianceType, e.VarianceAmountMinor, e.CorridorID, e.BatchID, e.IntendedAmountMinor, e.SettledAmountMinor, e.DeductionReason, e.IsWhitelisted, e.CrossPeriodFlag, e.TenantID)
 
 	// Accumulate variance signals into RCA fragment for this intent.
-	if e.BatchID != "" && e.IntentID != "" {
+	if batchIDForAttribution != "" && e.IntentID != "" {
 		sigV := VarianceSignals{
 			VarianceType:        e.VarianceType,
 			AmountVarianceMinor: e.VarianceAmountMinor.IntPart(),
 			ValueDateMismatch:   e.ExpectedValueDate != "" && e.ActualValueDate != "" && e.ExpectedValueDate != e.ActualValueDate,
 			CrossPeriodFlag:     e.CrossPeriodFlag,
 		}
-		if err := s.rcaSvc.AccumulateVarianceFragment(ctx, e.TenantID, e.BatchID, e.IntentID, sigV); err != nil {
+		if err := s.rcaSvc.AccumulateVarianceFragment(ctx, e.TenantID, batchIDForAttribution, e.IntentID, sigV); err != nil {
 			log.Printf("HandleVarianceRecord: AccumulateVarianceFragment failed variance=%s: %v", e.VarianceID, err)
 		}
 	}
@@ -1261,6 +1666,8 @@ func (s *ProjectionService) HandleVarianceRecord(
 	if err := s.projRepo.MarkProcessed(ctx, e.TenantID, e.EventID); err != nil {
 		return fmt.Errorf("HandleVarianceRecord MarkProcessed event_id=%s: %w", e.EventID, err)
 	}
+	log.Printf("[variance.record.created] STORED OK event_id=%s tenant=%s variance=%s type=%s amount=%s whitelisted=%v batch=%s",
+		e.EventID, e.TenantID, e.VarianceID, e.VarianceType, e.VarianceAmountMinor, e.IsWhitelisted, e.BatchID)
 	return nil
 }
 
@@ -1280,15 +1687,20 @@ func (s *ProjectionService) HandleBatchSummaryUpdated(
 		return nil
 	}
 
+	log.Printf("[batch.summary.updated] RECEIVED event_id=%s tenant=%s batch=%s status=%s total=%d intended=%s ambiguity=%.2f original_settled=%s",
+		e.EventID, e.TenantID, e.BatchID, e.BatchFinalityStatus, e.TotalCount, e.TotalIntendedAmountMinor, e.AmbiguityScore, e.OriginalSettledAmountMinor)
+
 	processed, err := s.projRepo.IsProcessed(ctx, e.TenantID, e.EventID)
 	if err != nil {
 		return fmt.Errorf("HandleBatchSummaryUpdated IsProcessed event_id=%s: %w", e.EventID, err)
 	}
 	if processed {
+		log.Printf("[batch.summary.updated] SKIPPED duplicate event_id=%s tenant=%s batch=%s",
+			e.EventID, e.TenantID, e.BatchID)
 		return nil
 	}
 	log.Printf(
-		"HandleBatchSummaryUpdated tenant_id=%s event_id=%s batch_id=%s occurred_at=%s trace_id=%s source_reference=%s corridor_id=%s total_count=%d success_count=%d failed_count=%d pending_count=%d reversed_count=%d partial_recon_count=%d total_intended_amount_minor=%s total_confirmed_amount_minor=%s total_variance_minor=%s ambiguity_score=%f batch_finality_status=%s",
+		"HandleBatchSummaryUpdated tenant_id=%s event_id=%s batch_id=%s occurred_at=%s trace_id=%s source_reference=%s corridor_id=%s total_count=%d success_count=%d failed_count=%d pending_count=%d reversed_count=%d partial_recon_count=%d total_intended_amount_minor=%s total_confirmed_amount_minor=%s total_variance_minor=%s ambiguity_score=%f match_confidence=%f batch_finality_status=%s original_settled_amount_minor=%s",
 		e.TenantID,
 		e.EventID,
 		e.BatchID,
@@ -1306,7 +1718,9 @@ func (s *ProjectionService) HandleBatchSummaryUpdated(
 		e.TotalConfirmedAmountMinor.String(),
 		e.TotalVarianceMinor.String(),
 		e.AmbiguityScore,
+		e.MatchConfidence,
 		e.BatchFinalityStatus,
+		e.OriginalSettledAmountMinor.String(),
 	)
 	occurredAt := e.OccurredAt
 	if occurredAt.IsZero() {
@@ -1344,31 +1758,48 @@ func (s *ProjectionService) HandleBatchSummaryUpdated(
 
 	// Issue 10 Fix: Upsert batch to contracts immediately alongside projection window to keep Batch API aligned.
 	bc := persistence.BatchContract{
-		BatchID:                   e.BatchID,
-		TenantID:                  e.TenantID,
-		SourceReference:           nil, // Mapped if upstream adds it via Event Schema
-		TotalCount:                e.TotalCount,
-		SuccessCount:              e.SuccessCount,
-		FailedCount:               e.FailedCount,
-		PendingCount:              e.PendingCount,
-		ReversedCount:             e.ReversedCount,
-		PartialReconCount:         e.PartialReconCount,
-		TotalIntendedAmountMinor:  e.TotalIntendedAmountMinor,
-		TotalConfirmedAmountMinor: e.TotalConfirmedAmountMinor,
-		TotalVarianceMinor:        e.TotalVarianceMinor,
-		BatchFinalityStatus:       e.BatchFinalityStatus,
-		AmbiguityScore:            &e.AmbiguityScore,
-		LastUpdatedAt:             time.Now(),
-		CreatedAt:                 time.Now(),
+		BatchID:                    e.BatchID,
+		TenantID:                   e.TenantID,
+		SourceReference:            nil, // Mapped if upstream adds it via Event Schema
+		TotalCount:                 e.TotalCount,
+		SuccessCount:               e.SuccessCount,
+		FailedCount:                e.FailedCount,
+		PendingCount:               e.PendingCount,
+		ReversedCount:              e.ReversedCount,
+		PartialReconCount:          e.PartialReconCount,
+		TotalIntendedAmountMinor:   e.TotalIntendedAmountMinor,
+		TotalConfirmedAmountMinor:  e.TotalConfirmedAmountMinor,
+		OriginalSettledAmountMinor: e.OriginalSettledAmountMinor,
+		TotalVarianceMinor:         e.TotalVarianceMinor,
+		BatchFinalityStatus:        e.BatchFinalityStatus,
+		AmbiguityScore:             &e.AmbiguityScore,
+		MatchConfidence:            &e.MatchConfidence,
+		LastUpdatedAt:              time.Now(),
+		CreatedAt:                  time.Now(),
 	}
 	if err := s.batchRepo.Upsert(ctx, bc); err != nil {
 		return fmt.Errorf("HandleBatchSummaryUpdated batchRepo.Upsert batch=%s: %w", e.BatchID, err)
+	}
+
+	// Capture one immutable leakage feature row once the batch reaches the
+	// canonicalized summary stage. We only attempt inference for genuinely
+	// pre-settlement summaries, so finalized batches never get a late forecast.
+	if s.leakagePredSvc != nil {
+		allowPrediction := !isTerminalBatchFinalityStatus(e.BatchFinalityStatus) &&
+			e.TotalConfirmedAmountMinor.LessThanOrEqual(decimal.Zero) &&
+			e.OriginalSettledAmountMinor.LessThanOrEqual(decimal.Zero)
+		s.leakagePredSvc.CaptureBatchOnce(ctx, e.TenantID, e.BatchID, window.start, window.end, allowPrediction)
 	}
 
 	// If batch reached a terminal state, the true ambiguity outcome is now known.
 	// Feed it back to the LR model as a labeled training example (online SGD).
 	if e.BatchFinalityStatus == "FULLY_SETTLED" || e.BatchFinalityStatus == "FAILED" {
 		s.ambiguitySvc.TrainOnLabel(ctx, e.TenantID, e.BatchID, e.AmbiguityScore, window.start, window.end)
+	}
+	if e.BatchFinalityStatus == "FULLY_SETTLED" || e.BatchFinalityStatus == "FAILED" || e.BatchFinalityStatus == "CLOSED" || e.PendingCount == 0 {
+		if s.leakagePredSvc != nil {
+			s.leakagePredSvc.TrainOnLabel(ctx, e.TenantID, e.BatchID)
+		}
 	}
 
 	// Step 2: Compute PATTERN intelligence snapshot
@@ -1416,6 +1847,9 @@ func (s *ProjectionService) HandleBatchSummaryUpdated(
 	if err := s.projRepo.MarkProcessed(ctx, e.TenantID, e.EventID); err != nil {
 		return fmt.Errorf("HandleBatchSummaryUpdated MarkProcessed event_id=%s: %w", e.EventID, err)
 	}
+	log.Printf("[batch.summary.updated] STORED OK event_id=%s tenant=%s batch=%s status=%s total=%d success=%d failed=%d pending=%d ambiguity=%.2f",
+		e.EventID, e.TenantID, e.BatchID, e.BatchFinalityStatus,
+		e.TotalCount, e.SuccessCount, e.FailedCount, e.PendingCount, e.AmbiguityScore)
 	return nil
 }
 
@@ -1452,11 +1886,16 @@ func (s *ProjectionService) HandleGovernanceDecision(
 		return nil
 	}
 
+	log.Printf("[governance.decision.created] RECEIVED event_id=%s tenant=%s gdec=%s intent=%s outcome=%s kyc=%v aml=%v replay=%v",
+		e.EventID, e.TenantID, e.GovernanceDecisionID, e.IntentID, e.DecisionOutcome, e.KYCChecked, e.AMLChecked, e.ReplayEquivalent)
+
 	processed, err := s.projRepo.IsProcessed(ctx, e.TenantID, e.EventID)
 	if err != nil {
 		return fmt.Errorf("HandleGovernanceDecision IsProcessed event_id=%s: %w", e.EventID, err)
 	}
 	if processed {
+		log.Printf("[governance.decision.created] SKIPPED duplicate event_id=%s tenant=%s gdec=%s",
+			e.EventID, e.TenantID, e.GovernanceDecisionID)
 		return nil
 	}
 
@@ -1514,6 +1953,8 @@ func (s *ProjectionService) HandleGovernanceDecision(
 	if err := s.projRepo.MarkProcessed(ctx, e.TenantID, e.EventID); err != nil {
 		return fmt.Errorf("HandleGovernanceDecision MarkProcessed event_id=%s: %w", e.EventID, err)
 	}
+	log.Printf("[governance.decision.created] STORED OK event_id=%s tenant=%s gdec=%s intent=%s outcome=%s",
+		e.EventID, e.TenantID, e.GovernanceDecisionID, e.IntentID, e.DecisionOutcome)
 	return nil
 }
 
@@ -1578,5 +2019,73 @@ func classifyCarrierRichness(score float64) string {
 		return "PARTIAL"
 	default:
 		return "POOR"
+	}
+}
+
+func deriveLeakageProviderAndRail(corridorID, providerHint, sourceSystem string) (string, string) {
+	corridorID = strings.TrimSpace(corridorID)
+	providerHint = strings.TrimSpace(providerHint)
+	sourceSystem = strings.TrimSpace(sourceSystem)
+
+	var providerKey string
+	var rail string
+
+	if corridorID != "" && !strings.EqualFold(corridorID, "UNKNOWN") {
+		parts := strings.Split(corridorID, ".")
+		if len(parts) >= 2 {
+			providerKey = strings.ToLower(strings.TrimSpace(parts[0]))
+			rail = strings.ToUpper(strings.TrimSpace(parts[len(parts)-1]))
+		} else {
+			rail = strings.ToUpper(corridorID)
+		}
+	}
+
+	if providerKey == "" && providerHint != "" {
+		hintUpper := strings.ToUpper(providerHint)
+		if !strings.Contains(hintUpper, "RAIL") &&
+			hintUpper != "UPI" &&
+			hintUpper != "IMPS" &&
+			hintUpper != "NEFT" &&
+			hintUpper != "RTGS" &&
+			hintUpper != "BANK" {
+			providerKey = strings.ToLower(providerHint)
+		}
+	}
+
+	if providerKey == "" && sourceSystem != "" {
+		providerKey = strings.ToLower(sourceSystem)
+	}
+
+	if rail == "" && providerHint != "" {
+		hintUpper := strings.ToUpper(providerHint)
+		switch {
+		case strings.Contains(hintUpper, "UPI"):
+			rail = "UPI"
+		case strings.Contains(hintUpper, "IMPS"):
+			rail = "IMPS"
+		case strings.Contains(hintUpper, "NEFT"):
+			rail = "NEFT"
+		case strings.Contains(hintUpper, "RTGS"):
+			rail = "RTGS"
+		case strings.Contains(hintUpper, "BANK"):
+			rail = "BANK"
+		}
+	}
+
+	if providerKey == "" {
+		providerKey = "UNKNOWN"
+	}
+	if rail == "" {
+		rail = "UNKNOWN"
+	}
+	return providerKey, rail
+}
+
+func isTerminalBatchFinalityStatus(status string) bool {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "FULLY_SETTLED", "PARTIALLY_SETTLED", "FAILED", "REQUIRES_REVIEW", "CLOSED":
+		return true
+	default:
+		return false
 	}
 }

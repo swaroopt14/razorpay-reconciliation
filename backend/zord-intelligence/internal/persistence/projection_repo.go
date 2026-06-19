@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"time"
 
@@ -1880,6 +1881,7 @@ func (r *ProjectionRepo) AtomicRecordAttachmentDecision(
 	isLowConfidence bool,
 	hasCollision bool,
 	scoreMargin float64,
+	isSuccessfulDecision bool,
 	windowStart, windowEnd time.Time,
 ) error {
 	key := "ambiguity.summary"
@@ -1920,6 +1922,10 @@ func (r *ProjectionRepo) AtomicRecordAttachmentDecision(
 	if hasCollision {
 		collisionIncr = 1
 	}
+	successfulIncr := 0
+	if isSuccessfulDecision {
+		successfulIncr = 1
+	}
 
 	upsertSQL := `
 		INSERT INTO projection_state
@@ -1945,7 +1951,9 @@ func (r *ProjectionRepo) AtomicRecordAttachmentDecision(
 				'candidate_collision_rate',     $12::float8,
 				'score_margin_sum',             $13::float8,
 				'score_margin_count',           1,
-				'avg_score_margin',             $13::float8
+				'avg_score_margin',             $13::float8,
+				'successful_decision_count',    $14::int,
+				'decision_success_rate',        $14::float8
 			),
 			now(), 1, 'AMBIGUITY', 'TENANT')
 		ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
@@ -1962,42 +1970,46 @@ func (r *ProjectionRepo) AtomicRecordAttachmentDecision(
 												jsonb_set(
 													jsonb_set(
 														jsonb_set(
-															projection_state.value_json,
-															'{ambiguous_intent_count}',
-															to_jsonb(COALESCE((projection_state.value_json->>'ambiguous_intent_count')::int, 0) + $5::int)
+															jsonb_set(
+																projection_state.value_json,
+																'{ambiguous_intent_count}',
+																to_jsonb(COALESCE((projection_state.value_json->>'ambiguous_intent_count')::int, 0) + $5::int)
+															),
+															'{ambiguous_amount_minor}',
+															to_jsonb(COALESCE((projection_state.value_json->>'ambiguous_amount_minor')::numeric, 0) + $6::numeric)
 														),
-														'{ambiguous_amount_minor}',
-														to_jsonb(COALESCE((projection_state.value_json->>'ambiguous_amount_minor')::numeric, 0) + $6::numeric)
+														'{unresolved_settlement_count}',
+														to_jsonb(COALESCE((projection_state.value_json->>'unresolved_settlement_count')::int, 0) + $7::int)
 													),
-													'{unresolved_settlement_count}',
-													to_jsonb(COALESCE((projection_state.value_json->>'unresolved_settlement_count')::int, 0) + $7::int)
+													'{value_at_risk_minor}',
+													to_jsonb(COALESCE((projection_state.value_json->>'value_at_risk_minor')::numeric, 0) + $8::numeric)
 												),
-												'{value_at_risk_minor}',
-												to_jsonb(COALESCE((projection_state.value_json->>'value_at_risk_minor')::numeric, 0) + $8::numeric)
+												'{confidence_sum}',
+												to_jsonb(COALESCE((projection_state.value_json->>'confidence_sum')::float8, 0.0) + $9::float8)
 											),
-											'{confidence_sum}',
-											to_jsonb(COALESCE((projection_state.value_json->>'confidence_sum')::float8, 0.0) + $9::float8)
+											'{confidence_count}',
+											to_jsonb(COALESCE((projection_state.value_json->>'confidence_count')::int, 0) + 1)
 										),
-										'{confidence_count}',
-										to_jsonb(COALESCE((projection_state.value_json->>'confidence_count')::int, 0) + 1)
+										'{provider_ref_missing_count}',
+										to_jsonb(COALESCE((projection_state.value_json->>'provider_ref_missing_count')::int, 0) + $10::int)
 									),
-									'{provider_ref_missing_count}',
-									to_jsonb(COALESCE((projection_state.value_json->>'provider_ref_missing_count')::int, 0) + $10::int)
+									'{total_decisions}',
+									to_jsonb(COALESCE((projection_state.value_json->>'total_decisions')::int, 0) + 1)
 								),
-								'{total_decisions}',
-								to_jsonb(COALESCE((projection_state.value_json->>'total_decisions')::int, 0) + 1)
+								'{low_confidence_count}',
+								to_jsonb(COALESCE((projection_state.value_json->>'low_confidence_count')::int, 0) + $11::int)
 							),
-							'{low_confidence_count}',
-							to_jsonb(COALESCE((projection_state.value_json->>'low_confidence_count')::int, 0) + $11::int)
+							'{candidate_collision_count}',
+							to_jsonb(COALESCE((projection_state.value_json->>'candidate_collision_count')::int, 0) + $12::int)
 						),
-						'{candidate_collision_count}',
-						to_jsonb(COALESCE((projection_state.value_json->>'candidate_collision_count')::int, 0) + $12::int)
+						'{score_margin_sum}',
+						to_jsonb(COALESCE((projection_state.value_json->>'score_margin_sum')::float8, 0.0) + $13::float8)
 					),
-					'{score_margin_sum}',
-					to_jsonb(COALESCE((projection_state.value_json->>'score_margin_sum')::float8, 0.0) + $13::float8)
+					'{score_margin_count}',
+					to_jsonb(COALESCE((projection_state.value_json->>'score_margin_count')::int, 0) + 1)
 				),
-				'{score_margin_count}',
-				to_jsonb(COALESCE((projection_state.value_json->>'score_margin_count')::int, 0) + 1)
+				'{successful_decision_count}',
+				to_jsonb(COALESCE((projection_state.value_json->>'successful_decision_count')::int, 0) + $14::int)
 			),
 		computed_at = now()
 	`
@@ -2012,6 +2024,7 @@ func (r *ProjectionRepo) AtomicRecordAttachmentDecision(
 		lowConfidenceIncr,        // $11
 		collisionIncr,            // $12
 		scoreMargin,              // $13
+		successfulIncr,           // $14
 	); err != nil {
 		return fmt.Errorf("projection_repo.AtomicRecordAttachmentDecision tenant=%s decision=%s: %w",
 			tenantID, decisionType, err)
@@ -2029,6 +2042,7 @@ func (r *ProjectionRepo) AtomicRecordAttachmentDecision(
 //	candidate_collision_rate  = candidate_collision_count / total_decisions
 //	avg_score_margin          = score_margin_sum / score_margin_count
 //	carrier_completeness_rate = carrier_complete_count / total_carrier_records
+//	decision_success_rate     = successful_decision_count / total_decisions
 func (r *ProjectionRepo) recomputeAmbiguityRates(
 	ctx context.Context,
 	tenantID, key string,
@@ -2043,12 +2057,22 @@ func (r *ProjectionRepo) recomputeAmbiguityRates(
 						jsonb_set(
 							jsonb_set(
 								jsonb_set(
-									value_json,
-									'{avg_attachment_confidence}',
+									jsonb_set(
+										value_json,
+										'{avg_attachment_confidence}',
+										to_jsonb(
+											COALESCE(
+												(value_json->>'confidence_sum')::numeric /
+												NULLIF((value_json->>'confidence_count')::numeric, 0),
+												0
+											)
+										)
+									),
+									'{decision_success_rate}',
 									to_jsonb(
 										COALESCE(
-											(value_json->>'confidence_sum')::numeric /
-											NULLIF((value_json->>'confidence_count')::numeric, 0),
+											(value_json->>'successful_decision_count')::numeric /
+											NULLIF((value_json->>'total_decisions')::numeric, 0),
 											0
 										)
 									)
@@ -2814,6 +2838,65 @@ func (r *ProjectionRepo) GetAllByProjectionKeyPrefix(
 		return nil, fmt.Errorf("projection_repo.GetAllByProjectionKeyPrefix rows: %w", err)
 	}
 	return fragments, nil
+}
+
+// CleanupStaleRCAFragments deletes all rca.frag.* rows that are older than
+// maxAge across ALL tenants. Called by the outbox worker on every tick.
+//
+// RCA fragments are temporary per-intent accumulation rows created while
+// events are arriving for a batch. Once clustering runs (triggered by
+// BatchSummaryUpdated) the fragments are no longer needed. However, due to
+// Kafka consumer ordering, some fragments may arrive AFTER the batch summary
+// triggers cleanup — leaving orphan rows. A TTL-based sweep ensures no
+// fragments survive past their useful window regardless of ordering.
+//
+// Production TTL: 10 minutes — comfortably longer than any batch processing window.
+// Test TTL: same — the outbox worker runs every 5s so orphans clear within 15s.
+func (r *ProjectionRepo) CleanupStaleRCAFragments(ctx context.Context, maxAge time.Duration) (int64, error) {
+	cutoff := time.Now().UTC().Add(-maxAge)
+	tag, err := r.pool.Exec(ctx, `
+		DELETE FROM projection_state
+		WHERE projection_key LIKE 'rca.frag.%'
+		  AND computed_at < $1
+	`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("projection_repo.CleanupStaleRCAFragments: %w", err)
+	}
+	if tag.RowsAffected() > 0 {
+		log.Printf("projection_repo: cleaned %d stale rca fragment rows (age>%s)",
+			tag.RowsAffected(), maxAge)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// DeleteProjectionsByKeyPrefix deletes all projection_state rows whose
+// projection_key starts with the given prefix for a tenant.
+//
+// Used to clean up RCA fragment rows after HDBSCAN clustering completes.
+// Fragments are temporary accumulation artifacts — once clustering has consumed
+// them and written the RCA snapshot, they serve no further purpose and would
+// otherwise grow indefinitely in the projection_state table.
+//
+// Safe to call even if no rows match — returns nil in that case.
+func (r *ProjectionRepo) DeleteProjectionsByKeyPrefix(
+	ctx context.Context,
+	tenantID, prefix string,
+) error {
+	sql := `
+		DELETE FROM projection_state
+		WHERE tenant_id     = $1
+		  AND projection_key LIKE $2
+	`
+	tag, err := r.pool.Exec(ctx, sql, tenantID, prefix+"%")
+	if err != nil {
+		return fmt.Errorf("projection_repo.DeleteProjectionsByKeyPrefix tenant=%s prefix=%s: %w",
+			tenantID, prefix, err)
+	}
+	if tag.RowsAffected() > 0 {
+		log.Printf("projection_repo: deleted %d rca fragment rows prefix=%s tenant=%s",
+			tag.RowsAffected(), prefix, tenantID)
+	}
+	return nil
 }
 
 // UpsertRCAFragment reads the existing RCAFragment for (tenantID, key), applies

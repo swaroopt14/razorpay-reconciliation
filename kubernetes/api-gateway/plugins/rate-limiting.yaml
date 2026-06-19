@@ -1,0 +1,58 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Kong Plugin: Rate Limiting
+# ─────────────────────────────────────────────────────────────────────────────
+# Configured in kong/configmap.yaml (declarative config).
+# This file serves as documentation and reference.
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# GLOBAL RATE LIMIT (applied to all routes by default)
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# - 300 requests/minute per client IP
+# - 10,000 requests/hour per client IP
+# - Policy: local (per Kong pod — no Redis needed)
+# - Fault tolerant: true (if counter fails, allow request)
+# - Response headers: X-RateLimit-Limit-Minute, X-RateLimit-Remaining-Minute
+# - Error: HTTP 429 with message "Rate limit exceeded. Please slow down."
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# ROUTE-SPECIFIC OVERRIDES (stricter limits for heavy operations)
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Route: edge-bulk-ingest
+#   - 30 requests/minute
+#   - 500 requests/hour
+#   - Reason: Bulk CSV/XLSX upload is CPU/IO intensive
+#
+# Route: outcome-settlement
+#   - 20 requests/minute
+#   - 200 requests/hour
+#   - Reason: Settlement XLSX parsing is heavy
+#
+# Route: prompt-query
+#   - 60 requests/minute
+#   - 1,000 requests/hour
+#   - Reason: LLM API calls are expensive (Gemini)
+#
+# Route: prompt-chat
+#   - 60 requests/minute
+#   - 1,000 requests/hour
+#   - Reason: LLM API calls are expensive (Gemini)
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# PRODUCTION UPGRADE PATH
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Current: policy=local (per-pod counters, not shared)
+#   - Simple, no dependencies
+#   - Limits are per-pod (2 pods = effectively 2x the limit)
+#
+# Future: policy=redis (shared counters across all Kong pods)
+#   - Requires Redis deployment
+#   - Accurate global rate limiting
+#   - Config change:
+#     policy: redis
+#     redis_host: redis.api-gateway.svc.cluster.local
+#     redis_port: 6379
+#     redis_timeout: 2000
+# ─────────────────────────────────────────────────────────────────────────────

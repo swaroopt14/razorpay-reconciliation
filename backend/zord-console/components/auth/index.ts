@@ -7,3 +7,5 @@ export { DarkLoginLayout } from './DarkLoginLayout'
 export { LoginLayout } from './LoginLayout'
 export { RoleSwitcher } from './RoleSwitcher'
 export { ZordLoginExperience } from './ZordLoginExperience'
+export { SessionManager } from './SessionManager'
+

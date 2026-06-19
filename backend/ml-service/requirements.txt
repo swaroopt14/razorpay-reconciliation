@@ -7,3 +7,5 @@ uvicorn[standard]==0.30.1
 hdbscan==0.8.38.post1
 joblib==1.4.2
 scipy==1.13.1
+catboost==1.2.10
+psycopg[binary]==3.2.9

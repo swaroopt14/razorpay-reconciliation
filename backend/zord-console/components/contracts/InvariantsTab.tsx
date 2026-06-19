@@ -39,11 +39,11 @@ function AddValidationRuleModal({ isOpen, onClose, onAdd, fields }: AddValidatio
   const [error, setError] = useState('')
 
   const handleTemplateSelect = (templateId: string) => {
-    const template = RULE_TEMPLATES.find(t => t.id === templateId)
+    const template = RULE_TEMPLATES[Number(templateId)]
     if (template) {
       setSelectedTemplate(templateId)
       setExpression(template.expression)
-      setErrorMessage(template.errorMessage)
+      setErrorMessage(`${template.label} failed`)
     }
   }
 
@@ -96,21 +96,24 @@ function AddValidationRuleModal({ isOpen, onClose, onAdd, fields }: AddValidatio
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Start from Template</label>
             <div className="grid grid-cols-2 gap-2">
-              {RULE_TEMPLATES.map(template => (
+              {RULE_TEMPLATES.map((template, index) => {
+                const templateId = String(index)
+                return (
                 <button
-                  key={template.id}
+                  key={template.label}
                   type="button"
-                  onClick={() => handleTemplateSelect(template.id)}
+                  onClick={() => handleTemplateSelect(templateId)}
                   className={`p-3 text-left border rounded-md transition-colors ${
-                    selectedTemplate === template.id
+                    selectedTemplate === templateId
                       ? 'border-blue-500 bg-blue-50'
                       : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
                   }`}
                 >
-                  <p className="text-sm font-medium text-gray-900">{template.name}</p>
+                  <p className="text-sm font-medium text-gray-900">{template.label}</p>
                   <p className="text-xs text-gray-500 mt-0.5">{template.description}</p>
                 </button>
-              ))}
+                )
+              })}
             </div>
           </div>
 

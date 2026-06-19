@@ -15,19 +15,20 @@ export function ReceiptTimeline({ receiptId, status, receivedAt, events }: Recei
   const statusOrder: ReceiptStatus[] = ['RECEIVED', 'RAW_STORED', 'VALIDATING', 'CANONICALIZED', 'FAILED']
   const currentIndex = statusOrder.indexOf(status)
 
-  const timelineEvents: ReceiptTimelineEvent[] = events || [
+  const defaultEvents: ReceiptTimelineEvent[] = [
     { status: 'RECEIVED', timestamp: receivedAt },
-    ...(status !== 'RECEIVED' ? [{ status: 'RAW_STORED', timestamp: new Date(new Date(receivedAt).getTime() + 1000).toISOString() }] : []),
+    ...(status !== 'RECEIVED' ? [{ status: 'RAW_STORED' as const, timestamp: new Date(new Date(receivedAt).getTime() + 1000).toISOString() }] : []),
     ...(status === 'VALIDATING' || status === 'CANONICALIZED' || status === 'FAILED' 
-      ? [{ status: 'VALIDATING', timestamp: new Date(new Date(receivedAt).getTime() + 2000).toISOString() }] 
+      ? [{ status: 'VALIDATING' as const, timestamp: new Date(new Date(receivedAt).getTime() + 2000).toISOString() }] 
       : []),
     ...(status === 'CANONICALIZED' 
-      ? [{ status: 'CANONICALIZED', timestamp: new Date(new Date(receivedAt).getTime() + 3000).toISOString() }] 
+      ? [{ status: 'CANONICALIZED' as const, timestamp: new Date(new Date(receivedAt).getTime() + 3000).toISOString() }] 
       : []),
     ...(status === 'FAILED' 
-      ? [{ status: 'FAILED', timestamp: new Date(new Date(receivedAt).getTime() + 3000).toISOString() }] 
+      ? [{ status: 'FAILED' as const, timestamp: new Date(new Date(receivedAt).getTime() + 3000).toISOString() }] 
       : []),
   ]
+  const timelineEvents = events || defaultEvents
 
   return (
     <div className="space-y-4">

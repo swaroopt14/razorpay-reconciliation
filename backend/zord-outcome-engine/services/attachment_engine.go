@@ -6,7 +6,7 @@ package services
 // Orchestrates the full intent-to-settlement attachment pipeline:
 //   Step 1  Receive attachment work (batch or single observation)
 //   Step 2  Load matching ruleset
-//   Step 3  Build candidate intent set per observation
+//   Step 3  Build candidate observation set per intent
 //   Step 4  Score every candidate (deterministic, versioned)
 //   Step 5  Select decision type
 //   Step 6  Compute variance for attached pairs
@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"time"
 
 	"zord-outcome-engine/db"
@@ -46,70 +47,145 @@ type AttachmentEngine struct{}
 // PUBLIC ENTRY POINTS
 // ─────────────────────────────────────────────────────────────────────────────
 
-// RunForBatch triggers an attachment job for all canonical settlement observations
+// RunForBatch triggers an attachment job for all canonical intents
 // that belong to a given settlement batch reference.
 func (e *AttachmentEngine) RunForBatch(
 	ctx context.Context,
 	tenantID uuid.UUID,
 	batchRef string,
 ) (*models.AttachmentJob, error) {
-	log.Printf("attachment.engine.start scope=SETTLEMENT_BATCH tenant=%s batch_ref=%s", tenantID, batchRef)
+	log.Printf("attachment.engine.start scope=INTENT_BATCH tenant=%s batch_ref=%s", tenantID, batchRef)
 
-	// Load observations for this batch.
-	observations, err := loadObservationsByBatch(ctx, tenantID, batchRef)
+	// Load intents for this batch.
+	intentMap, err := loadMasterIntentsByBatchRef(ctx, tenantID, batchRef)
 	if err != nil {
-		return nil, fmt.Errorf("attachment.RunForBatch: load observations: %w", err)
+		return nil, fmt.Errorf("attachment.RunForBatch: load intents: %w", err)
 	}
-	if len(observations) == 0 {
-		return nil, fmt.Errorf("attachment.RunForBatch: no observations found for batch_ref=%s", batchRef)
+	if len(intentMap) == 0 {
+		return nil, fmt.Errorf("attachment.RunForBatch: no intents found for batch_ref=%s", batchRef)
 	}
 
-	return e.runAttachment(ctx, tenantID, models.JobScopeSettlementBatch, batchRef, observations)
+	intents := make([]models.CanonicalIntent, 0, len(intentMap))
+	for _, intent := range intentMap {
+		intents = append(intents, intent)
+	}
+
+	return e.runAttachment(ctx, tenantID, models.JobScopeSettlementBatch, batchRef, intents)
 }
 
-// RunForJob triggers an attachment job for all canonical settlement observations
-// produced by one settlement ingest job.
+// RunForJob triggers attachment for one settlement ingest run.
 func (e *AttachmentEngine) RunForJob(
 	ctx context.Context,
 	tenantID uuid.UUID,
 	jobID string,
 ) (*models.AttachmentJob, error) {
-	log.Printf("attachment.engine.start scope=INGEST_JOB tenant=%s job_id=%s", tenantID, jobID)
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" {
+		return nil, fmt.Errorf("attachment.RunForJob: ingest_run_id is required")
+	}
+
+	log.Printf("attachment.engine.start scope=INGEST_RUN tenant=%s ingest_run_id=%s", tenantID, jobID)
 
 	observations, err := loadObservationsByJobID(ctx, tenantID, jobID)
 	if err != nil {
 		return nil, fmt.Errorf("attachment.RunForJob: load observations: %w", err)
 	}
 	if len(observations) == 0 {
-		return nil, fmt.Errorf("attachment.RunForJob: no observations found for job_id=%s", jobID)
+		return nil, fmt.Errorf("attachment.RunForJob: no observations found for ingest_run_id=%s", jobID)
 	}
 
-	// Scope type stays batch for reporting compatibility; scope_ref stores job_id.
-	return e.runAttachment(ctx, tenantID, models.JobScopeSettlementBatch, jobID, observations)
+	intentMap, err := loadIntentsForIngestRunObservations(ctx, tenantID, observations)
+	if err != nil {
+		return nil, fmt.Errorf("attachment.RunForJob: load intents: %w", err)
+	}
+	if len(intentMap) == 0 {
+		return nil, fmt.Errorf("attachment.RunForJob: no intents found for ingest_run_id=%s using client_batch_id, batch_reference, or client_reference_candidate", jobID)
+	}
+
+	intents := make([]models.CanonicalIntent, 0, len(intentMap))
+	for _, intent := range intentMap {
+		intents = append(intents, intent)
+	}
+	sort.Slice(intents, func(i, j int) bool {
+		return intents[i].IntentID.String() < intents[j].IntentID.String()
+	})
+
+	return e.runAttachment(ctx, tenantID, models.JobScopeIngestRun, jobID, intents)
 }
 
-// RunForSingleObservation triggers an attachment job for one specific observation.
-func (e *AttachmentEngine) RunForSingleObservation(
+// RunForSingleIntent triggers an attachment job for one specific intent.
+func (e *AttachmentEngine) RunForSingleIntent(
 	ctx context.Context,
 	tenantID uuid.UUID,
-	observationID uuid.UUID,
+	intentID uuid.UUID,
 ) (*models.AttachmentJob, error) {
-	log.Printf("attachment.engine.start scope=SINGLE_OBSERVATION tenant=%s obs=%s", tenantID, observationID)
+	log.Printf("attachment.engine.start scope=SINGLE_INTENT tenant=%s intent=%s", tenantID, intentID)
 
-	obs, err := loadObservationByID(ctx, tenantID, observationID)
+	intent, err := loadIntentByID(ctx, tenantID, intentID)
 	if err != nil {
-		return nil, fmt.Errorf("attachment.RunForSingleObservation: %w", err)
+		return nil, fmt.Errorf("attachment.RunForSingleIntent: %w", err)
 	}
 
-	// Use the observation's batch_reference as the scope ref so that
+	// Use the intent's batch_reference as the scope ref so that
 	// GET /v1/attachment/batch/:batch_ref resolves correctly.
-	// Fall back to the observation UUID when no batch ref is present.
-	scopeRef := observationID.String()
-	if obs.BatchReference != nil && *obs.BatchReference != "" {
-		scopeRef = *obs.BatchReference
+	scopeRef := intentID.String()
+	if intent.ClientBatchRef != nil && *intent.ClientBatchRef != "" {
+		scopeRef = *intent.ClientBatchRef
 	}
 
-	return e.runAttachment(ctx, tenantID, models.JobScopeSingleObservation, scopeRef, []models.CanonicalSettlementObservation{*obs})
+	return e.runAttachment(ctx, tenantID, models.JobScopeSingleIntent, scopeRef, []models.CanonicalIntent{*intent})
+}
+
+func loadIntentsForIngestRunObservations(
+	ctx context.Context,
+	tenantID uuid.UUID,
+	observations []models.CanonicalSettlementObservation,
+) (map[uuid.UUID]models.CanonicalIntent, error) {
+	result := make(map[uuid.UUID]models.CanonicalIntent)
+	batchRefs := make(map[string]struct{})
+	clientRefs := make(map[string]struct{})
+
+	for _, obs := range observations {
+		if ref := strings.TrimSpace(obs.ClientBatchID); ref != "" {
+			batchRefs[ref] = struct{}{}
+		}
+		if obs.BatchReference != nil {
+			if ref := strings.TrimSpace(*obs.BatchReference); ref != "" {
+				batchRefs[ref] = struct{}{}
+			}
+		}
+		if obs.ClientReferenceCandidate != nil {
+			if ref := strings.TrimSpace(*obs.ClientReferenceCandidate); ref != "" {
+				clientRefs[strings.ToLower(ref)] = struct{}{}
+			}
+		}
+	}
+
+	for batchRef := range batchRefs {
+		intents, err := loadMasterIntentsByBatchRef(ctx, tenantID, batchRef)
+		if err != nil {
+			return nil, err
+		}
+		for id, intent := range intents {
+			result[id] = intent
+		}
+	}
+
+	refs := make([]string, 0, len(clientRefs))
+	for ref := range clientRefs {
+		refs = append(refs, ref)
+	}
+	sort.Strings(refs)
+
+	refIntents, err := loadIntentsByClientPayoutRefs(ctx, tenantID, refs)
+	if err != nil {
+		return nil, err
+	}
+	for id, intent := range refIntents {
+		result[id] = intent
+	}
+
+	return result, nil
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -121,21 +197,10 @@ func (e *AttachmentEngine) runAttachment(
 	tenantID uuid.UUID,
 	scopeType string,
 	scopeRef string,
-	observations []models.CanonicalSettlementObservation,
+	intents []models.CanonicalIntent,
 ) (*models.AttachmentJob, error) {
 
-	// ── Distributed lock: prevent concurrent jobs for the same scope ──────
-	// Two simultaneous requests for the same (tenant, scope_ref) would both
-	// call findCandidateIntents, score the same intents, and both persist a
-	// winning decision — double-attaching the same intent to two observations.
-	//
-	// PostgreSQL advisory locks are session-scoped and require no extra
-	// infrastructure. We derive a stable int64 key from the tenant UUID and
-	// scope_ref string so the same logical job always maps to the same lock slot.
-	//
-	// pg_try_advisory_lock returns false immediately if another session holds
-	// the lock; we return a clear error rather than queuing silently.
-	lockKey := advisoryLockKey(tenantID, scopeRef)
+	lockKey := advisoryLockKey(tenantID, scopeType+"|"+scopeRef)
 	var acquired bool
 	if err := db.DB.QueryRowContext(ctx,
 		`SELECT pg_try_advisory_lock($1)`, lockKey,
@@ -145,26 +210,19 @@ func (e *AttachmentEngine) runAttachment(
 	if !acquired {
 		return nil, fmt.Errorf("attachment.engine: concurrent job already running for tenant=%s scope_ref=%s — try again shortly", tenantID, scopeRef)
 	}
-	// Always release on return. pg_advisory_unlock is a no-op if the lock was
-	// already released or was never held.
 	defer func() {
 		if _, unlockErr := db.DB.ExecContext(ctx, `SELECT pg_advisory_unlock($1)`, lockKey); unlockErr != nil {
 			log.Printf("attachment.engine.advisory_unlock_warn tenant=%s scope_ref=%s err=%v", tenantID, scopeRef, unlockErr)
 		}
 	}()
 
-	// ── Step 2: Load matching ruleset ─────────────────────────────────────
 	profile, err := loadRuleProfile(ctx, tenantID)
 	if err != nil {
-		// Non-fatal: fall back to defaults if no profile is configured yet.
 		log.Printf("attachment.engine.no_profile tenant=%s err=%v — using defaults", tenantID, err)
 		profile = defaultRuleProfile(tenantID)
 	}
-	// Parse the policy once so we can pass it through to scoring functions
-	// without re-parsing on every call.
 	policy := parseRuleProfile(profile)
 
-	// ── Step 1 (continued): Register attachment job ───────────────────────
 	job := &models.AttachmentJob{
 		AttachmentJobID:        uuid.New(),
 		TenantID:               tenantID,
@@ -181,153 +239,142 @@ func (e *AttachmentEngine) runAttachment(
 		return nil, fmt.Errorf("attachment.engine: insert job: %w", err)
 	}
 
-	// ── Reverse scan setup: load master intent list for batch scope ───────
-	// Per PDF review (section 10): we must also scan from the intent side to
-	// detect intents that were never matched by any observation.
-	// Only performed for SETTLEMENT_BATCH scope — a single ad-hoc observation
-	// check has no defined "expected population" to compare against.
-	var masterIntentMap map[uuid.UUID]models.CanonicalIntent
-	if scopeType == models.JobScopeSettlementBatch {
-		masterIntentMap, err = loadMasterIntentsByBatchRef(ctx, tenantID, scopeRef)
+	// ── Reverse scan setup: load master observation list ──────────────────
+	var masterObservationMap map[uuid.UUID]models.CanonicalSettlementObservation
+	switch scopeType {
+	case models.JobScopeSettlementBatch:
+		masterObservationMap, err = loadMasterObservationsByBatchRef(ctx, tenantID, scopeRef)
 		if err != nil {
-			// Non-fatal: log and continue. Reverse scan will be skipped below.
-			log.Printf("attachment.engine.master_intent_load_warn job=%s err=%v (reverse scan skipped)", job.AttachmentJobID, err)
-			masterIntentMap = map[uuid.UUID]models.CanonicalIntent{}
+			log.Printf("attachment.engine.master_obs_load_warn job=%s err=%v (will fall back to candidate scan)", job.AttachmentJobID, err)
+			masterObservationMap = map[uuid.UUID]models.CanonicalSettlementObservation{}
+		}
+	case models.JobScopeIngestRun:
+		observations, loadErr := loadObservationsByJobID(ctx, tenantID, scopeRef)
+		if loadErr != nil {
+			log.Printf("attachment.engine.master_obs_load_warn job=%s ingest_run_id=%s err=%v (will fall back to candidate scan)", job.AttachmentJobID, scopeRef, loadErr)
+			masterObservationMap = map[uuid.UUID]models.CanonicalSettlementObservation{}
+		} else {
+			masterObservationMap = make(map[uuid.UUID]models.CanonicalSettlementObservation, len(observations))
+			for _, obs := range observations {
+				masterObservationMap[obs.SettlementObservationID] = obs
+			}
 		}
 	}
 
-	// matchedIntentIDs tracks every intent that won a MATCH_EXACT or
-	// MATCH_HIGH_CONFIDENCE decision in this job.  Used by performReverseScan
-	// after the main loop to identify intents with no strong observation match.
-	matchedIntentIDs := make(map[uuid.UUID]bool)
+	matchedObservationIDs := make(map[uuid.UUID]bool)
+	obsDecisionTypes := make(map[uuid.UUID][]string)
 
-	// intentDecisionTypes tracks all decision types an intent appeared in as
-	// a candidate (winning or losing).  Used to produce granular reason codes
-	// in the reverse scan (e.g. ONLY_AMBIGUOUS_CANDIDATES_FOUND).
-	intentDecisionTypes := make(map[uuid.UUID][]string)
+	previouslyDecidedObservationIDs, err := loadPreviouslyDecidedObservationIDs(ctx, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("attachment.engine: load previously decided observations: %w", err)
+	}
 
-	// ── Steps 3-7: Process each observation ──────────────────────────────
 	var (
-		allDecisions        []models.AttachmentDecision
-		allVariances        []models.VarianceRecord
-		allCandidates       []models.AttachmentCandidate
-		totalIntendedAmount decimal.Decimal
-		clientBatchRef      *string
-		intentsMap          = make(map[uuid.UUID]*models.CanonicalIntent)
-		claimedIntentIDs    = make(map[uuid.UUID]bool)
-		// allScannedIntentsMap accumulates every intent seen as a candidate
-		// during the forward scan. Used as a fallback for the reverse scan
-		// when loadMasterIntentsByBatchRef returns nothing (e.g. batch-ref
-		// mismatch between canonical_intents and the observations table).
-		allScannedIntentsMap = make(map[uuid.UUID]models.CanonicalIntent)
+		allDecisions              []models.AttachmentDecision
+		allVariances              []models.VarianceRecord
+		allCandidates             []models.AttachmentCandidate
+		totalIntendedAmount       decimal.Decimal
+		clientBatchRef            *string
+		claimedObservationIDs     = previouslyDecidedObservationIDs
+		allScannedObservationsMap = make(map[uuid.UUID]models.CanonicalSettlementObservation)
 	)
 
 	counters := struct {
 		exact, high, ambiguous, unresolved, conflicted int
 	}{}
 
-	for _, obs := range observations {
+	candidateIngestRunID := ""
+	if scopeType == models.JobScopeIngestRun {
+		candidateIngestRunID = scopeRef
+	}
 
-		// Step 3: Build candidate intent set.
-		intents, err := findCandidateIntents(ctx, tenantID, obs)
+	for _, intent := range intents {
+
+		observations, err := findCandidateObservations(ctx, tenantID, intent, claimedObservationIDs, candidateIngestRunID)
 		if err != nil {
-			log.Printf("attachment.engine.candidate_lookup_failed obs=%s err=%v", obs.SettlementObservationID, err)
-			// Record as unresolved — do not drop silently.
-			decision := buildUnresolvedDecision(tenantID, obs.SettlementObservationID, job.AttachmentJobID, "CANDIDATE_LOOKUP_FAILED")
+			log.Printf("attachment.engine.candidate_lookup_failed intent=%s err=%v", intent.IntentID, err)
+			decision := buildUnresolvedDecision(tenantID, intent.IntentID, job.AttachmentJobID, "CANDIDATE_LOOKUP_FAILED")
 			allDecisions = append(allDecisions, decision)
 			counters.unresolved++
 			continue
 		}
 
-		// Collect all candidate intents for reverse-scan fallback.
-		for _, intent := range intents {
-			allScannedIntentsMap[intent.IntentID] = intent
+		for _, obs := range observations {
+			allScannedObservationsMap[obs.SettlementObservationID] = obs
 		}
 
-		// Step 4: Score every candidate.
 		var scored []CandidateScore
-		for _, intent := range intents {
+		for _, obs := range observations {
 			cs := ScoreCandidate(obs, intent, profile)
+			cs.SettlementObservationID = obs.SettlementObservationID
 			cs.IntentID = intent.IntentID
 			scored = append(scored, cs)
 		}
 
-		// Sort descending by total score.
 		sort.Slice(scored, func(i, j int) bool {
 			return scored[i].Total > scored[j].Total
 		})
 
-		// Step 5: Select decision type.
-		// IMPORTANT: SelectDecisionType must be called BEFORE buildCandidateRows.
-		// It calls ClassifyConfidenceContext which sets ConfidenceBucket on the top
-		// candidate. If we call buildCandidateRows first, every row is persisted with
-		// an empty ConfidenceBucket string.
 		decisionType, reasonCode := SelectDecisionType(scored, profile)
 
-		// Back-fill ConfidenceBucket for ALL candidates in the ranked set.
-		// SelectDecisionType only classifies the top (index 0) candidate.
-		// Runner-up candidates need their own bucket so the DB row is meaningful.
-		// We use margin = 0 for every non-top candidate (they lost the contest).
 		if len(scored) > 0 {
-			policy := parseRuleProfile(profile)
-			// Top candidate: margin vs runner-up (already set by SelectDecisionType,
-			// but we re-derive here to guarantee consistency for all paths).
 			topMargin := 0.0
 			if len(scored) > 1 {
 				topMargin = scored[0].Total - scored[1].Total
 			}
 			scored[0].ConfidenceBucket = ClassifyConfidenceContext(scored[0], scored, policy.ManualReviewThresholds)
-			_ = topMargin // used implicitly inside ClassifyConfidenceContext via ranked slice
-			// Runner-ups: evaluate independently with margin = 0 so they get their
-			// own honest bucket rather than inheriting the winner's context.
+			_ = topMargin
 			for i := 1; i < len(scored); i++ {
 				singleRanked := []CandidateScore{scored[i]}
 				scored[i].ConfidenceBucket = ClassifyConfidenceContext(scored[i], singleRanked, policy.ManualReviewThresholds)
 			}
 		}
 
-		// Build candidate rows for persistence (full set, not just winner).
-		// Called AFTER confidence buckets are classified so every row is complete.
-		candidates := buildCandidateRows(tenantID, job.AttachmentJobID, obs.SettlementObservationID, scored, intents)
+		candidates := buildCandidateRows(tenantID, job.AttachmentJobID, intent.IntentID, scored, observations)
 		allCandidates = append(allCandidates, candidates...)
 
+		var topObs models.CanonicalSettlementObservation
+		if len(scored) > 0 {
+			for _, o := range observations {
+				if o.SettlementObservationID == scored[0].SettlementObservationID {
+					topObs = o
+					break
+				}
+			}
+		}
 
-		// Updated signatures: pass obs and policy so scores reflect candidate
-		// set size, source strength, carrier richness, and parse/mapping quality.
-		ambiguityScore := ComputeAmbiguityScore(scored, decisionType, obs, policy)
+		ambiguityScore := ComputeAmbiguityScore(scored, decisionType, topObs, policy)
 
 		var (
-			winnerIntentID *uuid.UUID
-			winningScore   float64
-			runnerUpScore  *float64
-			scoreMargin    *float64
-			confScore      float64
-			relMargin      *float64
+			winnerObsID   *uuid.UUID
+			winningScore  float64
+			runnerUpScore *float64
+			scoreMargin   *float64
+			confScore     float64
+			matchConf     float64
+			relMargin     *float64
 		)
 
 		if len(scored) > 0 {
-			topID := scored[0].IntentID.(uuid.UUID)
-			winnerIntentID = &topID
+			topID := scored[0].SettlementObservationID
+			winnerObsID = &topID
 			winningScore = scored[0].Total
-			// Updated signature: pass full ranked list, obs, and policy.
-			confScore = ComputeConfidenceScore(scored[0], decisionType, scored, obs, policy)
+			confScore = ComputeConfidenceScore(scored[0], decisionType, scored, topObs, policy)
+			matchConf = ComputeMatchConfidence(scored[0])
 		}
 
-		// For AMBIGUOUS / CONFLICTED decisions — do NOT set winnerIntentID.
 		if decisionType == models.DecisionMatchAmbiguous ||
-			decisionType == models.DecisionMatchConflicted {
-			winnerIntentID = nil
+			decisionType == models.DecisionMatchConflicted ||
+			decisionType == models.DecisionMatchUnresolved {
+			winnerObsID = nil
 		}
 
-		// INTRA-JOB DEDUPLICATION:
-		// If the winner has already been claimed by another observation in this job,
-		// we must demote this match to prevent double-attachment.
-		if winnerIntentID != nil && claimedIntentIDs[*winnerIntentID] {
-			log.Printf("attachment.engine.double_match_detected obs=%s intent=%s - demoting to AMBIGUOUS",
-				obs.SettlementObservationID, *winnerIntentID)
+		if winnerObsID != nil && claimedObservationIDs[*winnerObsID] {
+			log.Printf("attachment.engine.double_match_detected intent=%s obs=%s - demoting to AMBIGUOUS",
+				intent.IntentID, *winnerObsID)
 			decisionType = models.DecisionMatchAmbiguous
-			reasonCode = "INTENT_ALREADY_CLAIMED_IN_JOB"
-			winnerIntentID = nil
+			reasonCode = "OBSERVATION_ALREADY_CLAIMED_IN_JOB"
+			winnerObsID = nil
 		}
 
 		if len(scored) > 1 {
@@ -339,27 +386,30 @@ func (e *AttachmentEngine) runAttachment(
 			relMargin = &rm
 		}
 
-		// Track decision types per candidate intent for the reverse scan.
 		for _, cs := range scored {
-			intentID := cs.IntentID.(uuid.UUID)
-			intentDecisionTypes[intentID] = append(intentDecisionTypes[intentID], decisionType)
+			obsID := cs.SettlementObservationID
+			obsDecisionTypes[obsID] = append(obsDecisionTypes[obsID], decisionType)
 		}
 
-		// Mark winner as matched (only for strong decisions).
-		if winnerIntentID != nil &&
+		if winnerObsID != nil &&
 			(decisionType == models.DecisionMatchExact || decisionType == models.DecisionMatchHighConfidence) {
-			matchedIntentIDs[*winnerIntentID] = true
-			claimedIntentIDs[*winnerIntentID] = true
+			matchedObservationIDs[*winnerObsID] = true
+			claimedObservationIDs[*winnerObsID] = true
 		}
 
-		// Build supporting carriers summary.
-		carriers := buildSupportingCarriers(obs)
+		var topScore *CandidateScore
+		if len(scored) > 0 {
+			topScore = &scored[0]
+		}
+		var topObsPtr *models.CanonicalSettlementObservation
+		if len(scored) > 0 && topObs.SettlementObservationID != uuid.Nil {
+			topObsPtr = &topObs
+		}
+		carriers := buildMatchEvidenceCarriers(intent, topObsPtr, topScore)
 		carriersJSON, _ := json.Marshal(carriers)
 
-		// Candidate set hash — deterministic fingerprint of the full candidate set for audit integrity.
-		candidateSetHash := computeCandidateSetHash(obs.SettlementObservationID, RulesetVersion, scored)
+		candidateSetHash := computeCandidateSetHash(intent.IntentID, RulesetVersion, scored)
 
-		// Decision reason detail.
 		reasonDetail := map[string]interface{}{
 			"candidate_count": len(scored),
 			"decision_type":   decisionType,
@@ -368,14 +418,17 @@ func (e *AttachmentEngine) runAttachment(
 		if len(scored) > 0 {
 			reasonDetail["top_score"] = scored[0].Total
 			reasonDetail["top_confidence_bucket"] = scored[0].ConfidenceBucket
+			reasonDetail["has_hard_conflict"] = scored[0].HasHardConflict
+			reasonDetail["has_any_conflict"] = scored[0].HasAnyConflict
+			reasonDetail["score_breakdown"] = scored[0].Breakdown
 		}
 		reasonDetailJSON, _ := json.Marshal(reasonDetail)
 
 		decision := models.AttachmentDecision{
 			AttachmentDecisionID:     uuid.New(),
 			TenantID:                 tenantID,
-			SettlementObservationID:  obs.SettlementObservationID,
-			IntentID:                 winnerIntentID,
+			SettlementObservationID:  winnerObsID,
+			IntentID:                 intent.IntentID,
 			AttachmentJobID:          job.AttachmentJobID,
 			DecisionType:             decisionType,
 			DecisionReasonCode:       reasonCode,
@@ -386,6 +439,7 @@ func (e *AttachmentEngine) runAttachment(
 			ScoreMargin:              scoreMargin,
 			RelativeScoreMargin:      relMargin,
 			ConfidenceScore:          confScore,
+			MatchConfidence:          matchConf,
 			AmbiguityScore:           ambiguityScore,
 			SupportingCarriersJSON:   carriersJSON,
 			CandidateSetHash:         candidateSetHash,
@@ -396,31 +450,34 @@ func (e *AttachmentEngine) runAttachment(
 		}
 		allDecisions = append(allDecisions, decision)
 
-		// Step 6: Compute variance for attached pairs only.
-		if winnerIntentID != nil {
-			winnerIntent := findIntentByID(intents, *winnerIntentID)
-			if winnerIntent != nil {
-				intentsMap[*winnerIntentID] = winnerIntent
-				if clientBatchRef == nil && winnerIntent.ClientBatchRef != nil {
-					clientBatchRef = winnerIntent.ClientBatchRef
+		if winnerObsID != nil {
+			var winnerObservation *models.CanonicalSettlementObservation
+			for _, o := range observations {
+				if o.SettlementObservationID == *winnerObsID {
+					winnerObservation = &o
+					break
 				}
-				totalIntendedAmount = totalIntendedAmount.Add(winnerIntent.Amount)
+			}
+			if winnerObservation != nil {
+				if clientBatchRef == nil && intent.ClientBatchRef != nil {
+					clientBatchRef = intent.ClientBatchRef
+				}
+				totalIntendedAmount = totalIntendedAmount.Add(intent.Amount)
 				amtVariance, feeVar, dedVar, severity, flags, reasons := ComputeVariance(VarianceInputs{
-					Intent:      *winnerIntent,
-					Observation: obs,
+					Intent:      intent,
+					Observation: *winnerObservation,
 				})
-				delayDays := computeDelayDays(*winnerIntent, obs)
+				delayDays := computeDelayDays(intent, *winnerObservation)
 				reasonsJSON, _ := json.Marshal(reasons)
 
-				// Derive variance_type from the computed flags and amounts.
-				varianceType := classifyVarianceType(amtVariance, flags, obs)
+				varianceType := classifyVarianceType(amtVariance, flags, *winnerObservation)
 
 				vr := models.VarianceRecord{
 					VarianceRecordID:        uuid.New(),
 					TenantID:                tenantID,
 					AttachmentDecisionID:    decision.AttachmentDecisionID,
-					IntentID:                *winnerIntentID,
-					SettlementObservationID: obs.SettlementObservationID,
+					IntentID:                intent.IntentID,
+					SettlementObservationID: *winnerObsID,
 					AmountVariance:          amtVariance,
 					FeeVariance:             feeVar,
 					DeductionVariance:       dedVar,
@@ -435,20 +492,13 @@ func (e *AttachmentEngine) runAttachment(
 					VarianceType:            varianceType,
 					VarianceSeverity:        severity,
 					VarianceReasonCodesJSON: reasonsJSON,
-					// Whitelist fields default to false/nil — a separate whitelist
-					// policy service populates these in a subsequent pass.
-					IsWhitelisted:          false,
-					WhitelistPolicyID:      nil,
-					WhitelistPolicyVersion: nil,
-					WhitelistReasonCode:    nil,
-					WhitelistExplanation:   nil,
-					CreatedAt:              time.Now().UTC(),
+					IsWhitelisted:           false,
+					CreatedAt:               time.Now().UTC(),
 				}
 				allVariances = append(allVariances, vr)
 			}
 		}
 
-		// Update counters.
 		switch decisionType {
 		case models.DecisionMatchExact:
 			counters.exact++
@@ -463,41 +513,42 @@ func (e *AttachmentEngine) runAttachment(
 		}
 	}
 
-	// ── Reverse scan: find intents with no strong observation match ───────
-	// Only runs for SETTLEMENT_BATCH scope.
-	//
-	// Fallback: if the DB-based masterIntentMap is empty (e.g. client_batch_ref
-	// on canonical_intents does not match the scopeRef), fall back to every
-	// intent that appeared as a candidate during the forward scan. This ensures
-	// ambiguous / conflicted / low-confidence intents still generate
-	// UnresolvedIntentRecords even when the batch-ref lookup fails.
-	if scopeType == models.JobScopeSettlementBatch && len(masterIntentMap) == 0 && len(allScannedIntentsMap) > 0 {
-		log.Printf("attachment.engine.reverse_scan_fallback job=%s: masterIntentMap empty, using %d forward-scan intents as fallback",
-			job.AttachmentJobID, len(allScannedIntentsMap))
-		masterIntentMap = allScannedIntentsMap
+	var allOrphans []models.OrphanSettlementRecord
+	effectiveObservationMap := masterObservationMap
+	if len(effectiveObservationMap) == 0 && len(allScannedObservationsMap) > 0 {
+		effectiveObservationMap = allScannedObservationsMap
 	}
 
-	var allUnresolvedIntents []models.UnresolvedIntentRecord
-	if scopeType == models.JobScopeSettlementBatch && len(masterIntentMap) > 0 {
-		allUnresolvedIntents = performReverseScan(
-			tenantID,
-			job.AttachmentJobID,
-			scopeRef,
-			masterIntentMap,
-			matchedIntentIDs,
-			intentDecisionTypes,
-			policy,
-		)
+	var originalObservationAmount decimal.Decimal
+	obsAmountMap := make(map[uuid.UUID]decimal.Decimal)
+	for id, obs := range effectiveObservationMap {
+		originalObservationAmount = originalObservationAmount.Add(obs.Amount)
+		obsAmountMap[id] = obs.Amount
+	}
+
+	if scopeType == models.JobScopeSettlementBatch || scopeType == models.JobScopeIngestRun {
+		if len(effectiveObservationMap) > 0 {
+			allOrphans = performReverseScanOrphans(
+				tenantID,
+				job.AttachmentJobID,
+				scopeRef,
+				effectiveObservationMap,
+				matchedObservationIDs,
+				obsDecisionTypes,
+				policy,
+			)
+		}
 	}
 
 	// ── Step 7: Persist all outputs transactionally ───────────────────────
 	// Batch summary is computed here and passed into the transaction so it is
 	// written atomically with candidates, decisions, variances, and the job
 	// status update. No separate call after commit.
-	batchSummary := computeBatchSummary(tenantID, job.AttachmentJobID, scopeRef, clientBatchRef, observations, allDecisions, allVariances, totalIntendedAmount)
+	unresolvedIntents := buildUnresolvedIntentRecords(tenantID, job.AttachmentJobID, clientBatchRef, intents, allDecisions)
+	batchSummary := computeBatchSummary(tenantID, job.AttachmentJobID, scopeRef, clientBatchRef, intents, allDecisions, allVariances, allOrphans, obsAmountMap, totalIntendedAmount, originalObservationAmount)
 	if err := persistAttachmentOutputs(
 		ctx, job,
-		allCandidates, allDecisions, allVariances, allUnresolvedIntents,
+		allCandidates, allDecisions, allVariances, allOrphans, unresolvedIntents,
 		batchSummary,
 		counters.exact, counters.high, counters.ambiguous, counters.unresolved, counters.conflicted,
 	); err != nil {
@@ -505,11 +556,23 @@ func (e *AttachmentEngine) runAttachment(
 	}
 
 	// Build observation map keyed by settlement_observation_id.
-	obsMap := make(map[uuid.UUID]*models.CanonicalSettlementObservation, len(observations))
-	rowRefs := make([]string, 0, len(observations))
-	for i := range observations {
-		obsMap[observations[i].SettlementObservationID] = &observations[i]
-		rowRefs = append(rowRefs, observations[i].SourceRowRef)
+	obsMap := make(map[uuid.UUID]*models.CanonicalSettlementObservation)
+	var rowRefs []string
+	for id, obs := range masterObservationMap {
+		o := obs
+		obsMap[id] = &o
+		if o.SourceRowRef != "" {
+			rowRefs = append(rowRefs, o.SourceRowRef)
+		}
+	}
+	for id, obs := range allScannedObservationsMap {
+		if _, exists := obsMap[id]; !exists {
+			o := obs
+			obsMap[id] = &o
+			if o.SourceRowRef != "" {
+				rowRefs = append(rowRefs, o.SourceRowRef)
+			}
+		}
 	}
 
 	// ── Step 8: Emit downstream events (internal ops topics) ────────────
@@ -532,8 +595,8 @@ func (e *AttachmentEngine) runAttachment(
 		log.Printf("attachment.engine.leaf_bundle_failed job=%s err=%v", job.AttachmentJobID, err)
 	}
 
-	log.Printf("attachment.engine.done job=%s exact=%d high=%d ambiguous=%d unresolved=%d conflicted=%d reverse_scan_unresolved=%d",
-		job.AttachmentJobID, counters.exact, counters.high, counters.ambiguous, counters.unresolved, counters.conflicted, len(allUnresolvedIntents))
+	log.Printf("attachment.engine.done job=%s exact=%d high=%d ambiguous=%d unresolved=%d conflicted=%d reverse_scan_orphans=%d unresolved_intents=%d",
+		job.AttachmentJobID, counters.exact, counters.high, counters.ambiguous, counters.unresolved, counters.conflicted, len(allOrphans), len(unresolvedIntents))
 
 	return job, nil
 }
@@ -542,41 +605,27 @@ func (e *AttachmentEngine) runAttachment(
 // REVERSE SCAN
 // ─────────────────────────────────────────────────────────────────────────────
 
-// performReverseScan iterates every intent in the master list and produces an
-// UnresolvedIntentRecord for any intent that was not strongly matched
+// performReverseScanOrphans iterates every observation in the master list and produces an
+// OrphanSettlementRecord for any observation that was not strongly matched
 // (MATCH_EXACT or MATCH_HIGH_CONFIDENCE) during this job.
-//
-// Reason code logic (PDF review section 10):
-//   - If the intent appeared as a candidate in at least one MATCH_AMBIGUOUS
-//     decision → ONLY_AMBIGUOUS_CANDIDATES_FOUND
-//   - If the intent appeared as a candidate in at least one MATCH_CONFLICTED
-//     decision → ONLY_CONFLICTED_CANDIDATES_FOUND
-//   - Otherwise → NO_SETTLEMENT_OBSERVATION_FOUND
-func performReverseScan(
+func performReverseScanOrphans(
 	tenantID uuid.UUID,
 	jobID uuid.UUID,
 	batchRef string,
-	masterIntentMap map[uuid.UUID]models.CanonicalIntent,
-	matchedIntentIDs map[uuid.UUID]bool,
-	intentDecisionTypes map[uuid.UUID][]string,
+	masterObservationMap map[uuid.UUID]models.CanonicalSettlementObservation,
+	matchedObservationIDs map[uuid.UUID]bool,
+	obsDecisionTypes map[uuid.UUID][]string,
 	policy AttachmentPolicyConfig,
-) []models.UnresolvedIntentRecord {
-	var records []models.UnresolvedIntentRecord
+) []models.OrphanSettlementRecord {
+	var records []models.OrphanSettlementRecord
 
-	windowHours := policy.TimeWindow.MaxHoursDifference
-	if windowHours <= 0 {
-		windowHours = 72
-	}
-
-	for intentID, intent := range masterIntentMap {
-		if matchedIntentIDs[intentID] {
-			// This intent was strongly matched — nothing to record.
+	for obsID, obs := range masterObservationMap {
+		if matchedObservationIDs[obsID] {
 			continue
 		}
 
-		// Determine reason code from candidate-level decision types.
-		reasonCode := models.UnresolvedReasonNoSettlementObservationFound
-		decisionTypes := intentDecisionTypes[intentID]
+		reasonCode := "NO_INTENT_FOUND"
+		decisionTypes := obsDecisionTypes[obsID]
 		hasAmbiguous := false
 		hasConflicted := false
 		for _, dt := range decisionTypes {
@@ -587,35 +636,25 @@ func performReverseScan(
 				hasConflicted = true
 			}
 		}
-		// CONFLICTED takes precedence over AMBIGUOUS.
 		switch {
 		case hasConflicted:
-			reasonCode = models.UnresolvedReasonOnlyConflictedCandidatesFound
+			reasonCode = "ONLY_CONFLICTED_CANDIDATES_FOUND"
 		case hasAmbiguous:
-			reasonCode = models.UnresolvedReasonOnlyAmbiguousCandidatesFound
-		}
-
-		// expected_window_end = intent.IntendedExecutionAt + time window hours.
-		// If the intent has no IntendedExecutionAt, leave the field nil.
-		var expectedWindowEnd *time.Time
-		if intent.IntendedExecutionAt != nil {
-			t := intent.IntendedExecutionAt.Add(time.Duration(windowHours) * time.Hour)
-			expectedWindowEnd = &t
+			reasonCode = "ONLY_AMBIGUOUS_CANDIDATES_FOUND"
 		}
 
 		batchID := &batchRef
 
-		records = append(records, models.UnresolvedIntentRecord{
-			UnresolvedID:      uuid.New(),
-			TenantID:          tenantID,
-			AttachmentJobID:   jobID,
-			IntentID:          intentID,
-			BatchID:           batchID,
-			ExpectedWindowEnd: expectedWindowEnd,
-			ReasonCode:        reasonCode,
-			Amount:            intent.Amount,
-			CurrencyCode:      intent.CurrencyCode,
-			CreatedAt:         time.Now().UTC(),
+		records = append(records, models.OrphanSettlementRecord{
+			OrphanID:                uuid.New(),
+			TenantID:                tenantID,
+			AttachmentJobID:         jobID,
+			SettlementObservationID: obsID,
+			BatchID:                 batchID,
+			UnresolvedReason:        reasonCode,
+			Amount:                  obs.Amount,
+			CurrencyCode:            obs.CurrencyCode,
+			CreatedAt:               time.Now().UTC(),
 		})
 	}
 
@@ -626,98 +665,158 @@ func performReverseScan(
 // CANDIDATE DISCOVERY
 // ─────────────────────────────────────────────────────────────────────────────
 
-// findCandidateIntents builds the candidate intent set for one settlement observation.
+// loadPreviouslyDecidedIntentIDs fetches all intent IDs for the tenant that have already
+// been strongly matched in the past. We preload this into a map at the start of a job
+// to avoid executing N+1 EXISTS queries in the database.
+// loadPreviouslyDecidedObservationIDs fetches all observation IDs for the tenant that have already
+// been strongly matched in the past.
+func loadPreviouslyDecidedObservationIDs(ctx context.Context, tenantID uuid.UUID) (map[uuid.UUID]bool, error) {
+	rows, err := db.DB.QueryContext(ctx, `
+		SELECT settlement_observation_id FROM attachment_decisions 
+		WHERE tenant_id = $1 AND decision_type IN ('MATCH_EXACT', 'MATCH_HIGH_CONFIDENCE')
+		  AND settlement_observation_id IS NOT NULL
+	`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("query attachment_decisions: %w", err)
+	}
+	defer rows.Close()
+
+	excluded := make(map[uuid.UUID]bool)
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		excluded[id] = true
+	}
+	return excluded, rows.Err()
+}
+
+// findCandidateObservations builds the candidate observation set for one canonical intent.
 // Multi-index search: tenant + references, source system, and amount/currency/time.
-func findCandidateIntents(
+func findCandidateObservations(
 	ctx context.Context,
 	tenantID uuid.UUID,
-	obs models.CanonicalSettlementObservation,
-) ([]models.CanonicalIntent, error) {
-
-	// Build a union query that finds intents matching ANY of:
-	//   (a) same client_payout_ref
-	//   (b) same client_batch_ref
-	//   (c) same amount + currency (within time window)
-	//   (d) same source system hint (provider_hint)
-	// Deduplication is handled via DISTINCT on intent_id.
+	intent models.CanonicalIntent,
+	excludedObservationIDs map[uuid.UUID]bool,
+	ingestRunID string,
+) ([]models.CanonicalSettlementObservation, error) {
 
 	query := `
-		SELECT DISTINCT
-			intent_id, tenant_id,
-			client_payout_ref, client_batch_ref, business_idempotency_key,
- 			amount, currency_code,
-			intended_execution_at, payout_type, provider_hint, corridor,
-			proof_readiness_score, matchability_score,
-			canonical_hash, governance_state,
+		SELECT
+			settlement_observation_id, tenant_id, trace_id,
+			settlement_envelope_id, ingest_run_id,
+			source_file_ref, source_row_ref, source_system,
+			observation_kind, source_strength_class,
+			client_reference_candidate, provider_reference, bank_reference,
+			external_reference, batch_reference,
+			amount, settled_amount, fee_amount, deduction_amount,
+			currency_code, settlement_status,
+			retry_flag, reversal_flag, return_flag,
+			observation_timestamp, value_date,
+			provider_ref_status,
+			mapping_profile_id, mapping_profile_version,
+			parse_confidence, mapping_confidence,
+			carrier_richness_score, attachment_readiness_score,
+			canonical_hash, client_batch_id, COALESCE(corridor_id, ''),
 			beneficiary_fingerprint, zord_signature_carrier,
-			created_at
-		FROM canonical_intents ci
+			created_at, updated_at
+		FROM canonical_settlement_observations cso
 		WHERE tenant_id = $1
+		  AND ($8 = '' OR cso.ingest_run_id = $8)
 		  AND NOT EXISTS (
 		      SELECT 1 FROM attachment_decisions ad 
-		      WHERE ad.intent_id = ci.intent_id 
+		      WHERE ad.settlement_observation_id = cso.settlement_observation_id 
 		        AND ad.decision_type IN ('MATCH_EXACT', 'MATCH_HIGH_CONFIDENCE')
 		  )
 		  AND (
-		    ($2 != '' AND client_payout_ref = $2)
-		    OR ($3 != '' AND client_batch_ref = $3)
-		    OR ($8 != '' AND provider_hint = $8)
+		    ($2 != '' AND LOWER(client_reference_candidate) = LOWER($2))
+		    OR ($3 != '' AND LOWER(batch_reference) = LOWER($3))
+		    OR ($3 != '' AND LOWER(client_batch_id) = LOWER($3))
 		    OR (
 		      amount = $4
 		      AND currency_code = $5
-		      AND (intended_execution_at IS NULL
-		           OR intended_execution_at BETWEEN $6 AND $7)
+		      AND observation_timestamp BETWEEN $6 AND $7
 		    )
 		  )
-		ORDER BY intent_id
+		ORDER BY
+		  CASE
+		    WHEN $2 != '' AND LOWER(client_reference_candidate) = LOWER($2) THEN 0
+		    WHEN $3 != '' AND (LOWER(batch_reference) = LOWER($3) OR LOWER(client_batch_id) = LOWER($3))
+		         AND amount = $4 AND currency_code = $5 AND observation_timestamp BETWEEN $6 AND $7 THEN 1
+		    WHEN amount = $4 AND currency_code = $5 AND observation_timestamp BETWEEN $6 AND $7 THEN 2
+		    WHEN $3 != '' AND (LOWER(batch_reference) = LOWER($3) OR LOWER(client_batch_id) = LOWER($3)) THEN 3
+		    ELSE 4
+		  END,
+		  observation_timestamp,
+		  settlement_observation_id
 		LIMIT 200`
 
-	windowStart := obs.ObservationTimestamp.Add(-72 * time.Hour)
-	windowEnd := obs.ObservationTimestamp.Add(72 * time.Hour)
+	var windowStart, windowEnd time.Time
+	if intent.IntendedExecutionAt != nil {
+		windowStart = intent.IntendedExecutionAt.Add(-72 * time.Hour)
+		windowEnd = intent.IntendedExecutionAt.Add(72 * time.Hour)
+	} else {
+		windowStart = time.Now().Add(-8760 * time.Hour) // fallback 1 year
+		windowEnd = time.Now().Add(8760 * time.Hour)
+	}
 
 	clientRef := ""
-	if obs.ClientReferenceCandidate != nil {
-		clientRef = *obs.ClientReferenceCandidate
+	if intent.ClientPayoutRef != nil {
+		clientRef = *intent.ClientPayoutRef
 	}
 	batchRef := ""
-	if obs.BatchReference != nil {
-		batchRef = *obs.BatchReference
+	if intent.ClientBatchRef != nil {
+		batchRef = *intent.ClientBatchRef
 	}
+
 	rows, err := db.DB.QueryContext(ctx, query,
 		tenantID,
 		clientRef,
 		batchRef,
-		obs.Amount,
-		obs.CurrencyCode,
+		intent.Amount,
+		intent.CurrencyCode,
 		windowStart,
 		windowEnd,
-		obs.SourceSystem,
+		ingestRunID,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("findCandidateIntents: query: %w", err)
+		return nil, fmt.Errorf("findCandidateObservations: query: %w", err)
 	}
 	defer rows.Close()
 
-	var intents []models.CanonicalIntent
+	var observations []models.CanonicalSettlementObservation
 	for rows.Next() {
-		var intent models.CanonicalIntent
+		var o models.CanonicalSettlementObservation
 		err := rows.Scan(
-			&intent.IntentID, &intent.TenantID,
-			&intent.ClientPayoutRef, &intent.ClientBatchRef, &intent.BusinessIdempotencyKey,
-			&intent.Amount, &intent.CurrencyCode,
-			&intent.IntendedExecutionAt, &intent.PayoutType, &intent.ProviderHint, &intent.Corridor,
-			&intent.ProofReadinessScore, &intent.MatchabilityScore,
-			&intent.CanonicalHash, &intent.GovernanceState,
-			&intent.BeneficiaryFingerprint, &intent.ZordSignatureCarrier,
-			&intent.CreatedAt,
+			&o.SettlementObservationID, &o.TenantID, &o.TraceID,
+			&o.SettlementEnvelopeID, &o.IngestRunID,
+			&o.SourceFileRef, &o.SourceRowRef, &o.SourceSystem,
+			&o.ObservationKind, &o.SourceStrengthClass,
+			&o.ClientReferenceCandidate, &o.ProviderReference, &o.BankReference,
+			&o.ExternalReference, &o.BatchReference,
+			&o.Amount, &o.SettledAmount, &o.FeeAmount, &o.DeductionAmount,
+			&o.CurrencyCode, &o.SettlementStatus,
+			&o.RetryFlag, &o.ReversalFlag, &o.ReturnFlag,
+			&o.ObservationTimestamp, &o.ValueDate,
+			&o.ProviderRefStatus,
+			&o.MappingProfileID, &o.MappingProfileVersion,
+			&o.ParseConfidence, &o.MappingConfidence,
+			&o.CarrierRichnessScore, &o.AttachmentReadinessScore,
+			&o.CanonicalHash, &o.ClientBatchID, &o.CorridorID,
+			&o.BeneficiaryFingerprint, &o.ZordSignatureCarrier,
+			&o.CreatedAt, &o.UpdatedAt,
 		)
 		if err != nil {
-			log.Printf("attachment.engine.intent_scan_err: %v", err)
+			log.Printf("attachment.engine.obs_scan_err: %v", err)
 			continue
 		}
-		intents = append(intents, intent)
+		if excludedObservationIDs[o.SettlementObservationID] {
+			continue // Skip already claimed observations
+		}
+		observations = append(observations, o)
 	}
-	return intents, rows.Err()
+	return observations, rows.Err()
 }
 
 // loadMasterIntentsByBatchRef fetches all canonical intents for a given
@@ -771,6 +870,114 @@ func loadMasterIntentsByBatchRef(
 	return result, rows.Err()
 }
 
+func loadIntentsByClientPayoutRefs(
+	ctx context.Context,
+	tenantID uuid.UUID,
+	clientRefs []string,
+) (map[uuid.UUID]models.CanonicalIntent, error) {
+	result := make(map[uuid.UUID]models.CanonicalIntent)
+	if len(clientRefs) == 0 {
+		return result, nil
+	}
+
+	rows, err := db.DB.QueryContext(ctx, `
+		SELECT
+			intent_id, tenant_id,
+			client_payout_ref, client_batch_ref, business_idempotency_key,
+			amount, currency_code,
+			intended_execution_at, payout_type, provider_hint, corridor,
+			proof_readiness_score, matchability_score,
+			canonical_hash, governance_state,
+			beneficiary_fingerprint, zord_signature_carrier,
+			created_at
+		FROM canonical_intents
+		WHERE tenant_id = $1 AND LOWER(client_payout_ref) = ANY($2)
+		ORDER BY intent_id`,
+		tenantID, pq.Array(clientRefs),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("loadIntentsByClientPayoutRefs: query: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var intent models.CanonicalIntent
+		if err := rows.Scan(
+			&intent.IntentID, &intent.TenantID,
+			&intent.ClientPayoutRef, &intent.ClientBatchRef, &intent.BusinessIdempotencyKey,
+			&intent.Amount, &intent.CurrencyCode,
+			&intent.IntendedExecutionAt, &intent.PayoutType, &intent.ProviderHint, &intent.Corridor,
+			&intent.ProofReadinessScore, &intent.MatchabilityScore,
+			&intent.CanonicalHash, &intent.GovernanceState,
+			&intent.BeneficiaryFingerprint, &intent.ZordSignatureCarrier,
+			&intent.CreatedAt,
+		); err != nil {
+			log.Printf("loadIntentsByClientPayoutRefs: scan: %v", err)
+			continue
+		}
+		result[intent.IntentID] = intent
+	}
+	return result, rows.Err()
+}
+
+// loadMasterObservationsByBatchRef fetches all canonical observations for a given
+// batch ref. Used by the reverse scan to identify orphaned observations.
+func loadMasterObservationsByBatchRef(
+	ctx context.Context,
+	tenantID uuid.UUID,
+	batchRef string,
+) (map[uuid.UUID]models.CanonicalSettlementObservation, error) {
+	obsList, err := loadObservationsByBatch(ctx, tenantID, batchRef)
+	if err != nil {
+		return nil, fmt.Errorf("loadMasterObservationsByBatchRef: %w", err)
+	}
+
+	result := make(map[uuid.UUID]models.CanonicalSettlementObservation)
+	for _, o := range obsList {
+		result[o.SettlementObservationID] = o
+	}
+	return result, nil
+}
+
+func loadIntentByID(ctx context.Context, tenantID uuid.UUID, intentID uuid.UUID) (*models.CanonicalIntent, error) {
+	rows, err := db.DB.QueryContext(ctx, `
+		SELECT
+			intent_id, tenant_id,
+			client_payout_ref, client_batch_ref, business_idempotency_key,
+			amount, currency_code,
+			intended_execution_at, payout_type, provider_hint, corridor,
+			proof_readiness_score, matchability_score,
+			canonical_hash, governance_state,
+			beneficiary_fingerprint, zord_signature_carrier,
+			created_at
+		FROM canonical_intents
+		WHERE tenant_id = $1 AND intent_id = $2`,
+		tenantID, intentID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	if rows.Next() {
+		var intent models.CanonicalIntent
+		if err := rows.Scan(
+			&intent.IntentID, &intent.TenantID,
+			&intent.ClientPayoutRef, &intent.ClientBatchRef, &intent.BusinessIdempotencyKey,
+			&intent.Amount, &intent.CurrencyCode,
+			&intent.IntendedExecutionAt, &intent.PayoutType, &intent.ProviderHint, &intent.Corridor,
+			&intent.ProofReadinessScore, &intent.MatchabilityScore,
+			&intent.CanonicalHash, &intent.GovernanceState,
+			&intent.BeneficiaryFingerprint, &intent.ZordSignatureCarrier,
+			&intent.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		return &intent, nil
+	}
+	return nil, fmt.Errorf("intent not found: %s", intentID)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -778,14 +985,14 @@ func loadMasterIntentsByBatchRef(
 func buildCandidateRows(
 	tenantID uuid.UUID,
 	jobID uuid.UUID,
-	obsID uuid.UUID,
+	intentID uuid.UUID,
 	scored []CandidateScore,
-	intents []models.CanonicalIntent,
+	observations []models.CanonicalSettlementObservation,
 ) []models.AttachmentCandidate {
 	candidates := make([]models.AttachmentCandidate, 0, len(scored))
 	for rank, cs := range scored {
 		breakdownJSON, _ := json.Marshal(cs.Breakdown)
-		intentID := cs.IntentID.(uuid.UUID)
+		obsID := cs.SettlementObservationID
 		candidates = append(candidates, models.AttachmentCandidate{
 			CandidateID:             uuid.New(),
 			AttachmentJobID:         jobID,
@@ -813,12 +1020,13 @@ func buildCandidateRows(
 	return candidates
 }
 
-func buildUnresolvedDecision(tenantID uuid.UUID, obsID uuid.UUID, jobID uuid.UUID, reasonCode string) models.AttachmentDecision {
+func buildUnresolvedDecision(tenantID uuid.UUID, intentID uuid.UUID, jobID uuid.UUID, reasonCode string) models.AttachmentDecision {
 	detail, _ := json.Marshal(map[string]string{"reason": reasonCode})
 	return models.AttachmentDecision{
 		AttachmentDecisionID:     uuid.New(),
 		TenantID:                 tenantID,
-		SettlementObservationID:  obsID,
+		SettlementObservationID:  nil,
+		IntentID:                 intentID,
 		AttachmentJobID:          jobID,
 		DecisionType:             models.DecisionMatchUnresolved,
 		DecisionReasonCode:       reasonCode,
@@ -831,71 +1039,132 @@ func buildUnresolvedDecision(tenantID uuid.UUID, obsID uuid.UUID, jobID uuid.UUI
 	}
 }
 
-func buildSupportingCarriers(obs models.CanonicalSettlementObservation) map[string]interface{} {
-	carriers := map[string]interface{}{
-		"amount":                obs.Amount,
-		"currency_code":         obs.CurrencyCode,
-		"attachment_readiness":  obs.AttachmentReadinessScore,
-		"carrier_richness":      obs.CarrierRichnessScore,
-		"source_strength_class": obs.SourceStrengthClass,
-		"parse_confidence":      obs.ParseConfidence,
-		"observation_timestamp": obs.ObservationTimestamp,
+func buildMatchEvidenceCarriers(
+	intent models.CanonicalIntent,
+	obs *models.CanonicalSettlementObservation,
+	topScore *CandidateScore,
+) map[string]interface{} {
+	intentCarriers := map[string]interface{}{
+		"intent_id":     intent.IntentID.String(),
+		"amount":        intent.Amount,
+		"currency_code": intent.CurrencyCode,
 	}
-	if obs.ClientReferenceCandidate != nil {
-		carriers["client_reference_candidate"] = *obs.ClientReferenceCandidate
+	if intent.ClientPayoutRef != nil {
+		intentCarriers["client_payout_ref"] = *intent.ClientPayoutRef
 	}
-	if obs.ProviderReference != nil {
-		carriers["provider_reference"] = *obs.ProviderReference
+	if intent.ClientBatchRef != nil {
+		intentCarriers["client_batch_ref"] = *intent.ClientBatchRef
 	}
-	if obs.BankReference != nil {
-		carriers["bank_reference"] = *obs.BankReference
+	if intent.BusinessIdempotencyKey != nil {
+		intentCarriers["business_idempotency_key"] = *intent.BusinessIdempotencyKey
 	}
-	if obs.BatchReference != nil {
-		carriers["batch_reference"] = *obs.BatchReference
+	if intent.ZordSignatureCarrier != nil {
+		intentCarriers["zord_signature_carrier"] = *intent.ZordSignatureCarrier
 	}
-	if obs.BeneficiaryFingerprint != nil {
-		carriers["beneficiary_fingerprint"] = *obs.BeneficiaryFingerprint
+	if intent.BeneficiaryFingerprint != nil {
+		intentCarriers["beneficiary_fingerprint"] = *intent.BeneficiaryFingerprint
 	}
-	if obs.ZordSignatureCarrier != nil {
-		carriers["zord_signature_carrier"] = *obs.ZordSignatureCarrier
+	if intent.IntendedExecutionAt != nil {
+		intentCarriers["intended_execution_at"] = intent.IntendedExecutionAt.UTC().Format(time.RFC3339)
 	}
-	return carriers
+	if intent.ProviderHint != nil {
+		intentCarriers["provider_hint"] = *intent.ProviderHint
+	}
+	if intent.Corridor != nil {
+		intentCarriers["corridor"] = *intent.Corridor
+	}
+
+	result := map[string]interface{}{
+		"intent_carriers": intentCarriers,
+	}
+
+	if topScore != nil {
+		result["match_flags"] = map[string]interface{}{
+			"exact_ref_match":        topScore.ExactRefMatch,
+			"client_ref_match":       topScore.ClientRefMatch,
+			"provider_ref_match":     topScore.ProviderRefMatch,
+			"bank_ref_match":         topScore.BankRefMatch,
+			"batch_match":            topScore.BatchMatch,
+			"amount_match":           topScore.AmountMatch,
+			"currency_match":         topScore.CurrencyMatch,
+			"time_window_match":      topScore.TimeWindowMatch,
+			"source_system_match":    topScore.SourceSystemMatch,
+			"zord_signature_match":   topScore.ZordSignatureMatch,
+			"composite_match":        topScore.CompositeMatch,
+			"has_hard_conflict":      topScore.HasHardConflict,
+			"has_any_conflict":       topScore.HasAnyConflict,
+		}
+	}
+
+	if obs != nil {
+		obsCarriers := map[string]interface{}{
+			"settlement_observation_id": obs.SettlementObservationID.String(),
+			"amount":                    obs.Amount,
+			"currency_code":             obs.CurrencyCode,
+			"observation_timestamp":     obs.ObservationTimestamp,
+			"source_strength_class":     obs.SourceStrengthClass,
+		}
+		if obs.ClientReferenceCandidate != nil {
+			obsCarriers["client_reference_candidate"] = *obs.ClientReferenceCandidate
+		}
+		if obs.ProviderReference != nil {
+			obsCarriers["provider_reference"] = *obs.ProviderReference
+		}
+		if obs.BankReference != nil {
+			obsCarriers["bank_reference"] = *obs.BankReference
+		}
+		if obs.BatchReference != nil {
+			obsCarriers["batch_reference"] = *obs.BatchReference
+		}
+		if obs.ClientBatchID != "" {
+			obsCarriers["client_batch_id"] = obs.ClientBatchID
+		}
+		if obs.BeneficiaryFingerprint != nil {
+			obsCarriers["beneficiary_fingerprint"] = *obs.BeneficiaryFingerprint
+		}
+		if obs.ZordSignatureCarrier != nil {
+			obsCarriers["zord_signature_carrier"] = *obs.ZordSignatureCarrier
+		}
+		if obs.ValueDate != nil {
+			obsCarriers["value_date"] = obs.ValueDate.UTC().Format(time.RFC3339)
+		}
+		result["matched_observation_carriers"] = obsCarriers
+	}
+
+	return result
 }
 
-func computeCandidateSetHash(obsID uuid.UUID, rulesetVersion string, scored []CandidateScore) string {
-	// Sort by score DESC, then intentID ASC for determinism
+func computeCandidateSetHash(intentID uuid.UUID, rulesetVersion string, scored []CandidateScore) string {
 	sort.Slice(scored, func(i, j int) bool {
 		if scored[i].Total != scored[j].Total {
 			return scored[i].Total > scored[j].Total
 		}
-		idI := fmt.Sprintf("%v", scored[i].IntentID)
-		idJ := fmt.Sprintf("%v", scored[j].IntentID)
-		return idI < idJ
+		return scored[i].SettlementObservationID.String() < scored[j].SettlementObservationID.String()
 	})
 
 	type candidateJSON struct {
-		IntentID       string      `json:"intent_id"`
-		ScoreTotal     float64     `json:"score_total"`
-		ScoreBreakdown interface{} `json:"score_breakdown"`
+		SettlementObservationID string      `json:"settlement_observation_id"`
+		ScoreTotal              float64     `json:"score_total"`
+		ScoreBreakdown          interface{} `json:"score_breakdown"`
 	}
 
 	type fullSnapshot struct {
-		SettlementObservationID string          `json:"settlement_observation_id"`
-		MatchingRulesetVersion  string          `json:"matching_ruleset_version"`
-		Candidates              []candidateJSON `json:"candidates"`
+		IntentID               string          `json:"intent_id"`
+		MatchingRulesetVersion string          `json:"matching_ruleset_version"`
+		Candidates             []candidateJSON `json:"candidates"`
 	}
 
 	snapshot := fullSnapshot{
-		SettlementObservationID: obsID.String(),
-		MatchingRulesetVersion:  rulesetVersion,
-		Candidates:              make([]candidateJSON, len(scored)),
+		IntentID:               intentID.String(),
+		MatchingRulesetVersion: rulesetVersion,
+		Candidates:             make([]candidateJSON, len(scored)),
 	}
 
 	for i, cs := range scored {
 		snapshot.Candidates[i] = candidateJSON{
-			IntentID:       fmt.Sprintf("%v", cs.IntentID),
-			ScoreTotal:     cs.Total,
-			ScoreBreakdown: cs.Breakdown,
+			SettlementObservationID: cs.SettlementObservationID.String(),
+			ScoreTotal:              cs.Total,
+			ScoreBreakdown:          cs.Breakdown,
 		}
 	}
 
@@ -922,16 +1191,117 @@ func computeDelayDays(intent models.CanonicalIntent, obs models.CanonicalSettlem
 	return int(settleDay.Sub(intentDay).Hours() / 24)
 }
 
+func buildUnresolvedIntentRecords(
+	tenantID uuid.UUID,
+	jobID uuid.UUID,
+	clientBatchRef *string,
+	intents []models.CanonicalIntent,
+	decisions []models.AttachmentDecision,
+) []models.UnresolvedIntentRecord {
+	intentByID := make(map[uuid.UUID]models.CanonicalIntent, len(intents))
+	for _, intent := range intents {
+		intentByID[intent.IntentID] = intent
+	}
+
+	var records []models.UnresolvedIntentRecord
+	for _, d := range decisions {
+		switch d.DecisionType {
+		case models.DecisionMatchUnresolved, models.DecisionMatchAmbiguous, models.DecisionMatchConflicted:
+		default:
+			continue
+		}
+
+		intent, ok := intentByID[d.IntentID]
+		if !ok {
+			continue
+		}
+
+		reasonCode := unresolvedIntentReasonCode(d.DecisionType, d.DecisionReasonCode)
+		var expectedWindowEnd *time.Time
+		if intent.IntendedExecutionAt != nil {
+			end := intent.IntendedExecutionAt.Add(72 * time.Hour)
+			expectedWindowEnd = &end
+		}
+
+		records = append(records, models.UnresolvedIntentRecord{
+			UnresolvedID:      uuid.New(),
+			TenantID:          tenantID,
+			AttachmentJobID:   jobID,
+			IntentID:          intent.IntentID,
+			BatchID:           clientBatchRef,
+			ExpectedWindowEnd: expectedWindowEnd,
+			ReasonCode:        reasonCode,
+			Amount:            intent.Amount,
+			CurrencyCode:      intent.CurrencyCode,
+			CreatedAt:         time.Now().UTC(),
+		})
+	}
+	return records
+}
+
+func unresolvedIntentReasonCode(decisionType string, decisionReasonCode string) string {
+	switch decisionType {
+	case models.DecisionMatchConflicted:
+		return models.UnresolvedReasonOnlyConflictedCandidatesFound
+	case models.DecisionMatchAmbiguous:
+		return models.UnresolvedReasonOnlyAmbiguousCandidatesFound
+	case models.DecisionMatchUnresolved:
+		if decisionReasonCode != "" {
+			return decisionReasonCode
+		}
+		return models.UnresolvedReasonNoSettlementObservationFound
+	default:
+		return decisionReasonCode
+	}
+}
+
+func ratioCoverage(numerator, denominator float64) float64 {
+	if denominator <= 0 {
+		return 0
+	}
+	r := numerator / denominator
+	if r > 1 {
+		return 1
+	}
+	if r < 0 {
+		return 0
+	}
+	return r
+}
+
+func decimalCoverage(numerator, denominator decimal.Decimal) float64 {
+	if denominator.IsZero() {
+		return 0
+	}
+	f, _ := numerator.Div(denominator).Float64()
+	if f > 1 {
+		return 1
+	}
+	if f < 0 {
+		return 0
+	}
+	return f
+}
+
 func computeBatchSummary(
 	tenantID uuid.UUID,
 	jobID uuid.UUID,
 	scopeRef string,
 	clientBatchRef *string,
-	observations []models.CanonicalSettlementObservation,
+	intents []models.CanonicalIntent,
 	decisions []models.AttachmentDecision,
 	variances []models.VarianceRecord,
+	allOrphans []models.OrphanSettlementRecord,
+	obsAmountMap map[uuid.UUID]decimal.Decimal,
 	totalIntendedAmount decimal.Decimal,
+	originalObservationAmount decimal.Decimal,
 ) models.BatchAttachmentSummary {
+	intentByID := make(map[uuid.UUID]models.CanonicalIntent, len(intents))
+	originalIntendedAmount := decimal.Zero
+	for _, intent := range intents {
+		originalIntendedAmount = originalIntendedAmount.Add(intent.Amount)
+		intentByID[intent.IntentID] = intent
+	}
 
 	summary := models.BatchAttachmentSummary{
 		BatchAttachmentSummaryID: uuid.New(),
@@ -939,15 +1309,40 @@ func computeBatchSummary(
 		BatchID:                  clientBatchRef,
 		SourceReference:          scopeRef,
 		AttachmentJobID:          jobID,
-		TotalIntentCount:         len(observations),
+		TotalIntentCount:         len(intents),
+		OriginalIntendedAmount:   originalIntendedAmount,
+		OriginalSettledAmount:    originalObservationAmount,
 		TotalIntendedAmount:      totalIntendedAmount,
+		TotalObservationCount:    len(obsAmountMap),
+		OrphanObservationCount:   len(allOrphans),
 		CreatedAt:                time.Now().UTC(),
 		UpdatedAt:                time.Now().UTC(),
 	}
 
+	attachedObsIDs := make(map[uuid.UUID]bool, len(variances))
+	for _, v := range variances {
+		attachedObsIDs[v.SettlementObservationID] = true
+	}
+
+	for obsID, amount := range obsAmountMap {
+		if attachedObsIDs[obsID] {
+			summary.TotalObservedAmount = summary.TotalObservedAmount.Add(amount)
+		}
+	}
+
+	orphanObservedAmount := decimal.Zero
+	for _, o := range allOrphans {
+		orphanObservedAmount = orphanObservedAmount.Add(o.Amount)
+	}
+	summary.OrphanObservedAmount = orphanObservedAmount
+
+	if len(decisions) == 0 {
+		summary.BatchAttachmentStatus = models.BatchStatusFailed
+		return summary
+	}
+
+	var matchedScoreCount float64
 	for _, d := range decisions {
-		summary.AggregateScore += d.ConfidenceScore
-		summary.AmbiguityScore += d.AmbiguityScore
 		switch d.DecisionType {
 		case models.DecisionMatchExact:
 			summary.ExactMatchCount++
@@ -960,48 +1355,68 @@ func computeBatchSummary(
 		case models.DecisionMatchConflicted:
 			summary.ConflictedCount++
 		}
-	}
 
-	for _, obs := range observations {
-		// Only add to TotalObservedAmount if this observation was successfully matched to an intent.
-		// We can check this by looking for a variance record (which only exists for attached pairs).
-		isAttached := false
-		for _, v := range variances {
-			if v.SettlementObservationID == obs.SettlementObservationID {
-				isAttached = true
-				break
+		if d.DecisionType == models.DecisionMatchUnresolved {
+			if intent, ok := intentByID[d.IntentID]; ok {
+				summary.UnresolvedIntendedAmount = summary.UnresolvedIntendedAmount.Add(intent.Amount)
 			}
 		}
-		if isAttached {
-			summary.TotalObservedAmount = summary.TotalObservedAmount.Add(obs.Amount)
+
+		if d.DecisionType != models.DecisionMatchUnresolved {
+			summary.AggregateScore += d.ConfidenceScore
+			summary.AggregateMatchConfidence += d.MatchConfidence
+			summary.AmbiguityScore += d.AmbiguityScore
+			matchedScoreCount++
 		}
 	}
 
-	// TotalVariance is the net difference between what was intended and what was observed for this batch.
-	summary.TotalVariance = summary.TotalIntendedAmount.Sub(summary.TotalObservedAmount).Abs()
+	summary.MatchedIntentCount = summary.ExactMatchCount + summary.HighConfidenceCount
+	summary.MatchedObservationCount = len(variances)
+	summary.MatchedIntendedAmount = summary.TotalIntendedAmount
+	summary.MatchedObservedAmount = summary.TotalObservedAmount
 
-	// Derive batch status.
-	total := len(decisions)
-	if total == 0 {
-		summary.BatchAttachmentStatus = models.BatchStatusFailed
-		summary.AggregateScore = 0
-		summary.AmbiguityScore = 0
-	} else {
-		summary.AggregateScore = summary.AggregateScore / float64(total)
-		summary.AmbiguityScore = summary.AmbiguityScore / float64(total)
-		strongCount := summary.ExactMatchCount + summary.HighConfidenceCount
-		ratio := float64(strongCount) / float64(total)
-		switch {
-		case summary.ConflictedCount > 0:
-			summary.BatchAttachmentStatus = models.BatchStatusRequiresReview
-		case ratio >= 0.9:
-			summary.BatchAttachmentStatus = models.BatchStatusFullySettled
-		case strongCount > 0:
-			summary.BatchAttachmentStatus = models.BatchStatusPartiallySettled
-		default:
-			summary.BatchAttachmentStatus = models.BatchStatusFailed
+	summary.MatchedPairVariance = summary.MatchedIntendedAmount.Sub(summary.MatchedObservedAmount).Abs()
+	summary.TotalVariance = summary.MatchedPairVariance
+	summary.NetBatchDelta = summary.OriginalSettledAmount.Sub(summary.OriginalIntendedAmount)
+
+	for _, v := range variances {
+		if v.FeeVariance != nil {
+			summary.TotalFeeAmount = summary.TotalFeeAmount.Add(*v.FeeVariance)
+		}
+		if v.DeductionVariance != nil {
+			summary.TotalDeductionAmount = summary.TotalDeductionAmount.Add(*v.DeductionVariance)
 		}
 	}
+	summary.NetUnexplainedVariance = summary.MatchedPairVariance.Sub(summary.TotalFeeAmount).Sub(summary.TotalDeductionAmount).Abs()
+
+	summary.IntentCountCoverage = ratioCoverage(float64(summary.MatchedIntentCount), float64(summary.TotalIntentCount))
+	summary.IntentValueCoverage = decimalCoverage(summary.MatchedIntendedAmount, summary.OriginalIntendedAmount)
+	summary.ObservedCountAllocationCoverage = ratioCoverage(float64(summary.MatchedObservationCount), float64(summary.TotalObservationCount))
+	summary.ObservedValueAllocationCoverage = decimalCoverage(summary.MatchedObservedAmount, summary.OriginalSettledAmount)
+
+	if matchedScoreCount > 0 {
+		summary.AggregateScore = summary.AggregateScore / matchedScoreCount
+		summary.AggregateMatchConfidence = summary.AggregateMatchConfidence / matchedScoreCount
+		summary.AmbiguityScore = summary.AmbiguityScore / matchedScoreCount
+	}
+
+	ambiguousCount := summary.AmbiguousCount
+	conflictedCount := summary.ConflictedCount
+	unresolvedIntentCount := summary.UnresolvedCount
+	orphanObservationCount := summary.OrphanObservationCount
+	tolerance := decimal.NewFromInt(0)
+
+	switch {
+	case ambiguousCount > 0 || conflictedCount > 0:
+		summary.BatchAttachmentStatus = models.BatchStatusRequiresReview
+	case unresolvedIntentCount > 0 || orphanObservationCount > 0:
+		summary.BatchAttachmentStatus = models.BatchStatusPartiallySettled
+	case summary.NetUnexplainedVariance.GreaterThan(tolerance):
+		summary.BatchAttachmentStatus = models.BatchStatusRequiresReview
+	default:
+		summary.BatchAttachmentStatus = models.BatchStatusFullySettled
+	}
+
 	return summary
 }
 
@@ -1049,6 +1464,7 @@ func persistAttachmentOutputs(
 	candidates []models.AttachmentCandidate,
 	decisions []models.AttachmentDecision,
 	variances []models.VarianceRecord,
+	allOrphans []models.OrphanSettlementRecord,
 	unresolvedIntents []models.UnresolvedIntentRecord,
 	batchSummary models.BatchAttachmentSummary,
 	exact, high, ambiguous, unresolved, conflicted int,
@@ -1089,7 +1505,7 @@ func persistAttachmentOutputs(
 		}
 	}
 
-	// Persist decisions (upsert by observation+job to allow replays).
+	// Persist decisions (upsert by intent+job to allow replays).
 	for _, d := range decisions {
 		if _, err = tx.ExecContext(ctx, `
 			INSERT INTO attachment_decisions (
@@ -1098,12 +1514,13 @@ func persistAttachmentOutputs(
 				decision_type, decision_reason_code, decision_reason_detail_json,
 				matching_ruleset_version,
 				winning_score, runner_up_score, score_margin,relative_score_margin,
-				confidence_score, ambiguity_score,
-				supporting_carriers_json, candidate_set_hash,
+				confidence_score, match_confidence, ambiguity_score,
+				supporting_carriers_json, candidate_set_hash, candidate_set_size,
 				created_at, updated_at
 			) VALUES (
-				$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
-			) ON CONFLICT (settlement_observation_id, attachment_job_id) DO UPDATE SET
+				$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
+			) ON CONFLICT (intent_id, attachment_job_id) DO UPDATE SET
+				settlement_observation_id = EXCLUDED.settlement_observation_id,
 				decision_type              = EXCLUDED.decision_type,
 				decision_reason_code       = EXCLUDED.decision_reason_code,
 				decision_reason_detail_json = EXCLUDED.decision_reason_detail_json,
@@ -1112,9 +1529,11 @@ func persistAttachmentOutputs(
 				score_margin               = EXCLUDED.score_margin,
 				relative_score_margin      = EXCLUDED.relative_score_margin,
 				confidence_score           = EXCLUDED.confidence_score,
-				ambiguity_score            = EXCLUDED.ambiguity_score,
+				match_confidence           = EXCLUDED.match_confidence,
+				ambiguity_score = EXCLUDED.ambiguity_score,
 				supporting_carriers_json   = EXCLUDED.supporting_carriers_json,
 				candidate_set_hash         = EXCLUDED.candidate_set_hash,
+				candidate_set_size         = EXCLUDED.candidate_set_size,
 				intent_id                  = EXCLUDED.intent_id,
 				updated_at                 = EXCLUDED.updated_at`,
 			d.AttachmentDecisionID, d.TenantID,
@@ -1122,8 +1541,8 @@ func persistAttachmentOutputs(
 			d.DecisionType, d.DecisionReasonCode, d.DecisionReasonDetailJSON,
 			d.MatchingRulesetVersion,
 			d.WinningScore, d.RunnerUpScore, d.ScoreMargin, d.RelativeScoreMargin,
-			d.ConfidenceScore, d.AmbiguityScore,
-			d.SupportingCarriersJSON, d.CandidateSetHash,
+			d.ConfidenceScore, d.MatchConfidence, d.AmbiguityScore,
+			d.SupportingCarriersJSON, d.CandidateSetHash, d.CandidateSetSize,
 			d.CreatedAt, d.UpdatedAt,
 		); err != nil {
 			return fmt.Errorf("persistAttachmentOutputs: insert decision: %w", err)
@@ -1164,7 +1583,25 @@ func persistAttachmentOutputs(
 		}
 	}
 
-	// Persist unresolved intent records (reverse scan output).
+	// Persist orphaned observations (reverse scan output).
+	for _, o := range allOrphans {
+		if _, err = tx.ExecContext(ctx, `
+			INSERT INTO orphan_settlement_records (
+				orphan_id, tenant_id, attachment_job_id,
+				settlement_observation_id, batch_id,
+				unresolved_reason, amount, currency_code, created_at
+			) VALUES (
+				$1,$2,$3,$4,$5,$6,$7,$8,$9
+			) ON CONFLICT DO NOTHING`,
+			o.OrphanID, o.TenantID, o.AttachmentJobID,
+			o.SettlementObservationID, o.BatchID,
+			o.UnresolvedReason, o.Amount, o.CurrencyCode, o.CreatedAt,
+		); err != nil {
+			return fmt.Errorf("persistAttachmentOutputs: insert orphan: %w", err)
+		}
+	}
+
+	// Persist unresolved / ambiguous / conflicted intents (reverse scan output).
 	for _, u := range unresolvedIntents {
 		if _, err = tx.ExecContext(ctx, `
 			INSERT INTO unresolved_intent_records (
@@ -1191,19 +1628,38 @@ func persistAttachmentOutputs(
 		INSERT INTO batch_attachment_summaries (
 			batch_attachment_summary_id, tenant_id, batch_id, source_reference,
 			attachment_job_id,
-			total_intent_count, exact_match_count, high_confidence_count,
-			ambiguous_count, unresolved_count, conflicted_count,
+			total_intent_count, total_observation_count, exact_match_count, high_confidence_count,
+			ambiguous_count, unresolved_count, conflicted_count, orphan_observation_count,
+			matched_intent_count, matched_observation_count,
+			original_intended_amount, original_settled_amount,
 			total_intended_amount, total_observed_amount, total_variance,
-			batch_attachment_status, aggregate_score, ambiguity_score, created_at, updated_at
+			matched_intended_amount, matched_observed_amount, orphan_observed_amount,
+			matched_pair_variance, net_batch_delta,
+			unresolved_intended_amount, ambiguous_observed_amount, conflicted_observed_amount, unresolved_observed_amount,
+			total_fee_amount, total_deduction_amount, net_unexplained_variance,
+			intent_count_coverage, intent_value_coverage,
+			observed_count_allocation_coverage, observed_value_allocation_coverage,
+			batch_attachment_status, avg_matched_attachment_quality, avg_matched_attachment_ambiguity, avg_matched_attachment_confidence, created_at, updated_at
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
+			$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
+			$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,
+			$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42
 		) ON CONFLICT DO NOTHING`,
 		batchSummary.BatchAttachmentSummaryID, batchSummary.TenantID, batchSummary.BatchID, batchSummary.SourceReference,
 		batchSummary.AttachmentJobID,
-		batchSummary.TotalIntentCount, batchSummary.ExactMatchCount, batchSummary.HighConfidenceCount,
-		batchSummary.AmbiguousCount, batchSummary.UnresolvedCount, batchSummary.ConflictedCount,
+		batchSummary.TotalIntentCount, batchSummary.TotalObservationCount, batchSummary.ExactMatchCount, batchSummary.HighConfidenceCount,
+		batchSummary.AmbiguousCount, batchSummary.UnresolvedCount, batchSummary.ConflictedCount, batchSummary.OrphanObservationCount,
+		batchSummary.MatchedIntentCount, batchSummary.MatchedObservationCount,
+		batchSummary.OriginalIntendedAmount, batchSummary.OriginalSettledAmount,
 		batchSummary.TotalIntendedAmount, batchSummary.TotalObservedAmount, batchSummary.TotalVariance,
-		batchSummary.BatchAttachmentStatus, batchSummary.AggregateScore, batchSummary.AmbiguityScore,
+		batchSummary.MatchedIntendedAmount, batchSummary.MatchedObservedAmount, batchSummary.OrphanObservedAmount,
+		batchSummary.MatchedPairVariance, batchSummary.NetBatchDelta,
+		batchSummary.UnresolvedIntendedAmount, batchSummary.AmbiguousObservedAmount, batchSummary.ConflictedObservedAmount, batchSummary.UnresolvedObservedAmount,
+		batchSummary.TotalFeeAmount, batchSummary.TotalDeductionAmount, batchSummary.NetUnexplainedVariance,
+		batchSummary.IntentCountCoverage, batchSummary.IntentValueCoverage,
+		batchSummary.ObservedCountAllocationCoverage, batchSummary.ObservedValueAllocationCoverage,
+		batchSummary.BatchAttachmentStatus, batchSummary.AggregateScore, batchSummary.AmbiguityScore, batchSummary.AggregateMatchConfidence,
 		batchSummary.CreatedAt, batchSummary.UpdatedAt,
 	); err != nil {
 		return fmt.Errorf("persistAttachmentOutputs: insert batch summary: %w", err)

@@ -11,14 +11,20 @@ import (
 	"zord-relay/publisher"
 )
 
-// Scheduler starts and supervises one Worker per configured upstream service.
+// WorkerRunner defines the interface for running a service worker loop.
+type WorkerRunner interface {
+	Run(ctx context.Context)
+	Name() string
+}
+
+// Scheduler starts and supervises one WorkerRunner per configured upstream service.
 // Each worker runs in its own goroutine with independent poll loops.
 type Scheduler struct {
-	workers []*Worker
+	workers []WorkerRunner
 	log     *zap.Logger
 }
 
-// NewScheduler builds one Worker per service defined in cfg.Services.
+// NewScheduler builds one WorkerRunner per service defined in cfg.Services.
 func NewScheduler(
 	cfg *config.Config,
 	pub publisher.Publisher,
@@ -28,14 +34,23 @@ func NewScheduler(
 		return nil, fmt.Errorf("scheduler: no services configured")
 	}
 
-	workers := make([]*Worker, 0, len(cfg.Services))
+	workers := make([]WorkerRunner, 0, len(cfg.Services))
 	for _, svcCfg := range cfg.Services {
-		w := NewWorker(svcCfg, cfg.Relay, pub, log)
+		var w WorkerRunner
+		if svcCfg.IsDLQ {
+			w = NewDLQWorker(svcCfg, cfg.Relay, pub, log)
+		} else if svcCfg.IsBatch {
+			w = NewBatchWorker(svcCfg, cfg.Relay, pub, log)
+		} else {
+			w = NewWorker(svcCfg, cfg.Relay, pub, log)
+		}
 		workers = append(workers, w)
 		log.Info("registered worker",
 			zap.String("service", svcCfg.Name),
 			zap.String("base_url", svcCfg.BaseURL),
 			zap.String("default_topic", svcCfg.DefaultTopic),
+			zap.Bool("is_dlq", svcCfg.IsDLQ),
+			zap.Bool("is_batch", svcCfg.IsBatch),
 		)
 	}
 
@@ -49,12 +64,12 @@ func (s *Scheduler) Run(ctx context.Context) {
 	var wg sync.WaitGroup
 	for _, w := range s.workers {
 		wg.Add(1)
-		go func(w *Worker) {
+		go func(w WorkerRunner) {
 			defer wg.Done()
 			defer func() {
 				if r := recover(); r != nil {
 					s.log.Error("worker panicked",
-						zap.String("service", w.svcCfg.Name),
+						zap.String("service", w.Name()),
 						zap.Any("panic", r),
 					)
 				}

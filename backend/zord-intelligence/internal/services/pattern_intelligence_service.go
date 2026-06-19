@@ -22,6 +22,7 @@ type PatternIntelligenceService struct {
 	mlRepo       *persistence.MLFeatureStoreRepo
 	predRepo     *persistence.MLPredictionRepo
 	mlClient     *mlclient.Client
+	slaRepo      *persistence.SLATimerRepo
 }
 
 type patternFeatureInputs struct {
@@ -39,6 +40,7 @@ func NewPatternIntelligenceService(
 	mlRepo *persistence.MLFeatureStoreRepo,
 	predRepo *persistence.MLPredictionRepo,
 	mlClient *mlclient.Client,
+	slaRepo *persistence.SLATimerRepo,
 ) *PatternIntelligenceService {
 	return &PatternIntelligenceService{
 		projRepo:     projRepo,
@@ -47,9 +49,25 @@ func NewPatternIntelligenceService(
 		mlRepo:       mlRepo,
 		predRepo:     predRepo,
 		mlClient:     mlClient,
+		slaRepo:      slaRepo,
 	}
 }
 
+// PatternSnapshot is the shape written into intelligence_snapshots.snapshot_json
+// for snapshot_type = PATTERN.
+//
+// It covers all 8 pattern categories defined in the Pattern Intelligence spec:
+//   A. Source-system traceability patterns
+//   B. Bank/PSP/provider reliability patterns
+//   C. Ambiguity pattern intelligence
+//   D. Leakage/variance pattern intelligence
+//   E. Duplicate-risk patterns
+//   F. Manual review / client file quality patterns
+//   G. Evidence weakness patterns
+//   H. Settlement timing / SLA patterns
+//
+// The BATCH-scoped snapshot (ScopeType=BATCH) carries the original P1–P6 batch
+// health fields. The TENANT-scoped snapshot carries the multi-dimensional patterns.
 type PatternSnapshot struct {
 	BatchID string `json:"batch_id"`
 
@@ -66,12 +84,12 @@ type PatternSnapshot struct {
 	FinalityStatus string  `json:"finality_status"`
 
 	// ── P1: Batch attachment quality score ────────────────────────────────────
-	BatchQualityScore  float64 `json:"batch_quality_score"`   // primary P1 output
-	ExactMatchCount    int     `json:"exact_match_count"`
-	HighConfidenceCount int    `json:"high_confidence_count"`
-	AmbiguousCount     int     `json:"ambiguous_count"`
-	UnresolvedCount    int     `json:"unresolved_count"`
-	ConflictedCount    int     `json:"conflicted_count"`
+	BatchQualityScore   float64 `json:"batch_quality_score"` // primary P1 output
+	ExactMatchCount     int     `json:"exact_match_count"`
+	HighConfidenceCount int     `json:"high_confidence_count"`
+	AmbiguousCount      int     `json:"ambiguous_count"`
+	UnresolvedCount     int     `json:"unresolved_count"`
+	ConflictedCount     int     `json:"conflicted_count"`
 
 	RiskSignals []BatchRiskSignal `json:"risk_signals"`
 	RiskTier    string            `json:"risk_tier"`
@@ -83,7 +101,97 @@ type PatternSnapshot struct {
 	PrepareAndSignRecommended bool   `json:"prepare_and_sign_recommended"`
 	RecommendedAction         string `json:"recommended_action,omitempty"`
 
+	// ── Section A: Source-system traceability patterns ────────────────────────
+	// Ranked list of source systems by quality issue severity.
+	SourceQualityPatterns []SourceQualityPattern `json:"source_quality_patterns,omitempty"`
+	// WeakestSourceSystem: the source system with the highest combined issue rate.
+	// Pre-computed for fast recommendation trigger evaluation.
+	WeakestSourceSystem        string  `json:"weakest_source_system,omitempty"`
+	WeakestSourceManualReviewRate float64 `json:"weakest_source_manual_review_rate,omitempty"`
+	WeakestSourceMissingRefRate  float64 `json:"weakest_source_missing_ref_rate,omitempty"`
+
+	// ── Section B: Bank/PSP/provider reliability patterns ────────────────────
+	ProviderQualityPatterns []ProviderQualityPattern `json:"provider_quality_patterns,omitempty"`
+	WeakestProviderID       string                   `json:"weakest_provider_id,omitempty"`
+
+	// ── Section C: Ambiguity pattern intelligence ─────────────────────────────
+	AmbiguityBySource      []AmbiguityBySourcePattern `json:"ambiguity_by_source,omitempty"`
+	TopAmbiguousSourceSystem string                   `json:"top_ambiguous_source_system,omitempty"`
+	TopAmbiguousSourceRate   float64                  `json:"top_ambiguous_source_rate,omitempty"`
+
+	// ── Section D: Leakage / variance pattern intelligence ───────────────────
+	UnexplainedVarianceAmountMinor  decimal.Decimal `json:"unexplained_variance_amount_minor,omitempty"`
+	WhitelistedDeductionAmountMinor decimal.Decimal `json:"whitelisted_deduction_amount_minor,omitempty"`
+	OverSettlementAmountMinor       decimal.Decimal `json:"over_settlement_amount_minor,omitempty"`
+
+	// ── Section E: Duplicate-risk patterns ───────────────────────────────────
+	DuplicateRiskExposureMinor decimal.Decimal `json:"duplicate_risk_exposure_minor,omitempty"`
+	DuplicateRiskRate          float64         `json:"duplicate_risk_rate,omitempty"`
+
+	// ── Section F: Manual review / client file quality patterns ───────────────
+	TenantManualReviewRate float64           `json:"tenant_manual_review_rate,omitempty"`
+	TopManualReviewReasons []ReasonBreakdown `json:"top_manual_review_reasons,omitempty"`
+
+	// ── Section G: Evidence weakness patterns ────────────────────────────────
+	MissingLeafRate     float64 `json:"missing_leaf_rate,omitempty"`
+	EvidencePackCoverage float64 `json:"evidence_pack_coverage,omitempty"`
+	WeakEvidenceRate    float64 `json:"weak_evidence_rate,omitempty"`
+
+	// ── Section H: Settlement timing / SLA patterns ───────────────────────────
+	SettlementDelayP50Days float64 `json:"settlement_delay_p50_days,omitempty"`
+	SettlementDelayP95Days float64 `json:"settlement_delay_p95_days,omitempty"`
+	CrossPeriodRate        float64 `json:"cross_period_rate,omitempty"`
+	PendingBeyondSLARate   float64 `json:"pending_beyond_sla_rate,omitempty"`
+
 	ComputedAt time.Time `json:"computed_at"`
+}
+
+// SourceQualityPattern summarises one source system's payment file quality.
+// Used in PatternSnapshot.SourceQualityPatterns (section A).
+type SourceQualityPattern struct {
+	SourceSystem         string          `json:"source_system"`
+	TotalIntentCount     int             `json:"total_intent_count"`
+	BatchCount           int             `json:"batch_count"`           // approximate distinct batches from this source
+	ManualReviewRate     float64         `json:"manual_review_rate"`
+	MissingClientRefRate float64         `json:"missing_client_ref_rate"`
+	LowMatchabilityRate  float64         `json:"low_matchability_rate"`
+	DuplicateRiskRate    float64         `json:"duplicate_risk_rate"`
+	ManualReviewAmount   decimal.Decimal `json:"manual_review_amount_minor"`
+	// Severity: CRITICAL (>30%), HIGH (>15%), MEDIUM (>5%), LOW (<5%) based on combined issue rate.
+	Severity string `json:"severity"`
+}
+
+// ProviderQualityPattern summarises one PSP/bank provider's settlement quality.
+// Used in PatternSnapshot.ProviderQualityPatterns (section B).
+type ProviderQualityPattern struct {
+	ProviderID             string  `json:"provider_id"`
+	AmbiguityRate          float64 `json:"ambiguity_rate"`
+	OrphanRate             float64 `json:"orphan_rate"`
+	AvgCarrierRichness     float64 `json:"avg_carrier_richness"`
+	AvgParseConfidence     float64 `json:"avg_parse_confidence"`
+	SettlementDelayP95Days float64 `json:"settlement_delay_p95_days"`
+	Severity               string  `json:"severity"`
+}
+
+// AmbiguityBySourcePattern summarises ambiguity signals per source system.
+// Used in PatternSnapshot.AmbiguityBySource (section C).
+type AmbiguityBySourcePattern struct {
+	SourceSystem        string          `json:"source_system"`
+	AmbiguityRate       float64         `json:"ambiguity_rate"`
+	CollisionRate       float64         `json:"collision_rate"`
+	LowConfidenceRate   float64         `json:"low_confidence_rate"`
+	ValueAtRiskMinor    decimal.Decimal `json:"value_at_risk_minor"`
+	TotalDecisions      int             `json:"total_decisions"`
+	Severity            string          `json:"severity"`
+}
+
+// ReasonBreakdown summarises manual review events by reason code.
+// Used in PatternSnapshot.TopManualReviewReasons (section F).
+type ReasonBreakdown struct {
+	ReasonCode  string          `json:"reason_code"`
+	Count       int             `json:"count"`
+	AmountMinor decimal.Decimal `json:"amount_minor"`
+	Rate        float64         `json:"rate"` // count / total_manual_review_count
 }
 
 type BatchRiskSignal struct {
@@ -535,35 +643,35 @@ type PatternTenantKPISnapshot struct {
 	ComputedAt                   time.Time `json:"computed_at"`
 }
 
-// computeAndSaveTenantPatternKPIs reads P2/P3/P6 projections and writes a
-// TENANT-scoped PATTERN intelligence snapshot for these rolling KPIs.
+// computeAndSaveTenantPatternKPIs reads all pattern projections and writes a
+// TENANT-scoped PATTERN intelligence snapshot covering all 8 pattern categories.
 //
-// P2: duplicate_risk_rate = duplicate_risk_count / total_intent_count
-// P3: same_beneficiary_amount_density = max_pair_count / total_batch_intents
-// P6: settlement_delay_p95_days = 95th-percentile of settlement_delay_samples
+// This replaces the old implementation that only covered P2/P3/P6 batch metrics.
+// The enriched snapshot now includes source quality, provider quality, ambiguity
+// by source, variance patterns, manual review patterns, evidence weakness, and
+// settlement timing patterns.
 func (s *PatternIntelligenceService) computeAndSaveTenantPatternKPIs(
 	ctx context.Context,
 	tenantID, batchID string,
 	windowStart, windowEnd time.Time,
 ) error {
-	// Read P2 and P6 from the pattern.p2_p6 projection
+	// ── Read core P2/P6 projection ────────────────────────────────────────────
 	p2p6, err := s.projRepo.GetPatternP2P6Summary(ctx, tenantID)
 	if err != nil {
 		return fmt.Errorf("GetPatternP2P6Summary tenant=%s: %w", tenantID, err)
 	}
-	if p2p6 == nil {
-		return nil // no data yet, skip
-	}
 
 	kpiSnap := PatternTenantKPISnapshot{
-		DuplicateRiskRate:      p2p6.DuplicateRiskRate,
-		DuplicateRiskCount:     p2p6.DuplicateRiskCount,
-		TotalIntentCount:       p2p6.TotalIntentCount,
-		SettlementDelayP95Days: p2p6.SettlementDelayP95Days,
-		ComputedAt:             time.Now().UTC(),
+		ComputedAt: time.Now().UTC(),
+	}
+	if p2p6 != nil {
+		kpiSnap.DuplicateRiskRate  = p2p6.DuplicateRiskRate
+		kpiSnap.DuplicateRiskCount = p2p6.DuplicateRiskCount
+		kpiSnap.TotalIntentCount   = p2p6.TotalIntentCount
+		kpiSnap.SettlementDelayP95Days = p2p6.SettlementDelayP95Days
 	}
 
-	// Read P3 from the pattern.batch_density.{batchID} projection
+	// ── Read P3 (batch density) ───────────────────────────────────────────────
 	if batchID != "" {
 		density, densityErr := s.projRepo.GetBatchIntentDensity(ctx, tenantID, batchID)
 		if densityErr != nil {
@@ -574,11 +682,74 @@ func (s *PatternIntelligenceService) computeAndSaveTenantPatternKPIs(
 		}
 	}
 
-	snapJSON, err := json.Marshal(kpiSnap)
-	if err != nil {
-		return fmt.Errorf("marshal tenant kpi snapshot: %w", err)
+	// ── Build enriched PatternSnapshot with all 8 categories ─────────────────
+	enriched := PatternSnapshot{
+		// Carry forward P2/P3/P6 fields into the multi-dimensional snapshot
+		DuplicateRiskRate:            kpiSnap.DuplicateRiskRate,
+		SettlementDelayP95Days:       kpiSnap.SettlementDelayP95Days,
+		ComputedAt:                   time.Now().UTC(),
 	}
-	projRefs := []string{"pattern.p2_p6", fmt.Sprintf("pattern.batch_density.%s", batchID)}
+
+	// ── Section A: Source quality patterns ────────────────────────────────────
+	enriched.SourceQualityPatterns = s.computeSourceQualityPatterns(ctx, tenantID, windowStart)
+	if len(enriched.SourceQualityPatterns) > 0 {
+		top := enriched.SourceQualityPatterns[0]
+		enriched.WeakestSourceSystem = top.SourceSystem
+		enriched.WeakestSourceManualReviewRate = top.ManualReviewRate
+		enriched.WeakestSourceMissingRefRate = top.MissingClientRefRate
+	}
+
+	// ── Section B: Provider quality patterns ──────────────────────────────────
+	enriched.ProviderQualityPatterns = s.computeProviderQualityPatterns(ctx, tenantID, windowStart)
+	if len(enriched.ProviderQualityPatterns) > 0 {
+		enriched.WeakestProviderID = enriched.ProviderQualityPatterns[0].ProviderID
+	}
+
+	// ── Section C: Ambiguity by source ────────────────────────────────────────
+	enriched.AmbiguityBySource = s.computeAmbiguityBySource(ctx, tenantID, windowStart)
+	if len(enriched.AmbiguityBySource) > 0 {
+		enriched.TopAmbiguousSourceSystem = enriched.AmbiguityBySource[0].SourceSystem
+		enriched.TopAmbiguousSourceRate = enriched.AmbiguityBySource[0].AmbiguityRate
+	}
+
+	// ── Section D: Variance patterns ─────────────────────────────────────────
+	enriched.UnexplainedVarianceAmountMinor,
+		enriched.WhitelistedDeductionAmountMinor,
+		enriched.OverSettlementAmountMinor = s.computeVariancePatterns(ctx, tenantID)
+
+	// ── Section E: Duplicate risk exposure (amount) ───────────────────────────
+	if p2p6 != nil {
+		enriched.DuplicateRiskExposureMinor = p2p6.DuplicateRiskAmountMinor
+	}
+
+	// ── Section F: Manual review patterns ────────────────────────────────────
+	enriched.TenantManualReviewRate, enriched.TopManualReviewReasons =
+		s.computeManualReviewSummary(ctx, tenantID, windowStart)
+
+	// ── Section G: Evidence weakness patterns ────────────────────────────────
+	enriched.MissingLeafRate, enriched.EvidencePackCoverage, enriched.WeakEvidenceRate =
+		s.computeEvidencePatterns(ctx, tenantID)
+
+	// ── Section H: Settlement timing patterns ─────────────────────────────────
+	enriched.SettlementDelayP50Days, enriched.SettlementDelayP95Days,
+		enriched.CrossPeriodRate, enriched.PendingBeyondSLARate =
+		s.computeTimingPatterns(ctx, tenantID)
+
+	// ── Write enriched snapshot ───────────────────────────────────────────────
+	snapJSON, err := json.Marshal(enriched)
+	if err != nil {
+		return fmt.Errorf("marshal tenant pattern snapshot: %w", err)
+	}
+
+	projRefs := []string{
+		"pattern.p2_p6",
+		fmt.Sprintf("pattern.batch_density.%s", batchID),
+		"pattern.source.*",
+		"pattern.provider.*",
+		"pattern.ambiguity.source.*",
+		"pattern.variance.source.*",
+		"defensibility.summary",
+	}
 	projRefsJSON, _ := json.Marshal(projRefs)
 	modelVer := "deterministic_v1"
 	snapID := "snap_" + uuid.New().String()
@@ -595,4 +766,256 @@ func (s *PatternIntelligenceService) computeAndSaveTenantPatternKPIs(
 		ModelVersion:       &modelVer,
 		CreatedAt:          time.Now().UTC(),
 	})
+}
+
+// RecomputeTenantKPIs recomputes and saves the TENANT-scoped Pattern Intelligence
+// snapshot without needing a batch. Called by HandleDLQItem after manual review
+// data arrives, so the snapshot reflects the latest source quality state.
+func (s *PatternIntelligenceService) RecomputeTenantKPIs(
+	ctx context.Context,
+	tenantID string,
+	windowStart, windowEnd time.Time,
+) error {
+	return s.computeAndSaveTenantPatternKPIs(ctx, tenantID, "", windowStart, windowEnd)
+}
+
+// ── MULTI-DIMENSIONAL PATTERN COMPUTE METHODS ─────────────────────────────────
+//
+// These 7 methods compute the new pattern categories (A–H) from projection_state.
+// They are called from computeAndSaveTenantPatternKPIs and their results are merged
+// into the enriched PatternTenantKPISnapshot before writing to intelligence_snapshots.
+
+// computeSourceQualityPatterns reads all pattern.source.* projections and returns
+// a ranked list of source systems by quality issue severity (section A).
+func (s *PatternIntelligenceService) computeSourceQualityPatterns(
+	ctx context.Context,
+	tenantID string,
+	windowStart time.Time,
+) []SourceQualityPattern {
+	sources, err := s.projRepo.GetAllSourceQualityProjections(ctx, tenantID, windowStart)
+	if err != nil {
+		log.Printf("pattern_svc: computeSourceQualityPatterns failed tenant=%s: %v", tenantID, err)
+		return nil
+	}
+
+	var patterns []SourceQualityPattern
+	for _, src := range sources {
+		if src.TotalIntentCount == 0 {
+			continue
+		}
+		combined := (src.ManualReviewRate + src.MissingClientRefRate + src.LowMatchabilityRate) / 3.0
+		sev := sourcePatternSeverity(combined)
+		patterns = append(patterns, SourceQualityPattern{
+			SourceSystem:         src.SourceSystem,
+			TotalIntentCount:     src.TotalIntentCount,
+			BatchCount:           src.BatchCount,
+			ManualReviewRate:     src.ManualReviewRate,
+			MissingClientRefRate: src.MissingClientRefRate,
+			LowMatchabilityRate:  src.LowMatchabilityRate,
+			DuplicateRiskRate:    src.DuplicateRiskRate,
+			ManualReviewAmount:   src.ManualReviewAmountMinor,
+			Severity:             sev,
+		})
+	}
+	return patterns
+}
+
+// computeProviderQualityPatterns reads all pattern.provider.* projections (section B).
+func (s *PatternIntelligenceService) computeProviderQualityPatterns(
+	ctx context.Context,
+	tenantID string,
+	windowStart time.Time,
+) []ProviderQualityPattern {
+	providers, err := s.projRepo.GetAllProviderQualityProjections(ctx, tenantID, windowStart)
+	if err != nil {
+		log.Printf("pattern_svc: computeProviderQualityPatterns failed tenant=%s: %v", tenantID, err)
+		return nil
+	}
+
+	var patterns []ProviderQualityPattern
+	for _, prov := range providers {
+		if prov.TotalSettlementCount == 0 && prov.TotalDecisions == 0 {
+			continue
+		}
+		combined := (prov.AmbiguityRate + prov.OrphanRate + (1.0 - prov.AvgCarrierRichness)) / 3.0
+		patterns = append(patterns, ProviderQualityPattern{
+			ProviderID:             prov.ProviderID,
+			AmbiguityRate:          prov.AmbiguityRate,
+			OrphanRate:             prov.OrphanRate,
+			AvgCarrierRichness:     prov.AvgCarrierRichness,
+			AvgParseConfidence:     prov.AvgParseConfidence,
+			SettlementDelayP95Days: prov.SettlementDelayP95Days,
+			Severity:               sourcePatternSeverity(combined),
+		})
+	}
+	return patterns
+}
+
+// computeAmbiguityBySource reads all pattern.ambiguity.source.* projections (section C).
+func (s *PatternIntelligenceService) computeAmbiguityBySource(
+	ctx context.Context,
+	tenantID string,
+	windowStart time.Time,
+) []AmbiguityBySourcePattern {
+	sources, err := s.projRepo.GetAllAmbiguityBySourceProjections(ctx, tenantID, windowStart)
+	if err != nil {
+		log.Printf("pattern_svc: computeAmbiguityBySource failed tenant=%s: %v", tenantID, err)
+		return nil
+	}
+
+	var patterns []AmbiguityBySourcePattern
+	for _, src := range sources {
+		if src.TotalDecisions == 0 {
+			continue
+		}
+		patterns = append(patterns, AmbiguityBySourcePattern{
+			SourceSystem:      src.SourceSystem,
+			AmbiguityRate:     src.AmbiguityRate,
+			CollisionRate:     src.CollisionRate,
+			LowConfidenceRate: src.LowConfidenceRate,
+			ValueAtRiskMinor:  src.ValueAtRiskMinor,
+			TotalDecisions:    src.TotalDecisions,
+			Severity:          sourcePatternSeverity(src.AmbiguityRate),
+		})
+	}
+	return patterns
+}
+
+// computeVariancePatterns reads leakage.total for explained/unexplained split (section D).
+func (s *PatternIntelligenceService) computeVariancePatterns(
+	ctx context.Context,
+	tenantID string,
+) (unexplained, whitelisted, overSettlement decimal.Decimal) {
+	leakage, err := s.projRepo.GetLeakageSummary(ctx, tenantID)
+	if err != nil || leakage == nil {
+		return
+	}
+	unexplained = leakage.UnderSettlementAmountMinor
+	whitelisted = leakage.WhitelistedDeductionAmountMinor
+	overSettlement = leakage.OverSettlementAmountMinor
+	return
+}
+
+// computeManualReviewSummary aggregates tenant-level manual review KPIs (section F).
+// Reads all source projections and aggregates reason breakdowns.
+func (s *PatternIntelligenceService) computeManualReviewSummary(
+	ctx context.Context,
+	tenantID string,
+	windowStart time.Time,
+) (tenantRate float64, topReasons []ReasonBreakdown) {
+	sources, err := s.projRepo.GetAllSourceQualityProjections(ctx, tenantID, windowStart)
+	if err != nil {
+		return
+	}
+
+	totalIntents, totalReview := 0, 0
+	reasonCounts := make(map[string]int)
+	reasonAmounts := make(map[string]decimal.Decimal)
+
+	for _, src := range sources {
+		totalIntents += src.TotalIntentCount
+		totalReview += src.ManualReviewCount
+		for code, cnt := range src.ReasonBreakdown {
+			reasonCounts[code] += cnt
+		}
+		// Accumulate amounts per reason (approximate: distribute proportionally)
+		if src.ManualReviewCount > 0 {
+			for code, cnt := range src.ReasonBreakdown {
+				share := decimal.NewFromFloat(float64(cnt) / float64(src.ManualReviewCount))
+				reasonAmounts[code] = reasonAmounts[code].Add(src.ManualReviewAmountMinor.Mul(share))
+			}
+		}
+	}
+
+	if totalIntents > 0 {
+		tenantRate = math.Round(float64(totalReview)/float64(totalIntents)*10000) / 10000
+	}
+
+	for code, cnt := range reasonCounts {
+		rate := 0.0
+		if totalReview > 0 {
+			rate = math.Round(float64(cnt)/float64(totalReview)*10000) / 10000
+		}
+		topReasons = append(topReasons, ReasonBreakdown{
+			ReasonCode:  code,
+			Count:       cnt,
+			AmountMinor: reasonAmounts[code],
+			Rate:        rate,
+		})
+	}
+
+	// Sort by count descending — most frequent reason first
+	for i := 0; i < len(topReasons)-1; i++ {
+		for j := i + 1; j < len(topReasons); j++ {
+			if topReasons[j].Count > topReasons[i].Count {
+				topReasons[i], topReasons[j] = topReasons[j], topReasons[i]
+			}
+		}
+	}
+
+	// Return top 5 reasons only — surfacing more than 5 overwhelms the frontend card
+	if len(topReasons) > 5 {
+		topReasons = topReasons[:5]
+	}
+	return
+}
+
+// computeEvidencePatterns reads defensibility.summary for missing leaf and coverage (section G).
+func (s *PatternIntelligenceService) computeEvidencePatterns(
+	ctx context.Context,
+	tenantID string,
+) (missingLeafRate, evidencePackCoverage, weakEvidenceRate float64) {
+	def, err := s.projRepo.GetDefensibilitySummary(ctx, tenantID)
+	if err != nil || def == nil {
+		return
+	}
+	missingLeafRate = def.MissingLeafRate
+	evidencePackCoverage = def.EvidencePackRate
+	weakEvidenceRate = def.WeakEvidenceRate
+	return
+}
+
+// computeTimingPatterns reads pattern.p2_p6 and sla_timers for timing KPIs (section H).
+// Returns (p50, p95, crossPeriodRate, pendingBeyondSLARate).
+func (s *PatternIntelligenceService) computeTimingPatterns(
+	ctx context.Context,
+	tenantID string,
+) (p50, p95, crossPeriodRate, pendingBeyondSLARate float64) {
+	p2p6, err := s.projRepo.GetPatternP2P6Summary(ctx, tenantID)
+	if err != nil || p2p6 == nil {
+		return
+	}
+	p50 = p2p6.SettlementDelayP50Days
+	p95 = p2p6.SettlementDelayP95Days
+
+	if p2p6.TotalIntentCount > 0 {
+		crossPeriodRate = math.Round(float64(p2p6.CrossPeriodCount)/float64(p2p6.TotalIntentCount)*10000) / 10000
+	}
+
+	// pending_beyond_sla_rate = timers past deadline / all active+breached timers.
+	// slaRepo may be nil when PatternIntelligenceService is created in unit tests.
+	if s.slaRepo != nil {
+		beyondSLA, total, slaErr := s.slaRepo.CountSLAForTenant(ctx, tenantID)
+		if slaErr != nil {
+			log.Printf("pattern_svc: CountSLAForTenant failed tenant=%s: %v", tenantID, slaErr)
+		} else if total > 0 {
+			pendingBeyondSLARate = math.Round(float64(beyondSLA)/float64(total)*10000) / 10000
+		}
+	}
+	return
+}
+
+// sourcePatternSeverity maps a combined issue rate to a severity tier.
+// Thresholds based on the Pattern Intelligence spec guidelines.
+func sourcePatternSeverity(combinedRate float64) string {
+	switch {
+	case combinedRate >= 0.30:
+		return "CRITICAL"
+	case combinedRate >= 0.15:
+		return "HIGH"
+	case combinedRate >= 0.05:
+		return "MEDIUM"
+	default:
+		return "LOW"
+	}
 }

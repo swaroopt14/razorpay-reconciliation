@@ -45,6 +45,7 @@ export interface IntentDetail {
   intent_id: string
   status: IntentStatus
   source: IntentSource
+  error_code?: string
   canonical: {
     intent_type: IntentType
     amount: {

@@ -213,19 +213,19 @@ type FinalContractUpdatedEvent struct {
 //   - Mark this contract as "has evidence" (reduces compliance risk score)
 
 type EvidencePackReadyEvent struct {
-	EventID        string    `json:"event_id"`
-	TenantID       string    `json:"tenant_id"`
-	IntentID       string    `json:"intent_id"`
-	ContractID     string    `json:"contract_id"`
-	EvidencePackID string    `json:"evidence_pack_id"`
-	MerkleRoot     string    `json:"merkle_root"` // cryptographic proof of evidence contents
-	OccurredAt     time.Time `json:"occurred_at"`
-	TraceID        string    `json:"trace_id"`
-	PackCompletenessScore float64 `json:"pack_completeness_score"`
-	LeafCount int `json:"leaf_count"`
-	RequiredLeafCount int `json:"required_leaf_count"`
-	SettlementLeafPresentFlag bool `json:"settlement_leaf_present_flag"`
-	AttachmentDecisionLeafPresentFlag bool `json:"attachment_decision_leaf_present_flag"`
+	EventID                           string    `json:"event_id"`
+	TenantID                          string    `json:"tenant_id"`
+	IntentID                          string    `json:"intent_id"`
+	ContractID                        string    `json:"contract_id"`
+	EvidencePackID                    string    `json:"evidence_pack_id"`
+	MerkleRoot                        string    `json:"merkle_root"` // cryptographic proof of evidence contents
+	OccurredAt                        time.Time `json:"occurred_at"`
+	TraceID                           string    `json:"trace_id"`
+	PackCompletenessScore             float64   `json:"pack_completeness_score"`
+	LeafCount                         int       `json:"leaf_count"`
+	RequiredLeafCount                 int       `json:"required_leaf_count"`
+	SettlementLeafPresentFlag         bool      `json:"settlement_leaf_present_flag"`
+	AttachmentDecisionLeafPresentFlag bool      `json:"attachment_decision_leaf_present_flag"`
 }
 
 // ── Event 7: from any service's Dead Letter Queue ─────────────────────────────
@@ -321,6 +321,8 @@ type CanonicalSettlementCreatedEvent struct {
 	// LOW    = manually uploaded CSV (human error risk)
 
 	SourceSystemID  string  `json:"source_system_id"` // identifies the specific PSP/bank/ERP
+	ProviderID      string  `json:"source_system"`    // e.g. ERP name, internal name
+	PaymentRail     string  `json:"corridor_id"`      // PSP corridor ID
 	ParseConfidence float64 `json:"parse_confidence"` // 0.0–1.0: how confident was the parser?
 	// 1.0 = perfect parse, all fields found
 	// 0.7 = some fields missing or ambiguous
@@ -340,6 +342,7 @@ type CanonicalSettlementCreatedEvent struct {
 	UTR             string  `json:"utr"`              // Unique Transaction Reference (Indian banking)
 	RRN             string  `json:"rrn"`              // Retrieval Reference Number
 	BankRef         string  `json:"bank_ref"`         // bank's own reference number
+	BankID          string  `json:"bank_id"`          // bank identifier
 	ProviderRef     string  `json:"provider_ref"`     // PSP reference (e.g. Razorpay payment ID)
 	ClientRef       string  `json:"client_ref"`       // merchant's own reference (most reliable)
 	CarrierRichness float64 `json:"carrier_richness"` // 0.0–1.0: fraction of carrier fields populated
@@ -357,6 +360,19 @@ type CanonicalSettlementCreatedEvent struct {
 	IngestRunID       string `json:"ingest_run_id"`
 
 	MappingConfidence float64 `json:"mapping_confidence"`
+
+	// // ── Pattern Intelligence fields (added per upstream contract — Service 5B) ──
+	// // ProviderID: logical PSP/intermediary that processed this settlement.
+	// // Service 5B sends this under the key "source_system".
+	// // e.g. "razorpay", "payu", "cashfree"
+	// ProviderID string `json:"source_system"`
+	// // BankID: destination bank or financial institution code.
+	// // e.g. "HDFC", "ICICI", "SBI"
+	// BankID string `json:"bank_id"`
+	// // PaymentRail: the transfer rail used.
+	// // Service 5B sends this under the key "corridor_id".
+	// // e.g. "NEFT", "RTGS", "IMPS", "UPI"
+	// PaymentRail string `json:"corridor_id"`
 }
 
 // ── NEW EVENT B: from Service 5C ─────────────────────────────────────────────
@@ -393,12 +409,14 @@ type AttachmentDecisionCreatedEvent struct {
 	OccurredAt time.Time `json:"occurred_at"`
 
 	// ── Decision identity ─────────────────────────────────────────────────────
-	DecisionID   string `json:"attachment_decision_id"`
-	SettlementID string `json:"settlement_observation_id"`
-	IntentID     string `json:"intent_id"`
-	ContractID   string `json:"contract_id"`
-	CorridorID   string `json:"corridor_id"`
-	BatchID      string `json:"batch_id"`
+	DecisionID      string `json:"attachment_decision_id"`
+	SettlementID    string `json:"settlement_observation_id"`
+	IntentID        string `json:"intent_id"`
+	ContractID      string `json:"contract_id"`
+	CorridorID      string `json:"corridor_id"`
+	BatchID         string `json:"batch_id"`
+	ProviderID      string `json:"source_system"`
+	ClientReference string `json:"client_reference"`
 
 	// ── Decision outcome ──────────────────────────────────────────────────────
 	DecisionType string `json:"decision_type"`
@@ -480,6 +498,7 @@ type VarianceRecordCreatedEvent struct {
 	SettlementID string `json:"settlement_id"` // the settlement observation
 	CorridorID   string `json:"corridor_id"`
 	BatchID      string `json:"batch_id"`
+	ProviderID   string `json:"source_system"`
 
 	// ── Variance type ─────────────────────────────────────────────────────────
 	VarianceType string `json:"variance_type"` // one of:
@@ -508,16 +527,16 @@ type VarianceRecordCreatedEvent struct {
 	EvidenceGapFlags []string `json:"evidence_gap_flags"` // named gaps: ["missing_utr", "no_bank_confirmation"]
 
 	// Fields added from VarianceRecord DB model — required for KPI computation
-	DeductionVariance    decimal.Decimal `json:"deduction_variance"`      // deduction amount in minor units (TDS, PSP fee)
-	FeeVariance          decimal.Decimal `json:"fee_variance"`            // fee component of variance in minor units
-	CurrencyMatchFlag    bool            `json:"currency_match_flag"`     // true = intent and settlement currencies match
-	StatusVarianceFlag   bool            `json:"status_variance_flag"`    // true = status differs between intent and observation
-	ValueDateMismatchFlag bool           `json:"value_date_mismatch_flag"` // true = value date differs from expected
-	SettlementDelayDays  int             `json:"settlement_delay_days"`   // calendar days between intended_execution_at and settlement — needed for P6 p95
-	ProviderRefMissingFlag bool          `json:"provider_ref_missing_flag"` // true = no UTR/RRN/BankRef on settlement side
-	BankRefMissingFlag   bool            `json:"bank_ref_missing_flag"`   // true = bank reference absent
-	EvidenceGapFlag      bool            `json:"evidence_gap_flag"`       // true = any evidence gap exists (bool summary of EvidenceGapFlags)
-	VarianceSeverity     string          `json:"variance_severity"`       // "LOW" | "MEDIUM" | "HIGH" — computed by variance engine
+	DeductionVariance      decimal.Decimal `json:"deduction_variance"`        // deduction amount in minor units (TDS, PSP fee)
+	FeeVariance            decimal.Decimal `json:"fee_variance"`              // fee component of variance in minor units
+	CurrencyMatchFlag      bool            `json:"currency_match_flag"`       // true = intent and settlement currencies match
+	StatusVarianceFlag     bool            `json:"status_variance_flag"`      // true = status differs between intent and observation
+	ValueDateMismatchFlag  bool            `json:"value_date_mismatch_flag"`  // true = value date differs from expected
+	SettlementDelayDays    int             `json:"settlement_delay_days"`     // calendar days between intended_execution_at and settlement — needed for P6 p95
+	ProviderRefMissingFlag bool            `json:"provider_ref_missing_flag"` // true = no UTR/RRN/BankRef on settlement side
+	BankRefMissingFlag     bool            `json:"bank_ref_missing_flag"`     // true = bank reference absent
+	EvidenceGapFlag        bool            `json:"evidence_gap_flag"`         // true = any evidence gap exists (bool summary of EvidenceGapFlags)
+	VarianceSeverity       string          `json:"variance_severity"`         // "LOW" | "MEDIUM" | "HIGH" — computed by variance engine
 }
 
 // ── NEW EVENT D: from Service 5C ─────────────────────────────────────────────
@@ -561,22 +580,25 @@ type BatchSummaryUpdatedEvent struct {
 	// ── Aggregate money amounts (all in minor units) ──────────────────────────
 	TotalIntendedAmountMinor  decimal.Decimal `json:"total_intended_amount_minor"`
 	TotalConfirmedAmountMinor decimal.Decimal `json:"total_confirmed_amount_minor"`
+	OriginalSettledAmountMinor decimal.Decimal `json:"original_settled_amount"`
 	TotalVarianceMinor        decimal.Decimal `json:"total_variance_minor"` // positive = leakage
 
 	// ── Intelligence scores ───────────────────────────────────────────────────
 	AmbiguityScore float64 `json:"ambiguity_score"` // 0.0–1.0 computed by Service 5C
 	// High ambiguity = many same-amount payouts, weak carrier references
 
+	MatchConfidence float64 `json:"aggregate_match_confidence"` // 0.0–1.0 computed by Service 5C
+
 	BatchFinalityStatus string `json:"batch_finality_status"` // "PROCESSING", "FULLY_SETTLED", etc.
 	// matches batch_contracts.batch_finality_status values from Phase 1 schema
 
 	// Fields added from BatchAttachmentSummary DB model — required for P1 batch_quality_score
-	ExactMatchCount     int     `json:"exact_match_count"`      // attachments resolved as MATCH_EXACT
-	HighConfidenceCount int     `json:"high_confidence_count"`  // attachments resolved as MATCH_HIGH
-	AmbiguousCount      int     `json:"ambiguous_count"`        // attachments resolved as MATCH_AMBIGUOUS
-	UnresolvedCount     int     `json:"unresolved_count"`       // attachments with no match (MATCH_UNRESOLVED)
-	ConflictedCount     int     `json:"conflicted_count"`       // attachments with conflicting signals
-	AggregateScore      float64 `json:"aggregate_score"`        // overall batch attachment quality score — primary input for P1
+	ExactMatchCount     int     `json:"exact_match_count"`     // attachments resolved as MATCH_EXACT
+	HighConfidenceCount int     `json:"high_confidence_count"` // attachments resolved as MATCH_HIGH
+	AmbiguousCount      int     `json:"ambiguous_count"`       // attachments resolved as MATCH_AMBIGUOUS
+	UnresolvedCount     int     `json:"unresolved_count"`      // attachments with no match (MATCH_UNRESOLVED)
+	ConflictedCount     int     `json:"conflicted_count"`      // attachments with conflicting signals
+	AggregateScore      float64 `json:"aggregate_score"`       // overall batch attachment quality score — primary input for P1
 }
 
 // ── NEW EVENT E: from Service 6 ──────────────────────────────────────────────
@@ -637,4 +659,69 @@ type GovernanceDecisionCreatedEvent struct {
 	// HUMAN_REVIEW = a human reviewed and approved (highest evidential weight)
 
 	DecidedAt time.Time `json:"decided_at"` // when the governance decision was made
+}
+
+// ── NEW EVENT F: from Service 2 ──────────────────────────────────────────────
+//
+// Arrives when a payment intent row is routed to manual review before or during
+// dispatch. Emitted per-intent (one event per reviewed row).
+//
+// WHAT IS MANUAL REVIEW?
+// When a payment row fails automated validation (invalid IFSC, missing fields,
+// schema mismatch, amount format errors, duplicate risk) it is held in a manual
+// review queue for a human operator to inspect before the payment is dispatched.
+//
+// ZPI uses this event to:
+//   - Compute manual_review_rate_by_source (which source system generates the most errors)
+//   - Detect recurring file quality patterns per source
+//   - Trigger "Fix Source Export" and "Fix Source Schema" recommendation cards
+//   - Compute manual_review_amount exposure per source over rolling windows
+//
+// KEY RULE: amount_minor must follow the same minor-unit convention as all
+// other monetary fields in ZPI (paise for INR, cents for USD). Never float64.
+//
+// Kafka topic: payments.intent.dlq
+// Published by: zord-relay (pulls/leases rows from zord-intent-engine's DLQ table
+//               and publishes as a standard RelayEvent envelope to Kafka)
+// =============================================================================
+
+// DLQItemEvent represents a single payment intent row that was routed to
+// manual review due to a validation or quality failure.
+type DLQItemEvent struct {
+	EventID    string    `json:"event_id"`
+	TenantID   string    `json:"tenant_id"`
+	TraceID    string    `json:"trace_id"`
+	OccurredAt time.Time `json:"occurred_at"`
+
+	// ── Intent reference ──────────────────────────────────────────────────────
+	IntentID string `json:"intent_id"` // the intent that was flagged
+	BatchID  string `json:"batch_id"`  // which batch this intent belongs to
+
+	// ── Source attribution ────────────────────────────────────────────────────
+	// SourceSystem identifies the upstream ERP, file upload, or API channel that
+	// created this intent. This is the primary dimension ZPI groups by.
+	// Examples: "tally_branch_a", "sap_vendor_batch", "manual_excel", "api_direct"
+	SourceSystem string `json:"source_system"`
+
+	// ── Financial impact ──────────────────────────────────────────────────────
+	// AmountMinor: the intended payment amount for this row in minor currency units.
+	// Relay publishes this under key "amount" (extracted from IntentContext).
+	AmountMinor decimal.Decimal `json:"amount"`
+
+	// ── Failure reason ────────────────────────────────────────────────────────
+	// ReasonCode: the primary reason this row was routed to manual review.
+	// ZPI groups by this to detect dominant failure patterns per source.
+	//
+	// Expected values:
+	//   MISSING_CLIENT_PAYOUT_REF — client_payout_ref / VoucherNo / InvoiceNo absent
+	//   INVALID_IFSC              — bank IFSC is malformed or not in master list
+	//   MISSING_ACCOUNT_NUMBER    — beneficiary account number absent
+	//   INVALID_AMOUNT_FORMAT     — amount is non-numeric, negative, or exceeds limit
+	//   DUPLICATE_ROW             — row is a duplicate of another row in same batch
+	//   SCHEMA_MISMATCH           — row fields do not match expected source mapping
+	//   MISSING_VENDOR_CODE       — vendor/seller identifier absent
+	//   BENEFICIARY_BLACKLISTED   — beneficiary flagged in AML/compliance list
+	//   CURRENCY_MISMATCH         — currency code invalid or mismatched with corridor
+	//   OTHER                     — any other reason not covered above
+	ReasonCode string `json:"reason_code"`
 }

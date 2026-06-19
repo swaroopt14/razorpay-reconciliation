@@ -5,14 +5,10 @@ const nextConfig = {
   reactStrictMode: true,
   output: 'standalone',
   eslint: {
-    // Warning: This allows production builds to successfully complete even if
-    // your project has ESLint errors.
-    ignoreDuringBuilds: true,
+    ignoreDuringBuilds: false,
   },
   typescript: {
-    // Warning: This allows production builds to successfully complete even if
-    // your project has TypeScript errors.
-    ignoreBuildErrors: true,
+    ignoreBuildErrors: false,
   },
   // Server fetch cache: opt out per-request via `cache: 'no-store'` on fetches and
   // `Cache-Control` on Route Handlers — there is no global "disable all fetch cache" flag here.
@@ -43,6 +39,11 @@ const nextConfig = {
     config.resolve.alias = alias
     alias['@/constants'] = path.resolve(__dirname, 'constants')
     alias['@/components'] = path.resolve(__dirname, 'components')
+    alias['@/features'] = path.resolve(__dirname, 'src/features')
+    alias['@/shared'] = path.resolve(__dirname, 'src/shared')
+    alias['@/server'] = path.resolve(__dirname, 'src/server')
+    alias['@/styles'] = path.resolve(__dirname, 'src/styles')
+    alias['@/lib'] = path.resolve(__dirname, 'src/shared/lib')
     alias['@/types'] = path.resolve(__dirname, 'types')
     alias['@/utils'] = path.resolve(__dirname, 'utils')
     alias['@/services'] = path.resolve(__dirname, 'services')

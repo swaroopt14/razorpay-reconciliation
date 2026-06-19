@@ -19,7 +19,9 @@ func NewTokenRepository(db *sql.DB) *TokenRepository {
 	return &TokenRepository{db: db}
 }
 
-// ✅ Updated: now also inserts audit record
+// Insert stores a token record and writes a TOKENIZE audit row atomically.
+// ON CONFLICT uses the composite primary key (tenant_id, kind, token_id) —
+// idempotent re-tokenization of the same value for the same tenant+kind is safe.
 func (r *TokenRepository) Insert(ctx context.Context, t models.TokenRecord) error {
 
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -28,12 +30,12 @@ func (r *TokenRepository) Insert(ctx context.Context, t models.TokenRecord) erro
 	}
 	defer tx.Rollback()
 
-	// Insert token_map (FIX: handle deterministic collisions)
+	// Insert token_map — conflict on composite PK (tenant_id, kind, token_id)
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO token_map 
 		(token_id, tenant_id, kind, ciphertext, nonce, encryption_key_id, key_version, status, created_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-		ON CONFLICT (token_id) DO NOTHING
+		ON CONFLICT (tenant_id, kind, token_id) DO NOTHING
 	`,
 		t.TokenID,
 		t.TenantID,
@@ -49,20 +51,25 @@ func (r *TokenRepository) Insert(ctx context.Context, t models.TokenRecord) erro
 		return err
 	}
 
-	// Insert token_audit
+	// Insert token_audit — all columns including new ones
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO token_audit
-		(audit_id, token_id, tenant_id, actor, action, purpose, decision, trace_id, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		(audit_id, token_id, tenant_id, actor, action, purpose, decision,
+		 trace_id, caller, object_ref, purpose_code, correlation_id, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 	`,
 		uuid.New().String(),
 		t.TokenID,
 		t.TenantID,
-		"service-2",         // actor
-		"TOKENIZE",          // action
-		"INTENT_PROCESSING", // purpose
-		"ALLOW",             // decision
-		"",                  // trace_id (can upgrade later)
+		t.Actor,             // was hardcoded "service-2"
+		"TOKENIZE",
+		"INTENT_PROCESSING",
+		"ALLOW",
+		t.TraceID,           // was hardcoded ""
+		t.Actor,             // caller = same as actor for tokenize
+		"",                  // object_ref not applicable for tokenize
+		"INTENT_PROCESSING",
+		"",                  // correlation_id
 		time.Now().UTC(),
 	)
 	if err != nil {
@@ -72,29 +79,84 @@ func (r *TokenRepository) Insert(ctx context.Context, t models.TokenRecord) erro
 	return tx.Commit()
 }
 
-func (r *TokenRepository) Get(ctx context.Context, tokenID string) (*models.TokenRecord, error) {
-	row := r.db.QueryRowContext(ctx, `
-		SELECT token_id, tenant_id, kind, ciphertext, nonce, encryption_key_id, key_version, status, created_at
-		FROM token_map
-		WHERE token_id = $1
-	`, tokenID)
+// Get fetches a token record and writes a detokenize audit entry atomically.
+// caller, purposeCode, objectRef, correlationID are required for the audit.
+// If the audit INSERT fails, Get returns an error — fail closed, never fail open.
+func (r *TokenRepository) Get(
+	ctx context.Context,
+	tokenID string,
+	tenantID string,
+	caller string,
+	purposeCode string,
+	objectRef string,
+	correlationID string,
+) (*models.TokenRecord, error) {
 
-	var t models.TokenRecord
-	err := row.Scan(
-		&t.TokenID,
-		&t.TenantID,
-		&t.Kind,
-		&t.Ciphertext,
-		&t.Nonce,
-		&t.EncryptionKeyID,
-		&t.KeyVersion,
-		&t.Status,
-		&t.CreatedAt,
-	)
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
-	return &t, nil
+	defer tx.Rollback()
+
+	var rec models.TokenRecord
+	err = tx.QueryRowContext(ctx, `
+		SELECT token_id, tenant_id, kind, ciphertext, nonce, encryption_key_id, key_version, status, created_at
+		FROM token_map
+		WHERE token_id = $1 AND tenant_id = $2
+	`, tokenID, tenantID).Scan(
+		&rec.TokenID, &rec.TenantID, &rec.Kind,
+		&rec.Ciphertext, &rec.Nonce,
+		&rec.EncryptionKeyID, &rec.KeyVersion,
+		&rec.Status, &rec.CreatedAt,
+	)
+	if err != nil {
+		// Write DENY audit before returning — commit it even on select failure
+		_ = r.writeAuditInTx(ctx, tx, tokenID, tenantID, caller, "DETOKENIZE",
+			"DENY", purposeCode, objectRef, correlationID)
+		_ = tx.Commit()
+		return nil, err
+	}
+
+	// Write ALLOW audit — fail closed: if audit fails, detokenize fails
+	if err := r.writeAuditInTx(ctx, tx, tokenID, tenantID, caller, "DETOKENIZE",
+		"ALLOW", purposeCode, objectRef, correlationID); err != nil {
+		return nil, err // intentionally fail closed
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	return &rec, nil
+}
+
+func (r *TokenRepository) writeAuditInTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	tokenID, tenantID, caller, action, decision,
+	purposeCode, objectRef, correlationID string,
+) error {
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO token_audit
+		(audit_id, token_id, tenant_id, actor, action, purpose, decision,
+		 trace_id, caller, object_ref, purpose_code, correlation_id, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+	`,
+		uuid.New().String(),
+		tokenID,
+		tenantID,
+		caller,
+		action,
+		purposeCode,
+		decision,
+		"",
+		caller,
+		objectRef,
+		purposeCode,
+		correlationID,
+		time.Now().UTC(),
+	)
+	return err
 }
 
 func (r *TokenRepository) GetActiveKey(ctx context.Context, tenantID string) (*models.EncryptionKey, error) {

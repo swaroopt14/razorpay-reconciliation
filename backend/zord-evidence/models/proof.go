@@ -132,7 +132,7 @@ type DisputeExportRequest struct {
 	PaymentReference string `json:"payment_reference" binding:"required"`
 	TenantID         string `json:"tenant_id" binding:"required"`
 	DisputeReason    string `json:"dispute_reason"`
-	ExportType       string `json:"export_type" binding:"required"` // FINANCE_SUMMARY | AUDIT_DETAILED | BANK_PSP_PACK | RAW_JSON
+	ExportType       string `json:"export_type"` // FINANCE_SUMMARY | AUDIT_DETAILED | BANK_PSP_PACK | RAW_JSON
 	RequestedBy      string `json:"requested_by"`
 	EvidencePackID   string `json:"evidence_pack_id"`
 }

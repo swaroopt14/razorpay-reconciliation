@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { BatchCommandCenterShell } from './_components/BatchCommandCenterShell'
+import { BatchCommandCenterShell } from '@/features/payout-command/batch-command-center/_components/BatchCommandCenterShell'
 
 export const metadata: Metadata = {
   title: 'Batch Command Center | Zord',
