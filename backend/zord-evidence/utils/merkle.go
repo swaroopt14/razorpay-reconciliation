@@ -1,6 +1,9 @@
 package utils
 
-import "sort"
+import (
+	"sort"
+	"zord-evidence/models"
+)
 
 type MerkleLeaf struct {
 	Index    int
@@ -48,7 +51,7 @@ func BuildMerkleRoot(leaves []MerkleLeaf) string {
 // BuildInclusionProofs returns, for each leaf, the ordered list of sibling
 // hashes needed to reconstruct the root (§14.4 selective disclosure).
 // The leaves slice should already be deterministically sorted for consistency.
-func BuildInclusionProofs(leaves []MerkleLeaf) map[string][]string {
+func BuildInclusionProofs(leaves []MerkleLeaf) map[int][]models.ProofNode {
 	if len(leaves) == 0 {
 		return nil
 	}
@@ -84,26 +87,26 @@ func BuildInclusionProofs(leaves []MerkleLeaf) map[string][]string {
 		levels = append(levels, level)
 	}
 
-	proofs := make(map[string][]string, len(sorted))
+	proofs := make(map[int][]models.ProofNode, len(sorted))
 	for idx, l := range sorted {
-		path := []string{}
+		path := []models.ProofNode{}
 		pos := idx
 		for lvl := 0; lvl < len(levels)-1; lvl++ {
 			row := levels[lvl]
 			if pos%2 == 0 {
 				// right sibling
+				siblingHash := row[pos] // duplicate
 				if pos+1 < len(row) {
-					path = append(path, row[pos+1])
-				} else {
-					path = append(path, row[pos]) // duplicate
+					siblingHash = row[pos+1]
 				}
+				path = append(path, models.ProofNode{Hash: siblingHash, IsLeft: false})
 			} else {
 				// left sibling
-				path = append(path, row[pos-1])
+				path = append(path, models.ProofNode{Hash: row[pos-1], IsLeft: true})
 			}
 			pos /= 2
 		}
-		proofs[l.LeafHash] = path
+		proofs[l.Index] = path
 	}
 	return proofs
 }

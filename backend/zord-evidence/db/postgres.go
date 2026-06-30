@@ -196,10 +196,11 @@ func EnsureTables(ctx context.Context, d *sql.DB) error {
 		// §14.4 — Merkle inclusion proofs
 		`CREATE TABLE IF NOT EXISTS merkle_inclusion_proofs (
 			evidence_pack_id TEXT NOT NULL,
+			leaf_index       INT NOT NULL,
 			leaf_hash        TEXT NOT NULL,
 			proof_path_json  JSONB NOT NULL,
 			created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			PRIMARY KEY(evidence_pack_id, leaf_hash)
+			PRIMARY KEY(evidence_pack_id, leaf_index)
 		)`,
 
 		// §14.5 — replay job tracking
@@ -292,6 +293,9 @@ func EnsureTables(ctx context.Context, d *sql.DB) error {
 		// `ALTER TABLE evidence_packs ADD COLUMN IF NOT EXISTS new_column TEXT;`,
 		`ALTER TABLE pending_leaf_candidates ADD COLUMN IF NOT EXISTS client_payout_ref TEXT;`,
 		`ALTER TABLE evidence_packs ADD COLUMN IF NOT EXISTS client_payout_ref TEXT;`,
+		`ALTER TABLE merkle_inclusion_proofs DROP CONSTRAINT IF EXISTS merkle_inclusion_proofs_pkey;`,
+		`ALTER TABLE merkle_inclusion_proofs ADD COLUMN IF NOT EXISTS leaf_index INT;`,
+		`ALTER TABLE merkle_inclusion_proofs ADD PRIMARY KEY (evidence_pack_id, leaf_index);`,
 	}
 	for _, m := range migrations {
 		if _, err := d.ExecContext(ctx, m); err != nil {

@@ -601,10 +601,10 @@ func (r *EvidenceRepository) SaveInclusionProofs(ctx context.Context, packID str
 	for _, p := range proofs {
 		pathJSON, _ := json.Marshal(p.ProofPath)
 		_, err = tx.ExecContext(ctx, `
-INSERT INTO merkle_inclusion_proofs(evidence_pack_id, leaf_hash, proof_path_json, created_at)
-VALUES($1,$2,$3,$4)
-ON CONFLICT (evidence_pack_id, leaf_hash) DO NOTHING`,
-			packID, p.LeafHash, pathJSON, p.CreatedAt)
+INSERT INTO merkle_inclusion_proofs(evidence_pack_id,leaf_index, leaf_hash, proof_path_json, created_at)
+VALUES($1,$2,$3,$4,$5)
+ON CONFLICT (evidence_pack_id, leaf_index) DO NOTHING`,
+			packID, p.LeafIndex, p.LeafHash, pathJSON, p.CreatedAt)
 		if err != nil {
 			return fmt.Errorf("insert inclusion proof: %w", err)
 		}
@@ -615,7 +615,7 @@ ON CONFLICT (evidence_pack_id, leaf_hash) DO NOTHING`,
 // GetInclusionProofs fetches all inclusion proofs for a pack (§14.4).
 func (r *EvidenceRepository) GetInclusionProofs(ctx context.Context, packID string) ([]models.InclusionProof, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT leaf_hash, proof_path_json, created_at
+		SELECT leaf_index, leaf_hash, proof_path_json, created_at
 		FROM merkle_inclusion_proofs WHERE evidence_pack_id=$1`, packID)
 	if err != nil {
 		return nil, err
@@ -626,7 +626,7 @@ func (r *EvidenceRepository) GetInclusionProofs(ctx context.Context, packID stri
 	for rows.Next() {
 		var p models.InclusionProof
 		var pathJSON []byte
-		if err := rows.Scan(&p.LeafHash, &pathJSON, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.LeafIndex, &p.LeafHash, &pathJSON, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal(pathJSON, &p.ProofPath)
