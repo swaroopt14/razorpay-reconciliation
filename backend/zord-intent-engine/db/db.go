@@ -467,6 +467,7 @@ CREATE TABLE IF NOT EXISTS etl_quality_results (
 		received_count                  INT NOT NULL DEFAULT 0,
 		canonicalized_count             INT NOT NULL DEFAULT 0,
 		dlq_count                       INT NOT NULL DEFAULT 0,
+		pending_count                   INT NOT NULL DEFAULT 0,
 		review_count                    INT NOT NULL DEFAULT 0,
 		low_matchability_count          INT NOT NULL DEFAULT 0,
 		low_proof_readiness_count       INT NOT NULL DEFAULT 0,
@@ -494,6 +495,9 @@ CREATE TABLE IF NOT EXISTS etl_quality_results (
 	if _, err := DB.Exec(canonicalBatches); err != nil {
 		log.Fatal("canonical_batches:", err)
 	}
+
+	// Dynamic schema evolution check for existing database structures
+	_, _ = DB.Exec("ALTER TABLE canonical_batches ADD COLUMN IF NOT EXISTS pending_count INT NOT NULL DEFAULT 0;")
 
 	// Lease indexes for relay batch-completion polling
 	if _, err := DB.Exec(`
