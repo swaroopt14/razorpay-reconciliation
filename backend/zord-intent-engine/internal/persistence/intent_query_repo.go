@@ -443,9 +443,11 @@ func (r *IntentQueryRepo) ListPaymentIntentsByBatch(
 		WHERE tenant_id = $1
 		  AND batchid = $2
 		ORDER BY created_at DESC, intent_id DESC
+		LIMIT $3 OFFSET $4
 	`
 
-	rows, err := r.db.QueryContext(ctx, dataQ, tenantID, batchID)
+	offset := (page - 1) * pageSize
+	rows, err := r.db.QueryContext(ctx, dataQ, tenantID, batchID, pageSize, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to fetch payment intents by batch: %w", err)
 	}
@@ -552,9 +554,11 @@ func (r *IntentQueryRepo) ListDLQItemsByBatch(
 				NULLIF(n.fields_json->>'client_batch_ref', '')
 		  ) = $2
 		ORDER BY d.created_at DESC, d.dlq_id DESC
+		LIMIT $3 OFFSET $4
 	`
 
-	rows, err := r.db.QueryContext(ctx, dataQ, tenantID, batchID)
+	offset := (page - 1) * pageSize
+	rows, err := r.db.QueryContext(ctx, dataQ, tenantID, batchID, pageSize, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to fetch dlq items by batch: %w", err)
 	}
@@ -643,9 +647,12 @@ func (r *IntentQueryRepo) ListPaymentIntentLiteByBatch(
 		WHERE tenant_id = $1
 		  AND batchid = $2
 		ORDER BY source_row_num ASC NULLS LAST, created_at ASC, intent_id ASC
+		LIMIT $3
 	`
 
-	rows, err := r.db.QueryContext(ctx, q, tenantID, batchID)
+	// Enforce a server-side safety limit to prevent large customer files from overwhelming memory.
+	const safetyLimit = 5000
+	rows, err := r.db.QueryContext(ctx, q, tenantID, batchID, safetyLimit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch payment intent lite rows: %w", err)
 	}

@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/shopspring/decimal"
 	"zord-intent-engine/internal/models"
 )
 
@@ -66,11 +67,13 @@ func applyFieldNormalization(field string, rawVal string, profile *models.Mappin
 
 	switch field {
 	case "amount.value":
-		amt, err := parseRawAmount(rawVal, profile.AmountFormat)
+		// Use exact decimal arithmetic — never pass through float64.
+		d, err := parseRawAmount(rawVal, profile.AmountFormat)
 		if err != nil {
 			return rawVal // Fallback to raw value on parse error
 		}
-		return fmt.Sprintf("%.2f", amt)
+		// Return the decimal's string representation formatted to two decimal places.
+		return d.StringFixed(2)
 
 	case "intended_execution_at":
 		t, err := parseFlexibleDate(rawVal, profile.DateFormat)
@@ -84,11 +87,15 @@ func applyFieldNormalization(field string, rawVal string, profile *models.Mappin
 	}
 }
 
-func parseRawAmount(raw string, format models.AmountFormat) (float64, error) {
+// parseRawAmount strips formatting characters and returns an exact decimal.Decimal.
+// Using shopspring/decimal avoids IEEE-754 float64 rounding on large monetary values
+// (e.g. 1234567.89 stored as 1234567.8900000001 in float64).
+func parseRawAmount(raw string, format models.AmountFormat) (decimal.Decimal, error) {
 	if strings.TrimSpace(raw) == "" {
-		return 0, fmt.Errorf("amount is empty")
+		return decimal.Zero, fmt.Errorf("amount is empty")
 	}
 
+	// Strip currency symbols, thousand-separators and whitespace; keep digits, '.', '-'.
 	cleaned := strings.Map(func(r rune) rune {
 		if unicode.IsDigit(r) || r == '.' || r == '-' {
 			return r
@@ -96,15 +103,16 @@ func parseRawAmount(raw string, format models.AmountFormat) (float64, error) {
 		return -1
 	}, raw)
 
-	val, err := strconv.ParseFloat(cleaned, 64)
+	d, err := decimal.NewFromString(cleaned)
 	if err != nil {
-		return 0, err
+		return decimal.Zero, fmt.Errorf("cannot parse amount %q: %w", raw, err)
 	}
 
+	// Paise → rupees: exact integer division, no float rounding.
 	if format == models.AmountFormatPaise {
-		return val / 100.0, nil
+		d = d.Div(decimal.NewFromInt(100))
 	}
-	return val, nil
+	return d, nil
 }
 
 func parseFlexibleDate(raw string, preferredLayout string) (time.Time, error) {
