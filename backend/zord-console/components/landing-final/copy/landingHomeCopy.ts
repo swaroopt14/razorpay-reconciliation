@@ -111,6 +111,11 @@ export const landingHomeCopy = {
     subcopy:
       'Scan connector health, rail posture, and bank hotspots in the same console layout teams use in sandbox and live workspaces.',
   },
+  featuresSection: {
+    headline: 'Clarity and control across every payout surface',
+    subcopy:
+      'Get a structured view of payment instructions, connector posture, and evidence readiness — from command center to finance close.',
+  },
   howItWorks: {
     title: 'The operating model behind control',
     body: 'Every payout moves through four stages so teams know where it is, what changed, and what evidence exists.',
