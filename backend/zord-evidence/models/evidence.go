@@ -45,9 +45,6 @@ var RequiredBatchLeafTypes = []string{
 	LeafTypeFileContentHash,
 }
 
-// ZeroVarianceHash is used when no financial variance exists for a transaction.
-// It is computed as SHA256("ZERO_VARIANCE_V1")
-const ZeroVarianceHash = "399c0a6a570f78a707a3363575916057a66710682f6e91963286395e8067f920"
 
 // PendingLeafCandidate represents a buffered leaf waiting for the full set.
 type PendingLeafCandidate struct {

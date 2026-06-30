@@ -246,15 +246,9 @@ func handleBatchUpdated(ctx context.Context, raw []byte, pg PackGenerator) error
 	}
 
 	log.Printf("evidence.kafka.handle_batch_updated RAW_SETTLEMENT_FILE source_val=%q final_hash=%q", payload["file_sha256"], rawSettlementHash)
-	if rawSettlementHash == "" {
-		rawSettlementHash = models.ZeroVarianceHash
-	}
 
 	// 5. File Content Hash (Matches the raw file content hash from edge)
 	fileHash := relayEvt.FileContentHash
-	if fileHash == "" {
-		fileHash = models.ZeroVarianceHash
-	}
 
 	// 6. Check finality before processing
 	jobStatus, _ := payload["job_status"].(string)
@@ -333,7 +327,7 @@ func handleFileUploaded(ctx context.Context, raw []byte, pg PackGenerator) error
 		return nil
 	}
 
-	hash := models.ZeroVarianceHash
+	var hash string
 	if h, ok := payload["file_hash"].(string); ok {
 		hash = h
 	}
@@ -369,7 +363,7 @@ func handleBatchCanonical(ctx context.Context, raw []byte, pg PackGenerator) err
 		return nil
 	}
 
-	hash := models.ZeroVarianceHash
+	var hash string
 	if payloadBytes, err := json.Marshal(payload); err == nil {
 		hash = utils.SHA256Hex(string(payloadBytes))
 	}
