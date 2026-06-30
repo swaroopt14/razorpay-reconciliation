@@ -24,10 +24,11 @@ func upsertCanonicalIntent(ctx context.Context, intent models.CanonicalIntent) e
 			amount, currency_code,
 			intended_execution_at, payout_type, provider_hint, corridor,
 			proof_readiness_score, matchability_score,
-			canonical_hash, governance_state, 
+			canonical_hash, governance_state,
+			source_row_num,
 			created_at
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18
 		) ON CONFLICT (intent_id) DO UPDATE SET
 			tenant_id               = EXCLUDED.tenant_id,
 			contract_id             = EXCLUDED.contract_id,
@@ -43,13 +44,15 @@ func upsertCanonicalIntent(ctx context.Context, intent models.CanonicalIntent) e
 			proof_readiness_score   = EXCLUDED.proof_readiness_score,
 			matchability_score      = EXCLUDED.matchability_score,
 			canonical_hash          = EXCLUDED.canonical_hash,
-			governance_state        = EXCLUDED.governance_state`,
+			governance_state        = EXCLUDED.governance_state,
+			source_row_num          = EXCLUDED.source_row_num`,
 		intent.IntentID, intent.TenantID, intent.ContractID,
 		intent.ClientPayoutRef, intent.ClientBatchRef, intent.BusinessIdempotencyKey,
 		intent.Amount, intent.CurrencyCode,
 		intent.IntendedExecutionAt, intent.PayoutType, intent.ProviderHint, intent.Corridor,
 		intent.ProofReadinessScore, intent.MatchabilityScore,
 		intent.CanonicalHash, intent.GovernanceState,
+		intent.SourceRowNum,
 		intent.CreatedAt,
 	)
 	return err
@@ -139,6 +142,7 @@ func canonicalIntentFromPayload(payload models.IntentPayload) (models.CanonicalI
 		CanonicalHash:          payload.CanonicalHash,
 		GovernanceState:        payload.GovernanceState,
 		// ZordSignatureCarrier:   signatureCarrier,
-		CreatedAt: createdAt,
+		SourceRowNum: payload.SourceRowNum,
+		CreatedAt:    createdAt,
 	}, nil
 }

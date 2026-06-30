@@ -37,7 +37,7 @@ const DEFAULT_POLL_MS = 30_000
 export type UseIntelligenceKpisOptions = {
   /** When true, polls BFF routes (tenant from session cookies). */
   tenantReady: boolean
-  /** Optional — scopes patterns KPI to a batch; other KPIs are tenant-wide. */
+  /** Optional — scopes intelligence KPIs to a batch when set; tenant-wide when omitted. */
   batchId?: string
   /** Optional date window forwarded to intelligence dashboards (from_date / to_date). */
   dateQuery?: IntelligenceDateQuery
@@ -52,6 +52,7 @@ export type UseIntelligenceKpisOptions = {
  */
 export function useIntelligenceKpis(options: UseIntelligenceKpisOptions): IntelligenceKpis {
   const { tenantReady, batchId, dateQuery, intervalMs = DEFAULT_POLL_MS } = options
+  const normalizedBatchId = apiTrimmedString(batchId) || undefined
   const dateFrom = dateQuery?.from_date ?? ''
   const dateTo = dateQuery?.to_date ?? ''
   const normalizedDateQuery = useMemo(
@@ -75,12 +76,12 @@ export function useIntelligenceKpis(options: UseIntelligenceKpisOptions): Intell
     setLoading(true)
     try {
       const [lk, am, df, pt, rc, rcaRes] = await Promise.all([
-        getLeakageKpis(normalizedDateQuery, apiTrimmedString(batchId) || undefined),
-        getAmbiguityKpis(normalizedDateQuery, apiTrimmedString(batchId) || undefined),
-        getDefensibilityKpis(normalizedDateQuery),
-        getPatternsKpis(apiTrimmedString(batchId) || undefined),
-        getRecommendationsKpis(normalizedDateQuery),
-        getRcaKpis(normalizedDateQuery),
+        getLeakageKpis(normalizedDateQuery, normalizedBatchId),
+        getAmbiguityKpis(normalizedDateQuery, normalizedBatchId),
+        getDefensibilityKpis(normalizedDateQuery, normalizedBatchId),
+        getPatternsKpis(normalizedBatchId),
+        getRecommendationsKpis(normalizedDateQuery, normalizedBatchId),
+        getRcaKpis(normalizedDateQuery, normalizedBatchId),
       ])
       if (cancelledRef.current) return
       setLeakage(lk)
@@ -93,7 +94,7 @@ export function useIntelligenceKpis(options: UseIntelligenceKpisOptions): Intell
     } finally {
       if (!cancelledRef.current) setLoading(false)
     }
-  }, [tenantReady, batchId, normalizedDateQuery])
+  }, [tenantReady, normalizedBatchId, normalizedDateQuery])
 
   useEffect(() => {
     cancelledRef.current = false

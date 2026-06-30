@@ -125,7 +125,7 @@ func main() {
 	policyService := services.NewPolicyService(policyRepo, projRepo, actionService)
 
 	// ── PHASE 4 & 7: Six intelligence layer services + Explanation ────────
-	leakageSvc := services.NewLeakageIntelligenceService(projRepo, snapshotRepo, mlRepo, predRepo, mlClient, batchRepo)
+	leakageSvc := services.NewLeakageIntelligenceService(projRepo, snapshotRepo, mlRepo, predRepo, mlClient)
 	leakagePredSvc := services.NewLeakagePredictionService(batchRepo, projRepo, mlRepo, predRepo, mlClient)
 	ambiguitySvc := services.NewAmbiguityIntelligenceService(context.Background(), projRepo, snapshotRepo, mlRepo, predRepo, mlClient)
 	defensibilitySvc := services.NewDefensibilityIntelligenceService(projRepo, snapshotRepo, batchRepo)
@@ -201,7 +201,7 @@ func main() {
 
 	// ── Dashboard handlers (frontend-facing /dashboard/ endpoints) ────────
 	intelligenceMode := string(cfg.IntelligenceMode)
-	dashLeakageH := handlers.NewDashboardLeakageHandler(snapshotRepo, intelligenceMode)
+	dashLeakageH := handlers.NewDashboardLeakageHandler(snapshotRepo, batchRepo, intelligenceMode)
 	dashAmbiguityH := handlers.NewDashboardAmbiguityHandler(snapshotRepo, batchRepo, projRepo, intelligenceMode)
 	dashDefensibilityH := handlers.NewDashboardDefensibilityHandler(snapshotRepo, intelligenceMode)
 	dashPatternH := handlers.NewDashboardPatternHandler(snapshotRepo, projRepo, intelligenceMode)

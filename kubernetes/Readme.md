@@ -24,30 +24,33 @@ Before starting, you need:
 Internet
   │
   ├── zordnet.com / api.zordnet.com / kong-admin.zordnet.com
-  │     → ALB (Kong) → Kong API Gateway (api-gateway namespace)
+  │     → ALB (shared) → Kong API Gateway (api-gateway namespace)
   │                         ├── / → zord-console:3000
   │                         ├── /v1/admin, /v1/bulk-ingest, /v1/ingest → zord-edge:8080
   │                         ├── /v1/intents, /v1/dlq, /v1/etl → zord-intent-engine:8083
   │                         ├── /v1/dispatch → zord-relay:8082
   │                         ├── /v1/settlement, /v1/reconciliation → zord-outcome-engine:8081
   │                         ├── /v1/evidence, /v1/verify → zord-evidence:8088
-  │                         ├── /v1/projections, /v1/policies, /v1/rca → zord-intelligence:8089
+  │                         ├── /v1/intelligence/rca → zord-intelligence:8089
   │                         └── /v1/query, /v1/chat → zord-prompt-layer:8086
   │
   └── grafana.zordnet.com / kibana.zordnet.com / jaeger.zordnet.com
-        → ALB (Observability) → Grafana / Kibana / Jaeger
+        → Same ALB (shared) → Grafana / Kibana / Jaeger
 ```
 
 ## DNS Records (All Subdomains)
 
-| Domain | ALB | Purpose |
-|--------|-----|---------|
-| `zordnet.com` | Kong ALB | Frontend UI |
-| `www.zordnet.com` | Kong ALB | Frontend UI (www) |
-| `api.zordnet.com` | Kong ALB | API testing (Postman) |
-| `kong-admin.zordnet.com` | Kong ALB | Kong Admin Dashboard |
-| `grafana.zordnet.com` | Observability ALB | Metrics dashboards |
-| `kibana.zordnet.com` | Observability ALB | Log search |
+All subdomains point to the **same shared ALB** (single ALB for cost savings):
+
+| Domain | Purpose |
+|--------|---------|
+| `zordnet.com` | Frontend UI |
+| `www.zordnet.com` | Frontend UI (www) |
+| `api.zordnet.com` | API (Postman / mobile) |
+| `kong-admin.zordnet.com` | Kong Admin Dashboard |
+| `grafana.zordnet.com` | Metrics dashboards |
+| `kibana.zordnet.com` | Log search |
+| `jaeger.zordnet.com` | Trace viewer |
 | `jaeger.zordnet.com` | Observability ALB | Trace viewer |
 
 ---
@@ -107,11 +110,13 @@ Copy this entire JSON and paste as the secret value:
   "RELAY_READ_DSN": "postgres://relay_user:relay_password@zord-postgres:5432/zord_relay_db?sslmode=disable",
   "INTELLIGENCE_READ_DSN": "postgres://zpi:zpi_secret@zord-postgres:5432/zord_intelligence?sslmode=disable",
   "EVIDENCE_READ_DSN": "postgres://evidence_user:evidence_password@zord-postgres:5432/zord_evidence_db?sslmode=disable",
-  "OUTCOME_READ_DSN": "postgres://outcome_user:outcome_password@zord-postgres:5432/zord_outcome_db?sslmode=disable"
+  "OUTCOME_READ_DSN": "postgres://outcome_user:outcome_password@zord-postgres:5432/zord_outcome_db?sslmode=disable",
+  "SLACK_LEADS_WEBHOOK_URL": "",
+  "SLACK_SUPPORT_WEBHOOK_URL": ""
 }
 ```
 
-**Total: 32 keys** (includes JWT_SIGNING_SECRET for Kong JWT plugin, ENCLAVE_INTERNAL_TOKEN for token-enclave auth, OUTCOME_READ_DSN for prompt-layer)
+**Total: 34 keys** (includes JWT_SIGNING_SECRET for Kong JWT plugin, ENCLAVE_INTERNAL_TOKEN for token-enclave auth, OUTCOME_READ_DSN for prompt-layer, SLACK_LEADS_WEBHOOK_URL for lead notifications, SLACK_SUPPORT_WEBHOOK_URL for support tickets)
 
 ### 1.3 Value for `ZORD_EDGE_SIGNING_KEY_JSON`
 
@@ -258,6 +263,10 @@ docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-prompt-layer
 # zord-console
 docker build -t 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-console:v3 ./backend/zord-console
 docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-console:v3
+
+# ml-service (Python ML inference)
+docker build -t 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/ml-service:v1 ./backend/ml-service
+docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/ml-service:v1
 ```
 
 Note: Jenkins automates this step in CI/CD.
@@ -710,6 +719,7 @@ zord-evidence-xxx        1/1  Running
 zord-intelligence-xxx    1/1  Running
 zord-prompt-layer-xxx    1/1  Running
 zord-console-xxx         1/1  Running
+zord-ml-service-xxx      1/1  Running
 ```
 
 ---
@@ -720,6 +730,18 @@ zord-console-xxx         1/1  Running
 # All pods running
 kubectl get pods -n zord
 kubectl get pods -n api-gateway
+
+# Check image versions running on each service
+kubectl get deployment zord-edge -n zord -o jsonpath='{.spec.template.spec.containers[0].image}'
+kubectl get deployment zord-intent-engine -n zord -o jsonpath='{.spec.template.spec.containers[0].image}'
+kubectl get deployment zord-token-enclave -n zord -o jsonpath='{.spec.template.spec.containers[0].image}'
+kubectl get deployment zord-relay -n zord -o jsonpath='{.spec.template.spec.containers[0].image}'
+kubectl get deployment zord-outcome-engine -n zord -o jsonpath='{.spec.template.spec.containers[0].image}'
+kubectl get deployment zord-intelligence -n zord -o jsonpath='{.spec.template.spec.containers[0].image}'
+kubectl get deployment zord-evidence -n zord -o jsonpath='{.spec.template.spec.containers[0].image}'
+kubectl get deployment zord-prompt-layer -n zord -o jsonpath='{.spec.template.spec.containers[0].image}'
+kubectl get deployment zord-console -n zord -o jsonpath='{.spec.template.spec.containers[0].image}'
+kubectl get deployment zord-ml-service -n zord -o jsonpath='{.spec.template.spec.containers[0].image}'
 
 # Services created
 kubectl get svc -n zord
@@ -798,6 +820,7 @@ To change any of these (e.g., switch to RDS or MSK), edit this one file and rede
 | zord-intelligence | 500m / 1.5 | 1Gi / 2Gi | — |
 | zord-prompt-layer | 200m / 750m | 384Mi / 1Gi | — |
 | zord-console | 100m / 500m | 256Mi / 512Mi | — |
+| ml-service | 200m / 1 | 512Mi / 1Gi | — |
 
 ### HPA (Auto-Scaling)
 
@@ -805,14 +828,15 @@ To change any of these (e.g., switch to RDS or MSK), edit this one file and rede
 |---------|-------------|-------------|-------------|
 | Kong Gateway | 2 | 6 | 70% CPU |
 | zord-edge | 2 | 5 | 70% CPU |
-| zord-intent-engine | 2 | 8 | 70% CPU |
-| zord-token-enclave | 2 | 4 | 70% CPU |
-| zord-relay | 2 | 6 | 70% CPU |
-| zord-outcome-engine | 2 | 4 | 70% CPU |
-| zord-evidence | 2 | 4 | 70% CPU |
-| zord-intelligence | 2 | 5 | 70% CPU |
-| zord-prompt-layer | 2 | 4 | 70% CPU |
-| zord-console | 2 | 5 | 70% CPU |
+| zord-intent-engine | 1 | 8 | 70% CPU |
+| zord-token-enclave | 1 | 4 | 70% CPU |
+| zord-relay | 1 | 6 | 70% CPU |
+| zord-outcome-engine | 1 | 4 | 70% CPU |
+| zord-evidence | 1 | 4 | 70% CPU |
+| zord-intelligence | 1 | 5 | 70% CPU |
+| zord-prompt-layer | 1 | 4 | 70% CPU |
+| zord-console | 1 | 5 | 70% CPU |
+| zord-ml-service | 1 | 3 | 70% CPU |
 
 ---
 
@@ -957,6 +981,7 @@ kubectl delete pods -n zord -l app.kubernetes.io/name=<service-name>
 - Kong uses DB-less mode — all config is declarative YAML in a ConfigMap
 - The browser hits Kong → Kong routes to zord-console or backend APIs based on path
 - Internal service-to-service calls (relay → edge, relay → intent-engine) bypass Kong and use K8s DNS directly
+- The Python `ml-service` communicates with `zord-intelligence` via Kafka topics (`ml.request.events` / `ml.result.events`). It has no HTTP API — only Kafka consumers/producers.
 
 ---
 

@@ -225,7 +225,13 @@ export function buildEvidencePackGraphFromLineage(
   const isRootNode = (id: string, label: string, nodeType: string): boolean => {
     const uid = id.toUpperCase()
     const ulabel = label.toUpperCase()
-    return uid === 'MERKLE_ROOT' || ulabel === 'PROOF ROOT' || nodeType === 'ROOT'
+    const utype = nodeType.toUpperCase()
+    return (
+      uid === 'MERKLE_ROOT' ||
+      ulabel === 'PROOF ROOT' ||
+      utype === 'ROOT' ||
+      (utype === 'SEAL' && ulabel === 'PROOF ROOT')
+    )
   }
 
   let leaves: LeafNode[] = (lineage.nodes ?? [])

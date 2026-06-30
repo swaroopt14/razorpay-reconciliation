@@ -70,7 +70,7 @@ export function RaiseTicketModal({ onClose, onSubmit }: RaiseTicketModalProps) {
               Raise new request
             </h2>
             <p className={`mt-1 ${HOME_BODY_IMPERIAL_SM}`}>
-              In-console ticket + optional email updates. You can also write to {ZORD_SUPPORT_EMAIL}.
+              Creates a support ticket and notifies the Zord team in Slack. You can also write to {ZORD_SUPPORT_EMAIL}.
             </p>
           </div>
           <button

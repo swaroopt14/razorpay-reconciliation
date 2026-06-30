@@ -166,7 +166,7 @@ export function useWorkspaceState(
   )
 
   const upsertActiveThread = useCallback(
-    (messages: WorkspaceConversationMessage[], threadId: string, title?: string) => {
+  (messages: WorkspaceConversationMessage[], threadId: string, title?: string, sessionId?: string) => {
       const now = new Date().toISOString()
       setThreads((prev) => {
         const existing = prev.find((t) => t.id === threadId)
@@ -190,7 +190,7 @@ export function useWorkspaceState(
               createdAt: now,
               updatedAt: now,
               messages,
-              sessionId: newSessionId(),
+              sessionId: sessionId ?? newSessionId(),
             },
             ...prev,
           ]
@@ -315,7 +315,7 @@ export function useWorkspaceState(
           },
         ]
         setConversation(finalMessages)
-        upsertActiveThread(finalMessages, threadId, threadTitleFromPrompt(cleaned))
+        upsertActiveThread(finalMessages, threadId, threadTitleFromPrompt(cleaned), threadSessionId)
         setConnectionState('error')
         setIsSubmitting(false)
         return
@@ -381,7 +381,7 @@ export function useWorkspaceState(
 
         const finalMessages = [...withUser, assistantMessage]
         setConversation(finalMessages)
-        upsertActiveThread(finalMessages, threadId, threadTitleFromPrompt(cleaned))
+        upsertActiveThread(finalMessages, threadId, threadTitleFromPrompt(cleaned), threadSessionId)
         setConnectionState('connected')
       } catch (error) {
         if (phaseTimerRef.current) window.clearInterval(phaseTimerRef.current)
@@ -404,7 +404,7 @@ export function useWorkspaceState(
           },
         ]
         setConversation(finalMessages)
-        upsertActiveThread(finalMessages, threadId, threadTitleFromPrompt(cleaned))
+        upsertActiveThread(finalMessages, threadId, threadTitleFromPrompt(cleaned), threadSessionId)
         setConnectionState('error')
       } finally {
         if (requestIdRef.current === requestId) setIsSubmitting(false)

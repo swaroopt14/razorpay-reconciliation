@@ -72,17 +72,20 @@ function segmentSeriesKey(name: string): string {
   return k || 'other'
 }
 
-function statusBucket(proofStatusKey: PackTableRowVm['proofStatusKey']): string {
-  if (proofStatusKey === 'proofReady' || proofStatusKey === 'verified' || proofStatusKey === 'exported') {
-    return 'Complete'
-  }
-  if (proofStatusKey === 'needsReview') return 'Review'
-  return 'Incomplete'
+/** Two-bucket status mix driven by the batch's payment-intent count:
+ *  Complete   = total payment intents in the batch (each payment that has proof)
+ *  Incomplete = total evidence packs − total intents (packs beyond covered intents)
+ *  Packs are classified chronologically so the daily area still sums to pack volume. */
+const COMPLETE_BUCKET = 'Complete'
+const INCOMPLETE_BUCKET = 'Incomplete'
+const BUCKET_COLOR: Record<string, string> = {
+  [COMPLETE_BUCKET]: '#0f172a',
+  [INCOMPLETE_BUCKET]: '#f59e0b',
 }
 
 function buildMixAreaSeries(
   segments: EvidenceTypeSegment[],
-  rows: PackTableRowVm[],
+  classified: { row: PackTableRowVm; bucket: string }[],
 ): { points: EvidenceMixAreaPoint[]; series: EvidenceMixAreaSeries[] } {
   const series = segments.map((seg) => ({
     key: segmentSeriesKey(seg.name),
@@ -93,12 +96,11 @@ function buildMixAreaSeries(
   const dayFmt = new Intl.DateTimeFormat('en-US', { weekday: 'short' })
   const byDay = new Map<string, Map<string, number>>()
 
-  for (const row of rows) {
+  for (const { row, bucket } of classified) {
     if (!row.generatedAt) continue
     const d = new Date(row.generatedAt)
     if (Number.isNaN(d.getTime())) continue
     const period = dayFmt.format(d)
-    const bucket = statusBucket(row.proofStatusKey)
     const dayMap = byDay.get(period) ?? new Map<string, number>()
     dayMap.set(bucket, (dayMap.get(bucket) ?? 0) + 1)
     byDay.set(period, dayMap)
@@ -120,9 +122,10 @@ function buildMixAreaSeries(
   return { points, series }
 }
 
-const SEGMENT_COLORS = ['#000000', '#000000', '#cbd5e1', '#cbd5e1', '#f59e0b']
-
-export function deriveEvidenceAnalytics(rows: PackTableRowVm[]): {
+export function deriveEvidenceAnalytics(
+  rows: PackTableRowVm[],
+  totalIntents: number | null,
+): {
   segments: EvidenceTypeSegment[]
   trend: EvidenceTrendPoint[]
   mixArea: EvidenceMixAreaPoint[]
@@ -139,21 +142,34 @@ export function deriveEvidenceAnalytics(rows: PackTableRowVm[]): {
     }
   }
 
-  const statusBuckets = new Map<string, number>()
-  for (const row of rows) {
-    const key = statusBucket(row.proofStatusKey)
-    statusBuckets.set(key, (statusBuckets.get(key) ?? 0) + 1)
-  }
+  const totalPacks = rows.length
+  // Complete = total intents (capped at pack count); Incomplete = the remaining packs.
+  const completeCount =
+    totalIntents != null ? Math.max(0, Math.min(totalIntents, totalPacks)) : totalPacks
+  const incompleteCount = Math.max(0, totalPacks - completeCount)
 
-  const total = rows.length
-  const segments: EvidenceTypeSegment[] = [...statusBuckets.entries()].map(([name, count], i) => ({
-    name,
-    pct: Math.round((count / total) * 100),
-    color: SEGMENT_COLORS[i % SEGMENT_COLORS.length],
+  // Classify packs chronologically: first `completeCount` count as Complete, rest Incomplete.
+  const ordered = [...rows].sort((a, b) =>
+    (a.generatedAt ?? '').localeCompare(b.generatedAt ?? ''),
+  )
+  const classified = ordered.map((row, i) => ({
+    row,
+    bucket: i < completeCount ? COMPLETE_BUCKET : INCOMPLETE_BUCKET,
   }))
 
+  const segments: EvidenceTypeSegment[] = [
+    { name: COMPLETE_BUCKET, count: completeCount },
+    { name: INCOMPLETE_BUCKET, count: incompleteCount },
+  ]
+    .filter((seg) => seg.count > 0)
+    .map((seg) => ({
+      name: seg.name,
+      pct: Math.round((seg.count / totalPacks) * 100),
+      color: BUCKET_COLOR[seg.name],
+    }))
+
   const trend = buildVolumeHistogram(rows)
-  const mix = buildMixAreaSeries(segments, rows)
+  const mix = buildMixAreaSeries(segments, classified)
 
   return {
     segments,

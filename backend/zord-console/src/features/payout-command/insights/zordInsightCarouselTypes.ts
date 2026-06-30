@@ -9,6 +9,8 @@ export type ZordInsightCard =
       prefix?: string
       highlight?: string
       suffix?: string
+      /** Rendered as a standalone red badge below the paragraph (e.g. "7.57%"). */
+      gapRate?: string
       delta?: InsightDelta
     }
   | {
@@ -19,8 +21,8 @@ export type ZordInsightCard =
       /** When set, shown instead of fmtINR(valueRupee) (e.g. literal “₹” from parent). */
       valueDisplay?: string
       subtext: string
-      count: number
-      countLabel: string
+      count?: number
+      countLabel?: string
       delta?: InsightDelta
     }
   | {

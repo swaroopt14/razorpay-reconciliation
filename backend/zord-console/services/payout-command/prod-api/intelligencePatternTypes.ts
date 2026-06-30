@@ -82,6 +82,9 @@ export type PatternSnapshotData = {
   weakest_source_missing_ref_rate?: number
   weakest_source_manual_review_rate?: number
   weakest_provider_id?: string
+  /** Optional network health point fields on history snapshots (API-only). */
+  network_success_pct?: number | string
+  network_latency_index?: number | string
 }
 
 export type PatternDetailResponse = {

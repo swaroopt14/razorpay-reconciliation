@@ -29,6 +29,7 @@ spec:
               for topic in \
                 payments.ledger.events.v1 \
                 payments.intent.events.v1 \
+                payments.intent.dlq \
                 payments.dispatch.events.v1 \
                 payments.outcome.events.v1 \
                 pii.tokenize.request \
@@ -43,6 +44,7 @@ spec:
                 finality.certificate.issued \
                 final.contract.updated \
                 evidence.pack.ready \
+                evidence.pack.created \
                 dlq.event \
                 statement.match.event \
                 corridor.health.tick \
@@ -51,7 +53,10 @@ spec:
                 attachment.decision.created \
                 variance.record.created \
                 batch.summary.updated \
+                batch.canonicalization.completed \
                 governance.decision.created \
+                ml.request.events \
+                ml.result.events \
                 zpi.actuation.retry \
                 zpi.actuation.evidence \
                 zpi.actuation.alert \

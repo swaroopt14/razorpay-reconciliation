@@ -29,6 +29,16 @@ Routes that follow this pattern today: **leakage**, **ambiguity**, **patterns**,
 - **Home** (batch selected): maps `batch_contract.total_confirmed_amount` as interim stand-in for `confirmed_matched_value_minor` on the settlement hero card.
 - Evidence still uses tenant defensibility until `batch_id` is wired on that route; no longer uses leakage `unmatched_amount_minor` on the Evidence page.
 
+### Backend gaps not solved by `swaroop/trust-batch-scoped-intelligence-kpis`
+
+| Gap | Notes |
+|-----|-------|
+| `confirmed_matched_value_minor` | Still not shipped. Console continues to use `batch_contract.total_confirmed_amount` as an interim batch-only stand-in. |
+| `batch_id` on defensibility | `zord-intelligence` handler documents `batch_id` as accepted but ignored; response remains tenant-scoped. |
+| `operations/summary`, `exceptions/summary`, `matching/summary`, `evidence/summary`, `connectors/summary` | No matching backend routes found in `zord-intelligence`; these are still required for canonical page summaries. |
+| `payment_exception_cases` model | Contract §12 projection/model is not shipped yet. |
+| Full metric envelope on all KPI responses | Partial only: current dashboard responses consistently expose `data_available` and some `computed_at`, but not the full envelope (`scope_type`, `window`, `freshness_ts`, `calculation_version`, `source_record_count`, `is_estimate`) everywhere. |
+
 ---
 
 ## P0 — Required for correct batch scope and scale

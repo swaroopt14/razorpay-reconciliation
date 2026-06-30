@@ -4,8 +4,8 @@ metadata:
   name: grafana-public
   namespace: monitoring
   annotations:
-    # Share ALB with other observability ingresses
-    alb.ingress.kubernetes.io/group.name: zord-observability
+    # Share ALB with Kong (single ALB for all services)
+    alb.ingress.kubernetes.io/group.name: zord-shared-alb
     alb.ingress.kubernetes.io/group.order: "10"
     # ALB settings
     alb.ingress.kubernetes.io/scheme: internet-facing

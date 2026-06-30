@@ -616,7 +616,7 @@ export default function HowItWorksClient() {
 
               <div className="flex flex-wrap items-center gap-4">
                 <a
-                  href="mailto:hello@arelais.com?subject=Book%20Demo%20for%20Zord"
+                  href="/signup"
                   className="group relative overflow-hidden rounded-full bg-gradient-to-r from-indigo-500 to-indigo-600 px-7 py-3.5 text-[15px] font-medium text-white shadow-lg shadow-indigo-500/30 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-indigo-500/50"
                   style={{
                     boxShadow:
@@ -963,7 +963,7 @@ export default function HowItWorksClient() {
                   Back to landing
                 </Link>
                 <a
-                  href="mailto:hello@arelais.com?subject=Book%20Demo%20for%20Zord"
+                  href="/signup"
                   className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-6 py-3 text-sm font-medium text-white shadow-[0_16px_32px_-10px_rgba(79,70,229,0.55)] transition-transform hover:-translate-y-0.5"
                 >
                   Book Demo

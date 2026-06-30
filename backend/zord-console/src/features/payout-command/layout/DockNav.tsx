@@ -8,6 +8,7 @@ import { useEnvironment } from '@/services/auth/EnvironmentProvider'
 import {
   dockItems,
   SANDBOX_DOCK_DISPLAY_LABELS,
+  CONNECTORS_DOCK_TEMPORARILY_HIDDEN,
   SANDBOX_DOCK_IDS,
   type DockId,
 } from '@/services/payout-command/model'
@@ -38,8 +39,13 @@ export function DockNav({ activeDock, onDockChange, alerts, onActivateClick }: D
         (d): d is (typeof dockItems)[number] => Boolean(d),
       )
     }
-    // Live: full rail minus sandbox-only + billing (plan page).
-    return dockItems.filter((d) => d.id !== 'sandbox' && d.id !== 'billing')
+    // Live: full rail minus sandbox-only + billing (plan page); connectors temporarily hidden.
+    return dockItems.filter(
+      (d) =>
+        d.id !== 'sandbox' &&
+        d.id !== 'billing' &&
+        !(CONNECTORS_DOCK_TEMPORARILY_HIDDEN && d.id === 'connectors'),
+    )
   }, [mode])
 
   const [search, setSearch] = useState('')

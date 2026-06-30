@@ -18,6 +18,20 @@ data:
         timeout: 5s
         send_batch_size: 1024
 
+    connectors:
+      spanmetrics:
+        histogram:
+          explicit:
+            buckets: [5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s]
+        dimensions:
+          - name: http.method
+          - name: http.status_code
+          - name: http.route
+          - name: messaging.system
+          - name: messaging.destination
+        dimensions_cache_size: 1000
+        aggregation_temporality: AGGREGATION_TEMPORALITY_CUMULATIVE
+
     exporters:
       otlp/jaeger:
         endpoint: jaeger-collector.tracing.svc.cluster.local:4317
@@ -37,8 +51,8 @@ data:
         traces:
           receivers: [otlp]
           processors: [batch]
-          exporters: [otlp/jaeger, debug]
+          exporters: [otlp/jaeger, spanmetrics, debug]
         metrics:
-          receivers: [otlp]
+          receivers: [otlp, spanmetrics]
           processors: [batch]
           exporters: [prometheusremotewrite, debug]

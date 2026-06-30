@@ -9,7 +9,6 @@ import {
   JOURNAL_BORDER,
   confidencePctFromBatch,
   BATCH_AGGREGATE_STATUS_GUIDE,
-  mergeBatchAggregateScore,
   neutralHealthTone,
   resolveBatchHealthStatus,
   statusTone,
@@ -87,13 +86,9 @@ export function IntentJournalBatchSidebar({
             ) : null}
             {sidebarPageRows.map((batch) => {
               const selected = batch.batchId === selectedBatchId
-              const batchForHealth = mergeBatchAggregateScore(batch, {
-                isSelected: selected,
-                metricsBatch: selected ? selectedMetricsBatch : null,
-              })
               const intentCount = selected ? selectedEngineIntentTotal : batch.transactions > 0 ? batch.transactions : null
-              const engineConfPct = confidencePctFromBatch(batchForHealth)
-              const status = resolveBatchHealthStatus(batchForHealth)
+              const engineConfPct = confidencePctFromBatch(batch)
+              const status = resolveBatchHealthStatus(batch)
               const sidebarScoreDisplay = engineConfPct != null ? `${engineConfPct}%` : '—'
               const progressWidthPct = engineConfPct ?? 0
               const tone = status ? statusTone(status) : neutralHealthTone()

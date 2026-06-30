@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: zord-token-enclave
 spec:
-  replicas: 2
+  replicas: 1
   minReadySeconds: 10
   strategy:
     type: RollingUpdate
@@ -46,7 +46,7 @@ spec:
               app.kubernetes.io/name: zord-token-enclave
       containers:
         - name: zord-token-enclave
-          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-token-enclave:v4
+          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-token-enclave:v12
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8087
@@ -93,6 +93,10 @@ spec:
                 configMapKeyRef:
                   name: zord-aws-config
                   key: KAFKA_BROKERS
+            - name: KAFKA_TOPIC_PII_TOKENIZE_REQUEST
+              value: pii.tokenize.request
+            - name: KAFKA_TOPIC_PII_TOKENIZE_RESULT
+              value: pii.tokenize.result
             - name: ENCLAVE_INTERNAL_TOKEN
               valueFrom:
                 secretKeyRef:

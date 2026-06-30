@@ -42,7 +42,9 @@ func NewRedisChatMemoryStore(redisURL string, ttlSeconds int, maxTurns int) (*Re
 func (r *RedisChatMemoryStore) key(tenantID, userID, sessionID string) string {
 	return fmt.Sprintf("pl:mem:%s:%s:%s", tenantID, userID, sessionID)
 }
-
+func (r *RedisChatMemoryStore) summaryKey(tenantID, userID, sessionID string) string {
+	return fmt.Sprintf("pl:mem:summary:%s:%s:%s", tenantID, userID, sessionID)
+}
 func (r *RedisChatMemoryStore) GetRecent(ctx context.Context, tenantID, userID, sessionID string) ([]services.ChatTurn, error) {
 	k := r.key(tenantID, userID, sessionID)
 	raw, err := r.client.LRange(ctx, k, 0, -1).Result()
@@ -73,4 +75,20 @@ func (r *RedisChatMemoryStore) AppendTurn(ctx context.Context, tenantID, userID,
 	pipe.Expire(ctx, k, r.ttl)
 	_, err := pipe.Exec(ctx)
 	return err
+}
+func (r *RedisChatMemoryStore) GetSummary(ctx context.Context, tenantID, userID, sessionID string) (string, error) {
+	k := r.summaryKey(tenantID, userID, sessionID)
+	val, err := r.client.Get(ctx, k).Result()
+	if err == redis.Nil {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return val, nil
+}
+
+func (r *RedisChatMemoryStore) SetSummary(ctx context.Context, tenantID, userID, sessionID, summary string) error {
+	k := r.summaryKey(tenantID, userID, sessionID)
+	return r.client.Set(ctx, k, summary, r.ttl).Err()
 }

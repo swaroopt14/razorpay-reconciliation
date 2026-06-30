@@ -1,8 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   DASHBOARD_FONT_STACK,
+  CONNECTORS_DOCK_TEMPORARILY_HIDDEN,
   dockItems,
   type DockId,
   type WorkspaceTab,
@@ -12,11 +14,11 @@ import { useHomeState } from '../hooks/useHomeState'
 import { useWorkspaceState } from '../hooks/useWorkspaceState'
 import { useAskZordState } from '../hooks/useAskZordState'
 import { AskZordPanel } from '../layout/AskZordPanel'
-import { HomeCommandFiltersForm } from '../layout/HomeCommandFiltersForm'
 import { PayoutConsoleNavStack } from '../layout/PayoutConsoleNavStack'
 import { PageHeader } from '../layout/PageHeader'
 import { PayoutPageActionsProvider } from '../layout/PayoutPageActionsContext'
-import ConnectorIntelligenceClient from '../connectors/ConnectorIntelligenceClient'
+// Connectors dock temporarily hidden — keep imports for when CONNECTORS_DOCK_TEMPORARILY_HIDDEN is false.
+// import ConnectorIntelligenceClient from '../connectors/ConnectorIntelligenceClient'
 import {
   AmbiguitySurface,
   BillingSurface,
@@ -28,7 +30,7 @@ import {
   LeakageSurface,
   ProofSurface,
   PostDisbursalMonitoringSurface,
-  SandboxConnectorsSurface,
+  // SandboxConnectorsSurface,
   SupportSurface,
   WorkspaceSurface,
 } from '../surfaces'
@@ -64,6 +66,13 @@ function resolveSharedBatchId(initial?: string) {
   return id || undefined
 }
 
+function resolveDockFromSearchParam(raw: string | null): DockId | null {
+  if (!raw) return null
+  const id = raw as DockId
+  if (CONNECTORS_DOCK_TEMPORARILY_HIDDEN && id === 'connectors') return null
+  return dockItems.some((item) => item.id === id) ? id : null
+}
+
 export default function PayoutCommandViewClient({
   forceMode,
   initialDock = 'home',
@@ -73,7 +82,8 @@ export default function PayoutCommandViewClient({
   const [activeDock, setActiveDock] = useState<DockId>(initialDock)
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('Today')
   const [activateWizardOpen, setActivateWizardOpen] = useState(false)
-  const [homeFiltersOpen, setHomeFiltersOpen] = useState(false)
+  const router = useRouter()
+  const searchParams = useSearchParams()
   const activeSurface = dockItems.find((item) => item.id === activeDock) ?? dockItems[0]
   const sharedBatchId = resolveSharedBatchId(scope.batchId)
   const onWorkspaceSuggestionSelect = useCallback((_label: string | null) => {}, [])
@@ -107,8 +117,23 @@ export default function PayoutCommandViewClient({
   }, [askZord])
 
   useEffect(() => {
-    setActiveDock((currentDock) => (currentDock === initialDock ? currentDock : initialDock))
-  }, [initialDock])
+    if (activeDock === 'workspace') {
+      askZord.close()
+    }
+  }, [activeDock, askZord.close])
+
+  useEffect(() => {
+    const dockFromUrl = resolveDockFromSearchParam(searchParams.get('dock')) ?? initialDock
+    setActiveDock((currentDock) => (currentDock === dockFromUrl ? currentDock : dockFromUrl))
+  }, [initialDock, searchParams])
+
+  // Deep links with ?dock=connectors redirect to home while connectors nav is hidden.
+  useEffect(() => {
+    if (!CONNECTORS_DOCK_TEMPORARILY_HIDDEN || searchParams.get('dock') !== 'connectors') return
+    const params = new URLSearchParams(searchParams.toString())
+    params.set('dock', 'home')
+    router.replace(`${window.location.pathname}?${params.toString()}`, { scroll: false })
+  }, [router, searchParams])
 
   // ── Navigation handlers ────────────────────────────────────────────────────
   const handleDockChange = useCallback(
@@ -118,8 +143,14 @@ export default function PayoutCommandViewClient({
         setActiveTab('Today')
         workspace.resetForTab('Today')
       }
+      if (typeof window !== 'undefined') {
+        const params = new URLSearchParams(window.location.search)
+        params.set('dock', id)
+        const newUrl = `${window.location.pathname}?${params.toString()}`
+        router.push(newUrl)
+      }
     },
-    [workspace],
+    [router, workspace],
   )
 
   const handleTabChange = useCallback(
@@ -155,12 +186,7 @@ export default function PayoutCommandViewClient({
     if (activeDock === 'workspace') {
       return (
         <div>
-          <WorkspaceSurface
-            activeTab={activeTab}
-            setActiveTab={handleTabChange}
-            workspace={workspace}
-            batchId={sharedBatchId}
-          />
+          <WorkspaceSurface askZord={askZord} batchId={sharedBatchId} />
         </div>
       )
     }
@@ -173,9 +199,10 @@ export default function PayoutCommandViewClient({
     if (activeDock === 'settlement') {
       return <SettlementJournalSurface initialClientBatchId={scope.clientBatchId} />
     }
-    if (activeDock === 'connectors') {
-      return forceMode === 'sandbox' ? <SandboxConnectorsSurface /> : <ConnectorIntelligenceClient />
-    }
+    // Connectors dock temporarily hidden — see CONNECTORS_DOCK_TEMPORARILY_HIDDEN in model.ts.
+    // if (activeDock === 'connectors') {
+    //   return forceMode === 'sandbox' ? <SandboxConnectorsSurface /> : <ConnectorIntelligenceClient />
+    // }
     if (activeDock === 'proof')
       return (
         <EvidenceSurface initialBatchId={sharedBatchId} />
@@ -194,6 +221,7 @@ export default function PayoutCommandViewClient({
   }, [
     activeDock,
     activeTab,
+    askZord,
     forceMode,
     scope.batchId,
     scope.clientBatchId,
@@ -229,23 +257,6 @@ export default function PayoutCommandViewClient({
                 pageSubtitle={pageHeaderMeta.pageSubtitle}
                 onAskZordToggle={handleAskZordToggle}
                 hideAskZordButton={activeDock === 'workspace'}
-                showUtilityIconButtons
-                homeCommandFilters={
-                  activeDock === 'home'
-                    ? {
-                        open: homeFiltersOpen,
-                        onToggle: () => setHomeFiltersOpen((open) => !open),
-                        panel: (
-                          <HomeCommandFiltersForm
-                            timeframe={home.timeframe}
-                            onTimeframeChange={home.setTimeframe}
-                            commandFilters={home.commandFilters}
-                            setCommandFilters={home.setCommandFilters}
-                          />
-                        ),
-                      }
-                    : undefined
-                }
               />
 
               {surfaceBody}

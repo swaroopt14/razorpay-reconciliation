@@ -11,6 +11,13 @@ function isKpiDashboardPath(path: string): boolean {
   return path.includes('/v1/intelligence/dashboard/')
 }
 
+function isOperationsOrExceptionsPath(path: string): boolean {
+  return (
+    path === BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.OPERATIONS_SUMMARY
+    || path === BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.EXCEPTIONS_SUMMARY
+  )
+}
+
 function isPatternDetailPath(path: string): boolean {
   return path === BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.PATTERN
     || path === BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.PATTERN_HISTORY
@@ -88,7 +95,7 @@ export async function forwardIntelligence(request: NextRequest, path: string): P
     const text = await upstream.text()
 
     if (!upstream.ok) {
-      if (isKpiDashboardPath(path)) {
+      if (isKpiDashboardPath(path) || isOperationsOrExceptionsPath(path)) {
         const reason =
           upstream.status === 404
             ? 'Intelligence KPIs not available (service or route missing).'
@@ -125,7 +132,7 @@ export async function forwardIntelligence(request: NextRequest, path: string): P
     applyRefreshedSessionCookies(res, gate.refreshedPayload)
     return res
   } catch (error) {
-    if (isKpiDashboardPath(path)) {
+    if (isKpiDashboardPath(path) || isOperationsOrExceptionsPath(path)) {
       const res = emptyKpiResponse(
         `Intelligence service unreachable (${error instanceof Error ? error.message : 'unknown'}).`,
       )

@@ -113,10 +113,11 @@ kubectl get ingress -n tracing
 | Tool | URL | Login Required? | Credentials |
 |------|-----|----------------|-------------|
 | **Grafana** | `https://grafana.zordnet.com` | Yes | admin / zord-grafana-2026 (from `monitoring/grafana/secret.yaml`) |
-| **Kibana** | `https://kibana.zordnet.com` | No | Open access (security disabled) |
-| **Jaeger** | `https://jaeger.zordnet.com` | No | Open access (no auth proxy) |
+| **Kibana** | `https://kibana.zordnet.com` | Yes | elastic / Arealiszord@2026 (from `logging/elasticsearch/credentials-secret.yaml`) |
+| **Jaeger** | `https://jaeger.zordnet.com` | Yes | jaeger / Arealiszord@2026 (from `tracing/jaeger/credentials-secret.yaml`) |
 
 **To change Grafana password:** Edit `monitoring/grafana/secret.yaml` → redeploy → restart Grafana pod.
+**To change Kibana password:** Edit `logging/elasticsearch/credentials-secret.yaml` → redeploy → restart ES, Kibana, Fluentd pods.
 
 ---
 
@@ -158,11 +159,11 @@ Copy the ALB DNS name and create these DNS records:
 
 - **Fluentd** runs on every node (DaemonSet), collects all pod logs
 - Enriches logs with Kubernetes metadata (namespace, pod, service name)
-- Ships to Elasticsearch (no authentication — internal only)
+- Ships to Elasticsearch (authenticated with elastic user credentials)
 - Logs indexed as `zord-logs-YYYY.MM.DD`
 - Kong access logs indexed as `kong-access-YYYY.MM.DD`
 - **Kibana** provides search, filtering, and visualization
-- No login required (Elasticsearch security disabled)
+- Login required: `elastic` / `Arealiszord@2026`
 - 50Gi storage for Elasticsearch
 - Data views auto-created by `kibana-init` Job
 
@@ -170,8 +171,9 @@ Copy the ALB DNS name and create these DNS records:
 
 - **OTel Collector** receives traces via OTLP (gRPC:4317, HTTP:4318)
 - Batches and forwards to Jaeger
+- **SpanMetrics connector** generates RED metrics (request rate, error rate, duration) from traces → exported to Prometheus → enables Jaeger Monitor tab
 - **Jaeger** stores traces in Badger (10Gi persistent storage)
-- Open access (no login required) — protected by subdomain only
+- Login required: `elastic` / `Arealiszord@2026` (nginx basic auth sidecar)
 - **Important:** Services must use gRPC endpoint format: `host:4317` (not `http://host:4318`)
 - The `OTEL_EXPORTER_OTLP_ENDPOINT` in `zord-aws-config` ConfigMap is set to: `otel-collector.tracing.svc.cluster.local:4317`
 
@@ -223,8 +225,8 @@ Services send traces via the `OTEL_EXPORTER_OTLP_ENDPOINT` env var (gRPC format,
 | Tool | Auth Method | How it works |
 |------|-------------|-------------|
 | **Grafana** | Built-in login | Grafana has its own user management. Credentials from K8s Secret (`monitoring/grafana/secret.yaml`). |
-| **Kibana** | No auth (open access) | Elasticsearch security disabled. Protected by subdomain only. |
-| **Jaeger** | No auth (open access) | Direct access to Jaeger UI. Protected by subdomain only. |
+| **Kibana** | Elasticsearch X-Pack (Basic Auth) | Login with `elastic` / `Arealiszord@2026`. Credentials from K8s Secret (`logging/elasticsearch/credentials-secret.yaml`). |
+| **Jaeger** | Nginx Basic Auth sidecar | Reverse proxy in front of Jaeger UI. Credentials from K8s Secret (`tracing/jaeger/credentials-secret.yaml`). |
 
 ---
 
@@ -415,9 +417,12 @@ kubectl delete ns zord api-gateway monitoring logging tracing argocd --ignore-no
 ## Security Notes
 
 - Grafana requires login (admin credentials from K8s Secret)
-- Kibana and Jaeger are open access — protected by subdomain only (team members know the URL)
+- Kibana requires login (elastic / Arealiszord@2026 — X-Pack security enabled)
+- Jaeger requires login (jaeger / Arealiszord@2026 — nginx basic auth sidecar)
 - Observability ALB is separate from the main app ALB
 - Prometheus admin API is not exposed externally
 - Elasticsearch is only accessible within the cluster (Kibana proxies to it)
+- Elasticsearch requires authentication (X-Pack Basic Auth enabled)
+- Fluentd authenticates to Elasticsearch with credentials from K8s Secret
 - Jaeger collector ports (4317/4318) are internal-only (services send traces via K8s DNS)
 - For production hardening: add Cloudflare Access or AWS Cognito for SSO on all observability UIs

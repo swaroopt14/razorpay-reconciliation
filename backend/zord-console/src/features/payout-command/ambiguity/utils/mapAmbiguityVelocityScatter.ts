@@ -27,7 +27,7 @@ export type AmbiguityBubblePoint = {
 export const BUBBLE_MAP_MAX_Z = 100
 
 const COLOR_CLEAN = '#94a3b8'
-const COLOR_SAFE = '#000000'
+const COLOR_SAFE = '#22c55e'
 const COLOR_WATCH = '#facc15'
 const COLOR_ALERT = '#fb923c'
 const COLOR_CRITICAL = '#ef4444'

@@ -54,10 +54,12 @@ export function batchHealthToLeakageViewModel(
     reversalMinor: 0,
     ambiguousRiskMinor,
     riskAdjustedMinor: varianceMinor,
-    valueNeedingReviewMinor: 0,
+    openFinancialExceptionValueMinor: null,
+    exposureAmountMinor: varianceMinor,
+    valueNeedingReviewMinor: varianceMinor,
     paymentGapRate,
     leakageFraction: paymentGapRate,
-    riskTier: String(health.finality_status ?? 'N/A'),
+    riskTier: health.finality_status?.trim() ? String(health.finality_status).trim() : null,
     tenantId,
     snapshotId: `batch:${batchId}`,
     computedAt: health.updated_at ?? '',
@@ -84,8 +86,10 @@ export function mergeBatchHealthWithTenantLeakage(
     reversalMinor: tenantVm.reversalMinor,
     ambiguousRiskMinor: Math.max(tenantVm.ambiguousRiskMinor, batchVm.ambiguousRiskMinor),
     riskAdjustedMinor: tenantVm.riskAdjustedMinor || batchVm.riskAdjustedMinor,
+    openFinancialExceptionValueMinor: tenantVm.openFinancialExceptionValueMinor,
+    exposureAmountMinor: tenantVm.exposureAmountMinor,
     valueNeedingReviewMinor: tenantVm.valueNeedingReviewMinor,
-    riskTier: tenantVm.riskTier !== 'N/A' ? tenantVm.riskTier : batchVm.riskTier,
+    riskTier: tenantVm.riskTier ?? batchVm.riskTier,
   }
 }
 

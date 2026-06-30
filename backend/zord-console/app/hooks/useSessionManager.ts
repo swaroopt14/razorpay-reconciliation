@@ -14,7 +14,7 @@ export function useSessionManager() {
     } finally {
       clearAuth()
       if (typeof window !== 'undefined') {
-        window.location.href = `/signin?next=${encodeURIComponent(window.location.pathname)}`
+        window.location.href = '/signin'
       }
     }
   }, [])
@@ -93,13 +93,14 @@ export function useSessionManager() {
       // Throttle activity recording to once every 45s
       if (now - lastActivityRef.current > 45000) {
         lastActivityRef.current = now
-        // Call status update which updates backend last_activity_at via middleware
-        checkStatus()
+        // Extend session on the backend when client activity is detected
+        extendSession()
       }
     }
 
     window.addEventListener('click', recordLocalActivity)
     window.addEventListener('keydown', recordLocalActivity)
+    window.addEventListener('mousemove', recordLocalActivity)
     window.addEventListener('scroll', recordLocalActivity)
     window.addEventListener('touchstart', recordLocalActivity)
 
@@ -139,6 +140,7 @@ export function useSessionManager() {
       broadcastChannelRef.current?.close()
       window.removeEventListener('click', recordLocalActivity)
       window.removeEventListener('keydown', recordLocalActivity)
+      window.removeEventListener('mousemove', recordLocalActivity)
       window.removeEventListener('scroll', recordLocalActivity)
       window.removeEventListener('touchstart', recordLocalActivity)
       window.removeEventListener(SESSION_EXPIRED_EVENT, handleExpiredEvent)

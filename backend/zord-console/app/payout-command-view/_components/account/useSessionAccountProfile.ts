@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { getCurrentUser, hydrateSession } from '@/services/auth'
 import type { User } from '@/types/auth'
 
@@ -57,5 +57,16 @@ export function useSessionAccountProfile(fallbackTenantId = '') {
     }
   }, [fallbackTenantId])
 
-  return { profile, loading }
+  const refresh = useCallback(async () => {
+    setLoading(true)
+    const user = await hydrateSession()
+    if (user) {
+      setProfile(toSessionAccountProfile(user, fallbackTenantId))
+    } else {
+      setProfile(toSessionAccountProfile(getCurrentUser(), fallbackTenantId))
+    }
+    setLoading(false)
+  }, [fallbackTenantId])
+
+  return { profile, loading, refresh }
 }

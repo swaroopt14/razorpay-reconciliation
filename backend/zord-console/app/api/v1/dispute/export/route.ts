@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import * as XLSX from 'xlsx'
+import ExcelJS from 'exceljs'
 import {
   applyEvidenceGateCookies,
   gateEvidenceTenant,
@@ -353,22 +353,21 @@ export async function POST(request: NextRequest) {
     )
     const settlementRef = apiTrimmedString(settlementItem?.ref) || 'N/A'
     const issueStatement = `${apiTrimmedString(pack.attachment_decision) || 'MATCH_EXACT'} — UTR:${utr}`
-    const ws = XLSX.utils.json_to_sheet([
-      {
-        'UTR': utr,
-        'Client Reference': packPaymentReference(pack),
-        'Value Date': valueDate,
-        'Amount': String(pack.amount ?? 'N/A'),
-        'Currency': currencyBank,
-        'Variance Reason': apiTrimmedString(pack.proof_status) || 'N/A',
-        'Settlement Record': settlementRef,
-        'Issue Statement': issueStatement,
-        'Zord Signature': zordSignature,
-      },
+    const workbook = new ExcelJS.Workbook()
+    const sheet = workbook.addWorksheet('Bank_PSP_Dispute')
+    sheet.addRow(['UTR', 'Client Reference', 'Value Date', 'Amount', 'Currency', 'Variance Reason', 'Settlement Record', 'Issue Statement', 'Zord Signature'])
+    sheet.addRow([
+      utr,
+      packPaymentReference(pack),
+      valueDate,
+      String(pack.amount ?? 'N/A'),
+      currencyBank,
+      apiTrimmedString(pack.proof_status) || 'N/A',
+      settlementRef,
+      issueStatement,
+      zordSignature,
     ])
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Bank_PSP_Dispute')
-    const out = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer
+    const out = Buffer.from(await workbook.xlsx.writeBuffer())
     const res = new NextResponse(new Uint8Array(out), {
       status: 200,
       headers: {

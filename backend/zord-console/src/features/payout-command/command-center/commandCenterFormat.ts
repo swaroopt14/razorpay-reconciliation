@@ -54,10 +54,19 @@ export function fmtInrFromMinorExact(value: number | null | undefined): string {
   return `${neg ? '-' : ''}₹${grouped}${fracRaw ? `.${fracRaw}` : ''}`
 }
 
-/** Chart Y-axis: minor units → thousands of rupees (₹50k → 50). */
+/**
+ * Chart Y-axis scale: API money fields → thousands of rupees (₹50,000 → 50).
+ * Intelligence/leakage payloads use rupee-scale numbers in `*_minor` fields for this console.
+ */
 export function chartThousandsFromMinor(minor: number): number {
   if (!Number.isFinite(minor) || minor <= 0) return 0
-  return minor / 100_000
+  return minor / 1000
+}
+
+/** Round Y-axis max to a clean ₹10k step above the series peak. */
+export function chartYAxisMaxThousands(peakThousands: number): number {
+  const padded = peakThousands * 1.12
+  return Math.max(10, Math.ceil(padded / 10) * 10)
 }
 
 /** @deprecated Use fmtInrFull — kept as alias to prevent L/Cr regressions. */

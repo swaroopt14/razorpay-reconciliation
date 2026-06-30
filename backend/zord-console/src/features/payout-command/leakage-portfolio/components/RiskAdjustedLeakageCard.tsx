@@ -15,7 +15,7 @@ import { getLeakageExposureTimeseries } from '@/services/payout-command/prod-api
 import type { LeakageExposureGranularity } from '@/services/payout-command/prod-api/intelligenceTypes'
 import { leakageCopy } from '../../leakage/copy/leakageCopy'
 import type { PortfolioLeakageViewModel } from '../normalizeLeakagePayload'
-import { formatMinorInr } from '../utils/formatMinorInr'
+import { formatKpiMoneyMinor } from '../../shared/formatApiKpiFields'
 import {
   mapLeakageComparisonSeries,
   type LeakageComparisonChartPoint,
@@ -35,15 +35,6 @@ const GRANULARITY_PILLS: { id: LeakageExposureGranularity; label: string }[] = [
 
 const CURRENT_COLOR = '#4a6fe6'
 const PREDICTED_COLOR = '#334155'
-
-function tierBadgeClass(tier: string): string {
-  const upper = tier.toUpperCase()
-  if (upper === 'CLEAN' || upper === 'LOW') {
-    return 'border-[#4a6fe6]/30 bg-[#4a6fe6]/10 text-[#103a9e]'
-  }
-  if (upper === 'MEDIUM') return 'border-amber-500/30 bg-amber-500/10 text-amber-600'
-  return 'border-red-500/30 bg-red-500/10 text-red-600'
-}
 
 function formatRangeLabel(points: LeakageComparisonChartPoint[]): string {
   if (!points.length) return '—'
@@ -92,7 +83,7 @@ function ComparisonTooltip({
               {entry.name}
             </span>
             <span className="text-[13px] font-semibold tabular-nums text-slate-900">
-              {formatMinorInr(entry.value)}
+              {formatKpiMoneyMinor(entry.value)}
             </span>
           </li>
         ))}
@@ -148,17 +139,8 @@ export function RiskAdjustedLeakageCard({ data, loading, batchId }: RiskAdjusted
     <article className="flex min-h-[420px] flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-[14px] font-medium text-slate-500">{leakageCopy.kpi.intendedValue}</p>
-          <div className="mt-2 flex flex-wrap items-center gap-3">
-            <p className="text-[2.75rem] font-bold tabular-nums tracking-tight text-slate-900">
-              {formatMinorInr(data.intendedMinor)}
-            </p>
-            <span
-              className={`rounded-full border px-3 py-1 text-[11px] font-bold uppercase tracking-wider ${tierBadgeClass(data.riskTier)}`}
-            >
-              {data.riskTier || 'N/A'}
-            </span>
-          </div>
+          <p className="text-[14px] font-medium text-slate-500">{leakageCopy.chart.riskAdjustedTitle}</p>
+          <p className="mt-1 text-[12px] text-slate-400">{leakageCopy.chart.helper}</p>
         </div>
 
         <div

@@ -45,3 +45,6 @@ next-env.d.ts
 
 # Config backups (keep organized configs)
 .config/
+
+# Local support ticket persistence (per-tenant JSON)
+.data/

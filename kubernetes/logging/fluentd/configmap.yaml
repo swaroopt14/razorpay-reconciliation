@@ -67,6 +67,8 @@ data:
       host elasticsearch.logging.svc.cluster.local
       port 9200
       scheme http
+      user "#{ENV['FLUENT_ELASTICSEARCH_USER']}"
+      password "#{ENV['FLUENT_ELASTICSEARCH_PASSWORD']}"
       logstash_format true
       logstash_prefix kong-access
       logstash_dateformat %Y.%m.%d
@@ -98,6 +100,8 @@ data:
       host elasticsearch.logging.svc.cluster.local
       port 9200
       scheme http
+      user "#{ENV['FLUENT_ELASTICSEARCH_USER']}"
+      password "#{ENV['FLUENT_ELASTICSEARCH_PASSWORD']}"
       logstash_format true
       logstash_prefix zord-logs
       logstash_dateformat %Y.%m.%d

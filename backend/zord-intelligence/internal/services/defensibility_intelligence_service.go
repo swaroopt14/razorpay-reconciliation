@@ -33,6 +33,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -92,6 +93,10 @@ type DefensibilitySnapshot struct {
 	// ── D5: Attachment evidence coverage ─────────────────────────────────────
 	AttachmentEvidenceCoverage float64 `json:"attachment_evidence_coverage"`
 
+	// ── Cross-layer Proof Readiness components (sourced from ambiguity projection) ──
+	MatchReliabilityScore      float64 `json:"match_reliability_score"`      // ambiguity.DecisionSuccessRate
+	ReferenceCompletenessScore float64 `json:"reference_completeness_score"` // 1 - ambiguity.ProviderRefMissingRate
+
 	// ── D7: Weak evidence rate ────────────────────────────────────────────────
 	WeakEvidenceCount int     `json:"weak_evidence_count"`
 	WeakEvidenceRate  float64 `json:"weak_evidence_rate"`
@@ -137,11 +142,19 @@ func (s *DefensibilityIntelligenceService) ComputeAndSave(
 		return nil
 	}
 
+	// Step 1b: read ambiguity projection for cross-layer Proof Readiness components.
+	// Non-fatal — if ambiguity data is not yet available the three components default to 0.
+	amb, _ := s.projRepo.GetAmbiguitySummary(ctx, tenantID)
+
+	// Step 1c: read pattern.tenant_summary for proof_readiness_score (dispute_ready_pct component 4).
+	// Non-fatal — defaults to 0 until the first batch summary event arrives.
+	pat, _ := s.projRepo.GetPatternTenantSummary(ctx, tenantID)
+
 	// Step 2: build snapshot
-	snap := s.buildSnapshot(def)
+	snap := s.buildSnapshot(def, amb, pat)
 
 	// Step 3: persist snapshot
-	projRefs := []string{"defensibility.summary"}
+	projRefs := []string{"defensibility.summary", "ambiguity.summary"}
 	projRefsJSON, _ := json.Marshal(projRefs)
 	snapJSON, err := json.Marshal(snap)
 	if err != nil {
@@ -167,6 +180,15 @@ func (s *DefensibilityIntelligenceService) ComputeAndSave(
 			tenantID, err)
 	}
 
+	// Step 3b: write dispute_ready_pct back to the projection so the policy engine
+	// (policy_service.go) can read it without querying intelligence_snapshots.
+	if err := s.projRepo.AtomicUpdateDefensibilityDisputeReady(
+		ctx, tenantID, snap.DisputeReadyPct, windowStart,
+	); err != nil {
+		// Non-fatal — snapshot already written; policy engine uses stale value until next event.
+		log.Printf("defensibility_svc: AtomicUpdateDefensibilityDisputeReady tenant=%s: %v", tenantID, err)
+	}
+
 	// Step 4: if batch-scoped, update the defensibility_tier on batch_contracts
 	// This lets GET /v1/intelligence/batches/{id} return the correct tier
 	// without needing to join intelligence_snapshots.
@@ -181,10 +203,12 @@ func (s *DefensibilityIntelligenceService) ComputeAndSave(
 }
 
 // buildSnapshot converts a DefensibilityValue projection into a full snapshot.
-func (s *DefensibilityIntelligenceService) buildSnapshot(dv *models.DefensibilityValue) DefensibilitySnapshot {
+// amb may be nil if the ambiguity projection is not yet populated.
+// pat may be nil if the pattern.tenant_summary projection is not yet populated.
+func (s *DefensibilityIntelligenceService) buildSnapshot(dv *models.DefensibilityValue, amb *models.AmbiguityValue, pat *models.PatternTenantSummaryValue) DefensibilitySnapshot {
 	snap := DefensibilitySnapshot{
 		AuditReadyPct:            dv.AuditReadyPct,
-		DisputeReadyPct:          dv.DisputeReadyPct,
+		DisputeReadyPct:          computeDisputeReadyPct(dv, pat),
 		GovernanceCoveragePct:    dv.GovernanceCoveragePct,
 		EvidencePackRate:         dv.EvidencePackRate,
 		ReplayabilityPct:         dv.ReplayabilityPct,
@@ -206,8 +230,17 @@ func (s *DefensibilityIntelligenceService) buildSnapshot(dv *models.Defensibilit
 		ComputedAt:                 time.Now().UTC(),
 	}
 
-	// Compute defensibility score from the spec rubric (total = 65 points)
-	snap.DefensibilityScore = s.computeScore(dv)
+	// Store cross-layer components for transparency in the snapshot
+	if amb != nil {
+		snap.MatchReliabilityScore = amb.DecisionSuccessRate
+		snap.ReferenceCompletenessScore = 1.0 - amb.ProviderRefMissingRate
+		if snap.ReferenceCompletenessScore < 0 {
+			snap.ReferenceCompletenessScore = 0
+		}
+	}
+
+	// Compute Proof Readiness Score (total = 65 points)
+	snap.DefensibilityScore = s.computeScore(dv, amb)
 	snap.DefensibilityTier = defensibilityTier(snap.DefensibilityScore)
 	snap.RecommendedAction = s.recommendedAction(dv)
 
@@ -221,83 +254,112 @@ func (s *DefensibilityIntelligenceService) buildSnapshot(dv *models.Defensibilit
 	return snap
 }
 
-// computeScore applies the ML doc §7.3 defensibility scoring formula.
+// computeDisputeReadyPct computes the new dispute pack readiness score (0–1).
+//
+// Formula: (avg_intent_quality + avg_mapping_confidence + avg_pack_completeness + proof_readiness) / 4
+//
+//   - avg_intent_quality:    running avg of IntentQualityScore from IntentCreatedEvent
+//   - avg_mapping_confidence: running avg of MappingConfidence from CanonicalSettlementCreatedEvent
+//   - avg_pack_completeness:  running avg of PackCompletenessScore from EvidencePackReadyEvent (D2)
+//   - proof_readiness:        last batch ProofReadinessScore from pattern.tenant_summary
+//
+// pat may be nil when no batch summary has arrived yet; proof_readiness defaults to 0.
+func computeDisputeReadyPct(dv *models.DefensibilityValue, pat *models.PatternTenantSummaryValue) float64 {
+	proofReadiness := 0.0
+	if pat != nil {
+		proofReadiness = pat.ProofReadinessScore
+	}
+	pct := (dv.AvgIntentQualityScore + dv.AvgMappingConfidence + dv.AvgPackCompletenessScore + proofReadiness) / 4.0
+	if pct > 1.0 {
+		pct = 1.0
+	}
+	if pct < 0 {
+		pct = 0
+	}
+	return pct
+}
+
+// computeScore computes the Proof Readiness Score.
 // Returns a score 0–65.
 //
-// FORMULA (from ML spec, 7 components, total = 100):
-//   0.20 × pack_completeness_score    — do evidence packs exist and are they complete?
-//   0.15 × governance_coverage        — what % of intents have governance decisions?
-//   0.15 × attachment_confidence      — proxy: governance_approved / total (high approval = confident attachment)
-//   0.15 × carrier_richness           — proxy: (1 - missing_ref_rate via AML/KYC coverage)
-//   0.15 × settlement_evidence        — what % have replay equivalence (best settlement proof proxy)?
-//   0.10 × replay_equivalence_flag    — are packs replay-equivalent (strongest audit signal)?
-//   0.10 × low_ambiguity_score        — how free of ambiguity is this tenant? (1 - ambiguity proxy)
+// FORMULA (7 components):
 //
-// WHY THIS REPLACES THE PROXY:
-// The old formula used governance_approved as a 35-point proxy for carrier/attachment
-// quality. The ML doc prescribes explicit weights per dimension so that each
-// improvement is precisely reflected in the score (e.g. fixing evidence packs
-// alone can add up to 20 points, not an indeterminate slice of 35).
-func (s *DefensibilityIntelligenceService) computeScore(dv *models.DefensibilityValue) float64 {
+//	0.20 × evidence_pack_coverage      — do complete evidence packs exist?
+//	0.15 × governance_coverage         — what % of intents have governance decisions?
+//	0.20 × match_reliability_score     — how reliable are attachment decisions? (ambiguity layer)
+//	0.15 × reference_completeness      — are carrier/provider references present? (ambiguity layer)
+//	0.15 × settlement_evidence_coverage — what % of packs include a settlement leaf?
+//	0.10 × replay_equivalence_rate     — are packs replay-equivalent?
+//	0.05 × (1 - ambiguity_rate)        — how free of ambiguous decisions is this tenant?
+//
+// amb may be nil (ambiguity projection not yet available); affected components default to 0.
+func (s *DefensibilityIntelligenceService) computeScore(dv *models.DefensibilityValue, amb *models.AmbiguityValue) float64 {
 	if dv.TotalIntents == 0 {
 		return 0
 	}
 	n := float64(dv.TotalIntents)
 
-	// Component 1 (weight 0.20): pack completeness — D2 real value
-	// Use AvgPackCompletenessScore (0–1) when packs exist; fall back to pack presence rate.
-	var packCompleteness float64
+	// Component 1 (weight 0.20): evidence_pack_coverage
+	// Use AvgPackCompletenessScore (D2) when available; fall back to pack presence rate.
+	var evidencePackCoverage float64
 	if dv.AvgPackCompletenessScore > 0 {
-		packCompleteness = dv.AvgPackCompletenessScore // D2 real value
+		evidencePackCoverage = dv.AvgPackCompletenessScore
 	} else {
-		packCompleteness = float64(dv.WithEvidencePack) / n // fallback: pack presence rate
+		evidencePackCoverage = float64(dv.WithEvidencePack) / n
+	}
+	if evidencePackCoverage > 1.0 {
+		evidencePackCoverage = 1.0
 	}
 
-	// Component 2 (weight 0.15): governance coverage
-	govCoverage := float64(dv.WithGovernanceDecision) / n // 0–1
+	// Component 2 (weight 0.15): governance_coverage
+	govCoverage := float64(dv.WithGovernanceDecision) / n
 
-	// Component 3 (weight 0.15): attachment confidence proxy
-	// governance_approved / total is our best proxy for high-confidence attachment
-	// (approved = governance confirmed the payment identity chain is sound).
-	attachConfidence := float64(dv.GovernanceApprovedCount) / n // 0–1
+	// Component 3 (weight 0.20): match_reliability_score
+	// DecisionSuccessRate from the ambiguity projection: fraction of attachment
+	// decisions that are unambiguous, non-colliding, and settled at the intended amount.
+	var matchReliability float64
+	if amb != nil {
+		matchReliability = amb.DecisionSuccessRate
+	}
 
-	// Component 4 (weight 0.15): carrier richness proxy
-	// KYC + AML coverage together indicate reference/carrier quality.
-	// Average of both rates gives a 0–1 coverage score.
-	kycRate := float64(dv.WithKYCChecked) / n
-	amlRate := float64(dv.WithAMLChecked) / n
-	carrierRichness := (kycRate + amlRate) / 2.0 // 0–1
+	// Component 4 (weight 0.15): reference_completeness_score
+	// 1 - ProviderRefMissingRate: how complete are carrier/provider references?
+	var refCompleteness float64
+	if amb != nil {
+		refCompleteness = 1.0 - amb.ProviderRefMissingRate
+		if refCompleteness < 0 {
+			refCompleteness = 0
+		}
+	}
 
-	// Component 5 (weight 0.15): settlement evidence — D4 real value
-	// SettlementEvidenceCoverage = fraction of packs with settlement leaf (D4).
+	// Component 5 (weight 0.15): settlement_evidence_coverage (D4)
 	// Falls back to replay-equivalence proxy when D4 not yet accumulated.
 	var settlementEvidence float64
 	if dv.SettlementEvidenceCoverage > 0 {
-		settlementEvidence = dv.SettlementEvidenceCoverage // D4 real value
+		settlementEvidence = dv.SettlementEvidenceCoverage
 	} else {
-		settlementEvidence = float64(dv.WithReplayEquivalence) / n // fallback proxy
+		settlementEvidence = float64(dv.WithReplayEquivalence) / n
 	}
 
-	// Component 6 (weight 0.10): replay equivalence flag (D6)
-	replayFlag := float64(dv.WithReplayEquivalence) / n // 0–1
+	// Component 6 (weight 0.10): replay_equivalence_rate (D6)
+	replayRate := float64(dv.WithReplayEquivalence) / n
 
-	// Component 7 (weight 0.10): low ambiguity score
-	// governance_rejected / total is the best available ambiguity signal:
-	// rejections signal that the payment identity was unclear or risky.
-	rejectionRate := float64(dv.GovernanceRejectedCount) / n
-	lowAmbiguity := 1.0 - rejectionRate // 0–1 (1.0 = no rejections = low ambiguity)
-	if lowAmbiguity < 0 {
-		lowAmbiguity = 0
+	// Component 7 (weight 0.05): (1 - ambiguity_rate)
+	lowAmbiguity := 1.0
+	if amb != nil {
+		lowAmbiguity = 1.0 - amb.AmbiguityRate
+		if lowAmbiguity < 0 {
+			lowAmbiguity = 0
+		}
 	}
 
-	// Weighted sum → scale to 0–65 (ML doc §7.3 D8 formula)
-	score := (0.20*packCompleteness +
+	score := (0.20*evidencePackCoverage +
 		0.15*govCoverage +
-		0.15*attachConfidence +
-		0.15*carrierRichness +
+		0.20*matchReliability +
+		0.15*refCompleteness +
 		0.15*settlementEvidence +
-		0.10*replayFlag +
-		0.10*lowAmbiguity) * 65
+		0.10*replayRate +
+		0.05*lowAmbiguity) * 65
 
 	if score > 65 {
 		score = 65

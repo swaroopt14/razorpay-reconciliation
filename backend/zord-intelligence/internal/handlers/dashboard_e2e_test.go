@@ -1,4 +1,4 @@
-﻿package handlers_test
+package handlers_test
 
 // dashboard_e2e_test.go
 //
@@ -170,7 +170,7 @@ func TestDashboard_Leakage_HappyPath(t *testing.T) {
 		"risk_tier":                     "HIGH"
 	}`))
 
-	h := handlers.NewDashboardLeakageHandler(persistence.NewIntelligenceSnapshotRepo(pool), "GRADE_A")
+	h := handlers.NewDashboardLeakageHandler(persistence.NewIntelligenceSnapshotRepo(pool), persistence.NewBatchContractRepo(pool), "GRADE_A")
 	req := httptest.NewRequest(http.MethodGet,
 		"/v1/intelligence/dashboard/leakage?tenant_id="+tenantID, nil)
 	rr := httptest.NewRecorder()
@@ -207,7 +207,7 @@ func TestDashboard_Leakage_NoData(t *testing.T) {
 	pool := setupE2EDB(t)
 	tenantID := uniqueTenant("tnt_leak_empty")
 
-	h := handlers.NewDashboardLeakageHandler(persistence.NewIntelligenceSnapshotRepo(pool), "GRADE_A")
+	h := handlers.NewDashboardLeakageHandler(persistence.NewIntelligenceSnapshotRepo(pool), persistence.NewBatchContractRepo(pool), "GRADE_A")
 	req := httptest.NewRequest(http.MethodGet,
 		"/v1/intelligence/dashboard/leakage?tenant_id="+tenantID, nil)
 	rr := httptest.NewRecorder()
@@ -228,7 +228,7 @@ func TestDashboard_Leakage_NoData(t *testing.T) {
 func TestDashboard_Leakage_MissingTenantID(t *testing.T) {
 	pool := setupE2EDB(t)
 
-	h := handlers.NewDashboardLeakageHandler(persistence.NewIntelligenceSnapshotRepo(pool), "GRADE_A")
+	h := handlers.NewDashboardLeakageHandler(persistence.NewIntelligenceSnapshotRepo(pool), persistence.NewBatchContractRepo(pool), "GRADE_A")
 	req := httptest.NewRequest(http.MethodGet, "/v1/intelligence/dashboard/leakage", nil)
 	rr := httptest.NewRecorder()
 	h.GetLeakageKPIs(rr, req)
@@ -257,7 +257,7 @@ func TestDashboard_Leakage_DateRangeFilter(t *testing.T) {
 	seedSnapshotAt(t, pool, "snap_e2e_leak_new", tenantID, "LEAKAGE", "TENANT", nil,
 		[]byte(`{"leakage_percentage":0.02,"risk_tier":"LOW"}`), recent)
 
-	h := handlers.NewDashboardLeakageHandler(persistence.NewIntelligenceSnapshotRepo(pool), "GRADE_A")
+	h := handlers.NewDashboardLeakageHandler(persistence.NewIntelligenceSnapshotRepo(pool), persistence.NewBatchContractRepo(pool), "GRADE_A")
 	// from_date set to yesterday — old snapshot is excluded, recent is within range.
 	yesterday := time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02")
 	req := httptest.NewRequest(http.MethodGet,
@@ -288,6 +288,7 @@ func TestDashboard_Ambiguity_HappyPath(t *testing.T) {
 		"ambiguity_rate":             0.15,
 		"avg_attachment_confidence": 0.72,
 		"provider_ref_missing_rate": 0.03,
+		"ambiguous_amount_minor":    120000,
 		"value_at_risk_minor":       350000,
 		"risk_tier":                 "MEDIUM"
 	}`))
@@ -317,6 +318,9 @@ func TestDashboard_Ambiguity_HappyPath(t *testing.T) {
 	}
 	if resp["provider_ref_missing_rate"].(float64) != 0.03 {
 		t.Errorf("provider_ref_missing_rate: want 0.03, got %v", resp["provider_ref_missing_rate"])
+	}
+	if got := fmt.Sprint(resp["value_at_risk_minor"]); got != "120000" {
+		t.Errorf("value_at_risk_minor: want ambiguous_amount_minor 120000, got %v", resp["value_at_risk_minor"])
 	}
 }
 

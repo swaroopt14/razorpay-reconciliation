@@ -39,6 +39,9 @@ import (
 	"github.com/segmentio/kafka-go"
 	"github.com/zord/zord-intelligence/config"
 	"github.com/zord/zord-intelligence/internal/models"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // =============================================================================
@@ -448,6 +451,29 @@ func wireHandler(
 	handlers[topic] = fn
 }
 
+// KafkaGoHeaderCarrier implements propagation.TextMapCarrier for kafka-go headers.
+// Enables extracting W3C traceparent from Kafka message headers for end-to-end tracing.
+type KafkaGoHeaderCarrier []kafka.Header
+
+func (c KafkaGoHeaderCarrier) Get(key string) string {
+	for _, h := range c {
+		if h.Key == key {
+			return string(h.Value)
+		}
+	}
+	return ""
+}
+
+func (c KafkaGoHeaderCarrier) Set(key string, value string) {}
+
+func (c KafkaGoHeaderCarrier) Keys() []string {
+	keys := make([]string, len(c))
+	for i, h := range c {
+		keys[i] = h.Key
+	}
+	return keys
+}
+
 // consumeSingleTopic reads one Kafka topic in a dedicated goroutine.
 // One goroutine per topic allows different topic types to process in parallel.
 // Per-tenant ordering within each topic is preserved: tenantID is the message key,
@@ -476,6 +502,7 @@ func consumeSingleTopic(
 	}()
 
 	log.Printf("kafka: consumer started topic=%s group=%s", topic, groupID)
+	tracer := otel.Tracer("zord-intelligence/consumer")
 
 	for {
 		msg, err := reader.FetchMessage(ctx)
@@ -488,9 +515,23 @@ func consumeSingleTopic(
 			continue
 		}
 
-		// ── [DIAGNOSTIC] Log every raw Kafka message before dispatch ────────────
-		
+		// Extract trace context from Kafka headers (W3C traceparent)
+		carrier := KafkaGoHeaderCarrier(msg.Headers)
+		msgCtx := otel.GetTextMapPropagator().Extract(ctx, carrier)
+
+		// Start a consumer span linked to the producer's trace
+		_, span := tracer.Start(msgCtx, "consume."+msg.Topic,
+			trace.WithSpanKind(trace.SpanKindConsumer),
+			trace.WithAttributes(
+				attribute.String("messaging.system", "kafka"),
+				attribute.String("messaging.destination", msg.Topic),
+				attribute.Int64("messaging.kafka.partition", int64(msg.Partition)),
+				attribute.Int64("messaging.kafka.offset", msg.Offset),
+			),
+		)
+
 		if err := handle(msg); err != nil {
+			span.RecordError(err)
 			log.Printf("kafka: handler error topic=%s partition=%d offset=%d: %v",
 				msg.Topic, msg.Partition, msg.Offset, err)
 			// Commit even on handler error to avoid an infinite redelivery loop
@@ -502,6 +543,7 @@ func consumeSingleTopic(
 				msg.Topic, msg.Offset, err)
 		}
 
+		span.End()
 		log.Printf("kafka: processed topic=%s partition=%d offset=%d",
 			msg.Topic, msg.Partition, msg.Offset)
 	}

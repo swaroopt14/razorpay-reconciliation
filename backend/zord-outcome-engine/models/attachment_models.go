@@ -112,6 +112,7 @@ type CanonicalIntent struct {
 	GovernanceState        string          `json:"governance_state" db:"governance_state"`
 	ZordSignatureCarrier   *string         `json:"zord_signature_carrier,omitempty" db:"zord_signature_carrier"`
 	BeneficiaryFingerprint *string         `json:"beneficiary_fingerprint,omitempty" db:"beneficiary_fingerprint"`
+	SourceRowNum           *int            `json:"source_row_num,omitempty" db:"source_row_num"`
 	CreatedAt              time.Time       `json:"created_at" db:"created_at"`
 }
 
@@ -272,6 +273,40 @@ type UnresolvedIntentRecord struct {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// AMBIGUOUS INTENT RECORD — intents with only ambiguous attachment candidates.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type AmbiguousIntentRecord struct {
+	AmbiguousID       uuid.UUID       `json:"ambiguous_id" db:"ambiguous_id"`
+	TenantID          uuid.UUID       `json:"tenant_id" db:"tenant_id"`
+	AttachmentJobID   uuid.UUID       `json:"attachment_job_id" db:"attachment_job_id"`
+	IntentID          uuid.UUID       `json:"intent_id" db:"intent_id"`
+	BatchID           *string         `json:"batch_id,omitempty" db:"batch_id"`
+	ExpectedWindowEnd *time.Time      `json:"expected_window_end,omitempty" db:"expected_window_end"`
+	ReasonCode        string          `json:"reason_code" db:"reason_code"`
+	Amount            decimal.Decimal `json:"amount" db:"amount"`
+	CurrencyCode      string          `json:"currency_code" db:"currency_code"`
+	CreatedAt         time.Time       `json:"created_at" db:"created_at"`
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONFLICTED INTENT RECORD — intents with only conflicted attachment candidates.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type ConflictedIntentRecord struct {
+	ConflictedID      uuid.UUID       `json:"conflicted_id" db:"conflicted_id"`
+	TenantID          uuid.UUID       `json:"tenant_id" db:"tenant_id"`
+	AttachmentJobID   uuid.UUID       `json:"attachment_job_id" db:"attachment_job_id"`
+	IntentID          uuid.UUID       `json:"intent_id" db:"intent_id"`
+	BatchID           *string         `json:"batch_id,omitempty" db:"batch_id"`
+	ExpectedWindowEnd *time.Time      `json:"expected_window_end,omitempty" db:"expected_window_end"`
+	ReasonCode        string          `json:"reason_code" db:"reason_code"`
+	Amount            decimal.Decimal `json:"amount" db:"amount"`
+	CurrencyCode      string          `json:"currency_code" db:"currency_code"`
+	CreatedAt         time.Time       `json:"created_at" db:"created_at"`
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ORPHAN SETTLEMENT RECORD — reverse scan output.
 //
 // Records every canonical settlement observation that was not matched during an
@@ -318,6 +353,8 @@ type BatchAttachmentSummary struct {
 	OriginalIntendedAmount   decimal.Decimal `json:"original_intended_amount" db:"original_intended_amount"`
 	MatchedIntendedAmount    decimal.Decimal `json:"matched_intended_amount" db:"matched_intended_amount"`
 	UnresolvedIntendedAmount decimal.Decimal `json:"unresolved_intended_amount" db:"unresolved_intended_amount"`
+	AmbiguousAmount          decimal.Decimal `json:"ambiguous_amount" db:"ambiguous_amount"`
+	ConflictedAmount         decimal.Decimal `json:"conflicted_amount" db:"conflicted_amount"`
 	TotalObservedAmount      decimal.Decimal `json:"total_observed_amount" db:"total_observed_amount"`
 	OriginalSettledAmount    decimal.Decimal `json:"original_settled_amount" db:"original_settled_amount"`
 	MatchedObservedAmount    decimal.Decimal `json:"matched_observed_amount" db:"matched_observed_amount"`

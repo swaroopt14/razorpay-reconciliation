@@ -34,7 +34,7 @@ export function EvidencePackTrendChart({ trend, preview }: Props) {
   const hasChart = trend.length > 0 && totalPacks > 0
 
   return (
-    <article className={`flex h-full min-h-[280px] flex-col ${EVIDENCE_CARD}`}>
+    <article className={`flex min-h-[280px] flex-col ${EVIDENCE_CARD}`}>
       <EvidenceSectionHeader
         title="Pack Volume"
         subtitle={`Daily histogram — last ${EVIDENCE_VOLUME_DAYS} days`}
@@ -47,9 +47,10 @@ export function EvidencePackTrendChart({ trend, preview }: Props) {
           ) : null
         }
       />
-      <div className="flex flex-1 px-2 pb-4 pt-1" style={{ minHeight: 220 }}>
+      <div className="px-2 pb-4 pt-1">
         {hasChart ? (
-          <ResponsiveContainer width="100%" height="100%">
+          <div className="h-[220px]">
+          <ResponsiveContainer width="100%" height={220}>
             <BarChart
               data={trend}
               barCategoryGap="12%"
@@ -103,8 +104,9 @@ export function EvidencePackTrendChart({ trend, preview }: Props) {
               />
             </BarChart>
           </ResponsiveContainer>
+          </div>
         ) : (
-          <p className="flex flex-1 items-center justify-center px-4 text-center text-[13px] font-medium text-[#00239C]">
+          <p className="flex h-[220px] items-center justify-center px-4 text-center text-[13px] font-medium text-[#00239C]">
             No pack volume data yet.
           </p>
         )}

@@ -5,8 +5,12 @@ import type {
 } from './intelligenceTypes'
 import { isDataAvailable } from './intelligenceTypes'
 
+/** Column keys from ambiguity heatmap API — display labels applied in UI. */
 const HEATMAP_X_LABELS = ['Exact', 'High', 'Amb', 'Unres', 'Conf'] as const
 const MAX_ROWS = 12
+
+/** Exact + High: high share is healthy (light). Amb + Unres + Conf: high share needs attention (dark). */
+const HEALTHY_COLUMN = new Set([0, 1])
 
 function batchRowLabel(batchId: string, index: number): number {
   const parts = batchId.split('_')
@@ -15,12 +19,17 @@ function batchRowLabel(batchId: string, index: number): number {
   return Number.isFinite(n) ? n : index + 1
 }
 
-/** Map share of intents in a bucket to heatmap cell intensity (0 idle, 1 syncing, 2 reviewing). */
-function cellIntensity(count: number, total: number): number {
-  if (total <= 0 || count <= 0) return 0
-  const ratio = count / total
-  if (ratio >= 0.3) return 2
-  if (ratio >= 0.05) return 1
+function cellIntensity(count: number, total: number, columnIndex: number): number {
+  const ratio = total > 0 ? count / total : 0
+  if (HEALTHY_COLUMN.has(columnIndex)) {
+    if (count <= 0) return 2
+    if (ratio >= 0.55) return 0
+    if (ratio >= 0.25) return 1
+    return 2
+  }
+  if (count <= 0) return 0
+  if (ratio >= 0.22) return 2
+  if (ratio >= 0.06) return 1
   return 0
 }
 
@@ -36,7 +45,7 @@ function buildSummary(batches: AmbiguityHeatmapBatchRow[]): string {
     `${batches.length} batch${batches.length === 1 ? '' : 'es'} in matching log`,
     syncing > 0 ? `${syncing} syncing` : null,
     reviewing > 0 ? `${reviewing} in review` : null,
-    `avg match score ${Math.round(avgScore * 100)}%`,
+    `avg match score ${Math.round(avgScore)}%`,
   ].filter(Boolean)
   return `${parts.join(' · ')} · ${intents.toLocaleString('en-IN')} intents tracked.`
 }
@@ -46,29 +55,43 @@ export function mapAmbiguityHeatmapResponse(
 ): MatchingExecutionHeatmap | null {
   if (!res || !isDataAvailable(res) || !res.batches?.length) return null
 
-  const batches = res.batches.slice(0, MAX_ROWS)
-  const y_labels = batches.map((b, i) => batchRowLabel(b.batch_id, i))
-  const cells = batches.map((b) => {
-    const total = b.total_count > 0 ? b.total_count : 1
-    return [
-      cellIntensity(b.exact_match_count, total),
-      cellIntensity(b.high_confidence_count, total),
-      cellIntensity(b.ambiguous_count, total),
-      cellIntensity(b.unresolved_count, total),
-      cellIntensity(b.conflicted_count, total),
-    ]
-  })
+  const allBatches = res.batches
 
-  const intents_under_evaluation_count = batches.reduce(
+  // Sum ambiguous + unresolved across ALL batches — not just the display-capped slice.
+  const intents_under_evaluation_count = allBatches.reduce(
     (sum, b) => sum + (b.ambiguous_count ?? 0) + (b.unresolved_count ?? 0),
     0,
   )
 
+  const batches = allBatches.slice(0, MAX_ROWS)
+  const y_labels = batches.map((b, i) => batchRowLabel(b.batch_id, i))
+  const batch_ids = batches.map((b) => b.batch_id)
+  const cells = batches.map((b) => {
+    const total = b.total_count > 0 ? b.total_count : 1
+    return [
+      cellIntensity(b.exact_match_count, total, 0),
+      cellIntensity(b.high_confidence_count, total, 1),
+      cellIntensity(b.ambiguous_count, total, 2),
+      cellIntensity(b.unresolved_count, total, 3),
+      cellIntensity(b.conflicted_count, total, 4),
+    ]
+  })
+
+  const column_totals = [
+    batches.reduce((sum, b) => sum + (b.exact_match_count ?? 0), 0),
+    batches.reduce((sum, b) => sum + (b.high_confidence_count ?? 0), 0),
+    batches.reduce((sum, b) => sum + (b.ambiguous_count ?? 0), 0),
+    batches.reduce((sum, b) => sum + (b.unresolved_count ?? 0), 0),
+    batches.reduce((sum, b) => sum + (b.conflicted_count ?? 0), 0),
+  ]
+
   return {
     y_labels,
+    batch_ids,
     x_labels: [...HEATMAP_X_LABELS],
     cells,
     summary: buildSummary(batches),
     intents_under_evaluation_count,
+    column_totals,
   }
 }

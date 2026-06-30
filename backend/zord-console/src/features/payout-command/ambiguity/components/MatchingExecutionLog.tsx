@@ -1,15 +1,44 @@
 'use client'
 
+import { Fragment } from 'react'
 import type {
   AmbiguityKpiResolved,
   MatchingExecutionHeatmap,
 } from '@/services/payout-command/prod-api/intelligenceTypes'
 import { getMatchingHeatmap, getMatchingSummary } from '../utils/ambiguityApiMappers'
+import { HOME_TITLE_BLACK } from '../../command-center/homeCommandCenterTokens'
+import { ZORD_SURFACE_MUTED } from '../../command-center/homeSurfaceFonts'
+import { MatchingHeatmapFocusPanel } from './MatchingHeatmapFocusPanel'
+import { columnFullLabel } from '../utils/matchingHeatmapLayout'
 
 function cellClass(v: number) {
-  if (v === 2) return 'bg-black'
-  if (v === 1) return 'bg-neutral-400'
-  return 'bg-slate-100'
+  if (v === 2) return 'bg-violet-700'
+  if (v === 1) return 'bg-violet-300'
+  return 'bg-slate-100 ring-1 ring-slate-200/80'
+}
+
+function cellTitle(v: number): string {
+  if (v === 2) return 'Needs review'
+  if (v === 1) return 'Syncing'
+  return 'Healthy'
+}
+
+function formatBatchDateLabel(year: string, month: string, day: string): string {
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)))
+  return date.toLocaleString('en-IN', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+}
+
+function rowLabel(heatmap: MatchingExecutionHeatmap, rowIdx: number): string {
+  const batchId = heatmap.batch_ids?.[rowIdx]
+  if (batchId) {
+    const isoInId = batchId.match(/(\d{4})-(\d{2})-(\d{2})/)
+    if (isoInId) {
+      const [, year, month, day] = isoInId
+      return formatBatchDateLabel(year, month, day)
+    }
+    return batchId.length <= 14 ? batchId : batchId.slice(-14)
+  }
+  return String(heatmap.y_labels[rowIdx] ?? rowIdx + 1)
 }
 
 type Props = {
@@ -21,102 +50,106 @@ type Props = {
 export function MatchingExecutionLog({ amb, heatmap: heatmapProp, heatmapLoading }: Props) {
   const heatmap = getMatchingHeatmap(amb, heatmapProp)
   const summary = getMatchingSummary(amb, heatmapProp)
-  const yLabels = heatmap?.y_labels ?? []
   const xLabels = heatmap?.x_labels ?? []
   const cells = heatmap?.cells ?? []
+  const rowCount = cells.length
+  const colCount = Math.max(xLabels.length, cells[0]?.length ?? 1)
+
+  if (heatmapLoading && !heatmap) {
+    return (
+      <div
+        className="flex min-h-[360px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white p-5"
+        data-testid="matching-execution-log"
+      >
+        <p className="text-[14px] font-medium text-slate-500">Loading matching execution heatmap…</p>
+      </div>
+    )
+  }
+
+  if (!heatmap) {
+    return (
+      <div
+        className="flex min-h-[360px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white p-5"
+        data-testid="matching-execution-log"
+      >
+        <p className="text-[14px] font-medium text-[#00239C]">Heatmap not available for this tenant yet.</p>
+      </div>
+    )
+  }
 
   return (
-    <article className="flex flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="h-2 w-2 animate-pulse rounded-full bg-black" />
-          <span className="text-[12px] font-semibold uppercase tracking-wider text-[#000000]">
-            Matching Execution Log
-          </span>
-        </div>
-        <div className="flex items-center gap-1.5 rounded-full bg-black px-3 py-1">
-          <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
-          <span className="text-[10px] font-bold uppercase tracking-wider text-white">Live Feed</span>
-        </div>
-      </div>
+    <section
+      className="grid gap-3 md:grid-cols-5 md:items-stretch"
+      data-testid="matching-execution-log"
+    >
+      <article className="relative flex min-h-[340px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:col-span-3">
+        <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#000000] via-[#7c3aed] to-[#4c1d95]" />
 
-      <div className="mt-5 flex flex-1 gap-2">
-        {heatmap ? (
-          <>
-            <div className="flex flex-col justify-between pr-1 text-[10px] font-semibold tabular-nums text-slate-400">
-              {yLabels.map((l) => (
-                <span key={l}>{l}</span>
-              ))}
-            </div>
-            <div className="flex flex-1 flex-col gap-1.5">
-              {cells.map((row, rIdx) => (
-                <div
-                  key={rIdx}
-                  className="grid gap-1.5"
-                  style={{ gridTemplateColumns: `repeat(${row.length}, minmax(0, 1fr))` }}
-                >
-                  {row.map((cell, cIdx) => (
-                    <div
-                      key={cIdx}
-                      className={`aspect-square w-full rounded-sm ${cellClass(cell)}`}
-                      style={{ minHeight: 20 }}
-                    />
-                  ))}
-                </div>
-              ))}
-              {xLabels.length > 0 ? (
-                <div
-                  className="mt-1 grid gap-1.5"
-                  style={{ gridTemplateColumns: `repeat(${xLabels.length}, minmax(0, 1fr))` }}
-                >
-                  {xLabels.map((l) => (
-                    <span key={l} className="text-center text-[9px] font-medium text-slate-400">
-                      {l}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          </>
-        ) : heatmapLoading ? (
-          <div className="flex min-h-[160px] flex-1 items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 text-center">
-            <p className="text-[12px] font-medium text-slate-500">Loading matching execution heatmap…</p>
-          </div>
-        ) : (
-          <div className="flex min-h-[160px] flex-1 items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 text-center">
-            <p className="text-[12px] font-medium text-[#00239C]">
-              Heatmap not available for this tenant yet.
+        <div className="flex shrink-0 items-start justify-between gap-3">
+          <div>
+            <h3 className={`text-[1.2rem] font-semibold tracking-[-0.01em] ${HOME_TITLE_BLACK}`}>
+              Matching execution log
+            </h3>
+            <p className={`mt-0.5 text-[13px] ${ZORD_SURFACE_MUTED}`}>
+              Batch × match-signal grid — darker cells need attention
             </p>
           </div>
-        )}
-      </div>
-
-      <div className="mt-5 border-t border-slate-100 pt-4">
-        <div className="flex flex-wrap items-center gap-4">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-            Intensity
-          </span>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1.5">
-              <div className="h-2.5 w-2.5 rounded-sm bg-black" />
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Reviewing</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="h-2.5 w-2.5 rounded-sm bg-neutral-400" />
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Syncing</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="h-2.5 w-2.5 rounded-sm bg-slate-100" />
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Idle</span>
-            </div>
+          <div className="flex items-center gap-1.5 rounded-full bg-violet-700 px-2.5 py-1">
+            <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
+            <span className="text-[10px] font-bold uppercase tracking-wider text-white">Live</span>
           </div>
         </div>
+
+        {/* Fluid grid — fills card interior; card outer size unchanged */}
+        <div
+          className="mt-3 min-h-0 flex-1"
+          style={{
+            display: 'grid',
+            gridTemplateColumns: `1.75rem repeat(${colCount}, minmax(0, 1fr))`,
+            gridTemplateRows: `repeat(${rowCount}, minmax(0, 1fr)) auto`,
+            gap: '3px',
+          }}
+        >
+          {cells.map((row, rIdx) => (
+            <Fragment key={rIdx}>
+              <span
+                className="flex items-center justify-end pr-0.5 text-[11px] font-semibold tabular-nums leading-none text-slate-500"
+                title={heatmap.batch_ids?.[rIdx]}
+              >
+                {rowLabel(heatmap, rIdx)}
+              </span>
+              {row.map((cell, cIdx) => (
+                <div
+                  key={cIdx}
+                  className={`min-h-0 min-w-0 rounded-[3px] ${cellClass(cell)}`}
+                  title={`Batch ${rowLabel(heatmap, rIdx)} · ${columnFullLabel(xLabels[cIdx] ?? '')}: ${cellTitle(cell)}`}
+                />
+              ))}
+            </Fragment>
+          ))}
+
+          <span aria-hidden className="min-h-0" />
+          {xLabels.map((l) => (
+            <span
+              key={`x-${l}`}
+              className="truncate pt-0.5 text-center text-[10px] font-semibold leading-tight text-slate-500"
+              title={columnFullLabel(l)}
+            >
+              {l}
+            </span>
+          ))}
+        </div>
+
         {summary ? (
-          <p className="mt-3 text-[11px] font-medium leading-relaxed text-[#00239C]">{summary}</p>
-        ) : (
-          <p className="mt-3 text-[11px] font-medium text-slate-400">—</p>
-        )}
-      </div>
-    </article>
+          <p className="mt-3 shrink-0 border-t border-slate-100 pt-3 text-[12px] font-medium leading-relaxed text-[#00239C]">
+            {summary}
+          </p>
+        ) : null}
+      </article>
+
+      <article className="flex min-h-[340px] flex-col md:col-span-2">
+        <MatchingHeatmapFocusPanel heatmap={heatmap} />
+      </article>
+    </section>
   )
 }

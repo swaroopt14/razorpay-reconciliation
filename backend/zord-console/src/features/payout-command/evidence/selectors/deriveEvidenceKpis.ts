@@ -1,6 +1,5 @@
 import { evidenceCopy } from '../copy/evidenceCopy'
 import type { EvidenceKpiCard } from '../types/evidenceViewModels'
-import { EXPECTED_PROOF_ITEMS } from '../types/evidenceViewModels'
 import type {
   DefensibilityKpiResolved,
   BatchHealth,
@@ -32,34 +31,25 @@ export function deriveEvidenceKpis(input: {
   let readyCount = 0
   let incompleteCount = 0
   let reviewCount = 0
-  let missingItems = 0
 
   for (const row of packRows) {
     const st = mapProofStatusFromPack(row.summary, row.itemCount)
     if (isExportReadyStatus(st.key)) readyCount += 1
     else if (st.key === 'needsReview') reviewCount += 1
     else incompleteCount += 1
-    const missing = row.summary.missing_artifact_count
-    if (typeof missing === 'number') missingItems += missing
-    else if (row.itemCount !== undefined) {
-      missingItems += Math.max(0, EXPECTED_PROOF_ITEMS - row.itemCount)
-    }
   }
 
   const defScoreRaw = defensibility ? defensibility.defensibility_score : null
   const defScore = defScoreRaw != null ? defScoreRaw.toFixed(1) : '—'
   const evidencePct = defensibility ? formatPercentLabel(defensibility.evidence_pack_rate) : '—'
   const govPct = defensibility ? formatPercentLabel(defensibility.governance_coverage_pct) : '—'
-  const replayPct = defensibility ? formatPercentLabel(defensibility.replayability_pct) : '—'
-  const disputePct = defensibility ? formatPercentLabel(defensibility.dispute_ready_pct) : '—'
-
-  let readinessSub = defensibility
-    ? `Evidence packs: ${evidencePct} · Replay-ready: ${replayPct} · Dispute-ready: ${disputePct}`
+  const packCompletenessPct = defensibility
+    ? formatPercentLabel(defensibility.avg_pack_completeness_score, { digits: 2 })
     : '—'
+  const replayPct = defensibility ? formatPercentLabel(defensibility.replayability_pct) : '—'
+  const disputePct = defensibility ? formatPercentLabel(defensibility.dispute_ready_pct, { digits: 2 }) : '—'
 
-  if (defensibility && defensibility.weak_evidence_count != null && defensibility.weak_evidence_count > 0) {
-    readinessSub += ` · ${defensibility.weak_evidence_count} weak evidence items`
-  }
+  const readinessSub = ''
 
   let readinessExplanation: string | undefined
   if (
@@ -85,10 +75,6 @@ export function deriveEvidenceKpis(input: {
       ? `${readyCount} ready to export · ${incompleteCount} incomplete · ${reviewCount} need review`
       : '—'
 
-  const missingValue = packCount > 0 ? missingItems.toLocaleString('en-IN') : '—'
-  const missingSub =
-    packCount > 0 ? 'Critical proof artifacts still missing across loaded packs' : '—'
-
   return [
     {
       id: 'readiness',
@@ -106,18 +92,12 @@ export function deriveEvidenceKpis(input: {
       sub: packsSub,
     },
     {
-      id: 'governance',
-      label: evidenceCopy.kpi.governanceChecks,
-      value: govPct,
+      id: 'packCompleteness',
+      label: evidenceCopy.kpi.packCompletenessScore,
+      value: packCompletenessPct,
       sub: defensibility
-        ? `Settlement coverage ${formatPercentLabel(defensibility.settlement_evidence_coverage)} · Attachment ${formatPercentLabel(defensibility.attachment_evidence_coverage)}`
+        ? `Average completeness score across all evidence packs in this batch`
         : '—',
-    },
-    {
-      id: 'missing',
-      label: evidenceCopy.kpi.missingProofItems,
-      value: missingValue,
-      sub: missingSub,
     },
     {
       id: 'dispute',
@@ -133,10 +113,7 @@ export function deriveEvidenceKpis(input: {
           : packCount > 0
             ? '0'
             : '—',
-      sub:
-        defensibility && packCount > 0
-          ? `${readyCount} export-ready · ${disputePct} dispute-ready per defensibility KPI`
-          : disputeSub,
+      sub: '',
     },
   ]
 }

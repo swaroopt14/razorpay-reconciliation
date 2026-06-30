@@ -28,4 +28,4 @@ spec:
   ports:
     - name: ui
       port: 16686
-      targetPort: 16686
+      targetPort: 8080

@@ -24,7 +24,7 @@ package handlers
 
 import (
 	"encoding/json"
-	"fmt"
+	"math"
 	"net/http"
 	"time"
 
@@ -79,12 +79,12 @@ type tenantPatternKPIFields struct {
 // ProviderDecisionStats is the per-provider breakdown for A9 decision_success_rate,
 // sourced from the pattern.provider.{provider_id} projection.
 type ProviderDecisionStats struct {
-	TotalDecisions          int    `json:"total_decisions"`
-	SuccessfulDecisionCount int    `json:"successful_decision_count"`
-	DecisionSuccessRate     string `json:"decision_success_rate"`
-	AmbiguityRate           string `json:"ambiguity_rate"`
-	UnresolvedDecisions     int    `json:"unresolved_decisions"`
-	OrphanRate              string `json:"orphan_rate"`
+	TotalDecisions          int     `json:"total_decisions"`
+	SuccessfulDecisionCount int     `json:"successful_decision_count"`
+	DecisionSuccessRate     float64 `json:"decision_success_rate"`
+	AmbiguityRate           float64 `json:"ambiguity_rate"`
+	UnresolvedDecisions     int     `json:"unresolved_decisions"`
+	OrphanRate              float64 `json:"orphan_rate"`
 }
 
 // DashboardPatternResponse is the frontend-ready payload for the pattern dashboard card.
@@ -111,8 +111,7 @@ type DashboardPatternResponse struct {
 	// A9 — decision_success_rate: tenant-wide fraction of attachment decisions
 	// that are unambiguous, non-colliding, and settled at the intended amount.
 	// source: ambiguity.summary projection (successful_decision_count / total_decisions)
-	// formatted as a percentage string (e.g. "64.95%").
-	DecisionSuccessRate string `json:"decision_success_rate"`
+	DecisionSuccessRate float64 `json:"decision_success_rate"`
 
 	// A9 — by_provider: per-provider breakdown of decision success/quality stats,
 	// sourced from pattern.provider.{provider_id} projections.
@@ -186,6 +185,7 @@ func (h *DashboardPatternHandler) GetPatternKPIs(w http.ResponseWriter, r *http.
 	}
 
 	resp := DashboardPatternResponse{TenantID: tenantID, IntelligenceMode: h.intelligenceMode}
+	pct := func(v float64) float64 { return math.Round(v*10000) / 100 }
 
 	// ── P7: value_date_mismatch_rate ─────────────────────────────────────
 	// Always computed from projections, regardless of whether a PATTERN snapshot exists.
@@ -198,7 +198,7 @@ func (h *DashboardPatternHandler) GetPatternKPIs(w http.ResponseWriter, r *http.
 		if ambErr == nil && ambiguity != nil {
 			attachedRecords := ambiguity.TotalDecisions - ambiguity.UnresolvedSettlementCount
 			if attachedRecords > 0 {
-				resp.ValueDateMismatchRate = float64(leakage.ValueDateMismatchCount) / float64(attachedRecords)
+				resp.ValueDateMismatchRate = pct(float64(leakage.ValueDateMismatchCount) / float64(attachedRecords))
 			}
 		}
 	}
@@ -208,7 +208,7 @@ func (h *DashboardPatternHandler) GetPatternKPIs(w http.ResponseWriter, r *http.
 	if ambErr == nil && ambiguity != nil {
 		decisionSuccessRate = ambiguity.DecisionSuccessRate
 	}
-	resp.DecisionSuccessRate = fmt.Sprintf("%.2f%%", decisionSuccessRate*100)
+	resp.DecisionSuccessRate = pct(decisionSuccessRate)
 
 	windowStart := time.Now().UTC().Truncate(24 * time.Hour)
 	if providers, provErr := h.projRepo.GetAllProviderQualityProjections(r.Context(), tenantID, windowStart); provErr == nil {
@@ -222,10 +222,10 @@ func (h *DashboardPatternHandler) GetPatternKPIs(w http.ResponseWriter, r *http.
 			resp.ByProvider[p.ProviderID] = ProviderDecisionStats{
 				TotalDecisions:          p.TotalDecisions,
 				SuccessfulDecisionCount: p.SuccessfulDecisionCount,
-				DecisionSuccessRate:     fmt.Sprintf("%.2f%%", p.DecisionSuccessRate*100),
-				AmbiguityRate:           fmt.Sprintf("%.2f%%", p.AmbiguityRate*100),
+				DecisionSuccessRate:     pct(p.DecisionSuccessRate),
+				AmbiguityRate:           pct(p.AmbiguityRate),
 				UnresolvedDecisions:     p.UnresolvedDecisions,
-				OrphanRate:              fmt.Sprintf("%.2f%%", p.OrphanRate*100),
+				OrphanRate:              pct(p.OrphanRate),
 			}
 		}
 	}
@@ -251,10 +251,10 @@ func (h *DashboardPatternHandler) GetPatternKPIs(w http.ResponseWriter, r *http.
 	resp.WindowStart = &snap.WindowStart
 	resp.WindowEnd = &snap.WindowEnd
 	resp.ComputedAt = &snap.CreatedAt
-	resp.BatchAnomalyScore = kpis.BatchAnomalyScore
+	resp.BatchAnomalyScore = pct(kpis.BatchAnomalyScore)
 	resp.AnomalyLevel = kpis.AnomalyLevel
 	resp.AnomalyType = kpis.AnomalyType
-	resp.BatchRiskScore = kpis.BatchRiskScore
+	resp.BatchRiskScore = pct(kpis.BatchRiskScore)
 	resp.RiskTier = kpis.RiskTier
 	resp.FinalityStatus = kpis.FinalityStatus
 	resp.TotalCount = kpis.TotalCount
@@ -262,7 +262,7 @@ func (h *DashboardPatternHandler) GetPatternKPIs(w http.ResponseWriter, r *http.
 	resp.FailedCount = kpis.FailedCount
 	resp.PendingCount = kpis.PendingCount
 	// P1: batch quality fields from the same BATCH snapshot
-	resp.BatchQualityScore = kpis.BatchQualityScore
+	resp.BatchQualityScore = pct(kpis.BatchQualityScore)
 	resp.ExactMatchCount = kpis.ExactMatchCount
 	resp.HighConfidenceCount = kpis.HighConfidenceCount
 	resp.AmbiguousCount = kpis.AmbiguousCount
@@ -278,9 +278,9 @@ func (h *DashboardPatternHandler) GetPatternKPIs(w http.ResponseWriter, r *http.
 	if tenantPatSnap != nil {
 		var tKPIs tenantPatternKPIFields
 		if jsonErr := json.Unmarshal(tenantPatSnap.SnapshotJSON, &tKPIs); jsonErr == nil {
-			resp.DuplicateRiskRate = tKPIs.DuplicateRiskRate
+			resp.DuplicateRiskRate = pct(tKPIs.DuplicateRiskRate)
 			resp.DuplicateRiskCount = tKPIs.DuplicateRiskCount
-			resp.SameBeneficiaryAmountDensity = tKPIs.SameBeneficiaryAmountDensity
+			resp.SameBeneficiaryAmountDensity = pct(tKPIs.SameBeneficiaryAmountDensity)
 			resp.SettlementDelayP95Days = tKPIs.SettlementDelayP95Days
 		}
 	}

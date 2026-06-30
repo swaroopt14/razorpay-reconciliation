@@ -440,5 +440,5 @@ For your current setup, these values are a good starting point:
 ### All Services
 
 - Script path: `jenkins/Jenkinsfile.all-services-ecr`
-- `SERVICES=zord-console,zord-edge,zord-intelligence`
+- `SERVICES=zord-console,zord-edge,zord-intelligence,ml-service`
 - `IMAGE_TAG=v10`

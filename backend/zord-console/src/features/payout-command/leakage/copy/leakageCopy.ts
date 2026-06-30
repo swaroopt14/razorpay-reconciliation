@@ -1,19 +1,21 @@
-/** Customer-facing copy for Payment Gaps & Value at Risk. */
+/** Customer-facing copy for Payment Gaps. */
 
 import type { RiskTier } from '@/services/payout-command/prod-api/intelligenceTypes'
 
 export const leakageCopy = {
-  pageTitle: 'Payment Gaps & Value at Risk',
+  pageTitle: 'Payment Gaps',
   pageSubtitle:
-    'Compare intended payments with bank or settlement outcomes. Identify unmatched, short-settled, reversed, or unlinked value that needs review.',
+    'Compare intended payments with bank or settlement outcomes. Identify unmatched, short-settled, reversed, or unlinked value.',
   sectionTitle: 'Payment Gap Analysis',
   kpi: {
     intendedValue: 'Intended Payment Value',
     intendedHelper: 'Total value your business intended to pay in this period.',
     bankObserved: 'Bank / Settlement Value Observed',
     bankObservedHelper: 'Total value found in bank, PSP, or settlement records.',
-    valueNeedingReview: 'Value Needing Review',
-    valueNeedingReviewHelper: 'Unmatched payment value from the leakage dashboard.',
+    openFinancialExceptionValue: 'Value needing review',
+    openFinancialExceptionHelper: 'Total open financial exception value from leakage `total_amount_minor`.',
+    exposureAmount: 'Exposure amount',
+    exposureAmountHelper: 'Unmatched payment value from the leakage dashboard.',
     paymentGapRate: 'Payment Gap Rate',
     paymentGapRateHelper: 'Share of intended value that is not fully matched or confirmed.',
     reviewPriority: 'Review Priority',
@@ -53,7 +55,7 @@ export const leakageCopy = {
     openReview: 'Open Review Items',
   },
   watchlist: {
-    title: 'Review Watchlist',
+    title: 'Batch watchlist',
     providerPending:
       'Source-level provider health will appear after bank/PSP signal integration.',
   },

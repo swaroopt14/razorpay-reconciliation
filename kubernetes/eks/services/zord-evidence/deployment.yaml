@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: zord-evidence
 spec:
-  replicas: 2
+  replicas: 1
   minReadySeconds: 10
   strategy:
     type: RollingUpdate
@@ -46,7 +46,7 @@ spec:
               app.kubernetes.io/name: zord-evidence
       containers:
         - name: zord-evidence
-          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-evidence:v4
+          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-evidence:v12
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8088
@@ -65,6 +65,18 @@ spec:
               value: z.outcome.events.v1
             - name: EVIDENCE_KAFKA_GROUP
               value: zord-evidence-group
+            - name: OUTCOME_KAFKA_TOPIC
+              value: payments.outcome.events.v1
+            - name: OUTCOME_KAFKA_GROUP
+              value: evidence-outcome-consumer-v3-group
+            - name: EDGE_KAFKA_TOPIC
+              value: payments.ledger.events.v1
+            - name: EDGE_KAFKA_GROUP
+              value: evidence-edge-consumer-v3-group
+            - name: INTENT_KAFKA_TOPIC
+              value: payments.intent.events.v1
+            - name: INTENT_KAFKA_GROUP
+              value: evidence-intent-consumer-v3-group
             - name: DB_HOST
               valueFrom:
                 configMapKeyRef:

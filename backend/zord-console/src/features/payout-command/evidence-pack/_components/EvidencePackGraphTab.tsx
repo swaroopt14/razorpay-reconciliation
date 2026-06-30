@@ -169,7 +169,7 @@ export function EvidencePackGraphTab({ packId, batchId, intentId }: EvidencePack
                   scope === 'batch' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
-                Batch graph ({batchPacks.length})
+                Batch graph ({batchPacks[0]?.leaf_count != null ? batchPacks[0].leaf_count + 2 : batchPacks.length})
               </button>
               <button
                 type="button"

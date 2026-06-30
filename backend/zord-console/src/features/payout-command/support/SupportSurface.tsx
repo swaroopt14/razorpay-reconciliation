@@ -7,16 +7,18 @@ import {
 } from '@/app/payout-command-view/_components/account/useSessionAccountProfile'
 import { useSessionTenant } from '@/services/auth/useSessionTenantId'
 import {
-  appendEmailMessage,
-  appendCustomerReply,
-  createSupportTicket,
-  loadSupportTickets,
-  markTicketRead,
-  saveSupportTickets,
+  type NewSupportTicketInput,
   type SupportMessage,
   type SupportTicket,
   type SupportTicketStatus,
 } from '@/services/payout-command/support/supportTickets'
+import {
+  createSupportTicketRemote,
+  fetchSupportTickets,
+  markSupportTicketReadRemote,
+  postSupportChatReply,
+  postSupportEmailMessage,
+} from '@/services/payout-command/support/supportTicketsApi'
 import { SANDBOX_API_KEYS, SANDBOX_RECENT_REQUESTS } from '@/services/payout-command/sandbox-data'
 import { getAmbiguityHeatmap, getPatternsKpis } from '@/services/payout-command/prod-api/getIntelligenceKpis'
 import { isDataAvailable, type AmbiguityHeatmapBatchRow } from '@/services/payout-command/prod-api/intelligenceTypes'
@@ -792,6 +794,9 @@ export function SupportSurface({ initialAccountTab }: SupportSurfaceProps) {
   const [showAllMessages, setShowAllMessages] = useState(false)
   const [emailCopied, setEmailCopied] = useState(false)
   const [hydrated, setHydrated] = useState(false)
+  const [ticketsLoading, setTicketsLoading] = useState(true)
+  const [ticketsError, setTicketsError] = useState<string | null>(null)
+  const [ticketActionPending, setTicketActionPending] = useState(false)
 
   const [tenantApiKey, setTenantApiKey] = useState<string | null>(null)
   const [processingLoading, setProcessingLoading] = useState(false)
@@ -803,11 +808,34 @@ export function SupportSurface({ initialAccountTab }: SupportSurfaceProps) {
 
   useEffect(() => {
     if (!tenantReady) return
-    const loaded = loadSupportTickets(tenantId)
-    setTickets(loaded)
-    const firstOpen = loaded.find((t) => t.status === 'open')
-    setSelectedId(firstOpen?.id ?? loaded[0]?.id ?? null)
-    setHydrated(true)
+    let cancelled = false
+    setTicketsLoading(true)
+    setTicketsError(null)
+
+    void (async () => {
+      try {
+        const loaded = await fetchSupportTickets(tenantId)
+        if (cancelled) return
+        setTickets(loaded)
+        const firstOpen = loaded.find((t) => t.status === 'open')
+        setSelectedId(firstOpen?.id ?? loaded[0]?.id ?? null)
+      } catch (e) {
+        if (!cancelled) {
+          setTicketsError(e instanceof Error ? e.message : 'Could not load support tickets.')
+          setTickets([])
+          setSelectedId(null)
+        }
+      } finally {
+        if (!cancelled) {
+          setTicketsLoading(false)
+          setHydrated(true)
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
   }, [tenantId, tenantReady])
 
   useEffect(() => {
@@ -927,13 +955,9 @@ export function SupportSurface({ initialAccountTab }: SupportSurfaceProps) {
     setShowAllMessages(false)
   }, [selectedId])
 
-  const persist = useCallback(
-    (next: SupportTicket[]) => {
-      setTickets(next)
-      saveSupportTickets(tenantId, next)
-    },
-    [tenantId],
-  )
+  const replaceTicket = useCallback((updated: SupportTicket) => {
+    setTickets((prev) => prev.map((t) => (t.id === updated.id ? updated : t)))
+  }, [])
 
   const selected = useMemo(
     () => tickets.find((t) => t.id === selectedId) ?? null,
@@ -942,9 +966,12 @@ export function SupportSurface({ initialAccountTab }: SupportSurfaceProps) {
 
   useEffect(() => {
     if (!selected || selected.unreadForCustomer === 0) return
-    const next = tickets.map((t) => (t.id === selected.id ? markTicketRead(t) : t))
-    persist(next)
-  }, [selected?.id, selected?.unreadForCustomer, tickets, persist, selected])
+    void markSupportTicketReadRemote(selected.id)
+      .then(replaceTicket)
+      .catch(() => {
+        /* non-blocking */
+      })
+  }, [selected?.id, selected?.unreadForCustomer, replaceTicket, selected])
 
   const visibleMessages = useMemo(() => {
     if (!selected) return []
@@ -955,25 +982,48 @@ export function SupportSurface({ initialAccountTab }: SupportSurfaceProps) {
 
   const hiddenCount = selected ? Math.max(0, selected.messages.length - visibleMessages.length) : 0
 
-  const handleRaise = (input: Parameters<typeof createSupportTicket>[0]) => {
-    const ticket = createSupportTicket(input)
-    persist([ticket, ...tickets])
-    setSelectedId(ticket.id)
-    setTab('open')
-    setAccountTab('Zord Support')
+  const handleRaise = (input: NewSupportTicketInput) => {
+    setTicketActionPending(true)
+    setTicketsError(null)
+    void createSupportTicketRemote(input)
+      .then((ticket) => {
+        setTickets((prev) => [ticket, ...prev])
+        setSelectedId(ticket.id)
+        setTab('open')
+        setAccountTab('Zord Support')
+      })
+      .catch((e) => {
+        setTicketsError(e instanceof Error ? e.message : 'Could not create support ticket.')
+      })
+      .finally(() => setTicketActionPending(false))
   }
 
   const handleSendReply = () => {
-    if (!selected || !replyDraft.trim() || selected.status === 'closed') return
-    const updated = appendCustomerReply(selected, replyDraft)
-    persist(tickets.map((t) => (t.id === updated.id ? updated : t)))
-    setReplyDraft('')
+    if (!selected || !replyDraft.trim() || selected.status === 'closed' || ticketActionPending) return
+    const body = replyDraft.trim()
+    setTicketActionPending(true)
+    setTicketsError(null)
+    void postSupportChatReply(selected.id, body)
+      .then((updated) => {
+        replaceTicket(updated)
+        setReplyDraft('')
+      })
+      .catch((e) => {
+        setTicketsError(e instanceof Error ? e.message : 'Could not send reply.')
+      })
+      .finally(() => setTicketActionPending(false))
   }
 
   const handleSendEmail = (payload: { to: string; cc?: string; subject: string; body: string }) => {
-    if (!selected) return
-    const updated = appendEmailMessage(selected, payload)
-    persist(tickets.map((t) => (t.id === updated.id ? updated : t)))
+    if (!selected || ticketActionPending) return
+    setTicketActionPending(true)
+    setTicketsError(null)
+    void postSupportEmailMessage(selected.id, payload)
+      .then(replaceTicket)
+      .catch((e) => {
+        setTicketsError(e instanceof Error ? e.message : 'Could not send email to support.')
+      })
+      .finally(() => setTicketActionPending(false))
   }
 
   const copySupportEmail = async () => {
@@ -1033,25 +1083,38 @@ export function SupportSurface({ initialAccountTab }: SupportSurfaceProps) {
           ) : null}
           {accountTab === 'Manage team' ? <ManageTeamTab profile={profile} /> : null}
           {accountTab === 'Zord Support' ? (
-            <SupportRequestsTab
-              tickets={tickets}
-              tab={tab}
-              setTab={setTab}
-              selectedId={selectedId}
-              setSelectedId={setSelectedId}
-              setRaiseOpen={setRaiseOpen}
-              setDocsOpen={setDocsOpen}
-              replyDraft={replyDraft}
-              setReplyDraft={setReplyDraft}
-              setShowAllMessages={setShowAllMessages}
-              emailCopied={emailCopied}
-              copySupportEmail={copySupportEmail}
-              handleSendReply={handleSendReply}
-              selected={selected}
-              visibleMessages={visibleMessages}
-              hiddenCount={hiddenCount}
-              setMailOpen={setMailOpen}
-            />
+            ticketsLoading ? (
+              <div className={`${HOME_BODY_IMPERIAL_SM} flex min-h-[320px] items-center justify-center text-slate-500`}>
+                Loading support tickets…
+              </div>
+            ) : (
+              <>
+                {ticketsError ? (
+                  <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] font-medium text-red-700">
+                    {ticketsError}
+                  </p>
+                ) : null}
+                <SupportRequestsTab
+                  tickets={tickets}
+                  tab={tab}
+                  setTab={setTab}
+                  selectedId={selectedId}
+                  setSelectedId={setSelectedId}
+                  setRaiseOpen={setRaiseOpen}
+                  setDocsOpen={setDocsOpen}
+                  replyDraft={replyDraft}
+                  setReplyDraft={setReplyDraft}
+                  setShowAllMessages={setShowAllMessages}
+                  emailCopied={emailCopied}
+                  copySupportEmail={copySupportEmail}
+                  handleSendReply={handleSendReply}
+                  selected={selected}
+                  visibleMessages={visibleMessages}
+                  hiddenCount={hiddenCount}
+                  setMailOpen={setMailOpen}
+                />
+              </>
+            )
           ) : null}
         </div>
       </div>

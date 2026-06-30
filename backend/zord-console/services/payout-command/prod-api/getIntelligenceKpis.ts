@@ -62,9 +62,13 @@ export async function getAmbiguityHeatmap(): Promise<AmbiguityHeatmapResponse | 
 
 export async function getDefensibilityKpis(
   dates?: IntelligenceDateQuery,
+  batchId?: string,
 ): Promise<DefensibilityKpiResponse | null> {
+  const extra = dateQueryExtra(dates)
+  const bid = apiTrimmedString(batchId)
+  if (bid) extra.batch_id = bid
   return fetchProdJsonGet<DefensibilityKpiResponse>(
-    intelQueryPath(`${INTEL_BASE}/defensibility`, dateQueryExtra(dates)),
+    intelQueryPath(`${INTEL_BASE}/defensibility`, extra),
   )
 }
 
@@ -79,15 +83,25 @@ export async function getPatternsKpis(batchId?: string): Promise<PatternsKpiResp
 
 export async function getRecommendationsKpis(
   dates?: IntelligenceDateQuery,
+  batchId?: string,
 ): Promise<RecommendationsKpiResponse | null> {
+  const extra = dateQueryExtra(dates)
+  const bid = apiTrimmedString(batchId)
+  if (bid) extra.batch_id = bid
   return fetchProdJsonGet<RecommendationsKpiResponse>(
-    intelQueryPath(`${INTEL_BASE}/recommendations`, dateQueryExtra(dates)),
+    intelQueryPath(`${INTEL_BASE}/recommendations`, extra),
   )
 }
 
-export async function getRcaKpis(dates?: IntelligenceDateQuery): Promise<RcaKpiResponse | null> {
+export async function getRcaKpis(
+  dates?: IntelligenceDateQuery,
+  batchId?: string,
+): Promise<RcaKpiResponse | null> {
+  const extra = dateQueryExtra(dates)
+  const bid = apiTrimmedString(batchId)
+  if (bid) extra.batch_id = bid
   return fetchProdJsonGet<RcaKpiResponse>(
-    intelQueryPath(`${INTEL_BASE}/rca`, dateQueryExtra(dates)),
+    intelQueryPath(`${INTEL_BASE}/rca`, extra),
   )
 }
 

@@ -3,6 +3,7 @@ kind: Kustomization
 
 resources:
   - namespace.yaml
+  - elasticsearch/credentials-secret.yaml
   - elasticsearch/service.yaml
   - elasticsearch/statefulset.yaml
   - kibana/deployment.yaml

@@ -14,10 +14,7 @@ spec:
     spec:
       serviceAccountName: fluentd
       tolerations:
-        - key: node-role.kubernetes.io/master
-          effect: NoSchedule
-        - key: node-role.kubernetes.io/control-plane
-          effect: NoSchedule
+        - operator: Exists
       containers:
         - name: fluentd
           image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/fluentd:v1.16-debian-elasticsearch8-1
@@ -28,6 +25,13 @@ spec:
               value: "9200"
             - name: FLUENT_ELASTICSEARCH_SCHEME
               value: http
+            - name: FLUENT_ELASTICSEARCH_USER
+              value: "elastic"
+            - name: FLUENT_ELASTICSEARCH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: elasticsearch-credentials
+                  key: ELASTIC_PASSWORD
             - name: FLUENT_ELASTICSEARCH_LOGSTASH_PREFIX
               value: zord-logs
             - name: FLUENT_CONTAINER_TAIL_PARSER_TYPE
@@ -54,7 +58,7 @@ spec:
               protocol: TCP
           resources:
             requests:
-              cpu: 100m
+              cpu: 10m
               memory: 64Mi
             limits:
               cpu: 500m

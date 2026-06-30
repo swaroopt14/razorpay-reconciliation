@@ -153,6 +153,7 @@ export async function login(request: LoginRequest): Promise<AuthApiEnvelope> {
       'Content-Type': 'application/json',
     },
     cache: 'no-store',
+    credentials: 'include',
     body: JSON.stringify({
       workspace_id: request.workspaceId,
       email: request.email,
@@ -191,7 +192,10 @@ export async function hydrateSession(): Promise<User | null> {
   }
 
   if (!response.ok) {
-    clearAuth()
+    // Only tear down client auth on explicit session rejection — not edge outages.
+    if (response.status === 401 || response.status === 403) {
+      clearAuth()
+    }
     return null
   }
 

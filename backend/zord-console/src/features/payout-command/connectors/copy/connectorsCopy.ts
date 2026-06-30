@@ -26,11 +26,12 @@ export const connectorsCopy = {
     needReview: 'Need review',
   },
   charts: {
-    networkHealthTrend: 'Network Health Trend',
-    networkHealthSnapshot: 'Network Health Snapshot',
+    leakageExposure: 'Leakage exposure trend',
+    leakageExposureCurrent: 'Current leakage',
+    leakageExposurePredicted: 'Predicted leakage',
+    leakageExposureEmpty:
+      'No leakage exposure points in this window yet. Run intelligence snapshots or widen the time range.',
     leakageComposition: 'Leakage Composition',
-    networkHealthEmpty:
-      'No trend points in this window yet. Run intelligence snapshots or widen the time range.',
     leakageEmpty:
       'No leakage breakdown in this window yet. Leakage KPIs or connector exposure will populate this chart.',
   },
@@ -44,12 +45,11 @@ export const connectorsCopy = {
     emptyTitle: 'No connector performance data yet',
     emptyBody:
       'Ingest payment events and run intelligence snapshots to see connector health, leakage composition, and recommended actions here.',
-    staleBanner: 'Metrics are stale. Refresh connector telemetry before acting on these numbers.',
   },
   sections: {
-    detectedPatterns: 'Detected Patterns',
+    detectedPatterns: 'Performance Signals',
     recommendedActions: 'Recommended Actions',
-    recommendedRoutes: 'Recommended Routes (Top 3)',
-    preventableLeakageImpact: 'Preventable Leakage Impact',
+    recommendedRoutes: 'Recommended Routes',
+    preventableLeakageImpact: 'Preventable Exposure by Action',
   },
 } as const

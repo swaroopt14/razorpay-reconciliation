@@ -200,14 +200,6 @@ export function mapSidebarItemToBatchRecord(it: IntentEngineBatchSidebarItem): J
 }
 
 export function mapIntelligenceRowToBatchRecord(b: IntelligenceBatchRow): JournalBatchRecord {
-  const matchPct = b.match_confidence_pct
-  const aggregateConfidenceScore =
-    typeof matchPct === 'number' && Number.isFinite(matchPct)
-      ? matchPct <= 1
-        ? matchPct
-        : matchPct / 100
-      : undefined
-
   return {
     batchId: b.batch_id,
     type: 'Disbursement',
@@ -217,7 +209,6 @@ export function mapIntelligenceRowToBatchRecord(b: IntelligenceBatchRow): Journa
     transactions: b.total_count ?? 0,
     confirmedCount: b.success_count ?? 0,
     highConfidenceCount: 0,
-    aggregateConfidenceScore,
     mismatchCount: 0,
     unresolvedCount: 0,
     intelligenceCounts: {

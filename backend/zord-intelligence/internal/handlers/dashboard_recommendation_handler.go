@@ -29,6 +29,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"time"
 
@@ -101,6 +102,8 @@ func (h *DashboardRecommendationHandler) GetRecommendationKPIs(w http.ResponseWr
 	}
 
 	now := time.Now().UTC()
+	pct := func(v float64) float64 { return math.Round(v*10000) / 100 }
+
 	resp := DashboardRecommendationResponse{
 		TenantID:        tenantID,
 		IntelligenceMode: h.intelligenceMode,
@@ -120,7 +123,7 @@ func (h *DashboardRecommendationHandler) GetRecommendationKPIs(w http.ResponseWr
 		if recErr == nil && recSnap != nil {
 			var recKPIs recSnapshotFields
 			if jsonErr := json.Unmarshal(recSnap.SnapshotJSON, &recKPIs); jsonErr == nil {
-				resp.RecommendationPriorityScore = recKPIs.RecommendationPriorityScore
+				resp.RecommendationPriorityScore = pct(recKPIs.RecommendationPriorityScore)
 				resp.RecommendationImpactEstimateMinor = recKPIs.RecommendationImpactEstimateMinor
 			}
 		}
@@ -139,12 +142,12 @@ func (h *DashboardRecommendationHandler) GetRecommendationKPIs(w http.ResponseWr
 	}
 
 	// KPI 15 — action_acceptance_rate = accepted / total_recommendations
-	resp.ActionAcceptanceRate = float64(summary.Accepted) / float64(summary.Total)
+	resp.ActionAcceptanceRate = pct(float64(summary.Accepted) / float64(summary.Total))
 
 	// KPI 16 — action_resolution_rate = resolved / total_accepted_actions
 	// "resolved" = reached a terminal decision (APPROVED or DISMISSED).
 	// "total_accepted_actions" = all non-EXPIRED contracts accepted for review = Total.
-	resp.ActionResolutionRate = float64(summary.Resolved) / float64(summary.Total)
+	resp.ActionResolutionRate = pct(float64(summary.Resolved) / float64(summary.Total))
 
 	writeJSON(w, http.StatusOK, resp)
 }

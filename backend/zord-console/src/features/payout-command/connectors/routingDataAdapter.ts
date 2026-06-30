@@ -6,12 +6,8 @@ export type RoutingIntelligenceAdapter = {
 }
 
 const liveAdapter: RoutingIntelligenceAdapter = {
-  async getSnapshot(window) {
-    try {
-      return await getLiveRoutingSnapshot(window)
-    } catch {
-      return null
-    }
+  getSnapshot(window) {
+    return getLiveRoutingSnapshot(window)
   },
 }
 

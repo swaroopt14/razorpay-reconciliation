@@ -77,11 +77,6 @@ export function IntentJournalHeroBanner({
               : '—',
     },
     {
-      label: intentJournalCopy.kpi.intendedValue,
-      value: valueLabel,
-      sub: intendedValueSub,
-    },
-    {
       label: intentJournalCopy.kpi.readiness,
       value: qualityPct,
       sub: 'Batch aggregate confidence score',

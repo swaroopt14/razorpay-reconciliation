@@ -220,7 +220,7 @@ func TestGradeA_LeakageService_ZScore_ColdStart(t *testing.T) {
 	mlRepo := persistence.NewMLFeatureStoreRepo(pool)
 	predRepo := persistence.NewMLPredictionRepo(pool)
 
-	svc := NewLeakageIntelligenceService(projRepo, snapshotRepo, mlRepo, predRepo, nil, nil)
+	svc := NewLeakageIntelligenceService(projRepo, snapshotRepo, mlRepo, predRepo, nil)
 	if err := svc.ComputeAndSave(ctx, tenantID, now.Add(-24*time.Hour), now); err != nil {
 		t.Fatalf("ComputeAndSave: %v", err)
 	}
@@ -269,7 +269,7 @@ func TestGradeA_LeakageService_ZScore_WithHistory(t *testing.T) {
 	mlRepo := persistence.NewMLFeatureStoreRepo(pool)
 	predRepo := persistence.NewMLPredictionRepo(pool)
 
-	svc := NewLeakageIntelligenceService(projRepo, snapshotRepo, mlRepo, predRepo, nil, nil)
+	svc := NewLeakageIntelligenceService(projRepo, snapshotRepo, mlRepo, predRepo, nil)
 	if err := svc.ComputeAndSave(ctx, tenantID, now.Add(-24*time.Hour), now); err != nil {
 		t.Fatalf("ComputeAndSave: %v", err)
 	}

@@ -47,6 +47,9 @@ export type DockId =
 /** Dock IDs in sandbox top nav: Today → Intent → Settlement → Billing. */
 export const SANDBOX_DOCK_IDS: DockId[] = ['home', 'grid', 'settlement', 'billing']
 
+/** Temporarily hide Connectors from nav and routing; connector code remains in the repo. */
+export const CONNECTORS_DOCK_TEMPORARILY_HIDDEN = true
+
 /** Short labels for sandbox dock pills only (page titles stay full names). */
 export const SANDBOX_DOCK_DISPLAY_LABELS: Partial<Record<DockId, string>> = {
   grid: 'Intent',
@@ -354,7 +357,12 @@ export const SANDBOX_CONSOLE_DOCK_PAGES: readonly PayoutConsoleDockPage[] = SAND
  * Order follows `dockItems`.
  */
 export const LIVE_CONSOLE_DOCK_PAGES: readonly PayoutConsoleDockPage[] = dockItems
-  .filter((d) => d.id !== 'sandbox' && d.id !== 'billing')
+  .filter(
+    (d) =>
+      d.id !== 'sandbox' &&
+      d.id !== 'billing' &&
+      !(CONNECTORS_DOCK_TEMPORARILY_HIDDEN && d.id === 'connectors'),
+  )
   .map((d) => ({ dockId: d.id, dockLabel: d.navLabel, pageName: d.title }))
 
 /** Routes outside the main console shell (header links, deep links). */
@@ -363,7 +371,7 @@ export const PAYOUT_STANDALONE_PAGE_NAMES = [
   { path: PAYOUT_VIEW_URLS.sandboxBatchCommandCenter, name: 'Sandbox · Batch Command Center' },
   { path: PAYOUT_VIEW_URLS.settingsAccount, name: 'Settings — Account' },
   { path: PAYOUT_VIEW_URLS.settingsApiKeys, name: 'Settings — API keys' },
-  { path: PAYOUT_VIEW_URLS.connectorIntelligence, name: 'Connector Intelligence' },
+  // { path: PAYOUT_VIEW_URLS.connectorIntelligence, name: 'Connector Intelligence' },
 ] as const
 
 /** Selectable workspace context tabs (Routing is shown disabled separately). */

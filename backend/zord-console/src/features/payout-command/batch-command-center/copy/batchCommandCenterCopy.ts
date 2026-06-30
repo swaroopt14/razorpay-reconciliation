@@ -165,7 +165,7 @@ export const BATCH_REVIEW_COPY = {
       subtitle: 'Payments with missing details, weak matches, duplicates, or settlement gaps.',
       viewCta: 'View Review Items',
     },
-    valueNeedingReview: { title: 'Value Needing Review' },
+    valueNeedingReview: { title: 'Exposure amount' },
     matchConfidence: { title: 'Average Match Confidence' },
     referenceCompleteness: { title: 'Reference Completeness' },
     missingReferenceRate: { title: 'Missing Reference Rate' },

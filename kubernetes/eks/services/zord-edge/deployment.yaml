@@ -45,7 +45,7 @@ spec:
               app.kubernetes.io/name: zord-edge
       containers:
         - name: zord-edge
-          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-edge:v4
+          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-edge:v12
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080

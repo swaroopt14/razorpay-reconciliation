@@ -2,38 +2,53 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { clampZeroBasedPage } from '../../_lib/clampPage'
 import type { FinalityStatus, IntelligenceBatchRow } from '@/services/payout-command/prod-api/intelligenceTypes'
 import { ambiguityCopy } from '../copy/ambiguityCopy'
-import { batchDisplayValue, batchMatchPct } from '../utils/ambiguityApiMappers'
+import { batchDisplayValue, batchMatchPctDisplay } from '../utils/ambiguityApiMappers'
+import { Glyph } from '../../shared'
+import { HOME_TITLE_BLACK } from '../../command-center/homeCommandCenterTokens'
+import { displayApiField } from '../../shared/formatApiKpiFields'
 
 const FINALITY_FILTERS: Array<{ value: '' | FinalityStatus; label: string }> = [
-  { value: '', label: 'All batches' },
+  { value: '', label: 'All' },
   { value: 'REQUIRES_REVIEW', label: 'Needs review' },
-  { value: 'PARTIALLY_SETTLED', label: 'Partially settled' },
+  { value: 'PARTIALLY_SETTLED', label: 'Partial' },
   { value: 'FAILED', label: 'Failed' },
   { value: 'PENDING', label: 'Pending' },
   { value: 'SETTLED', label: 'Settled' },
 ]
 
-const PAGE_SIZE = 6
+// Human-readable labels for raw API finality_status enum values.
+const FINALITY_DISPLAY: Record<string, string> = {
+  REQUIRES_REVIEW: 'Needs review',
+  PARTIALLY_SETTLED: 'Partial',
+  FAILED: 'Failed',
+  PENDING: 'Pending',
+  SETTLED: 'Settled',
+  FULLY_SETTLED: 'Settled',
+  PROCESSING: 'Processing',
+}
 
-function statusMeta(status: string): { dot: string; label: string; badge: string } {
+const PAGE_SIZE = 10
+
+function statusBadge(status: string): string {
   switch (status) {
     case 'SETTLED':
-      return { dot: 'bg-black', label: 'Active', badge: 'bg-black text-white' }
+    case 'FULLY_SETTLED':
+      return 'bg-slate-900 text-white'
     case 'REQUIRES_REVIEW':
-      return { dot: 'bg-amber-500', label: 'Review', badge: 'bg-amber-50 text-amber-700' }
+      return 'bg-amber-50 text-amber-800'
     case 'PARTIALLY_SETTLED':
-      return { dot: 'bg-orange-400', label: 'Low Conf', badge: 'bg-orange-50 text-orange-700' }
+      return 'bg-orange-50 text-orange-800'
     default:
-      return { dot: 'bg-red-500', label: 'Critical', badge: 'bg-red-50 text-red-700' }
+      return 'bg-red-50 text-red-700'
   }
 }
 
-function statusLabel(b: IntelligenceBatchRow, fallback: string): string {
-  return b.status_label?.trim() || fallback
+function batchStatus(b: IntelligenceBatchRow): string | undefined {
+  return b.batch_finality_status
 }
 
 type Props = {
@@ -41,100 +56,159 @@ type Props = {
   loading: boolean
   finalityFilter: '' | FinalityStatus
   onFilterChange: (v: '' | FinalityStatus) => void
+  highlightedBatchId?: string
+  onRowSelect?: (batchId: string) => void
 }
 
-export function BatchesNeedingReviewTable({ batches, loading, finalityFilter, onFilterChange }: Props) {
+export function BatchesNeedingReviewTable({
+  batches,
+  loading,
+  finalityFilter,
+  onFilterChange,
+  highlightedBatchId,
+  onRowSelect,
+}: Props) {
   const pathname = usePathname()
   const [page, setPage] = useState(0)
+  const [query, setQuery] = useState('')
 
-  const totalPages = Math.max(1, Math.ceil(batches.length / PAGE_SIZE))
-  const visible = batches.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE)
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return batches
+    return batches.filter(
+      (b) =>
+        b.batch_id.toLowerCase().includes(q) ||
+        (b.source_reference?.toLowerCase().includes(q) ?? false),
+    )
+  }, [batches, query])
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const visible = filtered.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE)
 
   useEffect(() => {
     setPage((p) => clampZeroBasedPage(p, totalPages))
   }, [totalPages])
 
+  useEffect(() => {
+    if (!highlightedBatchId) return
+    const idx = filtered.findIndex((b) => b.batch_id === highlightedBatchId)
+    if (idx < 0) return
+    setPage(Math.floor(idx / PAGE_SIZE))
+  }, [highlightedBatchId, filtered])
+
   return (
-    <article className="flex h-full flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <div className="h-2 w-2 animate-pulse rounded-full bg-black" />
-          <span className="text-[12px] font-semibold uppercase tracking-wider text-[#000000]">
-            Batch Performance
-          </span>
-          <span
-            className="rounded-full bg-black px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white"
-          >
-            Live Tracking
-          </span>
+    <section
+      className="rounded-[14px] border border-slate-200 bg-white p-5 shadow-sm"
+      data-testid="ambiguity-batch-queue"
+    >
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className={`text-[20px] font-semibold ${HOME_TITLE_BLACK}`}>{ambiguityCopy.batches.title}</p>
+          <p className="text-[12px] font-medium text-[#00239C]">
+            Click a batch to scope Match Review and open the intent journal
+          </p>
         </div>
-        <select
-          value={finalityFilter}
-          onChange={(e) => { onFilterChange(e.target.value as '' | FinalityStatus); setPage(0) }}
-          className="h-8 rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-[12px] font-medium text-slate-700 focus:border-black focus:outline-none appearance-none"
-        >
-          {FINALITY_FILTERS.map((f) => (
-            <option key={f.label} value={f.value}>{f.label}</option>
-          ))}
-        </select>
+        <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+          <Glyph name="search" className="h-4 w-4 text-slate-500" />
+          <input
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value)
+              setPage(0)
+            }}
+            placeholder="Search batch ID or provider"
+            className={`w-52 border-0 bg-transparent text-[14px] font-medium outline-none placeholder:text-slate-400 ${HOME_TITLE_BLACK}`}
+            aria-label="Search batch queue"
+          />
+        </div>
       </div>
 
-      {/* Table */}
-      <div className="mt-4 flex-1 overflow-x-auto">
-        <table className="w-full min-w-[500px] border-collapse text-left">
+      <div className="mb-3 flex flex-wrap gap-2">
+        {FINALITY_FILTERS.map((f) => {
+          const active = finalityFilter === f.value
+          return (
+            <button
+              key={f.label}
+              type="button"
+              onClick={() => {
+                onFilterChange(f.value)
+                setPage(0)
+              }}
+              className={`inline-flex items-center gap-1 rounded-xl border px-3 py-1.5 text-[13px] font-semibold transition ${
+                active
+                  ? 'border-[#0f172a] bg-[#0f172a] text-white'
+                  : `border-slate-300 bg-white ${HOME_TITLE_BLACK} hover:bg-slate-50`
+              }`}
+            >
+              {f.label}
+            </button>
+          )
+        })}
+      </div>
+
+      <div className="overflow-x-auto rounded-[10px] border border-slate-200">
+        <table className="min-w-full border-collapse text-left text-[15px]">
           <thead>
-            <tr className="border-b border-slate-100 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-              <th className="pb-2.5 pr-3">Batch ID</th>
-              <th className="pb-2.5 pr-3">Status</th>
-              <th className="pb-2.5 pr-3 text-right">Match %</th>
-              <th className="pb-2.5 pr-3 text-right">Value</th>
-              <th className="pb-2.5 text-right">Action</th>
+            <tr className="bg-slate-50">
+              <th className="px-3 py-3 text-[14px] font-semibold text-[#00239C]">Batch</th>
+              <th className="px-3 py-3 text-[14px] font-semibold text-[#00239C]">Status</th>
+              <th className="px-3 py-3 text-right text-[14px] font-semibold text-[#00239C]">Match conf</th>
+              <th className="px-3 py-3 text-right text-[14px] font-semibold text-[#00239C]">Value at risk</th>
+              <th className="px-3 py-3 text-right text-[14px] font-semibold text-[#00239C]">Action</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              Array.from({ length: 4 }).map((_, i) => (
-                <tr key={i} className="border-b border-slate-50">
-                  <td colSpan={5} className="py-3">
-                    <div className="h-4 w-full animate-pulse rounded bg-slate-100" />
+              Array.from({ length: 5 }).map((_, i) => (
+                <tr key={i} className="border-t border-slate-200">
+                  <td colSpan={5} className="px-3 py-3">
+                    <div className="h-4 animate-pulse rounded bg-slate-100" />
                   </td>
                 </tr>
               ))
             ) : visible.length === 0 ? (
               <tr>
-                <td colSpan={5} className="py-8 text-center text-[13px] text-slate-400">
-                  {ambiguityCopy.batches.empty}
+                <td colSpan={5} className="px-4 py-12 text-center text-[14px] font-medium text-[#00239C]">
+                  {query.trim() ? 'No batches match your search.' : ambiguityCopy.batches.empty}
                 </td>
               </tr>
             ) : (
               visible.map((b) => {
-                const pct = batchMatchPct(b)
-                const s = statusMeta(b.finality_status)
-                const shortId = b.batch_id.length > 16 ? `${b.batch_id.slice(0, 16)}…` : b.batch_id
+                const highlighted = b.batch_id === highlightedBatchId
+                const status = batchStatus(b)
                 return (
-                  <tr key={b.batch_id} className="border-b border-slate-50 transition hover:bg-slate-50">
-                    <td className="py-3 pr-3 font-mono text-[12px] font-medium text-slate-900">
-                      {shortId}
+                  <tr
+                    key={b.batch_id}
+                    id={`batch-row-${b.batch_id}`}
+                    className={`cursor-pointer border-t border-slate-200 transition hover:bg-sky-50/50 ${
+                      highlighted ? 'bg-sky-50/80' : ''
+                    }`}
+                    onClick={() => onRowSelect?.(b.batch_id)}
+                  >
+                    <td className="px-3 py-3">
+                      <p className={`text-[15px] font-semibold ${HOME_TITLE_BLACK}`}>
+                        {b.source_reference?.trim() || b.batch_id}
+                      </p>
+                      <p className="font-mono text-[13px] font-medium text-[#00239C]">{b.batch_id}</p>
                     </td>
-                    <td className="py-3 pr-3">
-                      <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ${s.badge}`}>
-                        <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
-                        {statusLabel(b, s.label)}
+                    <td className="px-3 py-3">
+                      <span
+                        className={`inline-flex rounded-full px-3 py-1 text-[12px] font-semibold ${statusBadge(status ?? '')}`}
+                      >
+                        {status ? (FINALITY_DISPLAY[status] ?? displayApiField(status)) : '—'}
                       </span>
                     </td>
-                    <td className="py-3 pr-3 text-right">
-                      <span className="tabular-nums text-[13px] font-semibold text-slate-900">
-                        {pct != null ? `${pct}%` : '—'}
-                      </span>
+                    <td className="px-3 py-3 text-right text-[15px] font-semibold tabular-nums text-slate-900">
+                      {batchMatchPctDisplay(b)}
                     </td>
-                    <td className="py-3 pr-3 text-right">
-                      <span className="tabular-nums text-[13px] text-slate-600">{batchDisplayValue(b)}</span>
+                    <td className="px-3 py-3 text-right text-[15px] font-semibold tabular-nums text-slate-700">
+                      {batchDisplayValue(b)}
                     </td>
-                    <td className="py-3 text-right">
+                    <td className="px-3 py-3 text-right">
                       <Link
                         href={`${pathname}?dock=grid&batch_id=${encodeURIComponent(b.batch_id)}`}
-                        className="inline-flex rounded-lg bg-slate-900 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-slate-700"
+                        onClick={(e) => e.stopPropagation()}
+                        className="inline-flex rounded-lg bg-slate-900 px-2.5 py-1 text-[12px] font-semibold text-white transition hover:bg-slate-700"
                       >
                         Review
                       </Link>
@@ -147,28 +221,27 @@ export function BatchesNeedingReviewTable({ batches, loading, finalityFilter, on
         </table>
       </div>
 
-      {/* Pagination */}
       <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-4">
         <button
           type="button"
           disabled={page === 0}
           onClick={() => setPage((p) => p - 1)}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[12px] font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[13px] font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
         >
           ← Prev
         </button>
-        <span className="text-[12px] text-slate-400">
+        <span className="text-[13px] text-slate-500">
           {page + 1} / {totalPages}
         </span>
         <button
           type="button"
           disabled={page >= totalPages - 1}
           onClick={() => setPage((p) => p + 1)}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[12px] font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[13px] font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
         >
           Next →
         </button>
       </div>
-    </article>
+    </section>
   )
 }

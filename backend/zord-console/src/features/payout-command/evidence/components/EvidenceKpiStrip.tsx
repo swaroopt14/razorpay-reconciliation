@@ -22,11 +22,13 @@ export function EvidenceKpiStrip({ cards, loading, defensibilityTier }: Evidence
     evidenceCopy.proofReadinessHelper
   const tierPill = defensibilityTier ? `Tier ${defensibilityTier}` : evidenceCopy.proofTierLabel
 
-  const buckets = cards.map((card) => ({
-    label: card.label,
-    value: card.value,
-    sub: card.sub,
-  }))
+  const buckets = cards
+    .filter((card) => card.id !== 'readiness')
+    .map((card) => ({
+      label: card.label,
+      value: card.value,
+      sub: card.sub,
+    }))
 
   return (
     <JournalIntelligenceKpiHero

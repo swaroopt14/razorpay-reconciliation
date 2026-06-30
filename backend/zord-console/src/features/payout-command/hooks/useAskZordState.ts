@@ -1,6 +1,7 @@
 'use client'
 import { useAuth } from '@/app/hooks'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { useSessionTenant } from '@/services/auth/useSessionTenantId'
 import {
   mapPromptLayerAnswer,
@@ -10,7 +11,18 @@ import {
 import type { AskZordResponse } from '@/services/payout-command/types'
 import type { HomeCommandStatus } from '@/services/payout-command/model'
 import type { AskZordArchivedTurn } from '../layout/AskZordPromptLayer'
-
+import {
+  buildThreadSnapshot,
+  loadAskZordThreads,
+  saveAskZordThreads,
+  type AskZordThread,
+} from '../workspace/askZordThreads'
+import {
+  clearAskZordSelectedContext,
+  readAskZordSelectedContext,
+  toPromptLayerUIContext,
+  type AskZordSelectedContext,
+} from '../workspace/askZordSelectedContext'
 export const ASK_ZORD_QUICK_PROMPTS = [
   'Where are delays occurring?',
   'What is the total value awaiting confirmation?',
@@ -29,13 +41,25 @@ export type AskZordState = {
   response: AskZordResponse | null
   lastUserPrompt: string | null
   archivedTurns: AskZordArchivedTurn[]
+  threads: AskZordThread[]
+  activeThreadId: string | null
+  startNewThread: () => void
+  selectedContext: AskZordSelectedContext | null
+  clearSelectedContext: () => void
+  selectThread: (id: string) => void
   run: (prompt: string) => void
   dismissResponse: () => void
+}
+
+function upsertThread(threads: AskZordThread[], snapshot: AskZordThread): AskZordThread[] {
+  const rest = threads.filter((t) => t.id !== snapshot.id)
+  return [snapshot, ...rest].sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
 export function useAskZordState(_activeSurfaceTitle: string): AskZordState {
   const { tenantId, tenantReady } = useSessionTenant()
   const { user, isLoading: authLoading } = useAuth()
+  const searchParams = useSearchParams()
   const [isOpen, setIsOpen] = useState(false)
   const [input, setInput] = useState('')
   const [status, setStatus] = useState<HomeCommandStatus>('idle')
@@ -43,6 +67,52 @@ export function useAskZordState(_activeSurfaceTitle: string): AskZordState {
   const [response, setResponse] = useState<AskZordResponse | null>(null)
   const [lastUserPrompt, setLastUserPrompt] = useState<string | null>(null)
   const [archivedTurns, setArchivedTurns] = useState<AskZordArchivedTurn[]>([])
+  const [threads, setThreads] = useState<AskZordThread[]>([])
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null)
+  const activeThreadIdRef = useRef<string | null>(null)
+  const [selectedContext, setSelectedContext] = useState<AskZordSelectedContext | null>(null)
+
+  useEffect(() => {
+    setSelectedContext(readAskZordSelectedContext(searchParams))
+  }, [searchParams])
+  useEffect(() => {
+    activeThreadIdRef.current = activeThreadId
+  }, [activeThreadId])
+
+  useEffect(() => {
+    if (!tenantReady || !tenantId?.trim()) {
+      setThreads([])
+      return
+    }
+    setThreads(loadAskZordThreads(tenantId))
+  }, [tenantId, tenantReady])
+
+  const persistThreads = useCallback(
+    (next: AskZordThread[]) => {
+      setThreads(next)
+      if (tenantId?.trim()) saveAskZordThreads(tenantId, next)
+    },
+    [tenantId],
+  )
+
+  const snapshotActiveThread = useCallback(
+    (complete: boolean) => {
+      const threadId = activeThreadIdRef.current ?? crypto.randomUUID()
+      const snapshot = buildThreadSnapshot({
+        id: threadId,
+        turns: archivedTurns,
+        lastUserPrompt,
+        responseTitle: response?.title ?? null,
+        responseBody: response?.body ?? null,
+        complete,
+      })
+      if (!snapshot) return null
+      persistThreads(upsertThread(threads, snapshot))
+      if (!activeThreadIdRef.current) setActiveThreadId(threadId)
+      return snapshot
+    },
+    [archivedTurns, lastUserPrompt, persistThreads, response, threads],
+  )
 
   useEffect(() => {
     if (!pendingResponse) return
@@ -74,9 +144,65 @@ export function useAskZordState(_activeSurfaceTitle: string): AskZordState {
     }
   }, [pendingResponse])
 
+  useEffect(() => {
+    if (status !== 'complete' || !lastUserPrompt || !response?.body.trim()) return
+    const threadId = activeThreadIdRef.current ?? crypto.randomUUID()
+    const snapshot = buildThreadSnapshot({
+      id: threadId,
+      turns: archivedTurns,
+      lastUserPrompt,
+      responseTitle: response.title,
+      responseBody: response.body,
+      complete: true,
+    })
+    if (!snapshot) return
+    setThreads((prev) => {
+      const next = upsertThread(prev, snapshot)
+      if (tenantId?.trim()) saveAskZordThreads(tenantId, next)
+      return next
+    })
+    if (!activeThreadIdRef.current) setActiveThreadId(threadId)
+    setArchivedTurns(snapshot.turns)
+    setLastUserPrompt(null)
+    setResponse(null)
+    setStatus('idle')
+  }, [status, lastUserPrompt, response, archivedTurns, tenantId])
+
   const open = useCallback(() => setIsOpen(true), [])
   const close = useCallback(() => setIsOpen(false), [])
   const toggle = useCallback(() => setIsOpen((current) => !current), [])
+  const clearSelectedContext = useCallback(() => {
+    clearAskZordSelectedContext()
+    setSelectedContext(null)
+  }, [])
+    const startNewThread = useCallback(() => {
+    snapshotActiveThread(true)
+    clearSelectedContext()
+    setArchivedTurns([])
+    setLastUserPrompt(null)
+    setResponse(null)
+    setInput('')
+    setStatus('idle')
+    setPendingResponse(null)
+    setActiveThreadId(null)
+    activeThreadIdRef.current = null
+  }, [clearSelectedContext, snapshotActiveThread])
+
+  const selectThread = useCallback(
+    (id: string) => {
+      snapshotActiveThread(true)
+      const thread = threads.find((t) => t.id === id)
+      if (!thread) return
+      setActiveThreadId(thread.id)
+      setArchivedTurns(thread.turns)
+      setLastUserPrompt(null)
+      setResponse(null)
+      setInput('')
+      setStatus('idle')
+      setPendingResponse(null)
+    },
+    [snapshotActiveThread, threads],
+  )
 
   const run = useCallback(
     (rawPrompt: string) => {
@@ -90,9 +216,14 @@ export function useAskZordState(_activeSurfaceTitle: string): AskZordState {
         ])
       }
 
-      setIsOpen(true)
-      setInput('')
-      setLastUserPrompt(cleaned)
+      const threadId = activeThreadIdRef.current ?? crypto.randomUUID()
+if (!activeThreadIdRef.current) {
+  activeThreadIdRef.current = threadId
+  setActiveThreadId(threadId)
+}
+
+setInput('')
+setLastUserPrompt(cleaned)
 
       const tenantGate = sessionTenantForPromptLayer(tenantId, tenantReady)
       if (!tenantGate.ok) {
@@ -128,10 +259,11 @@ export function useAskZordState(_activeSurfaceTitle: string): AskZordState {
           {
             query: cleaned,
             top_k: 6,
+            ui_context: toPromptLayerUIContext(selectedContext),
           },
           {
             tenantId: tenantGate.tenantId,
-            sessionId: crypto.randomUUID(), // or persisted ref if this hook has multi-turn continuity
+            sessionId: threadId,
             userId,
           },
         )
@@ -158,7 +290,7 @@ export function useAskZordState(_activeSurfaceTitle: string): AskZordState {
         })
       })()
     },
-    [authLoading, lastUserPrompt, response, status, tenantId, tenantReady, user?.id],
+    [authLoading, lastUserPrompt, response, selectedContext, status, tenantId, tenantReady, user?.id],
   )
 
   const dismissResponse = useCallback(() => {
@@ -178,6 +310,12 @@ export function useAskZordState(_activeSurfaceTitle: string): AskZordState {
     response,
     lastUserPrompt,
     archivedTurns,
+    threads,
+    activeThreadId,
+    selectedContext,
+    clearSelectedContext,
+    startNewThread,
+    selectThread,
     run,
     dismissResponse,
   }

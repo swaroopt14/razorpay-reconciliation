@@ -22,6 +22,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"time"
 
@@ -132,18 +133,19 @@ func (h *DashboardDefensibilityHandler) GetDefensibilityKPIs(w http.ResponseWrit
 	resp.WindowStart = &snap.WindowStart
 	resp.WindowEnd = &snap.WindowEnd
 	resp.ComputedAt = &snap.CreatedAt
-	resp.EvidencePackRate = kpis.EvidencePackRate
-	resp.GovernanceCoveragePct = kpis.GovernanceCoveragePct
-	resp.ReplayabilityPct = kpis.ReplayabilityPct
-	resp.DefensibilityScore = kpis.DefensibilityScore
+	pct := func(v float64) float64 { return math.Round(v*10000) / 100 }
+	resp.EvidencePackRate = pct(kpis.EvidencePackRate)
+	resp.GovernanceCoveragePct = pct(kpis.GovernanceCoveragePct)
+	resp.ReplayabilityPct = pct(kpis.ReplayabilityPct)
+	resp.DefensibilityScore = math.Round(kpis.DefensibilityScore*100) / 100
 	resp.DefensibilityTier = kpis.DefensibilityTier
-	resp.AuditReadyPct = kpis.AuditReadyPct
-	resp.DisputeReadyPct = kpis.DisputeReadyPct
-	resp.AvgPackCompletenessScore = kpis.AvgPackCompletenessScore
-	resp.SettlementEvidenceCoverage = kpis.SettlementEvidenceCoverage
-	resp.AttachmentEvidenceCoverage = kpis.AttachmentEvidenceCoverage
+	resp.AuditReadyPct = pct(kpis.AuditReadyPct)
+	resp.DisputeReadyPct = pct(kpis.DisputeReadyPct)
+	resp.AvgPackCompletenessScore = pct(kpis.AvgPackCompletenessScore)
+	resp.SettlementEvidenceCoverage = pct(kpis.SettlementEvidenceCoverage)
+	resp.AttachmentEvidenceCoverage = pct(kpis.AttachmentEvidenceCoverage)
 	resp.WeakEvidenceCount = kpis.WeakEvidenceCount
-	resp.WeakEvidenceRate = kpis.WeakEvidenceRate
+	resp.WeakEvidenceRate = pct(kpis.WeakEvidenceRate)
 
 	writeJSON(w, http.StatusOK, resp)
 }

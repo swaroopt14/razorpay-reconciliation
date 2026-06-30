@@ -18,7 +18,8 @@ pipeline {
         'zord-outcome-engine',
         'zord-prompt-layer',
         'zord-relay',
-        'zord-token-enclave'
+        'zord-token-enclave',
+        'ml-service'
       ],
       description: 'Service to build and deploy'
     )

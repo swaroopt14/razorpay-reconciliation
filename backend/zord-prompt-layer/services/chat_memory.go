@@ -15,6 +15,8 @@ type ChatTurn struct {
 type ChatMemoryStore interface {
 	GetRecent(ctx context.Context, tenantID, userID, sessionID string) ([]ChatTurn, error)
 	AppendTurn(ctx context.Context, tenantID, userID, sessionID, userMessage, assistantSummary string, ts time.Time) error
+	GetSummary(ctx context.Context, tenantID, userID, sessionID string) (string, error)
+	SetSummary(ctx context.Context, tenantID, userID, sessionID, summary string) error
 }
 
 func SummarizeAssistantAnswer(s string, max int) string {

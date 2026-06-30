@@ -43,6 +43,8 @@ import {
   type SettlementParseErrorRow,
 } from '@/services/payout-command/prod-api/settlementObservations'
 import { markSandboxSetupStep } from '@/services/payout-command/sandbox-setup-guide'
+import { getBatchContractKpis } from '@/services/payout-command/prod-api/getIntelligenceKpis'
+import { parseMatchConfidence } from '../settlement-journal/selectors/resolveSettlementIntelligenceKpis'
 import { LiveDataHint } from '../shared'
 import { useRegisterPayoutPageActions } from '../layout/PayoutPageActionsContext'
 
@@ -192,6 +194,29 @@ function SettlementJournalSurfaceContent({
       markSandboxSetupStep('settlement-journal')
     }
   }, [mode, feedLoaded, observationTotal])
+
+  // Pre-populate sidebar status for all batches in parallel via batch contract KPI
+  useEffect(() => {
+    if (!feedLoaded || !tenantReady || clientBatches.length === 0) return
+    void (async () => {
+      try {
+        const results = await Promise.allSettled(
+          clientBatches.map((bid) => getBatchContractKpis(bid)),
+        )
+        const entries: Record<string, SettlementSidebarOutcome> = {}
+        for (let i = 0; i < clientBatches.length; i++) {
+          const result = results[i]
+          if (result?.status !== 'fulfilled' || !result.value) continue
+          const confidence = parseMatchConfidence(result.value.match_confidence)
+          if (confidence == null) continue
+          entries[clientBatches[i]!] = outcomeFromMatchConfidence(confidence)
+        }
+        if (Object.keys(entries).length > 0) {
+          setBatchMatchOutcomeCache((prev) => ({ ...entries, ...prev }))
+        }
+      } catch { /* optional enrichment */ }
+    })()
+  }, [feedLoaded, tenantReady, clientBatches])
 
   useEffect(() => {
     if (!selectedClientBatchId) return

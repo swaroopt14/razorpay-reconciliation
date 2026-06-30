@@ -18,18 +18,25 @@ export function useDisbursementTrend(options: UseDisbursementTrendOptions) {
   const [data, setData] = useState<DisbursementTrendResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const cancelledRef = useRef(false)
+  const rangeRef = useRef(range)
+  rangeRef.current = range
 
   const refresh = useCallback(async () => {
     if (!tenantReady) {
       setData(null)
       return
     }
+    const requestedRange = range
     setLoading(true)
     try {
-      const res = await getDisbursementTrend(range)
-      if (!cancelledRef.current) setData(res)
+      const res = await getDisbursementTrend(requestedRange)
+      if (!cancelledRef.current && rangeRef.current === requestedRange) {
+        setData(res)
+      }
     } finally {
-      if (!cancelledRef.current) setLoading(false)
+      if (!cancelledRef.current && rangeRef.current === requestedRange) {
+        setLoading(false)
+      }
     }
   }, [tenantReady, range])
 
@@ -37,15 +44,18 @@ export function useDisbursementTrend(options: UseDisbursementTrendOptions) {
     cancelledRef.current = false
     if (!tenantReady) {
       setData(null)
+      setLoading(false)
       return
     }
+    setData(null)
+    setLoading(true)
     void refresh()
     const id = window.setInterval(() => void refresh(), intervalMs)
     return () => {
       cancelledRef.current = true
       window.clearInterval(id)
     }
-  }, [tenantReady, refresh, intervalMs])
+  }, [tenantReady, range, refresh, intervalMs])
 
   return { data, loading, refresh }
 }

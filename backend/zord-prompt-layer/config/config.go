@@ -91,7 +91,7 @@ func Load() AppConfig {
 
 		GeminiAPIKey:  os.Getenv("GEMINI_API_KEY"),
 		GeminiAPIKeys: parseCSVKeys(os.Getenv("GEMINI_API_KEYS")),
-		GeminiModel:   get("GEMINI_MODEL", "gemini-2.5-flash"),
+		GeminiModel:   get("GEMINI_MODEL", "gemini-3.1-flash-lite"),
 		GeminiBaseURL: get("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"),
 		EdgeReadDSN:   os.Getenv("EDGE_READ_DSN"),
 		IntentReadDSN: os.Getenv("INTENT_READ_DSN"),

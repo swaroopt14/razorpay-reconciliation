@@ -4,7 +4,8 @@ import type {
   DisbursementTrendRange,
 } from './disbursementTrendTypes'
 import type { LeakageKpiResolved, LeakageKpiResponse, MinorAmountField } from './intelligenceTypes'
-import { trendWindowBounds } from './aggregateIntentsToTrend'
+import { trendWindowBounds } from './disbursementTrendWindow'
+import { formatTrendBucketLabel } from './disbursementTrendLabels'
 
 export type LeakageTrendBucketSpec = {
   key: string
@@ -25,18 +26,6 @@ function addUtcDays(d: Date, days: number): Date {
   const x = new Date(d)
   x.setUTCDate(x.getUTCDate() + days)
   return x
-}
-
-function monthKey(d: Date): string {
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
-}
-
-function monthLabel(d: Date): string {
-  return d.toLocaleString('en-IN', { month: 'short', timeZone: 'UTC' })
-}
-
-function lastDayOfUtcMonth(d: Date): Date {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0))
 }
 
 function readMinor(value: MinorAmountField | undefined | null): number {
@@ -79,51 +68,12 @@ export function buildLeakageTrendBucketSpecs(range: DisbursementTrendRange): Lea
   const fromDay = startOfUtcDay(from)
   const toDay = startOfUtcDay(to)
 
-  if (range === 'year') {
-    const specs: LeakageTrendBucketSpec[] = []
-    const anchor = new Date(toDay)
-    for (let i = 11; i >= 0; i--) {
-      const monthStart = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() - i, 1))
-      const monthEnd = lastDayOfUtcMonth(monthStart)
-      const mk = monthKey(monthStart)
-      specs.push({
-        key: mk,
-        label: monthLabel(monthStart),
-        from_date: toIsoDate(monthStart),
-        to_date: toIsoDate(monthEnd > toDay ? toDay : monthEnd),
-      })
-    }
-    return specs
-  }
-
-  if (range === 'quarter') {
-    const specs: LeakageTrendBucketSpec[] = []
-    for (let cursor = new Date(fromDay); cursor <= toDay; cursor = addUtcDays(cursor, 7)) {
-      const weekStart = new Date(cursor)
-      const weekEnd = addUtcDays(weekStart, 6)
-      const end = weekEnd > toDay ? toDay : weekEnd
-      const key = toIsoDate(weekStart)
-      specs.push({
-        key,
-        label: weekStart.toLocaleString('en-IN', { month: 'short', day: 'numeric', timeZone: 'UTC' }),
-        from_date: key,
-        to_date: toIsoDate(end),
-      })
-    }
-    return specs
-  }
-
-  // week + month → daily buckets (7 or 30 bars)
   const specs: LeakageTrendBucketSpec[] = []
   for (let d = new Date(fromDay); d <= toDay; d = addUtcDays(d, 1)) {
     const dk = toIsoDate(d)
     specs.push({
       key: dk,
-      label: new Date(`${dk}T12:00:00.000Z`).toLocaleString('en-IN', {
-        weekday: 'short',
-        day: 'numeric',
-        timeZone: 'UTC',
-      }),
+      label: formatTrendBucketLabel(dk, range),
       from_date: dk,
       to_date: dk,
     })

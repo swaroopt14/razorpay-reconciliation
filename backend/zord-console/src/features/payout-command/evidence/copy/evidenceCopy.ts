@@ -59,11 +59,12 @@ export const evidenceCopy = {
   valueReviewHelper:
     'Payment value affected by unmatched records, missing references, ambiguity, or settlement gaps.',
   kpi: {
-    proofReadinessScore: 'Evidence Completeness Index',
+    proofReadinessScore: 'Defensibility Score',
     evidencePacksGenerated: 'Evidence Packs Generated',
     valueNeedingReview: 'Value Needing Evidence Review',
     missingProofItems: 'Missing Proof Items',
     governanceChecks: 'Governance Checks',
+    packCompletenessScore: 'Pack Completeness',
     disputePacksReady: 'Dispute Packs Ready',
     exportReadiness: 'Evidence Export Readiness',
   },

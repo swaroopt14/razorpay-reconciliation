@@ -72,6 +72,12 @@ func ensureAuthSchema(ctx context.Context, db *sql.DB) error {
 			user_agent TEXT,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`,
+		// auth_session_activity: rate-limiter table for RecordSessionActivity.
+		// Must be created here at startup — NOT inside the per-request hot path.
+		`CREATE TABLE IF NOT EXISTS auth_session_activity (
+			session_id UUID PRIMARY KEY,
+			last_recorded_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
 	}
 	for _, q := range stmts {
 		if _, err := db.ExecContext(ctx, q); err != nil {

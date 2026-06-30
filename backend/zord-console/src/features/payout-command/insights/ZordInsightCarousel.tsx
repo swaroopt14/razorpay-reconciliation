@@ -6,18 +6,18 @@ import { Line, LineChart, ResponsiveContainer } from 'recharts'
 import type { InsightDelta, ZordInsightCard } from './zordInsightCarouselTypes'
 import { INTELLIGENCE_BLUE_GRADIENT } from '../command-center/homeCommandCenterTokens'
 
-/** Home insight carousel — imperial blue glass; body copy is white for contrast on the gradient. */
+/** Home insight carousel — dark blue card surface. */
 const G = {
-  grad: INTELLIGENCE_BLUE_GRADIENT,
-  glow0: 'radial-gradient(ellipse at 72% 18%,rgba(255,255,255,0.52) 0%,transparent 62%)',
-  glow1: 'radial-gradient(ellipse at 28% 75%,rgba(255,255,255,0.44) 0%,transparent 58%)',
+  grad: '#1e3a8a',
+  glow0: 'radial-gradient(ellipse at 72% 18%,rgba(255,255,255,0.06) 0%,transparent 55%)',
+  glow1: 'radial-gradient(ellipse at 28% 75%,rgba(255,255,255,0.04) 0%,transparent 50%)',
   /** Primary type + chart stroke */
   dark: '#ffffff',
   /** Header label, icons, secondary emphasis */
   mid: 'rgba(255,255,255,0.92)',
   /** Captions, empty states, de-emphasized lines */
-  muted: 'rgba(255,255,255,0.72)',
-  pill: 'rgba(255,255,255,0.18)',
+  muted: 'rgba(255,255,255,0.65)',
+  pill: 'rgba(255,255,255,0.14)',
 } as const
 
 import { fmtInrFromMinorExact } from '../command-center/commandCenterFormat'
@@ -97,6 +97,13 @@ function ArrowSvg() {
 const ICON: Record<string, () => React.ReactElement> = {
   'account-insights': BoltSvg,
   'mismatch-value': RupeeSvg,
+  'intended-value': RupeeSvg,
+  'value-needing-review': RupeeSvg,
+  'unmatched-value': RupeeSvg,
+  'settlement-observed': RupeeSvg,
+  'short-settled': RupeeSvg,
+  'ambiguous-value': RupeeSvg,
+  'ambiguous-amount': RupeeSvg,
   'disbursement-trend': TrendSvg,
   leakage: AlertSvg,
 }
@@ -168,18 +175,32 @@ function boldNumbersAppear(text: string) {
 }
 
 function InsightBody({ card }: { card: Extract<ZordInsightCard, { type: 'insight' }> }) {
-  if (card.paragraph) {
-    return (
-      <div className="text-[20px] font-normal leading-[1.45] tracking-[0] text-white">
-        {boldNumbersAppear(card.paragraph)}
-      </div>
-    )
-  }
-  return (
+  const body = card.paragraph ? (
+    <div className="text-[20px] font-normal leading-[1.45] tracking-[0] text-white">
+      {boldNumbersAppear(card.paragraph)}
+    </div>
+  ) : (
     <div className="text-[20px] font-light leading-[1.38] tracking-[-0.02em]" style={{ color: G.dark }}>
       {card.prefix ?? ''}{' '}
       <strong style={{ fontWeight: 700 }}>{card.highlight}</strong> {card.suffix ?? ''}
     </div>
+  )
+  return (
+    <>
+      {body}
+      {card.gapRate ? (
+        <div
+          className="mt-3 inline-flex w-fit items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-bold"
+          style={{ background: 'rgba(239,68,68,0.22)', border: '1px solid rgba(239,68,68,0.4)', color: '#fca5a5' }}
+        >
+          <span
+            className="h-[7px] w-[7px] rounded-full"
+            style={{ background: '#ef4444', flexShrink: 0 }}
+          />
+          Payment gap rate: {card.gapRate}
+        </div>
+      ) : null}
+    </>
   )
 }
 
@@ -190,23 +211,25 @@ function MetricBody({ card }: { card: Extract<ZordInsightCard, { type: 'metric' 
       <div className="mb-0.5 text-[11px] font-normal uppercase tracking-[0.06em]" style={{ color: G.muted }}>
         Total value
       </div>
-      <div className="text-[42px] font-extrabold leading-none tracking-[-0.03em] tabular-nums" style={{ color: G.dark }}>
+      <div className="text-[42px] font-extrabold leading-none tracking-[-0.03em] tabular-nums" style={{ color: '#fcd34d' }}>
         {headline}
       </div>
       <div className="mt-1.5 text-[12px]" style={{ color: G.mid }}>
         {card.subtext}
       </div>
-      <div className="mt-2 flex items-center gap-1.5">
-        <span
-          className="rounded-full px-2 py-0.5 text-[11px] font-semibold"
-          style={{ background: G.pill, color: G.dark }}
-        >
-          {card.count} txns
-        </span>
-        <span className="text-[11px]" style={{ color: G.muted }}>
-          {card.countLabel}
-        </span>
-      </div>
+      {card.countLabel ? (
+        <div className="mt-2 flex items-center gap-1.5">
+          <span
+            className="rounded-full px-2 py-0.5 text-[11px] font-semibold"
+            style={{ background: G.pill, color: G.dark }}
+          >
+            {card.count} txns
+          </span>
+          <span className="text-[11px]" style={{ color: G.muted }}>
+            {card.countLabel}
+          </span>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -479,7 +502,7 @@ export function ZordInsightCarousel({
   }
 
   return (
-    <div className="flex h-full min-h-[300px] w-full max-w-full flex-col">
+    <div className="flex h-full min-h-[260px] w-full max-w-full flex-col">
       <div
         className="relative min-h-0 w-full min-w-0 flex-1 touch-pan-y"
         onMouseEnter={() => {

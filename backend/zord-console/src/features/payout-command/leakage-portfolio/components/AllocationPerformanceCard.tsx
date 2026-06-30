@@ -14,10 +14,10 @@ type BarDef = {
 export function AllocationPerformanceCard({ data }: { data: PortfolioLeakageViewModel }) {
   const bars: BarDef[] = useMemo(
     () => [
-      { id: 'unmatched', label: leakageCopy.kpi.unmatched, minor: data.unmatchedMinor },
-      { id: 'short', label: leakageCopy.kpi.shortSettled, minor: data.underSettlementMinor },
-      { id: 'orphan', label: leakageCopy.kpi.unlinked, minor: data.orphanMinor },
-      { id: 'reversal', label: leakageCopy.kpi.reversal, minor: data.reversalMinor },
+      { id: 'unmatched', label: leakageCopy.kpi.unmatched, minor: data.unmatchedMinor ?? 0 },
+      { id: 'short', label: leakageCopy.kpi.shortSettled, minor: data.underSettlementMinor ?? 0 },
+      { id: 'orphan', label: leakageCopy.kpi.unlinked, minor: data.orphanMinor ?? 0 },
+      { id: 'reversal', label: leakageCopy.kpi.reversal, minor: data.reversalMinor ?? 0 },
     ],
     [data],
   )

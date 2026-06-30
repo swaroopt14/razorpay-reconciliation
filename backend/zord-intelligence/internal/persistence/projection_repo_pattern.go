@@ -884,6 +884,128 @@ func (r *ProjectionRepo) AtomicRecordEvidenceLeafCoverage(
 	return nil
 }
 
+// ── DISPUTE READINESS COMPONENT ACCUMULATORS ─────────────────────────────────
+
+// AtomicRecordDefensibilityIntentQuality accumulates IntentQualityScore into
+// the defensibility.summary projection for use in the new dispute_ready_pct formula.
+// Called from HandleIntentCreated when IntentQualityScore > 0.
+func (r *ProjectionRepo) AtomicRecordDefensibilityIntentQuality(
+	ctx context.Context,
+	tenantID string,
+	intentQualityScore float64,
+	windowStart, windowEnd time.Time,
+) error {
+	key := "defensibility.summary"
+	sql := `
+		INSERT INTO projection_state
+			(tenant_id, projection_key, window_start, window_end,
+			 value_json, computed_at, projection_version,
+			 projection_family, entity_scope_type)
+		VALUES ($1, $2, $3, $4,
+			jsonb_build_object(
+				'intent_quality_sum',      $5::float8,
+				'intent_quality_count',    1,
+				'avg_intent_quality_score', $5::float8
+			),
+			now(), 1, 'DEFENSIBILITY', 'TENANT')
+		ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
+		DO UPDATE SET
+			value_json = jsonb_set(
+				jsonb_set(
+					projection_state.value_json,
+					'{intent_quality_sum}',
+					to_jsonb(COALESCE((projection_state.value_json->>'intent_quality_sum')::float8, 0) + $5::float8)
+				),
+				'{intent_quality_count}',
+				to_jsonb(COALESCE((projection_state.value_json->>'intent_quality_count')::int, 0) + 1)
+			),
+			computed_at = now()
+	`
+	if _, err := r.pool.Exec(ctx, sql, tenantID, key, windowStart, windowEnd, intentQualityScore); err != nil {
+		return fmt.Errorf("projection_repo.AtomicRecordDefensibilityIntentQuality tenant=%s: %w", tenantID, err)
+	}
+	return r.recomputeDefensibilityEvidenceRates(ctx, tenantID, key, windowStart)
+}
+
+// AtomicRecordDefensibilityMappingConfidence accumulates MappingConfidence into
+// the defensibility.summary projection for use in the new dispute_ready_pct formula.
+// Called from HandleSettlementCreated when MappingConfidence > 0.
+func (r *ProjectionRepo) AtomicRecordDefensibilityMappingConfidence(
+	ctx context.Context,
+	tenantID string,
+	mappingConfidence float64,
+	windowStart, windowEnd time.Time,
+) error {
+	key := "defensibility.summary"
+	sql := `
+		INSERT INTO projection_state
+			(tenant_id, projection_key, window_start, window_end,
+			 value_json, computed_at, projection_version,
+			 projection_family, entity_scope_type)
+		VALUES ($1, $2, $3, $4,
+			jsonb_build_object(
+				'mapping_confidence_sum',   $5::float8,
+				'mapping_confidence_count', 1,
+				'avg_mapping_confidence',   $5::float8
+			),
+			now(), 1, 'DEFENSIBILITY', 'TENANT')
+		ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
+		DO UPDATE SET
+			value_json = jsonb_set(
+				jsonb_set(
+					projection_state.value_json,
+					'{mapping_confidence_sum}',
+					to_jsonb(COALESCE((projection_state.value_json->>'mapping_confidence_sum')::float8, 0) + $5::float8)
+				),
+				'{mapping_confidence_count}',
+				to_jsonb(COALESCE((projection_state.value_json->>'mapping_confidence_count')::int, 0) + 1)
+			),
+			computed_at = now()
+	`
+	if _, err := r.pool.Exec(ctx, sql, tenantID, key, windowStart, windowEnd, mappingConfidence); err != nil {
+		return fmt.Errorf("projection_repo.AtomicRecordDefensibilityMappingConfidence tenant=%s: %w", tenantID, err)
+	}
+	return r.recomputeDefensibilityEvidenceRates(ctx, tenantID, key, windowStart)
+}
+
+// AtomicUpdateDefensibilityDisputeReady writes the service-layer-computed
+// dispute_ready_pct back to the projection so the policy engine can read it.
+// Called from DefensibilityIntelligenceService.ComputeAndSave after every snapshot.
+func (r *ProjectionRepo) AtomicUpdateDefensibilityDisputeReady(
+	ctx context.Context,
+	tenantID string,
+	disputeReadyPct float64,
+	windowStart time.Time,
+) error {
+	sql := `
+		UPDATE projection_state SET
+			value_json  = jsonb_set(value_json, '{dispute_ready_pct}', to_jsonb($3::float8)),
+			computed_at = now()
+		WHERE tenant_id        = $1
+		  AND projection_key   = 'defensibility.summary'
+		  AND window_start     = $2
+		  AND projection_version = 1
+	`
+	if _, err := r.pool.Exec(ctx, sql, tenantID, windowStart, disputeReadyPct); err != nil {
+		return fmt.Errorf("projection_repo.AtomicUpdateDefensibilityDisputeReady tenant=%s: %w", tenantID, err)
+	}
+	return nil
+}
+
+// GetPatternTenantSummary reads the pattern.tenant_summary projection.
+// Used by DefensibilityIntelligenceService to obtain ProofReadinessScore
+// for the dispute_ready_pct formula.
+func (r *ProjectionRepo) GetPatternTenantSummary(
+	ctx context.Context,
+	tenantID string,
+) (*models.PatternTenantSummaryValue, error) {
+	var v models.PatternTenantSummaryValue
+	if err := r.GetValueAs(ctx, tenantID, "pattern.tenant_summary", &v); err != nil {
+		return nil, fmt.Errorf("projection_repo.GetPatternTenantSummary: %w", err)
+	}
+	return &v, nil
+}
+
 // ── READ METHODS ─────────────────────────────────────────────────────────────
 
 // GetProjectionsByKeyPrefix returns all projection_state rows whose projection_key

@@ -52,6 +52,9 @@ kubernetes/eks/
 │   └── zord-console/
 │       ├── service.yaml
 │       └── deployment.yaml
+│   └── ml-service/
+│       ├── service.yaml
+│       └── deployment.yaml
 └── ingress/
     └── public-alb.yaml
 ```

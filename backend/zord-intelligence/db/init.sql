@@ -712,8 +712,8 @@ CREATE TABLE IF NOT EXISTS batch_contracts (
     batch_finality_status       TEXT         NOT NULL DEFAULT 'PROCESSING',
     CHECK (batch_finality_status IN (
         'PROCESSING',
-        'FULLY_SETTLED',
-        'PARTIALLY_SETTLED',
+        'FULLY_RECONCILED',
+        'PARTIALLY_RECONCILED',
         'FAILED',
         'REQUIRES_REVIEW',
         'CLOSED'
@@ -810,6 +810,24 @@ CREATE TABLE IF NOT EXISTS batch_contracts (
     client_ref_present_count    INT          NOT NULL DEFAULT 0,
     -- Count of attachment decisions where client_reference is present.
     -- Numerator for client_reference_coverage = client_ref_present_count / decision_ref_count.
+
+    -- ── Attachment completeness snapshot (Service 5C intent-centric batch summary) ──
+    total_intent_count                 INT          NOT NULL DEFAULT 0,
+    matched_intent_count               INT          NOT NULL DEFAULT 0,
+    ambiguous_count                    INT          NOT NULL DEFAULT 0,
+    unresolved_intent_count            INT          NOT NULL DEFAULT 0,
+    conflicted_count                   INT          NOT NULL DEFAULT 0,
+    orphan_observation_count           INT          NOT NULL DEFAULT 0,
+    original_intended_amount_minor     NUMERIC(20,2) NOT NULL DEFAULT 0,
+    ambiguous_amount_minor             NUMERIC(20,2) NOT NULL DEFAULT 0,
+    unresolved_intended_amount_minor   NUMERIC(20,2) NOT NULL DEFAULT 0,
+    conflicted_amount_minor            NUMERIC(20,2) NOT NULL DEFAULT 0,
+    orphan_observed_amount_minor       NUMERIC(20,2) NOT NULL DEFAULT 0,
+    net_batch_delta_minor              NUMERIC(20,2) NOT NULL DEFAULT 0,
+    intent_count_coverage              NUMERIC(10,6) NOT NULL DEFAULT 0,
+    intent_value_coverage              NUMERIC(10,6) NOT NULL DEFAULT 0,
+    observed_count_allocation_coverage NUMERIC(10,6) NOT NULL DEFAULT 0,
+    observed_value_allocation_coverage NUMERIC(10,6) NOT NULL DEFAULT 0,
 
     last_updated_at             TIMESTAMPTZ  NOT NULL DEFAULT now(),
     created_at                  TIMESTAMPTZ  NOT NULL DEFAULT now()
@@ -1050,6 +1068,40 @@ ALTER TABLE batch_contracts
 -- Added for existing databases where batch_contracts predates this column.
 ALTER TABLE batch_contracts
     ADD COLUMN IF NOT EXISTS match_confidence NUMERIC(4,3);
+
+-- Attachment completeness snapshot from Service 5C intent-centric batch summary.
+ALTER TABLE batch_contracts
+    ADD COLUMN IF NOT EXISTS total_intent_count INT NOT NULL DEFAULT 0;
+ALTER TABLE batch_contracts
+    ADD COLUMN IF NOT EXISTS matched_intent_count INT NOT NULL DEFAULT 0;
+ALTER TABLE batch_contracts
+    ADD COLUMN IF NOT EXISTS ambiguous_count INT NOT NULL DEFAULT 0;
+ALTER TABLE batch_contracts
+    ADD COLUMN IF NOT EXISTS unresolved_intent_count INT NOT NULL DEFAULT 0;
+ALTER TABLE batch_contracts
+    ADD COLUMN IF NOT EXISTS conflicted_count INT NOT NULL DEFAULT 0;
+ALTER TABLE batch_contracts
+    ADD COLUMN IF NOT EXISTS orphan_observation_count INT NOT NULL DEFAULT 0;
+ALTER TABLE batch_contracts
+    ADD COLUMN IF NOT EXISTS original_intended_amount_minor NUMERIC(20,2) NOT NULL DEFAULT 0;
+ALTER TABLE batch_contracts
+    ADD COLUMN IF NOT EXISTS ambiguous_amount_minor NUMERIC(20,2) NOT NULL DEFAULT 0;
+ALTER TABLE batch_contracts
+    ADD COLUMN IF NOT EXISTS unresolved_intended_amount_minor NUMERIC(20,2) NOT NULL DEFAULT 0;
+ALTER TABLE batch_contracts
+    ADD COLUMN IF NOT EXISTS conflicted_amount_minor NUMERIC(20,2) NOT NULL DEFAULT 0;
+ALTER TABLE batch_contracts
+    ADD COLUMN IF NOT EXISTS orphan_observed_amount_minor NUMERIC(20,2) NOT NULL DEFAULT 0;
+ALTER TABLE batch_contracts
+    ADD COLUMN IF NOT EXISTS net_batch_delta_minor NUMERIC(20,2) NOT NULL DEFAULT 0;
+ALTER TABLE batch_contracts
+    ADD COLUMN IF NOT EXISTS intent_count_coverage NUMERIC(10,6) NOT NULL DEFAULT 0;
+ALTER TABLE batch_contracts
+    ADD COLUMN IF NOT EXISTS intent_value_coverage NUMERIC(10,6) NOT NULL DEFAULT 0;
+ALTER TABLE batch_contracts
+    ADD COLUMN IF NOT EXISTS observed_count_allocation_coverage NUMERIC(10,6) NOT NULL DEFAULT 0;
+ALTER TABLE batch_contracts
+    ADD COLUMN IF NOT EXISTS observed_value_allocation_coverage NUMERIC(10,6) NOT NULL DEFAULT 0;
 
 -- "Which policies belong to the LEAKAGE family and fired today?"
 CREATE INDEX IF NOT EXISTS idx_ac_family_created
