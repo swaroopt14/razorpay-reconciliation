@@ -73,8 +73,8 @@ func (p *BankParser) parseRow(rowNum int, row []string, colIndex map[string]int)
 	if err != nil {
 		errs = append(errs, ParseRowError{RowIndex: rowNum, Field: "amount", Message: err.Error()})
 	} else {
-		// Service 2 expects amount.value as a STRING
-		shape.Amount.Value = fmt.Sprintf("%.2f", amt)
+		// Service 2 expects amount.value as a STRING — preserve exact decimal scale
+		shape.Amount.Value = amt.String()
 	}
 
 	// Static validation
