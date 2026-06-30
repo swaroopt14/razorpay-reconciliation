@@ -126,15 +126,6 @@ func (s *EvidenceService) HandleLeafUpdate(ctx context.Context, tenantID, envelo
 				Hash:          l.Hash,
 				SchemaVersion: l.SchemaVersion,
 			})
-		} else if requiredType == models.LeafTypeVarianceDecision {
-			// Special case: VARIANCE_DECISION is required but can be synthesized if missing
-			items = append(items, models.EvidenceItem{
-				Type:          models.LeafTypeVarianceDecision,
-				Ref:           intentID, // Fallback to intentID if missing
-				Hash:          models.ZeroVarianceHash,
-				SchemaVersion: "v1",
-			})
-			log.Printf("evidence.service.readiness_check intent=%s VARIANCE_DECISION missing — using ZeroVarianceHash", intentID)
 		} else {
 			allPresent = false
 			missing = append(missing, requiredType)

@@ -624,7 +624,7 @@ func buildBankPSPPack(pack *models.EvidencePack, req models.DisputeExportRequest
 	// variance_flag (legacy boolean column kept for backward compatibility)
 	varianceFlag := "false"
 	if v := getLeafByType(pack, models.LeafTypeVarianceDecision); v != nil {
-		if v.Hash != models.ZeroVarianceHash {
+		if v.Hash != "" {
 			varianceFlag = "true"
 		}
 	}
@@ -764,7 +764,7 @@ func deriveVarianceLabel(pack *models.EvidencePack) string {
 	if v == nil {
 		return "UNKNOWN"
 	}
-	if v.Hash == models.ZeroVarianceHash {
+	if v.Hash == "" {
 		return "ZERO"
 	}
 	return "NON-ZERO"
