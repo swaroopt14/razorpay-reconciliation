@@ -532,7 +532,7 @@ func (s *EvidenceService) GeneratePack(ctx context.Context, req models.GenerateE
 		CreatedAt:      now,
 	}
 	if err := s.repo.SaveArchive(ctx, archiveRecord); err != nil {
-		fmt.Printf("warn: save archive record failed: %v\n", err)
+		return nil, fmt.Errorf("save archive record failed: %w", err)
 	}
 
 	// --- Persist §14.4 inclusion proofs ---
@@ -548,7 +548,7 @@ func (s *EvidenceService) GeneratePack(ctx context.Context, req models.GenerateE
 		})
 	}
 	if err := s.repo.SaveInclusionProofs(ctx, packID, inclusionProofs); err != nil {
-		fmt.Printf("warn: save inclusion proofs failed: %v\n", err)
+		return nil, fmt.Errorf("save inclusion proofs failed: %w", err)
 	}
 
 	// --- Mark old pack superseded if this is a lifecycle version update (§23 Phase 5) ---
@@ -758,7 +758,7 @@ func (s *EvidenceService) GenerateBatchPack(ctx context.Context, req models.Gene
 		CreatedAt:      now,
 	}
 	if err := s.repo.SaveArchive(ctx, archiveRecord); err != nil {
-		fmt.Printf("warn: save archive record failed: %v\n", err)
+		return nil, fmt.Errorf("save archive record failed: %w", err)
 	}
 
 	proofPaths := utils.BuildInclusionProofs(leaves)
@@ -773,7 +773,7 @@ func (s *EvidenceService) GenerateBatchPack(ctx context.Context, req models.Gene
 		})
 	}
 	if err := s.repo.SaveInclusionProofs(ctx, packID, inclusionProofs); err != nil {
-		fmt.Printf("warn: save inclusion proofs failed: %v\n", err)
+		return nil, fmt.Errorf("save inclusion proofs failed: %w", err)
 	}
 
 	packEvent := kafka.PackEvent{
