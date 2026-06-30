@@ -148,6 +148,7 @@ func (s *AttachmentOutboxService) EmitForJob(
 
 		bID := ""
 		tID := uuid.Nil
+		var sourceSystem string
 
 		var bankRef, clientRefCandidate string
 		var obsCreatedAt time.Time
@@ -157,6 +158,7 @@ func (s *AttachmentOutboxService) EmitForJob(
 			if obs, ok := obsMap[*d.SettlementObservationID]; ok {
 				obsClientBatchID = strings.TrimSpace(obs.ClientBatchID)
 				settledAmount = obs.Amount
+				sourceSystem = obs.SourceSystem
 				if corrID == "" {
 					corrID = obs.CorridorID
 				}
@@ -245,7 +247,7 @@ func (s *AttachmentOutboxService) EmitForJob(
 			"corridor_id":                  corrID,
 			"batch_id":                     bID,
 			"settled_amount":               settledAmount.String(),
-			"source_system":                "", // TODO: handle source system for unmatched
+			"source_system":                sourceSystem,
 			"intended_amount":              intendedAmount.String(),
 			"currency":                     curr,
 			"candidate_set_size":           d.CandidateSetSize,

@@ -618,6 +618,7 @@ func (s *EvidenceService) GeneratePack(ctx context.Context, req models.GenerateE
 		EventType:                         eventType,
 		EvidencePackID:                    packID,
 		TenantID:                          req.TenantID,
+		BatchID:                           req.ClientBatchID,
 		IntentID:                          req.IntentID,
 		ContractID:                        req.ContractID,
 		Mode:                              req.Mode,
@@ -779,13 +780,11 @@ func (s *EvidenceService) GenerateBatchPack(ctx context.Context, req models.Gene
 		EventType:      kafka.EventPackCreated,
 		EvidencePackID: packID,
 		TenantID:       req.TenantID,
+		BatchID:        req.ClientBatchID,
 		Mode:           req.Mode,
 		MerkleRoot:     merkleRoot,
 		RulesetVersion: req.RulesetVersion,
 		OccurredAt:     now,
-		Extra: map[string]any{
-			"batch_id": req.ClientBatchID,
-		},
 	}
 	payloadBytes, _ := json.Marshal(packEvent)
 
