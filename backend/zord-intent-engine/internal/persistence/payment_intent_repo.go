@@ -880,8 +880,11 @@ func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, 
 	err = r.db.QueryRowContext(ctx, `
 		SELECT COALESCE(total_rows, 0), COALESCE(accepted_rows, 0), COALESCE(failed_rows, 0), COALESCE(status, '')
 		FROM intent_ingest_runs
-		WHERE tenant_id = $1 AND batch_id = $2
+		WHERE tenant_id = $1::uuid AND batch_id = $2
 	`, tenantID, batchID).Scan(&totalRowsSource, &acceptedRowsSource, &failedRowsSource, &sourceStatus)
+	if err != nil {
+		log.Printf("⚠️ Ingest run lookup failed for tenant=%s batch=%s: %v", tenantID, batchID, err)
+	}
 
 	var pendingCount int
 	if err == nil && totalRowsSource > 0 {
