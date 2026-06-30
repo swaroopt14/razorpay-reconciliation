@@ -60,7 +60,7 @@ function DockIcon({
 export function FinalLandingAssistantButton() {
   const dockButtons = [
     { name: 'home' as const, label: 'Home', href: '/' },
-    { name: 'chat' as const, label: 'Talk to ZORD', href: 'mailto:hello@arelais.com?subject=Talk%20to%20ZORD%20Copilot', active: true },
+    { name: 'chat' as const, label: 'Talk to ZORD', href: 'mailto:Support@zordnet.com?subject=Talk%20to%20ZORD%20Copilot', active: true },
     { name: 'zap' as const, label: 'Escalations', href: '/#product' },
     { name: 'document' as const, label: 'Docs', href: '/final-landing/resources' },
     { name: 'grid' as const, label: 'Solutions', href: '/final-landing/solutions' },

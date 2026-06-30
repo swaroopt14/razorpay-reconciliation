@@ -1,16 +1,14 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Bar, Brush, Cell, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import {
   clamp,
-  HOME_CHART_DOMAIN_MAX,
   HOME_QUARTERS,
   HOME_YEAR_OPTIONS,
   type HomeOverviewSnapshot,
   type HomeTimeframe,
 } from '@/services/payout-command/model'
-import { buildZordInsightCards } from '../insights/buildZordInsightCards'
+import { buildZordInsightCards, HOME_ZORD_INSIGHT_SLOT_COUNT } from '../insights/buildZordInsightCards'
 import { ZordInsightCarousel } from '../insights/ZordInsightCarousel'
 import { PaymentCommandCenterBand } from '../command-center/PaymentCommandCenterBand'
 import {
@@ -20,7 +18,14 @@ import {
   commandPeriodToTrendRange,
   carouselPeriodToTrendRange,
 } from '../command-center/commandCenterPeriod'
-import { chartThousandsFromMinor, fmtInrFromMinorExact, parseMinorField } from '../command-center/commandCenterFormat'
+import {
+  chartThousandsFromMinor,
+  fmtInrFromMinorExact,
+  parseMinorField,
+} from '../command-center/commandCenterFormat'
+import { PaymentTrendPanel } from '../command-center/PaymentTrendPanel'
+import { mapDisbursementBucketsToTrendPoints } from '../command-center/paymentTrendChartConfig'
+import type { PaymentTrendChartPoint } from '../command-center/PaymentValueTrendChart'
 import { PAYMENT_COMMAND_CENTER } from '../command-center/paymentCommandCopy'
 import { usePaymentCommandDataSources } from '../command-center/usePaymentCommandDataSources'
 import {
@@ -29,27 +34,31 @@ import {
   HOME_BODY_IMPERIAL_SM,
   HOME_TITLE_BLACK,
 } from '../command-center/homeCommandCenterTokens'
-import { ClientChart, Glyph } from '../shared'
+import { Glyph } from '../shared'
 import { useSessionTenant } from '@/services/auth/useSessionTenantId'
 import { useIntelligenceKpis } from '@/services/payout-command/prod-api/useIntelligenceKpis'
 import { isDataAvailable } from '@/services/payout-command/prod-api/intelligenceTypes'
+import type { DisbursementTrendRange } from '@/services/payout-command/prod-api/disbursementTrendTypes'
 import { useDisbursementTrend } from '@/services/payout-command/prod-api/useDisbursementTrend'
 import { useEnvironment } from '@/services/auth/EnvironmentProvider'
 import { markSandboxSetupStep } from '@/services/payout-command/sandbox-setup-guide'
 import { SandboxHomeCredentialsCard } from '../sandbox/SandboxHomeCredentialsCard'
 import { useRegisterPayoutPageActions } from '../layout/PayoutPageActionsContext'
-import {
-  confirmedMatchedValueMinorFromBatchContract,
-  parseMatchConfidence,
-  parsePercentValue,
-} from '@/features/payout-command/settlement-journal/selectors/resolveSettlementIntelligenceKpis'
-import {
-  parseMissingReferenceRatePercent,
-  useBatchContractKpis,
-} from '@/features/payout-command/hooks/useBatchContractKpis'
+import { displayApiField, formatKpiMoneyMinor } from '../shared/formatApiKpiFields'
 
 const TENANT_KPI_EMPTY_CAROUSEL_INSIGHT =
   'No payment data in this period yet. Upload payment instructions or connect bank/settlement files to populate this view.'
+
+function homeTimeframeToCommandPeriod(timeframe: HomeTimeframe): CommandCenterPeriod {
+  if (timeframe === 'Week') return 'week'
+  if (timeframe === 'Year') return 'year'
+  if (timeframe === 'Quarter' || timeframe === 'Custom') return 'quarter'
+  return 'month'
+}
+
+function homeTimeframeToTrendRange(timeframe: HomeTimeframe): DisbursementTrendRange {
+  return commandPeriodToTrendRange(homeTimeframeToCommandPeriod(timeframe))
+}
 
 function parseMinorStrict(value: string | number | undefined | null): number | null {
   if (value == null || value === '') return null
@@ -74,9 +83,12 @@ export function HomeSurface({
   onYearChange: (year: 2026 | 2027 | 2028) => void
   onQuarterChange: (quarterIndex: number) => void
 }) {
-  const [hoverIndex, setHoverIndex] = useState<number | null>(null)
-  const [trendAnchorIdx, setTrendAnchorIdx] = useState(0)
-  const [commandPeriod, setCommandPeriod] = useState<CommandCenterPeriod>('month')
+  const [commandPeriod, setCommandPeriod] = useState<CommandCenterPeriod>(() =>
+    homeTimeframeToCommandPeriod(timeframe),
+  )
+  const [chartPeriod, setChartPeriod] = useState<DisbursementTrendRange>(() =>
+    homeTimeframeToTrendRange(timeframe),
+  )
   const [carouselPeriod, setCarouselPeriod] = useState<CarouselInsightPeriod>('weekly')
   const [heroMetric, setHeroMetric] = useState<'intended' | 'confirmed'>('intended')
 
@@ -93,14 +105,30 @@ export function HomeSurface({
 
   // Sync the dropdown timeframe to the commandPeriod (which drives the chart/cards API)
   useEffect(() => {
-    if (timeframe === 'Week') setCommandPeriod('week')
-    else if (timeframe === 'Month') setCommandPeriod('month')
-    else if (timeframe === 'Quarter' || timeframe === 'Custom') setCommandPeriod('quarter')
-    else if (timeframe === 'Year') setCommandPeriod('year')
-    else setCommandPeriod('month')
+    if (timeframe === 'Week') {
+      setCommandPeriod('week')
+      setChartPeriod('week')
+    } else if (timeframe === 'Month') {
+      setCommandPeriod('month')
+      setChartPeriod('month')
+    } else if (timeframe === 'Quarter' || timeframe === 'Custom') {
+      setCommandPeriod('quarter')
+      setChartPeriod('quarter')
+    } else if (timeframe === 'Year') {
+      setCommandPeriod('year')
+      setChartPeriod('year')
+    } else {
+      setCommandPeriod('month')
+      setChartPeriod('month')
+    }
   }, [timeframe])
 
   const { data: trendSeries, loading: trendLoading, refresh: refreshTrend } = useDisbursementTrend({ tenantReady, range: trendRange })
+  const {
+    data: chartSeriesData,
+    loading: chartSeriesLoading,
+    refresh: refreshChartSeries,
+  } = useDisbursementTrend({ tenantReady, range: chartPeriod })
   const { data: carouselTrendSeries, loading: carouselTrendLoading, refresh: refreshCarouselTrend } = useDisbursementTrend({
     tenantReady,
     range: carouselTrendRange,
@@ -111,11 +139,6 @@ export function HomeSurface({
     batchId,
     dateQuery: intelligenceDateQuery,
   })
-  const {
-    data: batchContract,
-    loading: batchContractLoading,
-    refresh: refreshBatchContract,
-  } = useBatchContractKpis({ tenantReady, batchId })
   const leakageData = isDataAvailable(leakage) ? leakage : null
   const ambData = isDataAvailable(ambiguity) ? ambiguity : null
   const defData = isDataAvailable(defensibility) ? defensibility : null
@@ -123,12 +146,17 @@ export function HomeSurface({
   const recsData = isDataAvailable(recommendations) ? recommendations : null
 
   const handlePageRefresh = useCallback(async () => {
-    await Promise.all([refresh(), refreshTrend(), refreshCarouselTrend(), refreshBatchContract()])
-  }, [refresh, refreshTrend, refreshCarouselTrend, refreshBatchContract])
+    await Promise.all([
+      refresh(),
+      refreshTrend(),
+      refreshChartSeries(),
+      refreshCarouselTrend(),
+    ])
+  }, [refresh, refreshTrend, refreshChartSeries, refreshCarouselTrend])
 
   useRegisterPayoutPageActions({
     refresh: tenantReady ? handlePageRefresh : undefined,
-    refreshing: loading || trendLoading || carouselTrendLoading,
+    refreshing: loading || trendLoading || chartSeriesLoading || carouselTrendLoading,
   })
 
   useEffect(() => {
@@ -164,79 +192,27 @@ export function HomeSurface({
     return { total, intentCount }
   }, [trendSeries])
 
-  const liveTrendChart = useMemo(() => {
-    if (!tenantReady || !trendSeries?.data_available || trendSeries.buckets.length < 1) return null
-    const rows = trendSeries.buckets.map((b, i) => {
-      const minorT = Number(b.total_amount)
-      const minorC = Number(b.confirmed_amount)
-      const minorR = Number(b.review_amount)
-      if (!Number.isFinite(minorT) || !Number.isFinite(minorC) || !Number.isFinite(minorR) || !b.label) {
-        return null
-      }
-      const hasSignal = minorT > 0 || minorC > 0 || minorR > 0 || b.intent_count > 0
-      if (!hasSignal) return null
-      return {
-        point: i,
-        barValue: Math.max(0.001, chartThousandsFromMinor(minorT)),
-        lineValue: Math.max(0.001, chartThousandsFromMinor(minorC)),
-        reviewLineValue: Math.max(0.001, chartThousandsFromMinor(minorR)),
-        intendedMinor: minorT,
-        confirmedMinor: minorC,
-        reviewMinor: minorR,
-        label: b.label || '—',
-        selected: false,
-        isHoliday: false,
-      }
-    })
-    const validRows = rows.filter((row): row is NonNullable<typeof row> => Boolean(row))
-    if (!validRows.length) return null
-    const maxV = Math.max(0.001, ...validRows.flatMap((r) => [r.barValue, r.lineValue, r.reviewLineValue]))
-    const yMax = Math.max(5, Math.ceil((maxV * 1.15) / 5) * 5)
-    const ticks = [0, yMax * 0.25, yMax * 0.5, yMax * 0.75, yMax].map((x) => Math.round(x * 1000) / 1000)
-    return {
-      chartData: validRows,
-      axisLabels: validRows.map((r) => r.label),
-      yMax,
-      ticks,
+  const chartSeriesStale =
+    Boolean(chartSeriesData) && chartSeriesData?.range !== chartPeriod
+
+  const chartSeriesPoints = useMemo((): PaymentTrendChartPoint[] => {
+    if (
+      !tenantReady ||
+      chartSeriesStale ||
+      !chartSeriesData?.data_available ||
+      !chartSeriesData.buckets?.length
+    ) {
+      return []
     }
-  }, [tenantReady, trendSeries])
+    return mapDisbursementBucketsToTrendPoints(chartSeriesData.buckets)
+  }, [tenantReady, chartSeriesData, chartSeriesStale])
 
-  const chartData = useMemo(() => liveTrendChart?.chartData ?? [], [liveTrendChart])
-  const axisLabelsForChart = liveTrendChart?.axisLabels ?? []
-  const yDomainMax = liveTrendChart?.yMax ?? HOME_CHART_DOMAIN_MAX
-  const yTicks = liveTrendChart?.ticks ?? [0, 50000, 100000, 150000]
-
-  const trendChartReady = Boolean(liveTrendChart && chartData.length > 0)
-
-  useEffect(() => {
-    const n = chartData.length
-    if (!tenantReady || !trendChartReady || n < 1) return
-    setTrendAnchorIdx(clamp(Math.floor(n / 2), 0, Math.max(0, n - 1)))
-    setHoverIndex(null)
-  }, [tenantReady, commandPeriod, trendChartReady, chartData.length])
-
-  const displayPoint = hoverIndex ?? trendAnchorIdx
-  const safePoint = clamp(displayPoint, 0, Math.max(0, chartData.length - 1))
-  const selectedRange = trendChartReady
-    ? ([0, Math.max(0, chartData.length - 1)] as const)
-    : ([0, 0] as const)
-  const [selectedRangeStart, selectedRangeEnd] = selectedRange
-  const activeRow = chartData[safePoint]
-  const totalChartBars = chartData.length
-  const rangeLeftPercent = totalChartBars > 0 ? (selectedRangeStart / totalChartBars) * 100 : 0
-  const rangeWidthPercent =
-    totalChartBars > 0 ? ((selectedRangeEnd - selectedRangeStart + 1) / totalChartBars) * 100 : 100
-  const tooltipLeftPercent =
-    totalChartBars <= 1
-      ? 50
-      : clamp((safePoint / Math.max(totalChartBars - 1, 1)) * 100 - 8, 3, 74)
-  const monthLabel = activeRow?.label ?? '—'
-  const tooltipIntended = activeRow ? fmtInrFromMinorExact(activeRow.intendedMinor) : '—'
-  const tooltipConfirmed = activeRow ? fmtInrFromMinorExact(activeRow.confirmedMinor) : '—'
-  const tooltipReview = activeRow ? fmtInrFromMinorExact(activeRow.reviewMinor) : '—'
+  const trendChartReady = chartSeriesPoints.some(
+    (p) => p.intendedMinor > 0 || p.confirmedMinor > 0 || p.reviewMinor > 0,
+  )
 
   const chartTags = useMemo(() => {
-    const data = chartData
+    const data = chartSeriesPoints.slice(-30)
     if (!data.length) return [] as Array<{ leftPct: number; label: string; key: string }>
     let maxBar = 0
     let maxBarI = 0
@@ -245,17 +221,20 @@ export function HomeSurface({
     let maxReview = 0
     let maxReviewI = 0
     for (let i = 0; i < data.length; i++) {
-      if (data[i].barValue > maxBar) {
-        maxBar = data[i].barValue
+      const barK = chartThousandsFromMinor(data[i].intendedMinor)
+      const lineK = chartThousandsFromMinor(data[i].confirmedMinor)
+      const reviewK = chartThousandsFromMinor(data[i].reviewMinor)
+      if (barK > maxBar) {
+        maxBar = barK
         maxBarI = i
       }
-      const gap = data[i].barValue - data[i].lineValue
+      const gap = barK - lineK
       if (gap > maxGap) {
         maxGap = gap
         maxGapI = i
       }
-      if (data[i].reviewLineValue > maxReview) {
-        maxReview = data[i].reviewLineValue
+      if (reviewK > maxReview) {
+        maxReview = reviewK
         maxReviewI = i
       }
     }
@@ -272,7 +251,7 @@ export function HomeSurface({
       })
     }
     return tags
-  }, [chartData])
+  }, [chartSeriesPoints])
 
   const dataSources = usePaymentCommandDataSources({
     tenantReady,
@@ -292,14 +271,6 @@ export function HomeSurface({
   const reversalMinor = parseMinorStrict(leakageData?.reversal_exposure_minor)
   const observedMinor = parseMinorStrict(leakageData?.total_observed_settled_amount_minor)
 
-  const confirmedMatchedMinor = useMemo(() => {
-    if (!batchId?.trim()) return null
-    if (batchContractLoading) return null
-    return confirmedMatchedValueMinorFromBatchContract(batchContract)
-  }, [batchId, batchContract, batchContractLoading])
-
-  const settlementHeroMinor = batchId?.trim() ? (confirmedMatchedMinor ?? observedMinor) : observedMinor
-
   const bankConfirmedMinor = observedMinor
 
   const reviewMinor = leakageData != null ? parseMinorField(leakageData.unmatched_amount_minor) : null
@@ -315,30 +286,6 @@ export function HomeSurface({
         ? trendTotalsMinor.intentCount
         : null
 
-  const trendInsight = useMemo(() => {
-    if (intendedMinor != null && intendedMinor > 0 && observedMinor != null) {
-      const initiated = fmtInrFromMinorExact(intendedMinor)
-      const settled = fmtInrFromMinorExact(observedMinor)
-      const pct = Math.round((observedMinor / intendedMinor) * 100)
-      return `${initiated} was initiated, of which ${settled} has been successfully settled, reflecting ${pct}% settlement completion for the ${carouselPeriod} period.`
-    }
-    if (carouselTrendSeries?.data_available && carouselTrendSeries.buckets.length >= 2) {
-      const totalMinor = carouselTrendSeries.buckets.reduce((s, b) => s + b.total_amount, 0)
-      const confirmedMinor = carouselTrendSeries.buckets.reduce((s, b) => s + b.confirmed_amount, 0)
-      if (totalMinor > 0) {
-        const pct = Math.round((confirmedMinor / totalMinor) * 100)
-        return `${fmtInrFromMinorExact(totalMinor)} was initiated, of which ${fmtInrFromMinorExact(confirmedMinor)} has been successfully settled, reflecting ${pct}% settlement completion for the ${carouselPeriod} period.`
-      }
-    }
-    if (leakageData && patternsData) {
-      return `${patternsData.pending_count} payments still pending confirmation in the latest batch view.`
-    }
-    if (patternsData) {
-      return `${patternsData.success_count} of ${patternsData.total_count} payments completed in the latest batch signal.`
-    }
-    return TENANT_KPI_EMPTY_CAROUSEL_INSIGHT
-  }, [intendedMinor, observedMinor, carouselTrendSeries, carouselPeriod, leakageData, patternsData])
-
   const reviewDisplay =
     reviewMinor !== null
       ? fmtInrFromMinorExact(reviewMinor)
@@ -351,33 +298,27 @@ export function HomeSurface({
       buildZordInsightCards({
         tenantReady,
         kpiLoading: loading || carouselTrendLoading,
+        carouselPeriod,
         emptyInsightParagraph: TENANT_KPI_EMPTY_CAROUSEL_INSIGHT,
-        mismatchHeadline: reviewDisplay,
-        mismatchSubtext:
-          leakageData != null
-            ? 'Unmatched payment value from the leakage dashboard.'
-            : 'No leakage data available for this period.',
-        reviewValueMinor: reviewMinor,
-        mismatchPendingCount: patternsData?.pending_count ?? ambData?.ambiguous_intent_count ?? 0,
-        trendInsight,
         trendSeries: carouselTrendSeries,
         trendChartReady: Boolean(
           carouselTrendSeries?.data_available && (carouselTrendSeries.buckets?.length ?? 0) > 0,
         ),
         leakageData,
+        ambData,
+        defData,
         patternsData,
       }),
     [
       tenantReady,
       loading,
       carouselTrendLoading,
-      trendInsight,
+      carouselPeriod,
       carouselTrendSeries,
       leakageData,
+      ambData,
+      defData,
       patternsData,
-      reviewDisplay,
-      reviewMinor,
-      ambData?.ambiguous_intent_count,
     ],
   )
 
@@ -385,41 +326,46 @@ export function HomeSurface({
     tenantReady && insightCarouselCards.length === 0 && (loading || carouselTrendLoading),
   )
 
+  const insightCarouselSlots = useMemo(() => {
+    const cards = insightCarouselCards.slice(0, HOME_ZORD_INSIGHT_SLOT_COUNT)
+    while (cards.length < HOME_ZORD_INSIGHT_SLOT_COUNT) {
+      cards.push({
+        id: `empty-insight-${cards.length}`,
+        type: 'insight' as const,
+        label: 'Insights',
+        paragraph: TENANT_KPI_EMPTY_CAROUSEL_INSIGHT,
+      })
+    }
+    return cards.map((card, index) => (
+      <ZordInsightCarousel
+        key={`home-insight-slot-${index}`}
+        tenantReady={tenantReady}
+        autoplay={false}
+        loading={insightCarouselLoading}
+        cards={[card]}
+      />
+    ))
+  }, [insightCarouselCards, tenantReady, insightCarouselLoading])
+
   const matchConfidencePct = useMemo(() => {
-    if (batchId?.trim()) {
-      if (batchContractLoading) return '…'
-      const conf = parseMatchConfidence(batchContract?.match_confidence)
-      return conf != null ? `${Math.round(conf * 100)}%` : '—'
-    }
-    if (ambData) return `${Math.round((ambData.avg_attachment_confidence ?? 0) * 100)}%`
-    return loading ? '…' : '—'
-  }, [batchId, batchContract, batchContractLoading, ambData, loading])
+    const withPct = (v: string) => (v === '—' || v === '…' ? v : `${v}%`)
+    return withPct(displayApiField(ambData?.avg_attachment_confidence, loading))
+  }, [ambData, loading])
 
-  const missingRefRate = useMemo(() => {
-    if (batchId?.trim()) {
-      if (batchContractLoading) return '…'
-      return parsePercentValue(batchContract?.missing_reference_rate) ?? '—'
-    }
-    return ambData ? `${((ambData.provider_ref_missing_rate ?? 0) * 100).toFixed(1)}%` : '—'
-  }, [batchId, batchContract, batchContractLoading, ambData])
+  const missingRefRate = displayApiField(ambData?.provider_ref_missing_rate, loading)
 
-  const refCompleteness = useMemo(() => {
-    if (batchId?.trim()) {
-      const missingPct = parseMissingReferenceRatePercent(batchContract?.missing_reference_rate)
-      if (missingPct != null) return `${Math.max(0, 100 - missingPct).toFixed(0)}%`
-      return batchContractLoading ? '…' : '—'
-    }
-    if (ambData?.carrier_completeness_rate != null) {
-      return `${(ambData.carrier_completeness_rate * 100).toFixed(0)}%`
-    }
-    return '—'
-  }, [batchId, batchContract, batchContractLoading, ambData])
+  const refCompleteness = displayApiField(ambData?.carrier_completeness_rate, loading)
 
-  const proofCoveragePct = defData
-    ? `${Math.round((defData.evidence_pack_rate ?? 0) * 100)}%`
-    : loading
-      ? '…'
-      : '—'
+  const multiMatchRate = displayApiField(ambData?.candidate_collision_rate, loading)
+
+  const withPct = (v: string) => (v === '—' || v === '…' ? v : `${v}%`)
+  const proofCoveragePct = withPct(displayApiField(defData?.evidence_pack_rate, loading))
+  const proofReadyRow = withPct(displayApiField(defData?.audit_ready_pct, loading))
+  const incompleteProofRow = displayApiField(defData?.weak_evidence_count, loading)
+
+  const settlementHeroDisplay = loading
+    ? '…'
+    : formatKpiMoneyMinor(leakageData?.total_observed_settled_amount_minor)
 
   const nextActions = useMemo(() => {
     const actions: Array<{ title: string; description: string; href?: string; emphasis?: boolean }> = []
@@ -531,206 +477,33 @@ export function HomeSurface({
 
   const trendPanelInner = (
     <>
-        <div className="flex flex-wrap items-start justify-between gap-4 min-w-0">
-          <div>
-            <h2 className={`text-[20px] font-semibold leading-snug tracking-[-0.02em] ${HOME_TITLE_BLACK}`}>
-              {PAYMENT_COMMAND_CENTER.chartTitle}
-            </h2>
-            <p className={`mt-1 ${HOME_BODY_IMPERIAL}`}>{PAYMENT_COMMAND_CENTER.chartSubtitle}</p>
-            <p className={`mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 ${HOME_BODY_IMPERIAL}`}>
-              <span className="inline-flex items-center gap-1.5">
-                <span className="h-2 w-2 shrink-0 rounded-full bg-[#000000]" /> {PAYMENT_COMMAND_CENTER.legendIntended}
-              </span>
-              <span className="inline-flex items-center gap-1.5">
-                <span className="h-2 w-2 shrink-0 rounded-full bg-[#a78bfa]" /> {PAYMENT_COMMAND_CENTER.legendConfirmed}
-              </span>
-              <span className="inline-flex items-center gap-1.5">
-                <span className="h-2 w-2 shrink-0 rounded-full bg-[#f59e0b]" /> {PAYMENT_COMMAND_CENTER.legendReview}
-              </span>
-            </p>
+      <div className="min-w-0">
+        <h2 className={`text-[20px] font-semibold leading-snug tracking-[-0.02em] ${HOME_TITLE_BLACK}`}>
+          {PAYMENT_COMMAND_CENTER.chartTitle}
+        </h2>
+        <p className={`mt-1 ${HOME_BODY_IMPERIAL}`}>{PAYMENT_COMMAND_CENTER.chartSubtitle}</p>
+      </div>
+      <div className="relative z-[1] mt-4 min-w-0">
+        {tenantReady ? (
+          <PaymentTrendPanel
+            className="w-full"
+            series={chartSeriesPoints}
+            loading={chartSeriesLoading || chartSeriesStale}
+            period={chartPeriod}
+            onPeriodChange={setChartPeriod}
+          />
+        ) : (
+          <div className="flex h-[24rem] flex-col items-center justify-center gap-3 rounded-[20px] border border-dashed border-slate-200 bg-[#f3f4f5] px-4 text-center md:h-[26rem]">
+            <Glyph name="chart" className="h-10 w-10 shrink-0 text-black/90" aria-hidden />
+            <span className={`font-semibold ${HOME_TITLE_BLACK}`}>Workspace required</span>
+            <span className={`max-w-md ${HOME_BODY_IMPERIAL}`}>
+              Sign in and select a workspace to plot intended and confirmed value from the intent ledger.
+            </span>
           </div>
-          <div className="flex flex-col items-end gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={`mr-1 text-[14px] font-medium tracking-[0] ${HOME_TITLE_BLACK}`}>Timeframe</span>
-              <select
-                value={timeframe}
-                onChange={(e) => onTimeframeChange(e.target.value as HomeTimeframe)}
-                className="rounded-md border border-[#E5E5E5] bg-white px-3 py-1.5 text-[13px] font-medium text-neutral-800 focus:border-[#000000] focus:outline-none focus:ring-1 focus:ring-black/40"
-              >
-                <option value="Week">Week</option>
-                <option value="Month">Month</option>
-                <option value="Quarter">Quarter</option>
-                <option value="Year">Year</option>
-                <option value="Custom">Custom</option>
-              </select>
-            </div>
-            {trendLoading ? <span className="text-[12px] text-neutral-500">Updating…</span> : null}
-          </div>
-        </div>
-        <div className="relative z-[1] mt-6 min-w-0" onMouseLeave={() => setHoverIndex(null)}>
-          {trendChartReady ? (
-          <>
-            <div
-              className="pointer-events-none absolute inset-y-0 z-[8] bg-white/70"
-              style={{
-                left: `${rangeLeftPercent}%`,
-                width: `${rangeWidthPercent}%`,
-                opacity: 0.08,
-              }}
-              aria-hidden
-            />
-            <div
-              className="pointer-events-auto absolute top-1/2 z-20 w-[15rem] max-w-[calc(100%-2rem)] -translate-y-1/2 rounded-lg border-[0.5px] border-[#E0E0DE] bg-white px-3.5 py-3 shadow-[0_8px_24px_rgba(0,0,0,0.08)] sm:w-[16.5rem]"
-              style={{ left: `clamp(0.5rem, ${tooltipLeftPercent}%, calc(100% - 17rem))` }}
-            >
-              <button
-                type="button"
-                className="absolute right-2 top-2 text-[15px] leading-none text-[#888888] hover:text-[#000000]"
-                aria-label="Dismiss chart note"
-              >
-                ×
-              </button>
-              <div className="text-[11px] font-normal uppercase tracking-[0.06em] text-[#888888]">Date: {monthLabel}</div>
-              <div className={`mt-2 space-y-1 ${HOME_BODY_IMPERIAL_SM}`}>
-                <p>Intended payments: {tooltipIntended}</p>
-                <p>Bank-confirmed: {tooltipConfirmed}</p>
-                <p>Needs review: {tooltipReview}</p>
-              </div>
-              <p className={`mt-2 ${HOME_BODY_IMPERIAL_SM}`}>
-                Zord compares your payment instructions with bank/settlement records for this date.
-              </p>
-            </div>
-          <ClientChart className="h-[24rem] w-full md:h-[26rem]">
-            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={240}>
-              <ComposedChart
-                data={chartData}
-                margin={{ top: 10, right: 28, left: 8, bottom: 8 }}
-                barGap={2}
-                onMouseMove={(state) => {
-                  if (typeof state?.activeTooltipIndex === 'number') {
-                    setHoverIndex(state.activeTooltipIndex)
-                  }
-                }}
-              >
-                <XAxis hide dataKey="point" />
-                <Tooltip
-                  shared={false}
-                  isAnimationActive={false}
-                  cursor={{ fill: 'rgba(15,23,42,0.07)' }}
-                  wrapperStyle={{ outline: 'none' }}
-                  content={() => null}
-                />
-                <YAxis
-                  orientation="right"
-                  axisLine={false}
-                  tickLine={false}
-                  tickMargin={14}
-                  domain={[0, yDomainMax]}
-                  ticks={yTicks}
-                  tickFormatter={(value: number) => (value === 0 ? '0' : `₹${value.toFixed(0)}k`)}
-                  tick={{ fill: '#000000', fontSize: 11, fontWeight: 500 }}
-                />
-                <Bar dataKey="barValue" barSize={4} radius={[0, 0, 0, 0]} isAnimationActive>
-                  {chartData.map((entry) => (
-                    <Cell
-                      key={`home-bar-${entry.point}`}
-                      fill="#000000"
-                      opacity={entry.point === safePoint ? 1 : 0.78}
-                    />
-                  ))}
-                </Bar>
-                <Line
-                  type="monotone"
-                  dataKey="lineValue"
-                  stroke="#a78bfa"
-                  strokeWidth={1.35}
-                  dot={false}
-                  activeDot={false}
-                  strokeLinecap="round"
-                  connectNulls
-                  isAnimationActive
-                />
-                <Line
-                  type="monotone"
-                  dataKey="reviewLineValue"
-                  stroke="#f59e0b"
-                  strokeWidth={1.2}
-                  strokeDasharray="4 3"
-                  dot={false}
-                  activeDot={false}
-                  strokeLinecap="round"
-                  connectNulls
-                  isAnimationActive
-                />
-                {chartData.length > 10 && (
-                  <Brush
-                    dataKey="label"
-                    height={28}
-                    travellerWidth={6}
-                    startIndex={Math.max(0, chartData.length - 14)}
-                    endIndex={chartData.length - 1}
-                    stroke="#e2e8f0"
-                    fill="#f8fafc"
-                    tickFormatter={() => ''}
-                  >
-                    <ComposedChart>
-                      <Bar dataKey="barValue" fill="#000000" opacity={0.4} isAnimationActive={false} />
-                    </ComposedChart>
-                  </Brush>
-                )}
-              </ComposedChart>
-            </ResponsiveContainer>
-          </ClientChart>
-          </>
-          ) : tenantReady && trendLoading ? (
-            <div className="h-[24rem] w-full animate-pulse rounded-lg bg-slate-100 md:h-[26rem]" aria-busy="true" />
-          ) : (
-            <div className="flex h-[24rem] flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-slate-200 bg-white px-4 text-center md:h-[26rem]">
-              <Glyph name="chart" className="h-10 w-10 shrink-0 text-black/90" aria-hidden />
-              {tenantReady ? (
-                <>
-                  <span className={`font-semibold ${HOME_TITLE_BLACK}`}>No trend data in this range</span>
-                  <span className={`max-w-md ${HOME_BODY_IMPERIAL}`}>
-                    Try Week, Month, Quarter, or Year — or wait until intents exist in the selected window. The chart
-                    will populate automatically once payments appear.
-                  </span>
-                </>
-              ) : (
-                <>
-                  <span className={`font-semibold ${HOME_TITLE_BLACK}`}>Workspace required</span>
-                  <span className={`max-w-md ${HOME_BODY_IMPERIAL}`}>
-                    Sign in and select a workspace to plot intended and confirmed value from the intent ledger. This
-                    preview stays empty until a workspace is active.
-                  </span>
-                </>
-              )}
-            </div>
-          )}
-        </div>
+        )}
+      </div>
 
-        {trendChartReady ? (
-          <>
-        <div className="mt-3 h-[13px] rounded-[4px] bg-[#EBEBEA]">
-          <div
-            className="relative h-[13px] rounded-[4px] bg-[#C5C5C2]"
-            style={{ marginLeft: `${rangeLeftPercent}%`, width: `${rangeWidthPercent}%` }}
-          >
-            <div className="absolute inset-y-0 left-0 w-[3px] bg-[#444444]" />
-            <div className="absolute inset-y-0 right-0 w-[3px] bg-[#444444]" />
-          </div>
-        </div>
-
-        <div
-          className="mt-4 grid min-w-0 text-[14px] font-medium tracking-[0] text-[#000000]"
-          style={{ gridTemplateColumns: `repeat(${axisLabelsForChart.length}, minmax(0, 1fr))` }}
-        >
-          {axisLabelsForChart.map((month, i) => (
-            <div key={`trend-axis-${i}`} className="text-center">
-              {month}
-            </div>
-          ))}
-        </div>
-
+      {trendChartReady ? (
         <div className="mt-4 flex flex-wrap justify-center gap-2">
           {chartTags.map((tag) => (
             <span
@@ -741,8 +514,7 @@ export function HomeSurface({
             </span>
           ))}
         </div>
-          </>
-        ) : null}
+      ) : null}
     </>
   )
 
@@ -828,71 +600,33 @@ export function HomeSurface({
           <PaymentCommandCenterBand
             carouselPeriod={carouselPeriod}
             onCarouselPeriodChange={setCarouselPeriod}
-            fullyMatchedValue={
-              settlementHeroMinor !== null
-                ? fmtInrFromMinorExact(settlementHeroMinor)
-                : batchId?.trim() && batchContractLoading
-                  ? '…'
-                  : loading
-                    ? '…'
-                    : '—'
-            }
-            fullyMatchedSub={
-              batchId?.trim()
-                ? 'Confirmed matched value from batch contract (total_confirmed_amount interim mapping).'
-                : 'Settlement value observed from bank or PSP confirmation signals.'
-            }
-            fullyMatchedFooter={
-              batchId?.trim()
-                ? 'Batch-scoped confirmed matched value from batch_contract until confirmed_matched_value_minor KPI ships.'
-                : 'Observed settlement is the value Zord can link to a bank or settlement outcome — not the same as fully matched intent.'
-            }
-            awaitingConfirmation={bankConfirmedMinor == null}
+            fullyMatchedValue={settlementHeroDisplay}
+            fullyMatchedSub="Settlement value confirmed by bank or PSP"
+            fullyMatchedFooter="Includes partial matches and linked outcomes. This is not the same as total intended payment value for the batch."
+            awaitingConfirmation={false}
             reviewValue={reviewDisplay}
-            reviewSub={
-              leakageData != null
-                ? 'Unmatched intent value from payment-to-settlement matching.'
-                : 'No leakage data available for this period.'
-            }
-            reviewFooter="This is unmatched intent value only — not total review exposure across all exception types."
-            unmatchedDisplay={leakageData ? fmtInrFromMinorExact(unmatchedMinor) : '—'}
-            shortSettledDisplay={leakageData ? fmtInrFromMinorExact(underSettlementMinor) : '—'}
-            unlinkedDisplay={leakageData ? fmtInrFromMinorExact(unlinkedSettlementMinor) : '—'}
-            reversalDisplay={leakageData ? fmtInrFromMinorExact(reversalMinor) : '—'}
+            reviewSub="Payments without a confirmed settlement outcome"
+            reviewFooter="Covers payments with no confirmed settlement link. Short-settled, over-settled, unlinked, and reversal amounts are broken out below."
+            shortSettledDisplay={loading ? '…' : formatKpiMoneyMinor(leakageData?.under_settlement_amount_minor)}
+            overSettledDisplay={loading ? '…' : formatKpiMoneyMinor(leakageData?.over_settlement_amount_minor)}
+            unlinkedDisplay={loading ? '…' : formatKpiMoneyMinor(leakageData?.orphan_amount_minor)}
+            reversalDisplay={loading ? '…' : formatKpiMoneyMinor(leakageData?.reversal_exposure_minor)}
             reviewHref="/payout-command-view/today?dock=leakage"
             matchConfidencePct={matchConfidencePct}
             matchConfidenceSub="Average match confidence"
-            paymentsNeedingReview={
-              ambData?.ambiguous_intent_count != null ? String(ambData.ambiguous_intent_count) : '—'
-            }
+            matchConfidenceFooter={undefined}
+            paymentsNeedingReview={displayApiField(ambData?.ambiguous_intent_count, loading)}
             missingRefRate={missingRefRate}
             refCompleteness={refCompleteness}
-            multiMatchRate={
-              ambData?.candidate_collision_rate != null
-                ? `${(ambData.candidate_collision_rate * 100).toFixed(1)}%`
-                : '—'
-            }
+            multiMatchRate={multiMatchRate}
             proofCoverageDisplay={proofCoveragePct}
             proofSub="Evidence coverage for audit or export"
             proofFooter="Proof-ready payments have enough linked evidence to support audit or dispute export."
-            proofReadyRow={defData ? `${Math.round((defData.audit_ready_pct ?? 0) * 100)}% audit-ready` : '—'}
-            incompleteProofRow={
-              defData
-                ? `${Math.max(0, 100 - Math.round((defData.evidence_pack_rate ?? 0) * 100))}% incomplete`
-                : '—'
-            }
+            proofReadyRow={proofReadyRow}
+            incompleteProofRow={incompleteProofRow}
             proofHref="/payout-command-view/today?dock=proof"
             nextActions={{ actions: nextActions, completionHint }}
-            insightCarousel={
-              <ZordInsightCarousel
-                key={`${tenantId || 'no-tenant'}-${carouselPeriod}`}
-                tenantReady={tenantReady}
-                autoplay
-                interval={4000}
-                loading={insightCarouselLoading}
-                cards={insightCarouselCards}
-              />
-            }
+            insightCarousels={insightCarouselSlots}
           />
         </section>
 

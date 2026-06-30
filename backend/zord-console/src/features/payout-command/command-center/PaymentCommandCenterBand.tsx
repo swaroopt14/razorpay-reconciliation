@@ -12,18 +12,20 @@ import { HOME_BODY_IMPERIAL, HOME_TITLE_BLACK } from './homeCommandCenterTokens'
 
 export type PaymentCommandCenterBandProps = PaymentHealthCardsProps & {
   nextActions: NextActionsPanelProps
-  insightCarousel?: ReactNode
+  insightCarousels?: ReactNode[]
   carouselPeriod: CarouselInsightPeriod
   onCarouselPeriodChange: (p: CarouselInsightPeriod) => void
 }
 
 export function PaymentCommandCenterBand({
   nextActions,
-  insightCarousel,
+  insightCarousels,
   carouselPeriod,
   onCarouselPeriodChange,
   ...healthCards
 }: PaymentCommandCenterBandProps) {
+  const slots = insightCarousels?.filter(Boolean) ?? []
+
   return (
     <div className="space-y-4">
       <div className="rounded-[12px] border border-slate-200/90 bg-white/95 px-3 py-2.5 shadow-[0_2px_12px_rgba(15,23,42,0.04)] sm:px-3.5 sm:py-2.5">
@@ -43,7 +45,7 @@ export function PaymentCommandCenterBand({
         <NextActionsPanel {...nextActions} />
       </div>
 
-      {insightCarousel ? (
+      {slots.length > 0 ? (
         <div className="space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className={`text-[14px] font-semibold ${HOME_TITLE_BLACK}`}>Insights</p>
@@ -64,7 +66,13 @@ export function PaymentCommandCenterBand({
               ))}
             </div>
           </div>
-          <div className="min-h-[300px]">{insightCarousel}</div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {slots.map((slot, index) => (
+              <div key={index} className="min-h-[260px]">
+                {slot}
+              </div>
+            ))}
+          </div>
         </div>
       ) : null}
     </div>

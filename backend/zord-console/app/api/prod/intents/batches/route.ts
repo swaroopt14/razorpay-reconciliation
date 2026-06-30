@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { BACKEND_SERVICES } from '@/config/api.endpoints'
 import {
   applyRefreshedSessionCookies,
-  requireSessionTenantForProdProxy,
-  TENANT_MISMATCH_BODY,
 } from '@/services/auth/resolvePayoutTenant.server'
+import {
+  intentEngineForwardHeaders,
+  requireIntentEngineProxyGate,
+} from '../_intentEngineProxy'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,21 +16,15 @@ type BatchIdItem = { batch_id?: string }
 type LitePaymentIntent = Record<string, unknown>
 type LiteDlqItem = Record<string, unknown>
 
-function tenantHeaders(tenantId: string, batchId?: string): HeadersInit {
-  return {
-    'content-type': 'application/json',
-    'x-tenant-id': tenantId,
-    'tenant-id': tenantId,
-    tenant_id: tenantId,
-    ...(batchId ? { batch_id: batchId } : {}),
-  }
+function tenantHeaders(tenantId: string, authorization: string, batchId?: string): HeadersInit {
+  return intentEngineForwardHeaders(tenantId, authorization, batchId)
 }
 
-async function engineGet(path: string, tenantId: string, batchId?: string) {
+async function engineGet(path: string, tenantId: string, authorization: string, batchId?: string) {
   const url = `${ENGINE}${path}`
   const res = await fetch(url, {
     method: 'GET',
-    headers: tenantHeaders(tenantId, batchId),
+    headers: tenantHeaders(tenantId, authorization, batchId),
     cache: 'no-store',
   })
   const text = await res.text()
@@ -72,16 +68,10 @@ function paginate<T>(items: T[], page: number, pageSize: number) {
  * batch command center and other callers still on /batches.
  */
 export async function GET(request: NextRequest) {
-  const gate = await requireSessionTenantForProdProxy(request)
+  const gate = await requireIntentEngineProxyGate(request)
   if (!gate.ok) return gate.response
   const tenantId = gate.tenantId
-
-  const queryTenant = request.nextUrl.searchParams.get('tenant_id')?.trim()
-  if (queryTenant && queryTenant !== tenantId) {
-    const res = NextResponse.json(TENANT_MISMATCH_BODY, { status: 403 })
-    applyRefreshedSessionCookies(res, gate.refreshedPayload)
-    return res
-  }
+  const authorization = gate.authorization
 
   const batchId = request.nextUrl.searchParams.get('batch_id')?.trim()
   const page = Math.max(1, Number.parseInt(request.nextUrl.searchParams.get('page') ?? '1', 10) || 1)
@@ -91,7 +81,7 @@ export async function GET(request: NextRequest) {
   )
 
   try {
-    const idsRes = await engineGet('/api/prod/intents/batch-ids', tenantId)
+    const idsRes = await engineGet('/api/prod/intents/batch-ids', tenantId, authorization)
     if (idsRes.status >= 500) {
       const res = NextResponse.json(
         { error: 'intent-engine error', upstream_status: idsRes.status },
@@ -115,8 +105,8 @@ export async function GET(request: NextRequest) {
     }
 
     const [piRes, dlqRes] = await Promise.all([
-      engineGet('/api/prod/intents/payment-intents', tenantId, batchId),
-      engineGet('/api/prod/intents/dlq-items', tenantId, batchId),
+      engineGet('/api/prod/intents/payment-intents', tenantId, authorization, batchId),
+      engineGet('/api/prod/intents/dlq-items', tenantId, authorization, batchId),
     ])
 
     if (piRes.status >= 500 || dlqRes.status >= 500) {

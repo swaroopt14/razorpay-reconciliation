@@ -46,7 +46,7 @@ spec:
               app.kubernetes.io/name: zord-console
       containers:
         - name: zord-console
-          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-console:v4
+          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-console:v12
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
@@ -60,6 +60,8 @@ spec:
               value: "3000"
             - name: HOSTNAME
               value: 0.0.0.0
+            - name: AUTH_COOKIE_SECURE
+              value: "true"
             - name: ZORD_EDGE_URL
               value: http://zord-edge:8080
             - name: ZORD_VAULT_URL
@@ -82,6 +84,20 @@ spec:
               value: http://zord-prompt-layer:8086
             - name: NEXT_PUBLIC_PROMPT_LAYER_URL
               value: /api/prompt-layer
+            - name: ZORD_BULK_INGEST_SOURCE_TYPE
+              value: CSV
+            - name: ZORD_BULK_INGEST_SOURCE_CLASS
+              value: INTENT
+            - name: SLACK_LEADS_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: zord-app-secrets
+                  key: SLACK_LEADS_WEBHOOK_URL
+            - name: SLACK_SUPPORT_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: zord-app-secrets
+                  key: SLACK_SUPPORT_WEBHOOK_URL
           readinessProbe:
             httpGet:
               path: /api/health

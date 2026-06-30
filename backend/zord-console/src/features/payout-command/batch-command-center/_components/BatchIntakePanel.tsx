@@ -1,7 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { type ReactNode, type Ref, useCallback, useEffect, useMemo, useState } from 'react'
+import { type ReactNode, type Ref, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useDebouncedValue } from '@/app/hooks/useDebouncedValue'
 import { useSessionTenant } from '@/services/auth/useSessionTenantId'
 import { markSandboxSetupStep } from '@/services/payout-command/sandbox-setup-guide'
 import { COMMAND_CENTER_LABEL_GREEN, HOME_BODY_IMPERIAL_SM } from '../../command-center/homeCommandCenterTokens'
@@ -61,10 +62,14 @@ export type BatchUploadStatus = {
   message: string | null
 }
 
+const BATCH_REFERENCE_DEBOUNCE_MS = 450
+
 type BatchIntakePanelProps = {
-  batchIdInput: string
+  /** Committed batch id from URL / parent — syncs into the local draft when it changes externally. */
+  committedBatchId: string
   batchReferenceRef?: Ref<HTMLInputElement>
-  onBatchIdChange: (value: string) => void
+  /** Called after the user pauses typing — drives API load and URL without blocking the input. */
+  onBatchIdCommit: (value: string) => void
   isSandboxRoute: boolean
   onIntentIngestSuccess: (payload: IntentIngestSuccessPayload) => void
   onSettlementIngestSuccess: (payload: SettlementIngestSuccessPayload) => void
@@ -74,9 +79,9 @@ type BatchIntakePanelProps = {
 }
 
 export function BatchIntakePanel({
-  batchIdInput,
+  committedBatchId,
   batchReferenceRef,
-  onBatchIdChange,
+  onBatchIdCommit,
   isSandboxRoute,
   onIntentIngestSuccess,
   onSettlementIngestSuccess,
@@ -85,6 +90,29 @@ export function BatchIntakePanel({
   onIntentUploadFailed,
 }: BatchIntakePanelProps) {
   const { tenantId, tenantReady, refreshTenant } = useSessionTenant()
+  const [draftBatchRef, setDraftBatchRef] = useState(committedBatchId)
+  const debouncedDraftBatchRef = useDebouncedValue(draftBatchRef, BATCH_REFERENCE_DEBOUNCE_MS)
+  const lastCommittedRef = useRef(committedBatchId)
+
+  useEffect(() => {
+    setDraftBatchRef(committedBatchId)
+    lastCommittedRef.current = committedBatchId
+  }, [committedBatchId])
+
+  useEffect(() => {
+    if (debouncedDraftBatchRef === lastCommittedRef.current) return
+    lastCommittedRef.current = debouncedDraftBatchRef
+    onBatchIdCommit(debouncedDraftBatchRef)
+  }, [debouncedDraftBatchRef, onBatchIdCommit])
+
+  const commitBatchRefImmediately = useCallback(
+    (value: string) => {
+      setDraftBatchRef(value)
+      lastCommittedRef.current = value
+      onBatchIdCommit(value)
+    },
+    [onBatchIdCommit],
+  )
   const [sourceType, setSourceType] = useState<SourceTypeOption>(BATCH_REVIEW_COPY.fields.sourceTypeOptions[0])
   const [sourceSystem, setSourceSystem] = useState('')
   const [psp, setPsp] = useState(() => process.env.NEXT_PUBLIC_ZORD_SETTLEMENT_PSP ?? 'razorpay')
@@ -112,11 +140,11 @@ export function BatchIntakePanel({
   }, [sourceType])
 
   const settlementBatchIdResolved = useMemo(
-    () => (settlementBatchId ?? batchIdInput.trim()).trim(),
-    [batchIdInput, settlementBatchId],
+    () => (settlementBatchId ?? draftBatchRef.trim()).trim(),
+    [draftBatchRef, settlementBatchId],
   )
 
-  const hasManualOrServerBatchId = useMemo(() => batchIdInput.trim().length > 0, [batchIdInput])
+  const hasManualOrServerBatchId = useMemo(() => draftBatchRef.trim().length > 0, [draftBatchRef])
 
   const settlementCredentialsReady = useMemo(
     () =>
@@ -191,7 +219,7 @@ export function BatchIntakePanel({
   const onIntentBatchUpload = useCallback(async () => {
     const file = selectedIntentFile
     if (!file) return
-    const userBatchId = batchIdInput.trim()
+    const userBatchId = draftBatchRef.trim()
     setIntentFileName(file.name)
     setIntentIngestOk(false)
     setSettlementFileName(null)
@@ -215,7 +243,7 @@ export function BatchIntakePanel({
         const batchToKeep = userBatchId || result.batchIdFromBody
         if (batchToKeep) {
           setSettlementBatchId(batchToKeep)
-          if (batchToKeep !== batchIdInput.trim()) onBatchIdChange(batchToKeep)
+          if (batchToKeep !== draftBatchRef.trim()) commitBatchRefImmediately(batchToKeep)
           onIntentUploadFailed?.(batchToKeep)
         }
         const detail = result.errorMessage?.trim() || `HTTP ${result.httpStatus}`
@@ -232,7 +260,7 @@ export function BatchIntakePanel({
         throw new Error('Upload succeeded but the server did not return a batch reference.')
       }
       setSettlementBatchId(effectiveBatch)
-      if (effectiveBatch !== batchIdInput.trim()) onBatchIdChange(effectiveBatch)
+      if (effectiveBatch !== draftBatchRef.trim()) commitBatchRefImmediately(effectiveBatch)
       setIntentIngestOk(true)
       void refreshTenant()
       markSandboxSetupStep('intent-ingest')
@@ -256,9 +284,9 @@ export function BatchIntakePanel({
       setUploadState('idle')
     }
   }, [
-    batchIdInput,
+    draftBatchRef,
     bulkForceReprocess,
-    onBatchIdChange,
+    commitBatchRefImmediately,
     onIntentIngestSuccess,
     onIntentUploadFailed,
     refreshTenant,
@@ -282,7 +310,7 @@ export function BatchIntakePanel({
     const file = selectedSettlementFile
     if (!file) return
     const pspVal = psp.trim().toLowerCase()
-    const bid = (settlementBatchId ?? batchIdInput.trim()).trim()
+    const bid = (settlementBatchId ?? draftBatchRef.trim()).trim()
     if (!tenantReady || !pspVal || !bid) {
       reportUploadStatus(
         'failed',
@@ -325,7 +353,7 @@ export function BatchIntakePanel({
       setIntakeStep('intent_ready')
     }
   }, [
-    batchIdInput,
+    draftBatchRef,
     onSettlementIngestSuccess,
     psp,
     reportUploadStatus,
@@ -380,8 +408,8 @@ export function BatchIntakePanel({
             </span>
             <input
               ref={batchReferenceRef}
-              value={batchIdInput}
-              onChange={(e) => onBatchIdChange(e.target.value)}
+              value={draftBatchRef}
+              onChange={(e) => setDraftBatchRef(e.target.value)}
               placeholder={c.fields.batchReferencePlaceholder}
               className="h-9 rounded-lg border border-[#E5E5E5] bg-white px-2.5 text-[13px] text-[#0A0A0A] outline-none focus:border-[#6366f1]/50"
             />

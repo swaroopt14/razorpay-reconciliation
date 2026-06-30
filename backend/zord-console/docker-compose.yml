@@ -21,6 +21,8 @@ services:
       # Default 8089 matches zord-intelligence (see config/api.endpoints.ts). 8080 is zord-edge — wrong target for KPI/batch proxies.
       - ZORD_INTELLIGENCE_URL=${ZORD_INTELLIGENCE_URL:-http://host.docker.internal:8089}
       - ZORD_BULK_INGEST_API_KEY=${ZORD_BULK_INGEST_API_KEY:-}
+      - SLACK_LEADS_WEBHOOK_URL=${SLACK_LEADS_WEBHOOK_URL:-}
+      - SLACK_SUPPORT_WEBHOOK_URL=${SLACK_SUPPORT_WEBHOOK_URL:-}
       - ZORD_BULK_INGEST_SOURCE_TYPE=${ZORD_BULK_INGEST_SOURCE_TYPE:-CSV}
       - ZORD_BULK_INGEST_SOURCE_CLASS=${ZORD_BULK_INGEST_SOURCE_CLASS:-INTENT}
       - ZORD_EDGE_URL=${ZORD_EDGE_URL:-http://host.docker.internal:8080}
@@ -33,6 +35,9 @@ services:
       - ZORD_EVIDENCE_URL=${ZORD_EVIDENCE_URL:-http://host.docker.internal:8088}
       - ZORD_CONTRACTS_URL=${ZORD_CONTRACTS_URL:-http://host.docker.internal:8084}
       - ZORD_PII_ENCLAVE_URL=${ZORD_PII_ENCLAVE_URL:-http://host.docker.internal:8085}
+    volumes:
+      # Persist support tickets across container restarts (see services/support/supportTicketStore.server.ts).
+      - ./.data:/app/.data
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped

@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: zord-intelligence
 spec:
-  replicas: 2
+  replicas: 1
   minReadySeconds: 10
   strategy:
     type: RollingUpdate
@@ -46,7 +46,7 @@ spec:
               app.kubernetes.io/name: zord-intelligence
       containers:
         - name: zord-intelligence
-          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-intelligence:v4
+          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-intelligence:v12
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8089
@@ -91,7 +91,7 @@ spec:
             periodSeconds: 20
           resources:
             requests:
-              cpu: 500m
+              cpu: 400m
               memory: 1Gi
             limits:
               cpu: "1.5"

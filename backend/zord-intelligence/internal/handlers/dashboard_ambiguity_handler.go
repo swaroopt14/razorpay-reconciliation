@@ -23,6 +23,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"time"
 
@@ -60,7 +61,6 @@ type ambiguityKPIFields struct {
 	AmbiguityRate           float64         `json:"ambiguity_rate"`
 	AvgAttachmentConfidence float64         `json:"avg_attachment_confidence"`
 	ProviderRefMissingRate  float64         `json:"provider_ref_missing_rate"`
-	ValueAtRiskMinor        decimal.Decimal `json:"value_at_risk_minor"`
 	AmbiguousAmountMinor    decimal.Decimal `json:"ambiguous_amount_minor"`
 	LowConfidenceRate       float64         `json:"low_confidence_rate"`
 	CandidateCollisionRate  float64         `json:"candidate_collision_rate"`
@@ -164,15 +164,16 @@ func (h *DashboardAmbiguityHandler) GetAmbiguityKPIs(w http.ResponseWriter, r *h
 	resp.WindowStart = &snap.WindowStart
 	resp.WindowEnd = &snap.WindowEnd
 	resp.ComputedAt = &snap.CreatedAt
+	pct := func(v float64) float64 { return math.Round(v*10000) / 100 }
 	resp.AmbiguousIntentCount = kpis.AmbiguousIntentCount
-	resp.AmbiguityRate = kpis.AmbiguityRate
-	resp.AvgAttachmentConfidence = kpis.AvgAttachmentConfidence
-	resp.ProviderRefMissingRate = kpis.ProviderRefMissingRate
-	resp.LowConfidenceRate = kpis.LowConfidenceRate
-	resp.CandidateCollisionRate = kpis.CandidateCollisionRate
-	resp.AvgScoreMargin = kpis.AvgScoreMargin
-	resp.CarrierCompletenessRate = kpis.CarrierCompletenessRate
-	resp.ValueAtRiskMinor = kpis.ValueAtRiskMinor
+	resp.AmbiguityRate = pct(kpis.AmbiguityRate)
+	resp.AvgAttachmentConfidence = pct(kpis.AvgAttachmentConfidence)
+	resp.ProviderRefMissingRate = pct(kpis.ProviderRefMissingRate)
+	resp.LowConfidenceRate = pct(kpis.LowConfidenceRate)
+	resp.CandidateCollisionRate = pct(kpis.CandidateCollisionRate)
+	resp.AvgScoreMargin = math.Round(kpis.AvgScoreMargin*100) / 100
+	resp.CarrierCompletenessRate = pct(kpis.CarrierCompletenessRate)
+	resp.ValueAtRiskMinor = kpis.AmbiguousAmountMinor
 	resp.RiskTier = kpis.RiskTier
 
 	// ── A3: ambiguous_amount_rate — needs total_intended from LEAKAGE snapshot ──

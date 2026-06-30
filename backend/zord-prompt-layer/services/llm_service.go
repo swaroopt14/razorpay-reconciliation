@@ -255,7 +255,7 @@ func (s *LLMService) GenerateFromContextScopedWithConfidence(userQuery string, c
 
 	return out, nil
 }
-func (s *LLMService) ClassifyQueryIntent(userQuery string) (QueryClassDecision, error) {
+func (s *LLMService) ClassifyQueryIntent(userQuery string, memoryContext string) (QueryClassDecision, error) {
 	prompt := "You are the strict intent classifier for the Zord payment-operations assistant.\n" +
 		"Return strict JSON only.\n" +
 		"Do not include markdown.\n" +
@@ -266,13 +266,29 @@ func (s *LLMService) ClassifyQueryIntent(userQuery string) (QueryClassDecision, 
 		"3. navigation_or_how_to\n" +
 		"4. evidence_or_dispute_query\n" +
 		"5. out_of_scope\n\n" +
+		"Definitions:\n" +
+		"- operational_data_query: user asks about current payment data, payment instructions, batches, payouts, settlements, settlement matching, confirmations, pending items, failures, duplicate processing, unmatched value, unresolved value, review value, proof readiness, evidence coverage, risk, trends, uploaded files, value status, or operational status. The user does not need to use technical words like intent.\n" +
+		"- product_explanation: user asks what Zord is, how Zord works, what a product term means, what payment instructions/intents mean, or what a feature means without asking about current tenant data.\n" +
+		"- navigation_or_how_to: user asks where to click, how to upload, how to export, how to review, how to open a batch, how to use the dashboard, or what to do next inside Zord.\n" +
+		"- evidence_or_dispute_query: user asks specifically about proof packs, evidence packs, dispute resolution, audit export, verification, missing evidence, missing proof, or whether a payment can be supported for review/export.\n" +
+		"- out_of_scope: unrelated personal/general chatter not relevant to Zord, payment operations, proof, settlement, payout, evidence, or product usage.\n\n" +
 		"Rules:\n" +
-		"- needs_visualization=true only if user explicitly asks chart/graph/trend/visualization/comparison over time/visual breakdown.\n" +
+		"- If a query is related to Zord, payments, payout operations, settlement, proof, evidence, upload, review, or resolution, it is never out_of_scope.\n" +
+		"- Mixed questions like 'explain intents and what measures should I take to resolve it' are in-scope. Classify them as product_explanation if mostly conceptual, or operational_data_query if asking about current tenant data.\n" +
+		"- Questions like 'how many came in', 'what is pending', 'what failed', 'what is stuck', 'when will settlement arrive', 'what is unmatched', 'what is unresolved', and 'what needs review' are operational_data_query when they refer to Zord workspace context.\n" +
+		"- Use evidence_or_dispute_query only for explicit evidence pack, proof pack, dispute, audit export, or verification questions.\n" +
+		"- needs_visualization=true only if the user explicitly asks for chart, graph, trend, visualization, comparison over time, or visual breakdown.\n" +
 		"- needs_data=true for operational_data_query and evidence_or_dispute_query.\n" +
-		"- needs_data=false for product_explanation and navigation_or_how_to unless user asks about current data.\n" +
+		"- needs_data=false for product_explanation and navigation_or_how_to unless the user asks about current data.\n" +
 		"- confidence must be between 0 and 1.\n\n" +
 		"Return JSON schema:\n" +
 		"{\"class\":\"operational_data_query | product_explanation | navigation_or_how_to | evidence_or_dispute_query | out_of_scope\",\"confidence\":0.0,\"needs_data\":true,\"needs_visualization\":false,\"reason\":\"short plain reason\"}\n\n" +
+		"Conversation memory rules:\n" +
+		"- Use CONVERSATION MEMORY to understand short follow-up questions like 'is this good?', 'why?', 'what should I do?', 'what about this?', 'explain that', 'is it risky?', 'what next?', or 'should I worry?'.\n" +
+		"- If the current query is a short follow-up and CONVERSATION MEMORY contains payment status, batch status, unmatched value, settlement, proof, evidence, pending, failed, processing, review, uploaded file, or operational facts, classify it as operational_data_query unless the user clearly changes to an unrelated topic.\n" +
+		"- Never classify a short follow-up as out_of_scope only because it does not repeat payment words.\n" +
+		"- Do not classify a follow-up as product_explanation only because it is short or vague.\n\n" +
+		"CONVERSATION MEMORY:\n" + strings.TrimSpace(memoryContext) + "\n\n" +
 		"USER QUERY:\n" + userQuery
 
 	raw, err := s.gemini.Generate(prompt)
@@ -290,13 +306,7 @@ func (s *LLMService) ClassifyQueryIntent(userQuery string) (QueryClassDecision, 
 	if err := json.Unmarshal([]byte(clean), &out); err != nil {
 		return QueryClassDecision{}, err
 	}
-
 	out.Confidence = clamp01(out.Confidence)
-	switch out.Class {
-	case "operational_data_query", "product_explanation", "navigation_or_how_to", "evidence_or_dispute_query", "out_of_scope":
-	default:
-		out.Class = "product_explanation"
-	}
 	return out, nil
 }
 func (s *LLMService) GenerateOperationalJSON(userQuery, context, visRule string) (OperationalPromptResult, error) {
@@ -319,6 +329,8 @@ func (s *LLMService) GenerateOperationalJSON(userQuery, context, visRule string)
 			"- Do not use backend metric names.\n" +
 			"- Copy numeric and money values exactly as shown in CONTEXT. Do not divide, multiply, round, add commas, remove decimals, add decimals, or change the numeric representation.\n" +
 			"- If CONTEXT says INR 13146, answer INR 13146 exactly. Do not write INR 131.46 or INR 13,146.\n" +
+			"- Be explainable enough for business users: give the direct answer, then briefly explain what it means operationally.\n" +
+			"- If the user asks a broad status/count/question, summarize the most important business takeaway instead of only repeating one record.\n" +
 			"- Do not say \"leakage\" unless context clearly says money is actually lost. Prefer \"payment gap\", \"value needing review\", or \"unclear value\".\n" +
 			"- Do not say \"confirmed\" unless bank/settlement/outcome data is available.\n" +
 			"- Do not say \"proof-ready\" unless evidence data is available.\n" +
@@ -329,12 +341,22 @@ func (s *LLMService) GenerateOperationalJSON(userQuery, context, visRule string)
 			"- If both are available, explain matched value, unmatched value, review value, and confidence if present.\n" +
 			"- If data_available=false for any section, explain missing data in plain language.\n" +
 			"- If denominator is zero/unavailable, do not present 0% as real performance; say not available yet.\n\n" +
+			"Business context rules:\n" +
+			"- For payment count questions, explain whether the number refers to received payment instructions, processed instructions, failed instructions, or records needing review.\n" +
+			"- For settlement arrival questions, use the latest relevant timestamp and settlement policy from CONTEXT when available. Present it as an estimate, not a guarantee.\n" +
+			"- For duplicate processing questions, rely on duplicate-control evidence from CONTEXT and explain whether there is no indication, possible conflict, or needs review.\n" +
+			"- For follow-up questions using words like those, them, that, these, or same ones, use RESOLVED_QUERY_CONTEXT if present.\n\n" +
 			"Count and aggregate rules:\n" +
 			"- For count questions, use only aggregate summary values from CONTEXT.\n" +
 			"- Never estimate totals by counting sample records or citations.\n" +
 			"- Clearly distinguish payment instructions received, payment instructions processed, failed payment instructions, DLQ entries, and unique payment instructions affected by DLQ.\n" +
 			"- If CONTEXT includes a status breakdown, explain the most important status groups in business language.\n" +
 			"- If aggregate summary is missing for a count question, say the total cannot be calculated from current data.\n\n" +
+			"Outcome summary rules:\n" +
+			"- If CONTEXT contains Outcome settlement matching summary, use it as the strongest source for settlement matching, unmatched value, unresolved payments, match confidence, and batch review status.\n" +
+			"- payment_instructions_covered means payment instructions included in settlement matching coverage. Do not describe it as every payment instruction received in the entire system unless CONTEXT also says that.\n" +
+			"- For raw received-payment count questions, prefer explicit payment instruction aggregate context when present. If only outcome summary exists, clearly say the count is for settlement matching coverage.\n" +
+			"- Do not infer totals from sample payment rows when outcome or aggregate summary is present.\n\n" +
 			"Policy rules:\n" +
 			"- Follow the policy facts provided in CONTEXT. Do not invent policy outcomes.\n" +
 			"- If a policy summary is present, treat it as more reliable than sample records.\n\n" +
@@ -492,6 +514,27 @@ func (s *LLMService) GenerateNavigationHowTo(userQuery, context string) (string,
 			"Return a short, clear answer."
 
 	return s.gemini.Generate(prompt)
+}
+func (s *LLMService) UpdateConversationSummary(previousSummary, userQuery, assistantAnswer string) (string, error) {
+	prompt :=
+		"You are Zord's conversation memory summarizer.\n" +
+			"Create a compact factual memory summary for the next turn.\n" +
+			"Use only the previous summary, latest user query, and latest assistant answer.\n" +
+			"Do not invent facts.\n" +
+			"Do not include internal identifiers, UUIDs, tenant_id, user_id, session_id, intent_id, trace_id, hashes, tokens, secrets, raw payloads, or encrypted values.\n" +
+			"Preserve numeric and money values exactly as shown. Do not divide, multiply, round, add commas, or change decimal places.\n" +
+			"Keep the summary focused on what the user is discussing, key business facts, current status, important values, missing data, and likely follow-up references.\n" +
+			"Write plain text only. No markdown. Maximum 900 characters.\n\n" +
+			"PREVIOUS SUMMARY:\n" + previousSummary + "\n\n" +
+			"LATEST USER QUERY:\n" + userQuery + "\n\n" +
+			"LATEST ASSISTANT ANSWER:\n" + assistantAnswer + "\n\n" +
+			"UPDATED SUMMARY:"
+
+	raw, err := s.gemini.Generate(prompt)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(raw), nil
 }
 func clamp01(v float64) float64 {
 	if v < 0 {

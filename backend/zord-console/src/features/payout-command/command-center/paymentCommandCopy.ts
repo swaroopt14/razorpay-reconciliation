@@ -16,7 +16,7 @@ export const PAYMENT_COMMAND_CENTER = {
     'Shows how payment instructions compare with bank/settlement confirmations over time.',
   legendIntended: 'Intended Payment Value',
   legendConfirmed: 'Bank-Confirmed Value',
-  legendReview: 'Value Needing Review',
+  legendReview: 'Exposure amount',
   chipHighValue: 'High value',
   chipConfirmationGap: 'Confirmation gap',
   chipReviewNeeded: 'Review needed',

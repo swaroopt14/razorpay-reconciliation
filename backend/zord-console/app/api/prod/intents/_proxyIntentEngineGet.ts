@@ -1,35 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { BACKEND_SERVICES } from '@/config/api.endpoints'
+import { applyRefreshedSessionCookies } from '@/services/auth/resolvePayoutTenant.server'
 import {
-  applyRefreshedSessionCookies,
-  requireSessionTenantForProdProxy,
-  TENANT_MISMATCH_BODY,
-} from '@/services/auth/resolvePayoutTenant.server'
+  intentEngineForwardHeaders,
+  requireIntentEngineProxyGate,
+} from './_intentEngineProxy'
 
 export const dynamic = 'force-dynamic'
 
 type ProxyOptions = {
   upstreamPath: string
-  /** Extra query params forwarded upstream (tenant_id is always injected). */
+  /** Extra query params forwarded upstream (tenant_id is never forwarded — headers only). */
   query?: Record<string, string | undefined>
-  /** Extra headers forwarded upstream (tenant headers always set). */
-  headers?: Record<string, string | undefined>
 }
 
-/** Proxy GET to zord-intent-engine; tenant from session only. */
+/** Proxy GET to zord-intent-engine; tenant + auth from session headers only. */
 export async function proxyIntentEngineGet(request: NextRequest, options: ProxyOptions) {
-  const gate = await requireSessionTenantForProdProxy(request)
+  const gate = await requireIntentEngineProxyGate(request)
   if (!gate.ok) return gate.response
-  const tenantId = gate.tenantId
 
-  const queryTenant = request.nextUrl.searchParams.get('tenant_id')?.trim()
-  if (queryTenant && queryTenant !== tenantId) {
-    const res = NextResponse.json(TENANT_MISMATCH_BODY, { status: 403 })
-    applyRefreshedSessionCookies(res, gate.refreshedPayload)
-    return res
-  }
-
-  const upstreamParams = new URLSearchParams({ tenant_id: tenantId })
+  const upstreamParams = new URLSearchParams()
   for (const [k, v] of Object.entries(options.query ?? {})) {
     const trimmed = v?.trim()
     if (trimmed) upstreamParams.set(k, trimmed)
@@ -39,23 +29,18 @@ export async function proxyIntentEngineGet(request: NextRequest, options: ProxyO
     if (!upstreamParams.has(k) && v.trim()) upstreamParams.set(k, v)
   }
 
-  const url = `${BACKEND_SERVICES.INTENT_ENGINE.BASE_URL}${options.upstreamPath}?${upstreamParams.toString()}`
-
   const batchId =
     options.query?.batch_id?.trim() ||
     request.nextUrl.searchParams.get('batch_id')?.trim() ||
-    options.headers?.batch_id?.trim()
+    undefined
+
+  const query = upstreamParams.toString()
+  const url = `${BACKEND_SERVICES.INTENT_ENGINE.BASE_URL}${options.upstreamPath}${query ? `?${query}` : ''}`
 
   try {
     const upstream = await fetch(url, {
       method: 'GET',
-      headers: {
-        'content-type': 'application/json',
-        'x-tenant-id': tenantId,
-        'tenant-id': tenantId,
-        tenant_id: tenantId,
-        ...(batchId ? { batch_id: batchId } : {}),
-      },
+      headers: intentEngineForwardHeaders(gate.tenantId, gate.authorization, batchId),
       cache: 'no-store',
     })
     const text = await upstream.text()

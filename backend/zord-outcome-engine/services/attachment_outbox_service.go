@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 	"zord-outcome-engine/db"
 	"zord-outcome-engine/models"
@@ -68,6 +69,7 @@ func (s *AttachmentOutboxService) EmitForJob(
 		Currency            string
 		Amount              decimal.Decimal
 		IntendedExecutionAt *time.Time
+		ClientBatchRef      *string
 	}
 	intentLookup := make(map[uuid.UUID]intentInfo)
 	var intentIDs []uuid.UUID
@@ -84,7 +86,8 @@ func (s *AttachmentOutboxService) EmitForJob(
 				COALESCE(corridor, ''),
 				currency_code,
 				amount,
-				intended_execution_at
+				intended_execution_at,
+				client_batch_ref
 			FROM canonical_intents
 			WHERE intent_id = ANY($1)`, pq.Array(intentIDs))
 		if err != nil {
@@ -96,7 +99,8 @@ func (s *AttachmentOutboxService) EmitForJob(
 			var cID uuid.UUID
 			var amt decimal.Decimal
 			var intendedAt *time.Time
-			if err := rows.Scan(&idStr, &cID, &corrID, &curr, &amt, &intendedAt); err != nil {
+			var clientBatchRef *string
+			if err := rows.Scan(&idStr, &cID, &corrID, &curr, &amt, &intendedAt, &clientBatchRef); err != nil {
 				continue
 			}
 			id, _ := uuid.Parse(idStr)
@@ -107,21 +111,23 @@ func (s *AttachmentOutboxService) EmitForJob(
 				Currency:            curr,
 				Amount:              amt,
 				IntendedExecutionAt: intendedAt,
+				ClientBatchRef:      clientBatchRef,
 			}
 		}
 		rows.Close()
 	}
 
-	// 2. Fetch batch summary data for aggregate amounts
+	// 2. Fetch batch summary data for aggregate amounts and batch_id fallback
+	var summaryBatchID *string
 	var totalIntendedAmount, totalConfirmedAmount, totalVariance, originalSettledAmount decimal.Decimal
 	row := db.DB.QueryRowContext(ctx, `
-		SELECT total_intended_amount,original_settled_amount, total_observed_amount, total_variance
+		SELECT batch_id, total_intended_amount, original_settled_amount, total_observed_amount, total_variance
 		FROM batch_attachment_summaries 
 		WHERE attachment_job_id = $1 
 		LIMIT 1`,
 		job.AttachmentJobID,
 	)
-	_ = row.Scan(&totalIntendedAmount, &originalSettledAmount, &totalConfirmedAmount, &totalVariance)
+	_ = row.Scan(&summaryBatchID, &totalIntendedAmount, &originalSettledAmount, &totalConfirmedAmount, &totalVariance)
 
 	for _, d := range decisions {
 		// ── 1. attachment.decision.created ────────────────────────────────
@@ -146,12 +152,10 @@ func (s *AttachmentOutboxService) EmitForJob(
 		var bankRef, clientRefCandidate string
 		var obsCreatedAt time.Time
 		var parsedCreatedAt time.Time
+		var obsClientBatchID string
 		if d.SettlementObservationID != nil {
 			if obs, ok := obsMap[*d.SettlementObservationID]; ok {
-				bID = obs.ClientBatchID
-				if bID == "" && obs.BatchReference != nil {
-					bID = *obs.BatchReference
-				}
+				obsClientBatchID = strings.TrimSpace(obs.ClientBatchID)
 				settledAmount = obs.Amount
 				if corrID == "" {
 					corrID = obs.CorridorID
@@ -175,6 +179,14 @@ func (s *AttachmentOutboxService) EmitForJob(
 				}
 			}
 		}
+
+		var intentBatchRef string
+		if d.IntentID != uuid.Nil {
+			if info, ok := intentLookup[d.IntentID]; ok && info.ClientBatchRef != nil {
+				intentBatchRef = strings.TrimSpace(*info.ClientBatchRef)
+			}
+		}
+		bID = resolveDecisionBatchID(obsClientBatchID, intentBatchRef, summaryBatchID, job)
 
 		// intentID is always populated now
 		intentID := d.IntentID
@@ -458,7 +470,8 @@ func (s *AttachmentOutboxService) EmitForJob(
 			avg_matched_attachment_quality,
 			matched_intent_count, total_intent_count,
 			matched_pair_variance, net_batch_delta, orphan_observed_amount,
-			unresolved_intended_amount, orphan_observation_count, unresolved_count,
+			unresolved_intended_amount, ambiguous_amount, conflicted_amount, orphan_observation_count,
+			exact_match_count, high_confidence_count, ambiguous_count, unresolved_count, conflicted_count,
 			intent_count_coverage, intent_value_coverage,
 			observed_count_allocation_coverage, observed_value_allocation_coverage,
 			original_intended_amount, original_settled_amount,
@@ -468,14 +481,14 @@ func (s *AttachmentOutboxService) EmitForJob(
 		LIMIT 1`,
 		job.AttachmentJobID,
 	)
-	var summaryBatchID *string
 	var summarySourceRef string
 	var summaryAmbiguity float64
 	var summaryMatchConfidence float64
 	var summaryQualityScore float64
 	var matchedIntentCount, totalIntentCount int
-	var matchedPairVariance, netBatchDelta, orphanObservedAmount, unresolvedIntendedAmount decimal.Decimal
+	var matchedPairVariance, netBatchDelta, orphanObservedAmount, unresolvedIntendedAmount, ambiguousAmount, conflictedAmount decimal.Decimal
 	var orphanObservationCount, unresolvedIntentCount int
+	var summaryExactMatchCount, summaryHighConfidenceCount, summaryAmbiguousCount, summaryConflictedCount int
 	var intentCountCoverage, intentValueCoverage, observedCountCoverage, observedValueCoverage float64
 	var originalIntendedAmount, matchedIntendedAmount, matchedObservedAmount decimal.Decimal
 	if err := row.Scan(
@@ -484,7 +497,8 @@ func (s *AttachmentOutboxService) EmitForJob(
 		&summaryAmbiguity, &summaryMatchConfidence, &summaryQualityScore,
 		&matchedIntentCount, &totalIntentCount,
 		&matchedPairVariance, &netBatchDelta, &orphanObservedAmount,
-		&unresolvedIntendedAmount, &orphanObservationCount, &unresolvedIntentCount,
+		&unresolvedIntendedAmount, &ambiguousAmount, &conflictedAmount, &orphanObservationCount,
+		&summaryExactMatchCount, &summaryHighConfidenceCount, &summaryAmbiguousCount, &unresolvedIntentCount, &summaryConflictedCount,
 		&intentCountCoverage, &intentValueCoverage,
 		&observedCountCoverage, &observedValueCoverage,
 		&originalIntendedAmount, &originalSettledAmount,
@@ -494,6 +508,21 @@ func (s *AttachmentOutboxService) EmitForJob(
 			batchID = *summaryBatchID
 		}
 		aggregateAmbiguity = summaryAmbiguity
+	}
+	// Resolution order (mirrors resolveDecisionBatchID):
+	//   1. summaryBatchID from DB (intent client_batch_ref) — already applied above
+	//   2. obs.ClientBatchID — for INGEST_RUN where intents carry no batch ref
+	//   3. job.ScopeRef — last resort so the event is never dropped with batch_id=""
+	if batchID == "" {
+		for _, obs := range obsMap {
+			if c := strings.TrimSpace(obs.ClientBatchID); c != "" {
+				batchID = c
+				break
+			}
+		}
+	}
+	if batchID == "" {
+		batchID = job.ScopeRef
 	}
 
 	// 2. Fetch corridor_id from the first observation in this job
@@ -515,8 +544,8 @@ func (s *AttachmentOutboxService) EmitForJob(
 		firstObsID := decisions[0].SettlementObservationID
 		if firstObsID != nil {
 			if obs, ok := obsMap[*firstObsID]; ok {
-			ingestRunID = obs.IngestRunID
-		}
+				ingestRunID = obs.IngestRunID
+			}
 		}
 	}
 	if ingestRunID != "" {
@@ -530,58 +559,62 @@ func (s *AttachmentOutboxService) EmitForJob(
 			WHERE b.ingest_run_id = $1 AND b.tenant_id = $2
 			ORDER BY b.created_at DESC
 			LIMIT 1`,
-		ingestRunID, job.TenantID,
+			ingestRunID, job.TenantID,
 		)
 		if err := row.Scan(&totalCount, &successCount, &failedCount, &pendingCount, &reversedCount, &fileSHA); err != nil {
 			log.Printf("attachment.outbox.batch_metadata_lookup_by_ingest_run_failed ingest_run_id=%s scope_ref=%s err=%v", ingestRunID, job.ScopeRef, err)
 		}
 		log.Printf("attachment.outbox.batch_metadata ingest_run_id=%s scope_ref=%s total=%d success=%d failed=%d pending=%d reversed=%d file_sha256=%q",
 			ingestRunID, job.ScopeRef, totalCount, successCount, failedCount, pendingCount, reversedCount, fileSHA)
-			
+
 	}
 
 	batchPayload := map[string]interface{}{
-		"event_id":                     uuid.New().String(),
-		"tenant_id":                    job.TenantID.String(),
-		"trace_id":                     uuid.Nil.String(),
-		"occurred_at":                  time.Now().UTC().Format(time.RFC3339),
-		"batch_id":                     batchID,
-		"source_reference":             summarySourceRef,
-		"corridor_id":                  corridorID,
-		"file_sha256":                  fileSHA,
-		"total_count":                  totalCount,
-		"success_count":                successCount,
-		"failed_count":                 failedCount,
-		"pending_count":                pendingCount,
-		"reversed_count":               reversedCount,
-		"partial_recon_count":          0,
-		"total_intent_count":           totalIntentCount,
-		"matched_intent_count":         matchedIntentCount,
-		"unresolved_intent_count":      unresolvedIntentCount,
-		"orphan_observation_count":     orphanObservationCount,
-		"total_intended_amount_minor":  totalIntendedAmount.String(),
-		"total_confirmed_amount_minor": totalConfirmedAmount.String(),
-		"original_intended_amount":     originalIntendedAmount.String(),
-		"original_settled_amount":      originalSettledAmount.String(),
-		"matched_intended_amount":      matchedIntendedAmount.String(),
-		"matched_observed_amount":      matchedObservedAmount.String(),
-		"unresolved_intended_amount":   unresolvedIntendedAmount.String(),
-		"orphan_observed_amount":       orphanObservedAmount.String(),
-		"matched_pair_variance":        matchedPairVariance.String(),
-		"net_batch_delta":              netBatchDelta.String(),
-		"total_variance_minor":         totalVariance.String(),
-		"intent_count_coverage":        intentCountCoverage,
-		"intent_value_coverage":        intentValueCoverage,
+		"event_id":                           uuid.New().String(),
+		"tenant_id":                          job.TenantID.String(),
+		"trace_id":                           uuid.Nil.String(),
+		"occurred_at":                        time.Now().UTC().Format(time.RFC3339),
+		"batch_id":                           batchID,
+		"source_reference":                   summarySourceRef,
+		"corridor_id":                        corridorID,
+		"file_sha256":                        fileSHA,
+		"total_count":                        totalCount,
+		"success_count":                      successCount,
+		"failed_count":                       failedCount,
+		"pending_count":                      pendingCount,
+		"reversed_count":                     reversedCount,
+		"partial_recon_count":                0,
+		"total_intent_count":                 totalIntentCount,
+		"matched_intent_count":               matchedIntentCount,
+		"exact_match_count":                  summaryExactMatchCount,
+		"high_confidence_count":              summaryHighConfidenceCount,
+		"ambiguous_count":                    summaryAmbiguousCount,
+		"unresolved_count":                   unresolvedIntentCount,
+		"conflicted_count":                   summaryConflictedCount,
+		"unresolved_intent_count":            unresolvedIntentCount,
+		"orphan_observation_count":           orphanObservationCount,
+		"total_intended_amount_minor":        totalIntendedAmount.String(),
+		"total_confirmed_amount_minor":       totalConfirmedAmount.String(),
+		"original_intended_amount":           originalIntendedAmount.String(),
+		"original_settled_amount":            originalSettledAmount.String(),
+		"matched_intended_amount":            matchedIntendedAmount.String(),
+		"matched_observed_amount":            matchedObservedAmount.String(),
+		"unresolved_intended_amount":         unresolvedIntendedAmount.String(),
+		"ambiguous_amount":                   ambiguousAmount.String(),
+		"conflicted_amount":                  conflictedAmount.String(),
+		"orphan_observed_amount":             orphanObservedAmount.String(),
+		"matched_pair_variance":              matchedPairVariance.String(),
+		"net_batch_delta":                    netBatchDelta.String(),
+		"total_variance_minor":               totalVariance.String(),
+		"intent_count_coverage":              intentCountCoverage,
+		"intent_value_coverage":              intentValueCoverage,
 		"observed_count_allocation_coverage": observedCountCoverage,
 		"observed_value_allocation_coverage": observedValueCoverage,
-		"avg_matched_attachment_ambiguity": aggregateAmbiguity,
 		"ambiguity_score":                    aggregateAmbiguity,
-		"avg_matched_attachment_confidence": summaryMatchConfidence,
-		"avg_matched_attachment_quality":   summaryQualityScore,
-		"aggregate_score":                  summaryQualityScore,
+		"aggregate_score":                    summaryQualityScore,
 		"aggregate_match_confidence":         summaryMatchConfidence,
-		"batch_finality_status":        finalityStatus,
-		"job_status":                   job.Status,
+		"batch_finality_status":              finalityStatus,
+		"job_status":                         job.Status,
 	}
 	if err := s.insertEvent(ctx, job.TenantID, job.AttachmentJobID,
 		"", "", batchID,
@@ -594,6 +627,33 @@ func (s *AttachmentOutboxService) EmitForJob(
 		job.AttachmentJobID, decisionCount, ambiguousCount, unresolvedCount, conflictedCount, len(variances))
 
 	return lastErr
+}
+
+// resolveDecisionBatchID picks batch_id for attachment.decision.created payloads.
+// Order: observation ClientBatchID → intent client_batch_ref → batch summary batch_id → job scope_ref (SETTLEMENT_BATCH only).
+func resolveDecisionBatchID(
+	obsClientBatchID string,
+	intentBatchRef string,
+	summaryBatchID *string,
+	job *models.AttachmentJob,
+) string {
+	if obsClientBatchID != "" {
+		return obsClientBatchID
+	}
+	if intentBatchRef != "" {
+		return intentBatchRef
+	}
+	if summaryBatchID != nil {
+		if ref := strings.TrimSpace(*summaryBatchID); ref != "" {
+			return ref
+		}
+	}
+	if job != nil && job.JobScopeType == models.JobScopeSettlementBatch {
+		if ref := strings.TrimSpace(job.ScopeRef); ref != "" {
+			return ref
+		}
+	}
+	return ""
 }
 
 func (s *AttachmentOutboxService) insertEvent(

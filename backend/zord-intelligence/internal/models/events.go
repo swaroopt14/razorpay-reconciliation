@@ -599,6 +599,27 @@ type BatchSummaryUpdatedEvent struct {
 	UnresolvedCount     int     `json:"unresolved_count"`      // attachments with no match (MATCH_UNRESOLVED)
 	ConflictedCount     int     `json:"conflicted_count"`      // attachments with conflicting signals
 	AggregateScore      float64 `json:"aggregate_score"`       // overall batch attachment quality score — primary input for P1
+
+	TotalIntentCount int `json:"total_intent_count"` // total intents in the batch
+	MatchedIntentCount int `json:"matched_intent_count"`
+	UnresolvedIntentCount int `json:"unresolved_intent_count"`
+	OrphanObservationCount	int `json:"orphan_observation_count"`
+
+	OriginalIntendedAmount decimal.Decimal `json:"original_intended_amount"`
+	MatchedIntendedAmount decimal.Decimal `json:"matched_intended_amount"`
+	MatchedObservedAmount decimal.Decimal `json:"matched_observed_amount"`
+	UnresolvedIntendedAmount decimal.Decimal `json:"unresolved_intended_amount"`
+	AmbiguousAmount          decimal.Decimal `json:"ambiguous_amount"`
+	ConflictedAmount         decimal.Decimal `json:"conflicted_amount"`
+	OrphanObservedAmount decimal.Decimal `json:"orphan_observed_amount"`
+	MatchedPairVariance decimal.Decimal `json:"matched_pair_variance"`
+	NetBatchDelta decimal.Decimal `json:"net_batch_delta"`
+
+	IntentCountCoverage float64 `json:"intent_count_coverage"`
+	IntentValueCoverage float64 `json:"intent_value_coverage"`
+	ObservationCountCoverage float64 `json:"observed_count_allocation_coverage"` // "observation_count_coverage"`
+	ObservationValueCoverage float64 `json:"observed_value_allocation_coverage"`
+
 }
 
 // ── NEW EVENT E: from Service 6 ──────────────────────────────────────────────

@@ -271,7 +271,7 @@ func (h *Handler) GetBatchAttachmentSummaryHandler(c *gin.Context) {
 			total_intended_amount, total_observed_amount, total_variance,
 			matched_intended_amount, matched_observed_amount, orphan_observed_amount,
 			matched_pair_variance, net_batch_delta,
-			unresolved_intended_amount,
+			unresolved_intended_amount, ambiguous_amount, conflicted_amount,
 			total_fee_amount, total_deduction_amount, net_unexplained_variance,
 			intent_count_coverage, intent_value_coverage,
 			observed_count_allocation_coverage, observed_value_allocation_coverage,
@@ -295,7 +295,7 @@ func (h *Handler) GetBatchAttachmentSummaryHandler(c *gin.Context) {
 		&s.TotalIntendedAmount, &s.TotalObservedAmount, &s.TotalVariance,
 		&s.MatchedIntendedAmount, &s.MatchedObservedAmount, &s.OrphanObservedAmount,
 		&s.MatchedPairVariance, &s.NetBatchDelta,
-		&s.UnresolvedIntendedAmount,
+		&s.UnresolvedIntendedAmount, &s.AmbiguousAmount, &s.ConflictedAmount,
 		&s.TotalFeeAmount, &s.TotalDeductionAmount, &s.NetUnexplainedVariance,
 		&s.IntentCountCoverage, &s.IntentValueCoverage,
 		&s.ObservedCountAllocationCoverage, &s.ObservedValueAllocationCoverage,
@@ -339,9 +339,10 @@ func (h *Handler) RegisterIntentHandler(c *gin.Context) {
 			proof_readiness_score, matchability_score,
 			canonical_hash, governance_state,
 			beneficiary_fingerprint, zord_signature_carrier,
+			source_row_num,
 			created_at
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
 		) ON CONFLICT (intent_id) DO UPDATE SET
 			client_payout_ref        = EXCLUDED.client_payout_ref,
 			client_batch_ref         = EXCLUDED.client_batch_ref,
@@ -349,7 +350,8 @@ func (h *Handler) RegisterIntentHandler(c *gin.Context) {
 			currency_code            = EXCLUDED.currency_code,
 			governance_state         = EXCLUDED.governance_state,
 			beneficiary_fingerprint  = EXCLUDED.beneficiary_fingerprint,
-			zord_signature_carrier   = EXCLUDED.zord_signature_carrier`,
+			zord_signature_carrier   = EXCLUDED.zord_signature_carrier,
+			source_row_num           = EXCLUDED.source_row_num`,
 		intent.IntentID, intent.TenantID,
 		intent.ClientPayoutRef, intent.ClientBatchRef, intent.BusinessIdempotencyKey,
 		intent.Amount, intent.CurrencyCode,
@@ -357,6 +359,7 @@ func (h *Handler) RegisterIntentHandler(c *gin.Context) {
 		intent.ProofReadinessScore, intent.MatchabilityScore,
 		intent.CanonicalHash, intent.GovernanceState,
 		intent.BeneficiaryFingerprint, intent.ZordSignatureCarrier,
+		intent.SourceRowNum,
 		intent.CreatedAt,
 	)
 	if err != nil {

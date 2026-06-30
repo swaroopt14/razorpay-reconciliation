@@ -14,7 +14,7 @@ package services
 //   - unresolved_settlement_count
 //   - avg_attachment_confidence
 //   - provider_ref_missing_rate
-//   - value_at_risk_minor (the headline finance number)
+//   - value_at_risk_minor (ambiguous intent exposure; field name kept for API compatibility)
 //   - ambiguity_rate (what % of decisions are ambiguous)
 //   - risk tier: CRITICAL / HIGH / MEDIUM / LOW / CLEAN
 //
@@ -68,7 +68,7 @@ func NewAmbiguityIntelligenceService(
 // for snapshot_type = AMBIGUITY.
 type AmbiguitySnapshot struct {
 	// ── Headline numbers ─────────────────────────────────────────────────
-	ValueAtRiskMinor        decimal.Decimal `json:"value_at_risk_minor"`       // finance's headline number
+	ValueAtRiskMinor        decimal.Decimal `json:"value_at_risk_minor"`       // ambiguous intent exposure; name kept for API compatibility
 	AmbiguityRate           float64         `json:"ambiguity_rate"`            // ambiguous / total decisions
 	AvgAttachmentConfidence float64         `json:"avg_attachment_confidence"` // running average 0.0–1.0
 	ProviderRefMissingRate  float64         `json:"provider_ref_missing_rate"` // fraction with no carriers
@@ -140,7 +140,7 @@ func (s *AmbiguityIntelligenceService) ComputeAndSave(
 		AmbiguityRate:          amb.AmbiguityRate,
 		ProviderRefMissingRate: amb.ProviderRefMissingRate,
 		AvgConfidence:          amb.AvgAttachmentConfidence,
-		ValueAtRiskMinor:       amb.ValueAtRiskMinor.InexactFloat64(),
+		ValueAtRiskMinor:       amb.AmbiguousAmountMinor.InexactFloat64(),
 		TotalIntendedMinor:     0,
 	}, func(lrResult mlclient.LRResult, lrErr error) {
 		if lrErr != nil {
@@ -181,7 +181,7 @@ func (s *AmbiguityIntelligenceService) ComputeAndSave(
 			amb.AmbiguityRate,
 			amb.ProviderRefMissingRate,
 			amb.AvgAttachmentConfidence,
-			amb.ValueAtRiskMinor.InexactFloat64(),
+			amb.AmbiguousAmountMinor.InexactFloat64(),
 			0,
 		)
 		s.persistMLPrediction(ctx, tenantID, snapID, features, lrResult.Probability, lrResult.Level)
@@ -192,7 +192,7 @@ func (s *AmbiguityIntelligenceService) ComputeAndSave(
 
 func (s *AmbiguityIntelligenceService) buildSnapshot(av *models.AmbiguityValue) AmbiguitySnapshot {
 	snap := AmbiguitySnapshot{
-		ValueAtRiskMinor:          av.ValueAtRiskMinor,
+		ValueAtRiskMinor:          av.AmbiguousAmountMinor,
 		AmbiguityRate:             av.AmbiguityRate,
 		AvgAttachmentConfidence:   av.AvgAttachmentConfidence,
 		ProviderRefMissingRate:    av.ProviderRefMissingRate,
@@ -212,7 +212,7 @@ func (s *AmbiguityIntelligenceService) buildSnapshot(av *models.AmbiguityValue) 
 		ComputedAt:                time.Now().UTC(),
 	}
 
-	snap.RiskTier = ambiguityRiskTier(av.AmbiguityRate, av.ValueAtRiskMinor)
+	snap.RiskTier = ambiguityRiskTier(av.AmbiguityRate, snap.ValueAtRiskMinor)
 	snap.WeakestCohortSignal = s.weakestCohortSignal(av)
 	snap.RecommendedAction = s.recommendedAction(av)
 	return snap
@@ -314,7 +314,7 @@ func (s *AmbiguityIntelligenceService) persistMLFeatures(
 		"ambiguity_rate":              av.AmbiguityRate,
 		"avg_attachment_confidence":   av.AvgAttachmentConfidence,
 		"provider_ref_missing_rate":   av.ProviderRefMissingRate,
-		"value_at_risk_minor":         av.ValueAtRiskMinor,
+		"value_at_risk_minor":         av.AmbiguousAmountMinor,
 		"total_decisions":             av.TotalDecisions,
 		"ambiguous_intent_count":      av.AmbiguousIntentCount,
 		"unresolved_settlement_count": av.UnresolvedSettlementCount,

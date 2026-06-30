@@ -32,8 +32,8 @@ const resourceCards = [
     title: 'Get product access, technical answers, or onboarding support',
     body:
       'Reach Arealis directly for demos, integration questions, enterprise rollout discussions, or support.',
-    href: 'mailto:hello@arelais.com?subject=ZORD%20resources%20and%20support',
-    cta: 'Contact Arealis',
+    href: 'mailto:Support@zordnet.com?subject=ZORD%20resources%20and%20support',
+    cta: 'Contact Zord',
   },
 ] as const
 
@@ -68,7 +68,7 @@ export default function ResourcesPageClient() {
       eyebrow="Resources"
       title="Everything teams need to evaluate, learn, and roll out ZORD."
       description="Use the resource layer to understand the operating model, security posture, commercial fit, and the fastest path to working with the Arealis team."
-      primaryAction={{ label: 'Talk to the team', href: 'mailto:hello@arelais.com?subject=ZORD%20resources%20request' }}
+      primaryAction={{ label: 'Talk to the team', href: 'mailto:Support@zordnet.com?subject=ZORD%20resources%20request' }}
       secondaryAction={{ label: 'Back to product', href: '/' }}
       heroVisual={{
         src: '/final-landing/concepts/unified-control-system.png',

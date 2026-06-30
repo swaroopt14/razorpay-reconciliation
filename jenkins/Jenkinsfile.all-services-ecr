@@ -19,7 +19,7 @@ pipeline {
     booleanParam(name: 'USE_INSTANCE_ROLE', defaultValue: true, description: 'Use the EC2 instance IAM role for AWS access')
     string(
       name: 'SERVICES',
-      defaultValue: 'zord-console,zord-edge,zord-evidence,zord-intelligence,zord-intent-engine,zord-outcome-engine,zord-prompt-layer,zord-relay,zord-token-enclave',
+      defaultValue: 'zord-console,zord-edge,zord-evidence,zord-intelligence,zord-intent-engine,zord-outcome-engine,zord-prompt-layer,zord-relay,zord-token-enclave,ml-service',
       description: 'Comma-separated services to build'
     )
     booleanParam(name: 'PUSH_MANIFEST_CHANGES', defaultValue: true, description: 'Commit and push deployment.yaml changes back to GitHub')
@@ -259,7 +259,7 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
             remote_url="https://${GIT_USERNAME}:${GIT_TOKEN}@github.com/Arealis-network/Arealis-Zord-intent.git"
 
             for service in ${SERVICE_LIST}; do
-              git add "kubernetes/eks/services/${service}/deployment.yaml"
+              git add "kubernetes/eks/services/${service}/deployment.yaml" 2>/dev/null || true
             done
 
             if git diff --cached --quiet; then

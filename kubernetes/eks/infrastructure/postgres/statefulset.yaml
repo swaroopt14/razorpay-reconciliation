@@ -26,6 +26,22 @@ spec:
       containers:
         - name: postgres
           image: public.ecr.aws/docker/library/postgres:16-alpine
+          args:
+            - postgres
+            - -c
+            - max_connections=800
+            - -c
+            - shared_buffers=1GB
+            - -c
+            - work_mem=8MB
+            - -c
+            - log_statement=none
+            - -c
+            - log_min_messages=warning
+            - -c
+            - log_connections=off
+            - -c
+            - log_disconnections=off
           ports:
             - containerPort: 5432
               name: postgres
@@ -99,10 +115,10 @@ spec:
           resources:
             requests:
               cpu: 500m
-              memory: 512Mi
+              memory: 1Gi
             limits:
               cpu: "2"
-              memory: 2Gi
+              memory: 4Gi
       volumes:
         - name: bootstrap
           configMap:

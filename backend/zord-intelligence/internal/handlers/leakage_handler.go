@@ -19,11 +19,13 @@ func NewLeakageHandler(base *IntelligenceBase, projRepo *persistence.ProjectionR
 }
 
 // leakageResponse wraps the standard intelligence response and promotes
-// total_amount_minor from projection_state.value_json (leakage.total) to the
-// top level so callers do not need to parse the data blob to get this figure.
+// total_amount_minor and over_settlement_amount_minor from
+// projection_state.value_json (leakage.total) to the top level so callers
+// do not need to parse the data blob to get these figures.
 type leakageResponse struct {
 	intelligenceResponse
-	TotalAmountMinor decimal.Decimal `json:"total_amount_minor"`
+	TotalAmountMinor          decimal.Decimal `json:"total_amount_minor"`
+	OverSettlementAmountMinor decimal.Decimal `json:"over_settlement_amount_minor"`
 }
 
 // GetLeakage handles GET /v1/intelligence/leakage?tenant_id=X
@@ -36,13 +38,15 @@ func (h *LeakageHandler) GetLeakage(w http.ResponseWriter, r *http.Request) {
 
 	snap := h.base.buildSnapshotResponse(r, tenantID, "LEAKAGE", "TENANT", nil)
 
-	var totalAmountMinor decimal.Decimal
+	var totalAmountMinor, overSettlementAmountMinor decimal.Decimal
 	if lv, err := h.projRepo.GetLeakageSummary(r.Context(), tenantID); err == nil && lv != nil {
 		totalAmountMinor = lv.TotalAmountMinor
+		overSettlementAmountMinor = lv.OverSettlementAmountMinor
 	}
 
 	writeJSON(w, http.StatusOK, leakageResponse{
-		intelligenceResponse: snap,
-		TotalAmountMinor:     totalAmountMinor,
+		intelligenceResponse:      snap,
+		TotalAmountMinor:          totalAmountMinor,
+		OverSettlementAmountMinor: overSettlementAmountMinor,
 	})
 }

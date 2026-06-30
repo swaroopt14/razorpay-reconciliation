@@ -24,7 +24,7 @@ export default function PricingPageClient() {
       eyebrow={landingPricingCopy.eyebrow}
       title={landingPricingCopy.title}
       description={landingPricingCopy.description}
-      primaryAction={{ label: 'Contact sales', href: 'mailto:hello@arelais.com?subject=Pricing%20discussion%20for%20ZORD' }}
+      primaryAction={{ label: 'Contact sales', href: 'mailto:Support@zordnet.com?subject=Pricing%20discussion%20for%20ZORD' }}
       secondaryAction={{ label: 'Back to product', href: '/' }}
       heroVisual={{
         src: '/final-landing/sections/finance-ops-collaboration.png',

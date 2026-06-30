@@ -16,7 +16,7 @@ const BFF_PATHS = [
   '/api/prod/intelligence/batches?limit=1',
   '/api/prod/evidence/packs?page=1&page_size=1',
   '/api/prod/intents/batches?page=1&page_size=1',
-  '/api/prod/intents/payment-intents?batch_id=smoke-batch',
+  '/api/prod/intents/payment-intents?batch_id=batch-2026-06-12-payroll',
   '/api/prod/settlement/observations/batches?page=1&page_size=1',
   '/api/prod/ingest-status',
   '/api/prod/dlq',

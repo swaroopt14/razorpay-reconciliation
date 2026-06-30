@@ -56,7 +56,7 @@ export default function SolutionsHubClient() {
 
               <div className="mt-8 flex flex-col gap-4 sm:flex-row">
                 <a
-                  href="mailto:hello@arelais.com?subject=Explore%20Zord%20solutions"
+                  href="mailto:Support@zordnet.com?subject=Explore%20Zord%20solutions"
                   className="inline-flex items-center justify-center rounded-full bg-white px-7 py-4 text-[15px] font-semibold text-black transition hover:bg-zinc-200"
                 >
                   Talk to sales

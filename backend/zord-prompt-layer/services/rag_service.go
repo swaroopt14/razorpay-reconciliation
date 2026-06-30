@@ -78,28 +78,188 @@ func NewDefaultRAGService(model string, defaultK int, retriever EvidenceRetrieve
 		memory:       memory,
 	}
 }
-func classifyDeterministic(q string) queryClass {
-	s := strings.ToLower(strings.TrimSpace(q))
-	if s == "" {
-		return classOutOfScope
+
+func isGreetingOnly(s string) bool {
+	switch strings.TrimSpace(s) {
+	case "hi", "hello", "hey", "good morning", "good afternoon", "good evening":
+		return true
+	default:
+		return false
 	}
-	if strings.Contains(s, "hello") || strings.Contains(s, "hi ") || s == "hi" ||
-		strings.Contains(s, "good morning") || strings.Contains(s, "good evening") ||
-		strings.Contains(s, "how are you") {
-		return classProduct
+}
+
+func isProductExplanationQuery(s string) bool {
+	productPhrases := []string{
+		"what is zord",
+		"how does zord work",
+		"how zord works",
+		"what does zord do",
+		"explain zord",
+		"what is payment intent",
+		"what are payment intents",
+		"what is proof readiness",
+		"what is match confidence",
+		"what does unmatched mean",
 	}
-	if strings.Contains(s, "what is zord") || strings.Contains(s, "how does zord work") ||
-		strings.Contains(s, "how it works") || strings.Contains(s, "what is payment intent") ||
-		strings.Contains(s, "what are payment intents") {
-		return classProduct
+	return containsAnyPhrase(s, productPhrases)
+}
+
+func isNavigationQuery(s string) bool {
+	actionSignals := []string{"where", "how do i", "how to", "show me where", "open", "click", "upload", "export", "download", "review"}
+	zordSurfaceSignals := []string{"dashboard", "workspace", "batch", "file", "proof", "evidence", "report", "page", "screen"}
+
+	return containsAnyPhrase(s, actionSignals) && containsAnyPhrase(s, zordSurfaceSignals)
+}
+
+func isEvidenceQuery(s string) bool {
+	strongEvidenceSignals := []string{
+		"proof pack",
+		"evidence pack",
+		"audit export",
+		"export proof",
+		"dispute",
+		"dispute resolution",
+		"defend",
+		"defended",
+		"verification",
+		"verify evidence",
+		"missing evidence",
+		"missing proof",
+		"proof items",
+		"evidence items",
 	}
-	operationalHints := []string{"intent", "payment", "payout", "retry", "failure", "status", "sla", "batch", "csv", "callback", "proof", "tenant"}
-	for _, h := range operationalHints {
-		if strings.Contains(s, h) {
-			return classOperational
+
+	return containsAnyPhrase(s, strongEvidenceSignals)
+}
+
+func isClearlyOperationalQuery(s string) bool {
+	questionSignals := []string{
+		"how many",
+		"count",
+		"total",
+		"status",
+		"pending",
+		"failed",
+		"failure",
+		"delayed",
+		"delay",
+		"stuck",
+		"received",
+		"processed",
+		"uploaded",
+		"arrive",
+		"arrival",
+		"when will",
+		"unmatched",
+		"matched",
+		"settled",
+		"settlement",
+		"short settled",
+		"review",
+		"risk",
+		"duplicate",
+		"double",
+		"twice",
+		"gap",
+		"value",
+		"amount",
+		"trend",
+		"graph",
+		"chart",
+		"visual",
+	}
+	businessSignals := []string{
+		"payment",
+		"payments",
+		"payout",
+		"payouts",
+		"instruction",
+		"instructions",
+		"intent",
+		"intents",
+		"batch",
+		"batches",
+		"csv",
+		"file",
+		"settlement",
+		"bank",
+		"psp",
+		"confirmation",
+		"callback",
+		"proof",
+		"evidence",
+		"reconciliation",
+	}
+
+	return containsAnyPhrase(s, questionSignals) && containsAnyPhrase(s, businessSignals)
+}
+
+func isClearlyOutOfScopeQuery(s string) bool {
+	outOfScopeSignals := []string{
+		"movie",
+		"song",
+		"weather",
+		"cricket",
+		"football",
+		"joke",
+		"recipe",
+		"travel",
+	}
+
+	return containsAnyPhrase(s, outOfScopeSignals) &&
+		!containsAnyPhrase(s, []string{"payment", "payout", "zord", "batch", "settlement", "proof", "evidence"})
+}
+
+func containsAnyPhrase(s string, phrases []string) bool {
+	for _, p := range phrases {
+		if strings.Contains(s, p) {
+			return true
 		}
 	}
-	return classUnknown
+	return false
+}
+
+func hasTimeScopeSignal(q string) bool {
+	s := strings.ToLower(strings.TrimSpace(q))
+	timeSignals := []string{
+		"today",
+		"yesterday",
+		"tomorrow",
+		"this week",
+		"last week",
+		"this month",
+		"last month",
+		"this quarter",
+		"last quarter",
+		"this year",
+		"last year",
+		"last 7 days",
+		"last seven days",
+		"last 24 hours",
+		"last hour",
+		"recent",
+		"recently",
+		"current",
+		"currently",
+		"till now",
+		"until now",
+		"so far",
+		"between",
+		"from ",
+		"since ",
+		"financial year",
+		"fy",
+		"month-wise",
+		"day-wise",
+		"week-wise",
+	}
+
+	if containsAnyPhrase(s, timeSignals) {
+		return true
+	}
+
+	dateLike := regexp.MustCompile(`(?i)\b(\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{2,4}|\d{1,2}\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*)\b`)
+	return dateLike.MatchString(s)
 }
 
 func mapLLMClass(c string) queryClass {
@@ -182,65 +342,22 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 			NextActions:   []string{},
 		}, nil
 	}
-	class := classifyDeterministic(req.Query)
-	if class == classUnknown {
-		dec, err := s.llm.ClassifyQueryIntent(req.Query)
-		if err != nil {
-			log.Printf("[prompt-layer][classify] llm-classifier failed err=%v; defaulting general", err)
-			class = classProduct
-		} else if dec.Confidence >= 0.60 {
-			class = mapLLMClass(dec.Class)
-		} else {
-			class = classProduct
-		}
-	}
-	log.Printf("[prompt-layer][classify] class=%s tenant=%s", class, req.TenantID)
-
-	if class == classProduct {
-		txt, err := s.llm.GenerateProductExplanation(req.Query)
-		if err != nil {
-			return dto.QueryResponse{}, fmt.Errorf("generation failed: %w", err)
-		}
-		answer := utils.SanitizeAnswerText(txt)
-		if strings.TrimSpace(answer) == "" || uuidLeakRe.MatchString(answer) {
-			answer = buildGeneralResponse().Answer
-		}
-		return dto.QueryResponse{
-			Answer:        answer,
-			Confidence:    "high",
-			EntitiesFound: dto.EntitiesFound{},
-			Citations:     []dto.Citation{},
-			NextActions:   []string{},
-		}, nil
-	}
-	if class == classOutOfScope {
-		return buildOutOfScopeResponse(), nil
-	}
-	intentID := req.IntentID
-	traceID := req.TraceID
-	if intentID == "" {
-		intentID = utils.ExtractIntentID(req.Query)
-	}
-	if traceID == "" {
-		traceID = utils.ExtractTraceID(req.Query)
-	}
-	rawScope, err := s.llm.ExtractQueryScope(req.Query)
-	if err != nil {
-		rawScope = utils.QueryScope{}
-	}
-
-	// Use heuristic only when LLM did not provide explicit time window AND no phrase.
-	if !rawScope.HasExplicitTime && strings.TrimSpace(rawScope.TimePhrase) == "" {
-		rawScope.TimePhrase = utils.ExtractTimePhraseHeuristic(req.Query)
-	}
-
-	scope := utils.NormalizeScope(rawScope, time.Now(), time.Local)
 	resolvedQuery := req.Query
 	historyContext := ""
+	memorySummary := ""
+	memoryContext := ""
+	var history []ChatTurn
+
 	if s.memory != nil {
-		history, memErr := s.memory.GetRecent(ctx, req.TenantID, req.UserID, req.SessionID)
+		var memErr error
+		memorySummary, memErr = s.memory.GetSummary(ctx, req.TenantID, req.UserID, req.SessionID)
 		if memErr != nil {
-			log.Printf("[prompt-layer][memory] read failed tenant=%s user=%s session=%s err=%v", req.TenantID, req.UserID, req.SessionID, memErr)
+			log.Printf("[prompt-layer][memory] summary read failed tenant=%s user=%s session=%s err=%v", req.TenantID, req.UserID, req.SessionID, memErr)
+		}
+
+		history, memErr = s.memory.GetRecent(ctx, req.TenantID, req.UserID, req.SessionID)
+		if memErr != nil {
+			log.Printf("[prompt-layer][memory] turns read failed tenant=%s user=%s session=%s err=%v", req.TenantID, req.UserID, req.SessionID, memErr)
 		} else if len(history) > 0 {
 			var hb strings.Builder
 			for i, t := range history {
@@ -252,15 +369,108 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 				))
 			}
 			historyContext = hb.String()
-			resolvedQuery = resolveFollowupQuery(req.Query, history)
+		}
+
+		memoryContext = buildMemoryContext(memorySummary, historyContext)
+		resolvedQuery = resolveFollowupQuery(req.Query, history, memorySummary)
+
+		if !strings.EqualFold(strings.TrimSpace(resolvedQuery), strings.TrimSpace(req.Query)) {
+			log.Printf("[prompt-layer][memory] followup resolved tenant=%s user=%s session=%s", req.TenantID, req.UserID, req.SessionID)
 		}
 	}
-	if !strings.EqualFold(strings.TrimSpace(resolvedQuery), strings.TrimSpace(req.Query)) {
-		log.Printf("[prompt-layer][memory] followup resolved tenant=%s user=%s session=%s", req.TenantID, req.UserID, req.SessionID)
+	log.Printf("[prompt-layer][llm] call=classifier tenant=%s", req.TenantID)
+
+	dec, err := s.llm.ClassifyQueryIntent(resolvedQuery, memoryContext)
+	if err != nil {
+		log.Printf("[prompt-layer][classify] llm-classifier failed tenant=%s err=%v; defaulting general", req.TenantID, err)
+		return buildGeneralResponse(), nil
 	}
 
+	class := mapLLMClass(dec.Class)
+	if dec.Confidence < 0.50 {
+		log.Printf("[prompt-layer][classify] low confidence tenant=%s class=%s confidence=%.2f; defaulting general", req.TenantID, dec.Class, dec.Confidence)
+		class = classProduct
+	}
+
+	if class == classOutOfScope && shouldOverrideOutOfScopeForFollowup(req.Query, resolvedQuery, memorySummary, historyContext, history) {
+		log.Printf("[prompt-layer][router] followup override from=out_of_scope to=operational_data_query tenant=%s user=%s session=%s confidence=%.2f", req.TenantID, req.UserID, req.SessionID, dec.Confidence)
+		class = classOperational
+		dec.NeedsData = true
+	}
+
+	log.Printf("[prompt-layer][router] route=%s source=llm confidence=%.2f tenant=%s", class, dec.Confidence, req.TenantID)
+	log.Printf("[prompt-layer][classify] class=%s tenant=%s", class, req.TenantID)
+
+	if class == classProduct {
+
+		log.Printf("[prompt-layer][llm] call=product_explanation tenant=%s", req.TenantID)
+
+		txt, err := s.llm.GenerateProductExplanation(req.Query)
+		if err != nil {
+			return dto.QueryResponse{}, fmt.Errorf("generation failed: %w", err)
+		}
+		answer := utils.SanitizeAnswerText(txt)
+		if strings.TrimSpace(answer) == "" || uuidLeakRe.MatchString(answer) {
+			answer = buildGeneralResponse().Answer
+		}
+		s.persistConversationMemory(ctx, req, memorySummary, answer)
+		return dto.QueryResponse{
+			Answer:        answer,
+			Confidence:    "high",
+			EntitiesFound: dto.EntitiesFound{},
+			Citations:     []dto.Citation{},
+			NextActions:   []string{},
+		}, nil
+	}
+	if class == classOutOfScope {
+		resp := buildOutOfScopeResponse()
+		s.persistConversationMemory(ctx, req, memorySummary, resp.Answer)
+		return resp, nil
+	}
+	intentID := req.IntentID
+	traceID := req.TraceID
+	if intentID == "" {
+		intentID = utils.ExtractIntentID(req.Query)
+	}
+	if traceID == "" {
+		traceID = utils.ExtractTraceID(req.Query)
+	}
+	rawScope := utils.QueryScope{}
+
+	if hasTimeScopeSignal(req.Query) {
+		log.Printf("[prompt-layer][llm] call=scope_extraction tenant=%s", req.TenantID)
+
+		extractedScope, scopeErr := s.llm.ExtractQueryScope(req.Query)
+		if scopeErr != nil {
+			log.Printf("[prompt-layer][scope] llm-scope failed tenant=%s err=%v; using empty tenant-wide scope", req.TenantID, scopeErr)
+			rawScope = utils.QueryScope{}
+		} else {
+			rawScope = extractedScope
+		}
+
+		if !rawScope.HasExplicitTime && strings.TrimSpace(rawScope.TimePhrase) == "" {
+			rawScope.TimePhrase = utils.ExtractTimePhraseHeuristic(req.Query)
+		}
+
+		log.Printf("[prompt-layer][scope] source=llm time_phrase=%s explicit=%t tenant=%s", rawScope.TimePhrase, rawScope.HasExplicitTime, req.TenantID)
+	} else {
+		log.Printf("[prompt-layer][scope] source=local_no_time tenant=%s", req.TenantID)
+	}
+
+	scope := utils.NormalizeScope(rawScope, time.Now(), time.Local)
+
 	retrievalReq := req
-	retrievalReq.Query = resolvedQuery
+	retrievalReq.Query = buildSelectedUIContextQuery(req, resolvedQuery)
+
+	if req.UIContext != nil {
+		log.Printf(
+			"[prompt-layer][ui-context] scope=%s level=%s source=%s tenant=%s",
+			req.UIContext.Scope,
+			req.UIContext.ScopeLevel,
+			req.UIContext.SourcePage,
+			req.TenantID,
+		)
+	}
 
 	chunks, err := s.retriever.Retrieve(retrievalReq, intentID, traceID, topK, scope)
 	if err != nil {
@@ -299,13 +509,18 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 	nextActions = utils.SanitizeActions(nextActions)
 
 	if len(chunks) == 0 {
-		return dto.QueryResponse{
-			Answer:        "**I can't see enough payment progress yet**\n- I don't have clear payment status records for this question right now.\n- If you just uploaded a file, I may only be able to see that it was received, not whether each payment is done yet.",
+		answer := "**I can't see enough payment progress yet**\n- I don't have clear payment status records for this question right now.\n- If you just uploaded a file, I may only be able to see that it was received, not whether each payment is done yet."
+
+		resp := dto.QueryResponse{
+			Answer:        answer,
 			Confidence:    "low",
 			EntitiesFound: entities,
 			Citations:     []dto.Citation{},
 			NextActions:   nextActions,
-		}, nil
+		}
+
+		s.persistConversationMemory(ctx, req, memorySummary, answer)
+		return resp, nil
 	}
 	if edgeOnlyResp, ok := buildLatestUploadEdgeOnlyResponse(req.Query, chunks); ok {
 		edgeOnlyResp.EntitiesFound = entities
@@ -313,6 +528,8 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 			edgeOnlyResp.Citations = citations
 		}
 		edgeOnlyResp.NextActions = nextActions
+
+		s.persistConversationMemory(ctx, req, memorySummary, edgeOnlyResp.Answer)
 		return edgeOnlyResp, nil
 	}
 	rcaContext := ""
@@ -335,7 +552,9 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 		}
 	}
 	context := ""
-
+	if strings.TrimSpace(memorySummary) != "" {
+		context += "[CONVERSATION_SUMMARY]\n" + utils.SanitizeAnswerText(memorySummary) + "\n"
+	}
 	if strings.TrimSpace(historyContext) != "" {
 		context += "[CHAT_HISTORY_CONTEXT]\n" + historyContext + "\n"
 	}
@@ -344,12 +563,16 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 		context += "Original user query: " + utils.SanitizeAnswerText(req.Query) + "\n"
 		context += "Resolved business query: " + utils.SanitizeAnswerText(resolvedQuery) + "\n"
 	}
+	if selectedContext := buildSelectedUIContextBlock(req.UIContext); selectedContext != "" {
+		context += "[SELECTED_UI_CONTEXT]\n" + selectedContext + "\n"
+	}
 	context += buildBusinessContext(chunks)
 	if strings.TrimSpace(rcaContext) != "" {
 		context += "\n[RCA_CONTEXT]\n" + rcaContext + "\n"
 	}
 	var llmOut AnswerWithConfidence
 	if class == classNavigation {
+		log.Printf("[prompt-layer][llm] call=navigation_answer tenant=%s", req.TenantID)
 		txt, navErr := s.llm.GenerateNavigationHowTo(req.Query, context)
 		if navErr != nil {
 			return dto.QueryResponse{}, fmt.Errorf("generation failed: %w", navErr)
@@ -359,15 +582,19 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 		if uuidLeakRe.MatchString(answer) || strings.TrimSpace(answer) == "" {
 			answer = "I don't see that action available in the current workspace."
 		}
-		return dto.QueryResponse{
+		resp := dto.QueryResponse{
 			Answer:        answer,
 			Confidence:    "high",
 			EntitiesFound: entities,
 			Citations:     []dto.Citation{},
 			NextActions:   nextActions,
-		}, nil
+		}
+
+		s.persistConversationMemory(ctx, req, memorySummary, answer)
+		return resp, nil
 	}
 	if class == classEvidence {
+		log.Printf("[prompt-layer][llm] call=evidence_answer tenant=%s", req.TenantID)
 		ev, evErr := s.llm.GenerateEvidenceJSON(req.Query, context)
 		if evErr != nil {
 			return dto.QueryResponse{}, fmt.Errorf("generation failed: %w", evErr)
@@ -375,27 +602,36 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 		answer := utils.SanitizeAnswerText(ev.Answer)
 		answer = utils.StripActionLikeSections(answer)
 		if uuidLeakRe.MatchString(answer) || strings.TrimSpace(answer) == "" {
-			return dto.QueryResponse{
-				Answer:        "**I can share a safe proof-status summary only**\n- Sensitive identifiers or secure values were removed from the response.\n- Ask for available proof items, missing proof items, and export readiness.",
+			safeAnswer := "**I can share a safe proof-status summary only**\n- Sensitive identifiers or secure values were removed from the response.\n- Ask for available proof items, missing proof items, and export readiness."
+
+			resp := dto.QueryResponse{
+				Answer:        safeAnswer,
 				Confidence:    "low",
 				EntitiesFound: dto.EntitiesFound{},
 				Citations:     []dto.Citation{},
 				NextActions:   []string{},
-			}, nil
+			}
+
+			s.persistConversationMemory(ctx, req, memorySummary, safeAnswer)
+			return resp, nil
 		}
-		return dto.QueryResponse{
+		resp := dto.QueryResponse{
 			Answer:        answer,
 			Confidence:    ev.Confidence,
 			EntitiesFound: entities,
 			Citations:     []dto.Citation{},
 			NextActions:   utils.SanitizeActions(ev.NextSteps),
-		}, nil
+		}
+
+		s.persistConversationMemory(ctx, req, memorySummary, answer)
+		return resp, nil
 	}
 
 	visRule := "needed=false"
 	if scope.WantsVisualization {
 		visRule = "needed=true"
 	}
+	log.Printf("[prompt-layer][llm] call=operational_answer tenant=%s", req.TenantID)
 	op, opErr := s.llm.GenerateOperationalJSON(req.Query, context, visRule)
 	if opErr != nil {
 		return dto.QueryResponse{}, fmt.Errorf("generation failed: %w", opErr)
@@ -413,14 +649,18 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 	answer := utils.SanitizeAnswerText(llmOut.Answer)
 	answer = utils.StripActionLikeSections(answer)
 	if uuidLeakRe.MatchString(answer) || strings.TrimSpace(answer) == "" {
+		safeAnswer := "**I can share a safe operational summary only**\n- Sensitive identifiers or secure values were removed from the response.\n- Ask for status, counts, delays, or trends instead of record-level identifiers."
 
-		return dto.QueryResponse{
-			Answer:        "**I can share a safe operational summary only**\n- Sensitive identifiers or secure values were removed from the response.\n- Ask for status, counts, delays, or trends instead of record-level identifiers.",
+		resp := dto.QueryResponse{
+			Answer:        safeAnswer,
 			Confidence:    "low",
 			EntitiesFound: dto.EntitiesFound{},
 			Citations:     []dto.Citation{},
 			NextActions:   []string{},
-		}, nil
+		}
+
+		s.persistConversationMemory(ctx, req, memorySummary, safeAnswer)
+		return resp, nil
 	}
 
 	conf, confScore = calibrateConfidence(llmOut, chunks)
@@ -449,12 +689,7 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 	if shouldReturnCitations(class, chunks, conf) {
 		finalCitations = citations
 	}
-	if s.memory != nil {
-		summary := SummarizeAssistantAnswer(answer, 280)
-		if err := s.memory.AppendTurn(ctx, req.TenantID, req.UserID, req.SessionID, req.Query, summary, time.Now().UTC()); err != nil {
-			log.Printf("[prompt-layer][memory] write failed tenant=%s user=%s session=%s err=%v", req.TenantID, req.UserID, req.SessionID, err)
-		}
-	}
+	s.persistConversationMemory(ctx, req, memorySummary, answer)
 
 	return dto.QueryResponse{
 		Answer:        answer,
@@ -466,32 +701,233 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 	}, nil
 
 }
-func resolveFollowupQuery(query string, history []ChatTurn) string {
+func (s *DefaultRAGService) persistConversationMemory(ctx context.Context, req dto.QueryRequest, previousSummary string, answer string) {
+	if s.memory == nil {
+		return
+	}
+
+	cleanAnswer := utils.SanitizeAnswerText(answer)
+	if strings.TrimSpace(cleanAnswer) == "" {
+		return
+	}
+
+	turnSummary := SummarizeAssistantAnswer(cleanAnswer, 500)
+	if err := s.memory.AppendTurn(ctx, req.TenantID, req.UserID, req.SessionID, req.Query, turnSummary, time.Now().UTC()); err != nil {
+		log.Printf("[prompt-layer][memory] turn write failed tenant=%s user=%s session=%s err=%v", req.TenantID, req.UserID, req.SessionID, err)
+		return
+	}
+
+	log.Printf("[prompt-layer][memory] turn stored tenant=%s user=%s session=%s", req.TenantID, req.UserID, req.SessionID)
+
+	updatedSummary, err := s.llm.UpdateConversationSummary(previousSummary, req.Query, cleanAnswer)
+	if err != nil {
+		log.Printf("[prompt-layer][memory] summary update failed tenant=%s user=%s session=%s err=%v", req.TenantID, req.UserID, req.SessionID, err)
+		return
+	}
+
+	updatedSummary = utils.SanitizeAnswerText(updatedSummary)
+	if strings.TrimSpace(updatedSummary) == "" || uuidLeakRe.MatchString(updatedSummary) {
+		log.Printf("[prompt-layer][memory] summary skipped tenant=%s user=%s session=%s reason=empty_or_sensitive", req.TenantID, req.UserID, req.SessionID)
+		return
+	}
+
+	if err := s.memory.SetSummary(ctx, req.TenantID, req.UserID, req.SessionID, updatedSummary); err != nil {
+		log.Printf("[prompt-layer][memory] summary write failed tenant=%s user=%s session=%s err=%v", req.TenantID, req.UserID, req.SessionID, err)
+		return
+	}
+
+	log.Printf("[prompt-layer][memory] summary stored tenant=%s user=%s session=%s", req.TenantID, req.UserID, req.SessionID)
+}
+func buildMemoryContext(summary string, recentTurns string) string {
+	var b strings.Builder
+	if strings.TrimSpace(summary) != "" {
+		b.WriteString("Conversation summary: ")
+		b.WriteString(utils.SanitizeAnswerText(summary))
+		b.WriteString("\n")
+	}
+	if strings.TrimSpace(recentTurns) != "" {
+		b.WriteString("Recent turns:\n")
+		b.WriteString(recentTurns)
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func resolveFollowupQuery(query string, history []ChatTurn, memorySummary string) string {
 	q := strings.TrimSpace(query)
-	if q == "" || len(history) == 0 {
+	if q == "" {
+		return q
+	}
+
+	if len(history) == 0 && strings.TrimSpace(memorySummary) == "" {
 		return q
 	}
 
 	lower := strings.ToLower(q)
-	isFollowup := strings.Contains(lower, "those") ||
+	isFollowup := strings.Contains(lower, "this") ||
 		strings.Contains(lower, "that") ||
+		strings.Contains(lower, "those") ||
 		strings.Contains(lower, "these") ||
 		strings.Contains(lower, "them") ||
-		strings.Contains(lower, "same ones")
+		strings.Contains(lower, "it") ||
+		strings.Contains(lower, "same ones") ||
+		strings.Contains(lower, "is this good") ||
+		strings.Contains(lower, "is it good") ||
+		strings.Contains(lower, "why") ||
+		strings.Contains(lower, "what should i do") ||
+		strings.Contains(lower, "what next") ||
+		strings.Contains(lower, "explain that")
 
 	if !isFollowup {
 		return q
 	}
 
-	last := history[len(history)-1]
-	prevUser := utils.SanitizeAnswerText(last.UserMessage)
-	prevAssistant := utils.SanitizeAnswerText(last.AssistantSummary)
-
-	if strings.TrimSpace(prevUser) == "" && strings.TrimSpace(prevAssistant) == "" {
-		return q
+	var prevUser string
+	var prevAssistant string
+	if len(history) > 0 {
+		last := history[len(history)-1]
+		prevUser = utils.SanitizeAnswerText(last.UserMessage)
+		prevAssistant = utils.SanitizeAnswerText(last.AssistantSummary)
 	}
 
-	return strings.TrimSpace(q + " Previous business context: " + prevUser + " " + prevAssistant)
+	parts := []string{q}
+	if strings.TrimSpace(memorySummary) != "" {
+		parts = append(parts, "Conversation summary: "+utils.SanitizeAnswerText(memorySummary))
+	}
+	if strings.TrimSpace(prevUser) != "" || strings.TrimSpace(prevAssistant) != "" {
+		parts = append(parts, "Previous turn: "+prevUser+" "+prevAssistant)
+	}
+
+	return strings.Join(parts, " ")
+}
+func shouldOverrideOutOfScopeForFollowup(query string, resolvedQuery string, memorySummary string, historyContext string, history []ChatTurn) bool {
+	if strings.TrimSpace(memorySummary) == "" && strings.TrimSpace(historyContext) == "" && len(history) == 0 {
+		return false
+	}
+
+	if !isConversationFollowupQuery(query) && strings.EqualFold(strings.TrimSpace(query), strings.TrimSpace(resolvedQuery)) {
+		return false
+	}
+
+	return hasBusinessRelevantMemory(memorySummary, historyContext, history)
+}
+
+func isConversationFollowupQuery(query string) bool {
+	q := strings.ToLower(strings.TrimSpace(query))
+	if q == "" {
+		return false
+	}
+
+	followupPhrases := []string{
+		"this",
+		"that",
+		"those",
+		"these",
+		"them",
+		"it",
+		"same",
+		"same ones",
+		"is this good",
+		"is it good",
+		"is that good",
+		"good or bad",
+		"should i worry",
+		"is it risky",
+		"is this risky",
+		"why",
+		"why so",
+		"why is that",
+		"what next",
+		"next step",
+		"what should i do",
+		"what does this mean",
+		"explain this",
+		"explain that",
+		"tell me more",
+		"how to fix",
+		"how can i resolve",
+	}
+
+	for _, phrase := range followupPhrases {
+		if q == phrase || strings.Contains(q, phrase) {
+			return true
+		}
+	}
+
+	return len(strings.Fields(q)) <= 5 && strings.Contains(q, "?")
+}
+
+func hasBusinessRelevantMemory(memorySummary string, historyContext string, history []ChatTurn) bool {
+	var b strings.Builder
+	b.WriteString(" ")
+	b.WriteString(memorySummary)
+	b.WriteString(" ")
+	b.WriteString(historyContext)
+
+	for _, turn := range history {
+		b.WriteString(" ")
+		b.WriteString(turn.UserMessage)
+		b.WriteString(" ")
+		b.WriteString(turn.AssistantSummary)
+	}
+
+	text := strings.ToLower(b.String())
+	if strings.TrimSpace(text) == "" {
+		return false
+	}
+
+	businessTerms := []string{
+		"payment",
+		"payments",
+		"payout",
+		"payouts",
+		"intent",
+		"intents",
+		"payment instruction",
+		"payment instructions",
+		"batch",
+		"batches",
+		"settlement",
+		"settlements",
+		"bank",
+		"psp",
+		"confirmation",
+		"confirmed",
+		"status",
+		"processing",
+		"created",
+		"pending",
+		"failed",
+		"failure",
+		"retry",
+		"delayed",
+		"delay",
+		"unmatched",
+		"unresolved",
+		"review",
+		"manual review",
+		"value needing review",
+		"proof",
+		"evidence",
+		"dispute",
+		"upload",
+		"uploaded",
+		"file",
+		"received",
+		"processed",
+		"duplicate",
+		"risk",
+		"gap",
+		"short-settled",
+		"unlinked",
+	}
+
+	for _, term := range businessTerms {
+		if strings.Contains(text, term) {
+			return true
+		}
+	}
+
+	return false
 }
 func mustJSON(v any) []byte {
 	b, err := json.Marshal(v)
@@ -500,7 +936,79 @@ func mustJSON(v any) []byte {
 	}
 	return b
 }
+func buildSelectedUIContextQuery(req dto.QueryRequest, resolvedQuery string) string {
+	if req.UIContext == nil {
+		return resolvedQuery
+	}
 
+	parts := []string{resolvedQuery}
+
+	if s := strings.TrimSpace(req.UIContext.Scope); s != "" {
+		parts = append(parts, "selected_scope="+s)
+	}
+	if s := strings.TrimSpace(req.UIContext.SourcePage); s != "" {
+		parts = append(parts, "selected_source_page="+s)
+	}
+	if s := strings.TrimSpace(req.UIContext.SectionTitle); s != "" {
+		parts = append(parts, "selected_section="+s)
+	}
+	if s := strings.TrimSpace(req.UIContext.SelectedTitle); s != "" {
+		parts = append(parts, "selected_title="+s)
+	}
+	if s := strings.TrimSpace(req.UIContext.SelectedDescription); s != "" {
+		parts = append(parts, "selected_description="+s)
+	}
+	if s := strings.TrimSpace(req.UIContext.BatchID); s != "" {
+		parts = append(parts, "batch_id: "+s)
+	}
+
+	return strings.Join(parts, " ")
+}
+
+func buildSelectedUIContextBlock(ctx *dto.UIContext) string {
+	if ctx == nil {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("The user opened Ask Zord from a selected UI section. Answer only within this selected business context unless the user clearly asks to broaden the scope.\n")
+
+	writeContextLine := func(label, value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		b.WriteString(label)
+		b.WriteString(": ")
+		b.WriteString(utils.SanitizeAnswerText(value))
+		b.WriteString("\n")
+	}
+
+	writeContextLine("Selected scope", ctx.Scope)
+	writeContextLine("Scope level", ctx.ScopeLevel)
+	writeContextLine("Source page", ctx.SourcePage)
+	writeContextLine("Section", ctx.SectionTitle)
+	writeContextLine("Selected item", ctx.SelectedTitle)
+	writeContextLine("Selected explanation", ctx.SelectedDescription)
+
+	if len(ctx.SelectedMetrics) > 0 {
+		b.WriteString("Selected visible metrics:\n")
+		for _, metric := range ctx.SelectedMetrics {
+			label := strings.TrimSpace(metric.Label)
+			value := strings.TrimSpace(metric.Value)
+			if label == "" || value == "" {
+				continue
+			}
+			b.WriteString("- ")
+			b.WriteString(utils.SanitizeAnswerText(label))
+			b.WriteString(": ")
+			b.WriteString(utils.SanitizeAnswerText(value))
+			b.WriteString("\n")
+		}
+	}
+
+	return strings.TrimSpace(b.String())
+}
 func buildContext(chunks []model.RetrievedChunk) string {
 	var b strings.Builder
 	for i, c := range chunks {
@@ -756,7 +1264,7 @@ func sourceDiversity(chunks []model.RetrievedChunk) float64 {
 			seen[group] = struct{}{}
 		}
 	}
-	v := float64(len(seen)) / 5.0 // edge, intent, relay, intelligence, evidence
+	v := float64(len(seen)) / 6.0 // edge, intent, relay, intelligence, evidence
 	if v > 1 {
 		return 1
 	}
@@ -779,6 +1287,8 @@ func sourceGroup(sourceType string) string {
 		return "intelligence"
 	case strings.HasPrefix(s, "evidence_"):
 		return "evidence"
+	case strings.HasPrefix(s, "outcome_"):
+		return "outcome"
 	default:
 		return ""
 	}

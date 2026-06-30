@@ -54,7 +54,7 @@ export function AccountMenuButton({ deskRole }: AccountMenuButtonProps) {
     try {
       await logout()
       setOpen(false)
-      router.push('/signin/tenant')
+      router.push('/signin')
     } finally {
       setSigningOut(false)
     }

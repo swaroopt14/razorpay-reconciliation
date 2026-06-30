@@ -11,21 +11,45 @@ spec:
       containers:
         - name: kibana-init
           image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/curl:8.7.1
+          env:
+            - name: ELASTIC_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: elasticsearch-credentials
+                  key: ELASTIC_PASSWORD
+            - name: KIBANA_SYSTEM_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: elasticsearch-credentials
+                  key: KIBANA_SYSTEM_PASSWORD
           command:
             - /bin/sh
             - -c
             - |
-              echo "Waiting for Kibana to be ready..."
-              until curl -s http://kibana.logging.svc.cluster.local:5601/api/status | grep -q '"overall":{"level":"available"'; do
-                echo "Kibana not ready yet, waiting..."
-                sleep 10
-              done
-              echo "Kibana is ready. Creating data views..."
+              ES_URL="http://elasticsearch.logging.svc.cluster.local:9200"
+              KB_URL="http://kibana.logging.svc.cluster.local:5601"
+              ES_AUTH="elastic:${ELASTIC_PASSWORD}"
 
-              # ── Step 0: Create ES index template with keyword mappings ──
-              echo "Creating Elasticsearch index template..."
-              curl -s -X PUT "http://elasticsearch.logging.svc.cluster.local:9200/_index_template/zord-logs-template" \
-                -H "Content-Type: application/json" \
+              echo "=== Step 1: Wait for Elasticsearch ==="
+              until curl -s -u "${ES_AUTH}" "${ES_URL}/_cluster/health" | grep -q '"status"'; do
+                echo "ES not ready, waiting..." && sleep 10
+              done
+              echo "Elasticsearch is ready."
+
+              echo "=== Step 2: Set kibana_system password ==="
+              curl -s -X POST "${ES_URL}/_security/user/kibana_system/_password" \
+                -u "${ES_AUTH}" -H "Content-Type: application/json" \
+                -d "{\"password\": \"${KIBANA_SYSTEM_PASSWORD}\"}" && echo " -> done"
+
+              echo "=== Step 3: Wait for Kibana ==="
+              until curl -s -u "elastic:${ELASTIC_PASSWORD}" "${KB_URL}/api/status" | grep -q '"overall"'; do
+                echo "Kibana not ready, waiting..." && sleep 10
+              done
+              echo "Kibana is ready."
+
+              echo "=== Step 4: ES index template (keyword mappings) ==="
+              curl -s -X PUT "${ES_URL}/_index_template/zord-logs-template" \
+                -u "${ES_AUTH}" -H "Content-Type: application/json" \
                 -d '{
                   "index_patterns": ["zord-logs-*"],
                   "priority": 200,
@@ -36,17 +60,7 @@ spec:
                       "index.mapping.total_fields.limit": 500
                     },
                     "mappings": {
-                      "dynamic_templates": [
-                        {
-                          "strings_as_keywords": {
-                            "match_mapping_type": "string",
-                            "mapping": {
-                              "type": "keyword",
-                              "ignore_above": 1024
-                            }
-                          }
-                        }
-                      ],
+                      "dynamic_templates": [{"strings_as_keywords": {"match_mapping_type": "string","mapping": {"type": "keyword","ignore_above": 1024}}}],
                       "properties": {
                         "message": {"type": "text"},
                         "stream": {"type": "keyword"},
@@ -62,371 +76,70 @@ spec:
                       }
                     }
                   }
-                }' && echo " -> ES index template created (no duplicate .keyword fields)"
+                }' && echo " -> index template created"
 
-              # Also disable wildcard destructive protection
-              curl -s -X PUT "http://elasticsearch.logging.svc.cluster.local:9200/_cluster/settings" \
-                -H "Content-Type: application/json" \
+              curl -s -X PUT "${ES_URL}/_cluster/settings" \
+                -u "${ES_AUTH}" -H "Content-Type: application/json" \
                 -d '{"transient":{"action.destructive_requires_name":false}}' > /dev/null
 
-              # Create zord-logs data view
-              curl -s -X POST "http://kibana.logging.svc.cluster.local:5601/api/data_views/data_view" \
-                -H "kbn-xsrf: true" \
-                -H "Content-Type: application/json" \
-                -d '{
-                  "data_view": {
-                    "title": "zord-logs-*",
-                    "name": "Zord Application Logs",
-                    "timeFieldName": "@timestamp"
-                  }
-                }' && echo " -> zord-logs data view created"
+              echo "=== Step 5: Kibana data views ==="
+              curl -s -X POST "${KB_URL}/api/data_views/data_view" \
+                -u "elastic:${ELASTIC_PASSWORD}" -H "kbn-xsrf: true" -H "Content-Type: application/json" \
+                -d '{"data_view":{"title":"zord-logs-*","name":"Zord Application Logs","timeFieldName":"@timestamp"}}' && echo " -> zord-logs"
 
-              # Create kong-access data view
-              curl -s -X POST "http://kibana.logging.svc.cluster.local:5601/api/data_views/data_view" \
-                -H "kbn-xsrf: true" \
-                -H "Content-Type: application/json" \
-                -d '{
-                  "data_view": {
-                    "title": "kong-access-*",
-                    "name": "Kong Access Logs",
-                    "timeFieldName": "@timestamp"
-                  }
-                }' && echo " -> kong-access data view created"
+              curl -s -X POST "${KB_URL}/api/data_views/data_view" \
+                -u "elastic:${ELASTIC_PASSWORD}" -H "kbn-xsrf: true" -H "Content-Type: application/json" \
+                -d '{"data_view":{"title":"kong-access-*","name":"Kong Access Logs","timeFieldName":"@timestamp"}}' && echo " -> kong-access"
 
-              # Set zord-logs as default
-              curl -s -X POST "http://kibana.logging.svc.cluster.local:5601/api/data_views/default" \
-                -H "kbn-xsrf: true" \
-                -H "Content-Type: application/json" \
-                -d '{
-                  "data_view_id": "zord-logs-*",
-                  "force": true
-                }' && echo " -> default data view set"
+              curl -s -X POST "${KB_URL}/api/data_views/default" \
+                -u "elastic:${ELASTIC_PASSWORD}" -H "kbn-xsrf: true" -H "Content-Type: application/json" \
+                -d '{"data_view_id":"zord-logs-*","force":true}' && echo " -> default set"
 
-              # Wait for data to be indexed
-              echo "Waiting 30s for logs to be indexed..."
+              echo "=== Step 6: Alert rules ==="
               sleep 30
 
-              # Create Kibana dashboard — Zord Service Logs Overview
-              curl -s -X POST "http://kibana.logging.svc.cluster.local:5601/api/saved_objects/_import?overwrite=true" \
-                -H "kbn-xsrf: true" \
-                --form file=@- << 'DASHBOARD_EOF'
-              {"attributes":{"title":"Zord Service Logs Overview","hits":0,"description":"All microservice logs with filters","panelsJSON":"[{\"version\":\"8.13.0\",\"type\":\"lens\",\"gridData\":{\"x\":0,\"y\":0,\"w\":24,\"h\":8,\"i\":\"1\"},\"panelIndex\":\"1\",\"embeddableConfig\":{\"attributes\":{\"title\":\"Log Volume Over Time\",\"visualizationType\":\"lnsXY\",\"state\":{\"datasourceStates\":{\"formBased\":{\"layers\":{\"layer1\":{\"columns\":{\"col1\":{\"operationType\":\"date_histogram\",\"sourceField\":\"@timestamp\",\"params\":{\"interval\":\"auto\"}},\"col2\":{\"operationType\":\"count\",\"label\":\"Log Count\"}},\"columnOrder\":[\"col1\",\"col2\"]}}}},\"visualization\":{\"layers\":[{\"layerId\":\"layer1\",\"seriesType\":\"bar\",\"xAccessor\":\"col1\",\"accessors\":[\"col2\"]}]}},\"references\":[{\"type\":\"index-pattern\",\"id\":\"zord-logs-*\",\"name\":\"indexpattern-datasource-layer-layer1\"}]}}}]","optionsJSON":"{\"useMargins\":true,\"syncColors\":false,\"syncCursor\":true,\"syncTooltips\":false,\"hidePanelTitles\":false}","timeRestore":true,"timeTo":"now","timeFrom":"now-1h","kibanaSavedObjectMeta":{"searchSourceJSON":"{\"query\":{\"query\":\"\",\"language\":\"kuery\"},\"filter\":[]}"}},"id":"zord-logs-dashboard","type":"dashboard","references":[]}
-              DASHBOARD_EOF
-              echo " -> Zord logs dashboard created"
+              curl -s -X POST "${KB_URL}/api/alerting/rule" \
+                -u "elastic:${ELASTIC_PASSWORD}" -H "kbn-xsrf: true" -H "Content-Type: application/json" \
+                -d '{"name":"Service Error Logs Detected","consumer":"stackAlerts","rule_type_id":".es-query","schedule":{"interval":"1m"},"params":{"index":["zord-logs-*"],"timeField":"@timestamp","esQuery":"{\"query\":{\"bool\":{\"must\":[{\"term\":{\"stream\":\"stderr\"}},{\"range\":{\"@timestamp\":{\"gte\":\"now-5m\"}}}]}}}","timeWindowSize":5,"timeWindowUnit":"m","threshold":[10],"thresholdComparator":">"},"actions":[],"tags":["zord","error"],"enabled":true}' && echo " -> Error logs alert"
 
-              # ═══════════════════════════════════════════════════════════════
-              # CREATE ALERT RULES (Free tier — Elasticsearch query rules)
-              # ═══════════════════════════════════════════════════════════════
+              curl -s -X POST "${KB_URL}/api/alerting/rule" \
+                -u "elastic:${ELASTIC_PASSWORD}" -H "kbn-xsrf: true" -H "Content-Type: application/json" \
+                -d '{"name":"Critical Error (panic/fatal)","consumer":"stackAlerts","rule_type_id":".es-query","schedule":{"interval":"1m"},"params":{"index":["zord-logs-*"],"timeField":"@timestamp","esQuery":"{\"query\":{\"bool\":{\"should\":[{\"match_phrase\":{\"message\":\"panic\"}},{\"match_phrase\":{\"message\":\"fatal\"}}],\"minimum_should_match\":1,\"filter\":[{\"range\":{\"@timestamp\":{\"gte\":\"now-5m\"}}}]}}}","timeWindowSize":5,"timeWindowUnit":"m","threshold":[1],"thresholdComparator":">="},"actions":[],"tags":["zord","critical"],"enabled":true}' && echo " -> Critical alert"
 
-              echo "Creating alert rules..."
+              curl -s -X POST "${KB_URL}/api/alerting/rule" \
+                -u "elastic:${ELASTIC_PASSWORD}" -H "kbn-xsrf: true" -H "Content-Type: application/json" \
+                -d '{"name":"Database Connection Errors","consumer":"stackAlerts","rule_type_id":".es-query","schedule":{"interval":"2m"},"params":{"index":["zord-logs-*"],"timeField":"@timestamp","esQuery":"{\"query\":{\"bool\":{\"should\":[{\"match_phrase\":{\"message\":\"connection refused\"}},{\"match_phrase\":{\"message\":\"dial tcp\"}},{\"match_phrase\":{\"message\":\"pq:\"}}],\"minimum_should_match\":1,\"filter\":[{\"range\":{\"@timestamp\":{\"gte\":\"now-5m\"}}}]}}}","timeWindowSize":5,"timeWindowUnit":"m","threshold":[3],"thresholdComparator":">="},"actions":[],"tags":["zord","database"],"enabled":true}' && echo " -> DB alert"
 
-              # Alert 1: Error logs detected across all services
-              curl -s -X POST "http://kibana.logging.svc.cluster.local:5601/api/alerting/rule" \
-                -H "kbn-xsrf: true" \
-                -H "Content-Type: application/json" \
-                -d '{
-                  "name": "Service Error Logs Detected",
-                  "consumer": "stackAlerts",
-                  "rule_type_id": ".es-query",
-                  "schedule": {"interval": "1m"},
-                  "params": {
-                    "index": ["zord-logs-*"],
-                    "timeField": "@timestamp",
-                    "esQuery": "{\"query\":{\"bool\":{\"must\":[{\"term\":{\"stream\":\"stderr\"}},{\"range\":{\"@timestamp\":{\"gte\":\"now-5m\"}}}]}}}",
-                    "timeWindowSize": 5,
-                    "timeWindowUnit": "m",
-                    "threshold": [10],
-                    "thresholdComparator": ">"
-                  },
-                  "actions": [],
-                  "tags": ["zord", "error", "all-services"],
-                  "enabled": true
-                }' && echo " -> Alert: Service Error Logs created"
+              curl -s -X POST "${KB_URL}/api/alerting/rule" \
+                -u "elastic:${ELASTIC_PASSWORD}" -H "kbn-xsrf: true" -H "Content-Type: application/json" \
+                -d '{"name":"Kafka Connection Errors","consumer":"stackAlerts","rule_type_id":".es-query","schedule":{"interval":"2m"},"params":{"index":["zord-logs-*"],"timeField":"@timestamp","esQuery":"{\"query\":{\"bool\":{\"must\":[{\"match_phrase\":{\"message\":\"kafka\"}},{\"term\":{\"stream\":\"stderr\"}}],\"filter\":[{\"range\":{\"@timestamp\":{\"gte\":\"now-5m\"}}}]}}}","timeWindowSize":5,"timeWindowUnit":"m","threshold":[5],"thresholdComparator":">="},"actions":[],"tags":["zord","kafka"],"enabled":true}' && echo " -> Kafka alert"
 
-              # Alert 2: Critical errors (panic/fatal)
-              curl -s -X POST "http://kibana.logging.svc.cluster.local:5601/api/alerting/rule" \
-                -H "kbn-xsrf: true" \
-                -H "Content-Type: application/json" \
-                -d '{
-                  "name": "Critical Error (panic/fatal)",
-                  "consumer": "stackAlerts",
-                  "rule_type_id": ".es-query",
-                  "schedule": {"interval": "1m"},
-                  "params": {
-                    "index": ["zord-logs-*"],
-                    "timeField": "@timestamp",
-                    "esQuery": "{\"query\":{\"bool\":{\"should\":[{\"match_phrase\":{\"message\":\"panic\"}},{\"match_phrase\":{\"message\":\"fatal\"}},{\"match_phrase\":{\"message\":\"FATAL\"}}],\"minimum_should_match\":1,\"filter\":[{\"range\":{\"@timestamp\":{\"gte\":\"now-5m\"}}}]}}}",
-                    "timeWindowSize": 5,
-                    "timeWindowUnit": "m",
-                    "threshold": [1],
-                    "thresholdComparator": ">="
-                  },
-                  "actions": [],
-                  "tags": ["zord", "critical", "panic", "fatal"],
-                  "enabled": true
-                }' && echo " -> Alert: Critical Error created"
+              curl -s -X POST "${KB_URL}/api/alerting/rule" \
+                -u "elastic:${ELASTIC_PASSWORD}" -H "kbn-xsrf: true" -H "Content-Type: application/json" \
+                -d '{"name":"High Error Log Volume","consumer":"stackAlerts","rule_type_id":".es-query","schedule":{"interval":"2m"},"params":{"index":["zord-logs-*"],"timeField":"@timestamp","esQuery":"{\"query\":{\"bool\":{\"must\":[{\"term\":{\"stream\":\"stderr\"}}],\"filter\":[{\"range\":{\"@timestamp\":{\"gte\":\"now-2m\"}}}]}}}","timeWindowSize":2,"timeWindowUnit":"m","threshold":[100],"thresholdComparator":">"},"actions":[],"tags":["zord","crash-loop"],"enabled":true}' && echo " -> High volume alert"
 
-              # Alert 3: Database connection errors
-              curl -s -X POST "http://kibana.logging.svc.cluster.local:5601/api/alerting/rule" \
-                -H "kbn-xsrf: true" \
-                -H "Content-Type: application/json" \
-                -d '{
-                  "name": "Database Connection Errors",
-                  "consumer": "stackAlerts",
-                  "rule_type_id": ".es-query",
-                  "schedule": {"interval": "2m"},
-                  "params": {
-                    "index": ["zord-logs-*"],
-                    "timeField": "@timestamp",
-                    "esQuery": "{\"query\":{\"bool\":{\"should\":[{\"match_phrase\":{\"message\":\"connection refused\"}},{\"match_phrase\":{\"message\":\"dial tcp\"}},{\"match_phrase\":{\"message\":\"pq:\"}}],\"minimum_should_match\":1,\"filter\":[{\"range\":{\"@timestamp\":{\"gte\":\"now-5m\"}}}]}}}",
-                    "timeWindowSize": 5,
-                    "timeWindowUnit": "m",
-                    "threshold": [3],
-                    "thresholdComparator": ">="
-                  },
-                  "actions": [],
-                  "tags": ["zord", "database", "connection"],
-                  "enabled": true
-                }' && echo " -> Alert: Database Connection Errors created"
+              echo "=== Step 7: ILM policy ==="
+              curl -s -X PUT "${ES_URL}/_ilm/policy/zord-logs-policy" \
+                -u "${ES_AUTH}" -H "Content-Type: application/json" \
+                -d '{"policy":{"phases":{"hot":{"actions":{"rollover":{"max_age":"7d","max_size":"5gb"}}},"warm":{"min_age":"7d","actions":{"shrink":{"number_of_shards":1},"forcemerge":{"max_num_segments":1}}},"delete":{"min_age":"30d","actions":{"delete":{}}}}}}' && echo " -> ILM policy created"
 
-              # Alert 4: Kafka connection errors
-              curl -s -X POST "http://kibana.logging.svc.cluster.local:5601/api/alerting/rule" \
-                -H "kbn-xsrf: true" \
-                -H "Content-Type: application/json" \
-                -d '{
-                  "name": "Kafka Connection Errors",
-                  "consumer": "stackAlerts",
-                  "rule_type_id": ".es-query",
-                  "schedule": {"interval": "2m"},
-                  "params": {
-                    "index": ["zord-logs-*"],
-                    "timeField": "@timestamp",
-                    "esQuery": "{\"query\":{\"bool\":{\"must\":[{\"match_phrase\":{\"message\":\"kafka\"}},{\"term\":{\"stream\":\"stderr\"}}],\"filter\":[{\"range\":{\"@timestamp\":{\"gte\":\"now-5m\"}}}]}}}",
-                    "timeWindowSize": 5,
-                    "timeWindowUnit": "m",
-                    "threshold": [5],
-                    "thresholdComparator": ">="
-                  },
-                  "actions": [],
-                  "tags": ["zord", "kafka", "connection"],
-                  "enabled": true
-                }' && echo " -> Alert: Kafka Connection Errors created"
+              curl -s -X PUT "${ES_URL}/_index_template/zord-logs-template" \
+                -u "${ES_AUTH}" -H "Content-Type: application/json" \
+                -d '{"index_patterns":["zord-logs-*"],"priority":200,"template":{"settings":{"index.lifecycle.name":"zord-logs-policy","number_of_shards":1,"number_of_replicas":0},"mappings":{"dynamic_templates":[{"strings_as_keywords":{"match_mapping_type":"string","mapping":{"type":"keyword","ignore_above":1024}}}],"properties":{"message":{"type":"text"},"stream":{"type":"keyword"},"container":{"type":"keyword"},"namespace":{"type":"keyword"},"pod":{"type":"keyword"},"service":{"type":"keyword"},"cluster":{"type":"keyword"},"tag":{"type":"keyword"},"@timestamp":{"type":"date"},"time":{"type":"date"}}}}}' && echo " -> ILM template applied"
 
-              # Alert 5: High log volume (possible crash loop)
-              curl -s -X POST "http://kibana.logging.svc.cluster.local:5601/api/alerting/rule" \
-                -H "kbn-xsrf: true" \
-                -H "Content-Type: application/json" \
-                -d '{
-                  "name": "High Error Log Volume (possible crash loop)",
-                  "consumer": "stackAlerts",
-                  "rule_type_id": ".es-query",
-                  "schedule": {"interval": "2m"},
-                  "params": {
-                    "index": ["zord-logs-*"],
-                    "timeField": "@timestamp",
-                    "esQuery": "{\"query\":{\"bool\":{\"must\":[{\"term\":{\"stream\":\"stderr\"}}],\"filter\":[{\"range\":{\"@timestamp\":{\"gte\":\"now-2m\"}}}]}}}",
-                    "timeWindowSize": 2,
-                    "timeWindowUnit": "m",
-                    "threshold": [100],
-                    "thresholdComparator": ">"
-                  },
-                  "actions": [],
-                  "tags": ["zord", "high-volume", "crash-loop"],
-                  "enabled": true
-                }' && echo " -> Alert: High Error Log Volume created"
+              curl -s -X PUT "${ES_URL}/_index_template/kong-access-template" \
+                -u "${ES_AUTH}" -H "Content-Type: application/json" \
+                -d '{"index_patterns":["kong-access-*"],"template":{"settings":{"index.lifecycle.name":"zord-logs-policy","number_of_shards":1,"number_of_replicas":0}}}' && echo " -> Kong ILM applied"
 
-              # Alert 6: Authentication failures
-              curl -s -X POST "http://kibana.logging.svc.cluster.local:5601/api/alerting/rule" \
-                -H "kbn-xsrf: true" \
-                -H "Content-Type: application/json" \
-                -d '{
-                  "name": "Authentication Failures",
-                  "consumer": "stackAlerts",
-                  "rule_type_id": ".es-query",
-                  "schedule": {"interval": "2m"},
-                  "params": {
-                    "index": ["zord-logs-*"],
-                    "timeField": "@timestamp",
-                    "esQuery": "{\"query\":{\"bool\":{\"should\":[{\"match_phrase\":{\"message\":\"unauthorized\"}},{\"match_phrase\":{\"message\":\"401\"}},{\"match_phrase\":{\"message\":\"invalid token\"}}],\"minimum_should_match\":1,\"filter\":[{\"range\":{\"@timestamp\":{\"gte\":\"now-5m\"}}}]}}}",
-                    "timeWindowSize": 5,
-                    "timeWindowUnit": "m",
-                    "threshold": [10],
-                    "thresholdComparator": ">="
-                  },
-                  "actions": [],
-                  "tags": ["zord", "auth", "security"],
-                  "enabled": true
-                }' && echo " -> Alert: Authentication Failures created"
-
-              echo "All alert rules created successfully!"
-
-              # ═══════════════════════════════════════════════════════════════
-              # CREATE INDEX LIFECYCLE POLICY (auto-delete old logs)
-              # ═══════════════════════════════════════════════════════════════
-
-              echo "Creating ILM policy..."
-
-              # Create ILM policy: delete logs after 30 days
-              curl -s -X PUT "http://elasticsearch.logging.svc.cluster.local:9200/_ilm/policy/zord-logs-policy" \
-                -H "Content-Type: application/json" \
-                -d '{
-                  "policy": {
-                    "phases": {
-                      "hot": {
-                        "actions": {
-                          "rollover": {
-                            "max_age": "7d",
-                            "max_size": "5gb"
-                          }
-                        }
-                      },
-                      "warm": {
-                        "min_age": "7d",
-                        "actions": {
-                          "shrink": {"number_of_shards": 1},
-                          "forcemerge": {"max_num_segments": 1}
-                        }
-                      },
-                      "delete": {
-                        "min_age": "30d",
-                        "actions": {
-                          "delete": {}
-                        }
-                      }
-                    }
-                  }
-                }' && echo " -> ILM policy created (delete after 30 days)"
-
-              # Apply ILM policy to zord-logs index template (merged with keyword mappings)
-              curl -s -X PUT "http://elasticsearch.logging.svc.cluster.local:9200/_index_template/zord-logs-template" \
-                -H "Content-Type: application/json" \
-                -d '{
-                  "index_patterns": ["zord-logs-*"],
-                  "priority": 200,
-                  "template": {
-                    "settings": {
-                      "index.lifecycle.name": "zord-logs-policy",
-                      "number_of_shards": 1,
-                      "number_of_replicas": 0
-                    },
-                    "mappings": {
-                      "dynamic": true,
-                      "properties": {
-                        "message": {"type": "text"},
-                        "stream": {"type": "keyword"},
-                        "container": {"type": "keyword"},
-                        "namespace": {"type": "keyword"},
-                        "pod": {"type": "keyword"},
-                        "service": {"type": "keyword"},
-                        "cluster": {"type": "keyword"},
-                        "logtag": {"type": "keyword"},
-                        "tag": {"type": "keyword"},
-                        "@timestamp": {"type": "date"},
-                        "time": {"type": "date"}
-                      }
-                    }
-                  }
-                }' && echo " -> ILM + keyword mappings template applied to zord-logs-*"
-
-              # Apply ILM policy to kong-access index template
-              curl -s -X PUT "http://elasticsearch.logging.svc.cluster.local:9200/_index_template/kong-access-template" \
-                -H "Content-Type: application/json" \
-                -d '{
-                  "index_patterns": ["kong-access-*"],
-                  "template": {
-                    "settings": {
-                      "index.lifecycle.name": "zord-logs-policy",
-                      "number_of_shards": 1,
-                      "number_of_replicas": 0
-                    }
-                  }
-                }' && echo " -> ILM template applied to kong-access-*"
-
-              echo "ILM configured: logs auto-delete after 30 days"
-
-              # ═══════════════════════════════════════════════════════════════
-              # CREATE SAVED SEARCHES (per-service quick access)
-              # ═══════════════════════════════════════════════════════════════
-
-              echo "Creating saved searches..."
-
-              # Saved search: zord-edge errors
-              curl -s -X POST "http://kibana.logging.svc.cluster.local:5601/api/saved_objects/search/zord-edge-errors" \
-                -H "kbn-xsrf: true" \
-                -H "Content-Type: application/json" \
-                -d '{
-                  "attributes": {
-                    "title": "zord-edge Errors",
-                    "description": "All error logs from zord-edge service",
-                    "kibanaSavedObjectMeta": {
-                      "searchSourceJSON": "{\"query\":{\"query\":\"kubernetes.container_name: zord-edge AND stream: stderr\",\"language\":\"kuery\"},\"filter\":[],\"indexRefName\":\"kibanaSavedObjectMeta.searchSourceJSON.index\"}"
-                    }
-                  },
-                  "references": [{"id": "zord-logs-*", "name": "kibanaSavedObjectMeta.searchSourceJSON.index", "type": "index-pattern"}]
-                }' 2>/dev/null && echo " -> Saved: zord-edge errors"
-
-              # Saved search: zord-intent-engine errors
-              curl -s -X POST "http://kibana.logging.svc.cluster.local:5601/api/saved_objects/search/zord-intent-engine-errors" \
-                -H "kbn-xsrf: true" \
-                -H "Content-Type: application/json" \
-                -d '{
-                  "attributes": {
-                    "title": "zord-intent-engine Errors",
-                    "description": "All error logs from zord-intent-engine",
-                    "kibanaSavedObjectMeta": {
-                      "searchSourceJSON": "{\"query\":{\"query\":\"kubernetes.container_name: zord-intent-engine AND stream: stderr\",\"language\":\"kuery\"},\"filter\":[],\"indexRefName\":\"kibanaSavedObjectMeta.searchSourceJSON.index\"}"
-                    }
-                  },
-                  "references": [{"id": "zord-logs-*", "name": "kibanaSavedObjectMeta.searchSourceJSON.index", "type": "index-pattern"}]
-                }' 2>/dev/null && echo " -> Saved: zord-intent-engine errors"
-
-              # Saved search: zord-relay errors
-              curl -s -X POST "http://kibana.logging.svc.cluster.local:5601/api/saved_objects/search/zord-relay-errors" \
-                -H "kbn-xsrf: true" \
-                -H "Content-Type: application/json" \
-                -d '{
-                  "attributes": {
-                    "title": "zord-relay Errors",
-                    "description": "All error logs from zord-relay",
-                    "kibanaSavedObjectMeta": {
-                      "searchSourceJSON": "{\"query\":{\"query\":\"kubernetes.container_name: zord-relay AND stream: stderr\",\"language\":\"kuery\"},\"filter\":[],\"indexRefName\":\"kibanaSavedObjectMeta.searchSourceJSON.index\"}"
-                    }
-                  },
-                  "references": [{"id": "zord-logs-*", "name": "kibanaSavedObjectMeta.searchSourceJSON.index", "type": "index-pattern"}]
-                }' 2>/dev/null && echo " -> Saved: zord-relay errors"
-
-              # Saved search: All services errors
-              curl -s -X POST "http://kibana.logging.svc.cluster.local:5601/api/saved_objects/search/all-services-errors" \
-                -H "kbn-xsrf: true" \
-                -H "Content-Type: application/json" \
-                -d '{
-                  "attributes": {
-                    "title": "All Services - Errors Only",
-                    "description": "All error logs across all services",
-                    "kibanaSavedObjectMeta": {
-                      "searchSourceJSON": "{\"query\":{\"query\":\"stream: stderr\",\"language\":\"kuery\"},\"filter\":[],\"indexRefName\":\"kibanaSavedObjectMeta.searchSourceJSON.index\"}"
-                    }
-                  },
-                  "references": [{"id": "zord-logs-*", "name": "kibanaSavedObjectMeta.searchSourceJSON.index", "type": "index-pattern"}]
-                }' 2>/dev/null && echo " -> Saved: All services errors"
-
-              # Saved search: Kong API traffic
-              curl -s -X POST "http://kibana.logging.svc.cluster.local:5601/api/saved_objects/search/kong-api-traffic" \
-                -H "kbn-xsrf: true" \
-                -H "Content-Type: application/json" \
-                -d '{
-                  "attributes": {
-                    "title": "Kong API Gateway Traffic",
-                    "description": "All Kong access logs",
-                    "kibanaSavedObjectMeta": {
-                      "searchSourceJSON": "{\"query\":{\"query\":\"kubernetes.container_name: kong\",\"language\":\"kuery\"},\"filter\":[],\"indexRefName\":\"kibanaSavedObjectMeta.searchSourceJSON.index\"}"
-                    }
-                  },
-                  "references": [{"id": "zord-logs-*", "name": "kibanaSavedObjectMeta.searchSourceJSON.index", "type": "index-pattern"}]
-                }' 2>/dev/null && echo " -> Saved: Kong API traffic"
-
-              echo "All saved searches created!"
-              echo "Kibana initialization complete!"
+              echo "=== Setup Complete ==="
+              echo ""
+              echo "============================================"
+              echo "  KIBANA SECURITY SETUP COMPLETE"
+              echo "============================================"
+              echo "  URL: https://kibana.zordnet.com"
+              echo ""
+              echo "  Login:  elastic / Arealiszord@2026"
+              echo "============================================"
           resources:
             requests:
               cpu: 50m

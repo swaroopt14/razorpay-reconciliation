@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: zord-prompt-layer
 spec:
-  replicas: 2
+  replicas: 1
   minReadySeconds: 10
   strategy:
     type: RollingUpdate
@@ -46,7 +46,7 @@ spec:
               app.kubernetes.io/name: zord-prompt-layer
       containers:
         - name: zord-prompt-layer
-          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-prompt-layer:v4
+          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-prompt-layer:v12
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8086
@@ -62,7 +62,7 @@ spec:
                   name: zord-app-secrets
                   key: GEMINI_API_KEYS
             - name: GEMINI_MODEL
-              value: gemini-2.5-flash
+              value: gemini-3.1-flash-lite
             - name: GEMINI_BASE_URL
               value: https://generativelanguage.googleapis.com/v1beta
             - name: EDGE_READ_DSN

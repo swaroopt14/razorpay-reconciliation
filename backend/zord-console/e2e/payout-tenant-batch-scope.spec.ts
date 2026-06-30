@@ -173,7 +173,7 @@ test.describe('batch-scoped surfaces (session tenant via BFF + batch in query)',
     ).toBe(true)
   })
 
-  test('evidence (proof dock) requests batch_id on packs and patterns; batches list is tenant-wide', async ({
+  test('evidence (proof dock) requests client_batch_id on packs; batches list is tenant-wide', async ({
     page,
   }) => {
     const { captures: gets, stop } = trackProdGets(page)
@@ -181,7 +181,7 @@ test.describe('batch-scoped surfaces (session tenant via BFF + batch in query)',
       (res) =>
         res.request().method() === 'GET' &&
         res.url().includes('/api/prod/evidence/packs') &&
-        res.url().includes(`batch_id=${encodeURIComponent(BATCH_ID)}`),
+        res.url().includes(`client_batch_id=${encodeURIComponent(BATCH_ID)}`),
       { timeout: 20_000 },
     )
     await page.goto(`/payout-command-view/today?dock=proof&batch_id=${encodeURIComponent(BATCH_ID)}`)
@@ -194,7 +194,7 @@ test.describe('batch-scoped surfaces (session tenant via BFF + batch in query)',
     }
 
     const packs = pathsMatching(gets, '/api/prod/evidence/packs')
-    expect(packs.some((c) => c.searchParams.get('batch_id') === BATCH_ID)).toBe(true)
+    expect(packs.some((c) => c.searchParams.get('client_batch_id') === BATCH_ID)).toBe(true)
 
     const intelBatches = pathsMatching(gets, '/api/prod/intelligence/batches')
     expect(intelBatches.length).toBeGreaterThan(0)
@@ -202,9 +202,93 @@ test.describe('batch-scoped surfaces (session tenant via BFF + batch in query)',
       expect(cap.searchParams.get('batch_id')).toBeNull()
     }
 
+  })
+})
+
+test.describe('batch-scoped intelligence KPIs (session tenant via BFF + batch_id)', () => {
+  test.beforeEach(async ({ page, context }) => {
+    await installPayoutSessionCookies(context)
+    await installAuthAndProdMocks(page)
+    await page.addInitScript((tid) => {
+      localStorage.setItem('zord_tenant_id', tid)
+    }, SESSION_TENANT)
+  })
+
+  const INTELLIGENCE_BATCH_ROUTES = [
+    '/api/prod/intelligence/leakage',
+    '/api/prod/intelligence/ambiguity',
+    '/api/prod/intelligence/defensibility',
+    '/api/prod/intelligence/patterns',
+    '/api/prod/intelligence/recommendations',
+    '/api/prod/intelligence/rca',
+  ] as const
+
+  test('leakage and ambiguity send batch_id when batch is selected in URL', async ({ page }) => {
+    const { captures: gets, stop } = trackProdGets(page)
+    const leakageWait = waitForProdGet(page, '/api/prod/intelligence/leakage')
+    await page.goto(`/payout-command-view/today?dock=leakage&batch_id=${encodeURIComponent(BATCH_ID)}`)
+    await leakageWait
+    await page.waitForTimeout(1500)
+    stop()
+
+    for (const cap of gets) {
+      assertNoClientTenantId(cap.searchParams, cap.pathname)
+    }
+
+    const leakage = pathsMatching(gets, '/api/prod/intelligence/leakage')
+    expect(leakage.some((c) => c.searchParams.get('batch_id') === BATCH_ID)).toBe(true)
+
+    const { captures: ambiguityGets, stop: stopAmbiguity } = trackProdGets(page)
+    const ambiguityWait = waitForProdGet(page, '/api/prod/intelligence/ambiguity')
+    await page.goto(`/payout-command-view/today?dock=ambiguity&batch_id=${encodeURIComponent(BATCH_ID)}`)
+    await ambiguityWait
+    await page.waitForTimeout(1000)
+    stopAmbiguity()
+
+    const ambiguity = pathsMatching(ambiguityGets, '/api/prod/intelligence/ambiguity')
+    expect(ambiguity.some((c) => c.searchParams.get('batch_id') === BATCH_ID)).toBe(true)
+  })
+
+  test('evidence defensibility and patterns send batch_id when batch is selected', async ({ page }) => {
+    const { captures: gets, stop } = trackProdGets(page)
+    const defWait = waitForProdGet(page, '/api/prod/intelligence/defensibility')
+    await page.goto(`/payout-command-view/today?dock=proof&batch_id=${encodeURIComponent(BATCH_ID)}`)
+    await defWait
+    await page.waitForTimeout(1500)
+    stop()
+
+    for (const cap of gets) {
+      assertNoClientTenantId(cap.searchParams, cap.pathname)
+    }
+
+    const defensibility = pathsMatching(gets, '/api/prod/intelligence/defensibility')
+    expect(defensibility.some((c) => c.searchParams.get('batch_id') === BATCH_ID)).toBe(true)
+
     const patterns = pathsMatching(gets, '/api/prod/intelligence/patterns')
     if (patterns.length > 0) {
       expect(patterns.some((c) => c.searchParams.get('batch_id') === BATCH_ID)).toBe(true)
+    }
+  })
+
+  test('workspace sends batch-scoped intelligence KPIs when batch_id is in URL', async ({ page }) => {
+    const { captures: gets, stop } = trackProdGets(page)
+    const leakageWait = waitForProdGet(page, '/api/prod/intelligence/leakage')
+    await page.goto(`/payout-command-view/today?dock=workspace&batch_id=${encodeURIComponent(BATCH_ID)}`)
+    await leakageWait
+    await page.waitForTimeout(2000)
+    stop()
+
+    for (const cap of gets) {
+      assertNoClientTenantId(cap.searchParams, cap.pathname)
+    }
+
+    for (const route of INTELLIGENCE_BATCH_ROUTES) {
+      const matches = pathsMatching(gets, route)
+      if (matches.length === 0) continue
+      expect(
+        matches.some((c) => c.searchParams.get('batch_id') === BATCH_ID),
+        `${route} should include batch_id when batch is selected`,
+      ).toBe(true)
     }
   })
 })
@@ -218,7 +302,7 @@ test.describe('tenant-scoped surfaces (no batch_id on client prod GETs)', () => 
     }, SESSION_TENANT)
   })
 
-  test('leakage and ambiguity dashboards do not send batch_id', async ({ page }) => {
+  test('leakage and ambiguity dashboards do not send batch_id without batch selection', async ({ page }) => {
     const { captures: leakageGets, stop: stopLeakage } = trackProdGets(page)
     const leakageWait = waitForProdGet(page, '/api/prod/intelligence/leakage')
     await page.goto('/payout-command-view/today?dock=leakage')

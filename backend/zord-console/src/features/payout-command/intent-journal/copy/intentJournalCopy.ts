@@ -10,7 +10,7 @@ export const intentJournalCopy = {
     paymentWorkflow: 'Payment Workflow',
     instructionsCreated: 'Payment Instructions Created',
     intendedValue: 'Intended Payment Value',
-    readiness: 'Intent Quality',
+    readiness: 'Batch quality',
     needsReview: 'Needs Review',
   },
   tabs: {

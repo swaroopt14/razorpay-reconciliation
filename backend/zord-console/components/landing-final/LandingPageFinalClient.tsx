@@ -577,7 +577,7 @@ const pricingPlans: readonly PricingPlan[] = [
     detail: landingPricingCopy.plans[0].detail,
     points: landingPricingCopy.plans[0].points,
     ctaLabel: 'Start in sandbox',
-    href: '/signin/tenant',
+    href: '/signin',
   },
   {
     title: landingPricingCopy.plans[1].title,
@@ -588,7 +588,7 @@ const pricingPlans: readonly PricingPlan[] = [
     featured: true,
     badge: 'Most popular',
     ctaLabel: 'Talk to sales',
-    href: 'mailto:hello@arelais.com?subject=Growth%20plan%20for%20ZORD',
+    href: 'mailto:Support@zordnet.com?subject=Growth%20plan%20for%20ZORD',
   },
   {
     title: landingPricingCopy.plans[2].title,
@@ -597,7 +597,7 @@ const pricingPlans: readonly PricingPlan[] = [
     detail: landingPricingCopy.plans[2].detail,
     points: landingPricingCopy.plans[2].points,
     ctaLabel: 'Contact sales',
-    href: 'mailto:hello@arelais.com?subject=Custom%20pricing%20for%20ZORD',
+    href: 'mailto:Support@zordnet.com?subject=Custom%20pricing%20for%20ZORD',
   },
 ] as const
 
@@ -664,7 +664,7 @@ const resourceCards = [
     eyebrow: 'Talk to the team',
     title: 'Get product access, technical answers, or onboarding support',
     body: 'Reach Arealis directly for demos, integration questions, enterprise rollout discussions, or support.',
-    href: 'mailto:hello@arelais.com?subject=ZORD%20resources%20and%20support',
+    href: 'mailto:Support@zordnet.com?subject=ZORD%20resources%20and%20support',
     cta: 'Contact Arealis',
   },
 ] as const
@@ -960,7 +960,7 @@ function Hero() {
 
                     <div className="mt-10 flex flex-col items-center gap-4 sm:flex-row lg:items-start">
                       <a
-                        href="mailto:hello@arelais.com?subject=Book%20Demo%20for%20Zord"
+                        href="/signup"
                         className="flex w-full items-center justify-center gap-2 rounded-2xl border border-[#94A7AE]/35 bg-[#94A7AE] px-10 py-4 text-lg font-semibold text-[#0a0a0c] shadow-[0_20px_40px_rgba(148,167,179,0.18)] transition-all hover:bg-[#a7b7bf] sm:w-auto"
                       >
                         Book Demo
@@ -2786,10 +2786,10 @@ export function PricingTeaserSection() {
                     href="/signup"
                     className="inline-flex items-center justify-center rounded-full bg-white px-5 py-3 text-[13px] font-semibold text-black transition hover:bg-zinc-200"
                   >
-                    Sign up
+                    Book a demo
                   </Link>
                   <a
-                    href="mailto:hello@arelais.com?subject=Pricing%20discussion%20for%20ZORD"
+                    href="mailto:Support@zordnet.com?subject=Pricing%20discussion%20for%20ZORD"
                     className="inline-flex items-center justify-center rounded-full border border-white/12 bg-white/5 px-5 py-3 text-[13px] font-semibold text-white transition hover:bg-white/10"
                   >
                     Contact sales
@@ -3118,7 +3118,7 @@ function FinalCTA() {
             </p>
             <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
               <a
-                href="mailto:hello@arelais.com?subject=Book%20Demo%20for%20Zord"
+                href="mailto:Support@zordnet.com?subject=Book%20Demo%20for%20Zord"
                 className="inline-flex items-center justify-center gap-2 rounded-full bg-[#3464ff] px-10 py-4 text-lg font-semibold text-white shadow-[0_20px_40px_rgba(52,100,255,0.24)] transition-all hover:bg-[#2451ff]"
               >
                 Book Demo
@@ -3149,7 +3149,7 @@ function SiteFooter() {
             <p className="mt-6 max-w-[320px] text-[14px] leading-7 text-slate-400">
               {landingHomeCopy.footer.body}
             </p>
-            <p className="mt-4 text-[14px] text-slate-400">Contact: hello@arelais.com</p>
+            <p className="mt-4 text-[14px] text-slate-400">Contact: Support@zordnet.com</p>
           </div>
 
           {footerColumns.map((column) => (

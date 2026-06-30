@@ -51,35 +51,35 @@ export function formatRiskSignalInsight(signal: BatchRiskSignal): string {
   const thresholdPct = pctLabel(signal.threshold)
 
   if (code === 'HIGH_AMBIGUITY' && valuePct != null && thresholdPct != null) {
-    return `${headline} · ${RISK_SIGNAL_HEADLINES.HIGH_AMBIGUITY} — ${valuePct}% of payments have more than one possible settlement match (review limit ${thresholdPct}%). These need a person to confirm the correct match.`
+    return `${headline}: Match ambiguity at ${valuePct}% (review limit: ${thresholdPct}%). Payments with more than one possible settlement match require manual confirmation before close.`
   }
 
   if (code === 'UNRESOLVED_OR_MISSING_REF_RATE' && valuePct != null && thresholdPct != null) {
-    return `${headline} · ${RISK_SIGNAL_HEADLINES.UNRESOLVED_OR_MISSING_REF_RATE} — ${valuePct}% of payments lack a usable bank/UTR reference (safe limit ${thresholdPct}%). Without references, Zord can't confirm or prove these payments.`
+    return `${headline}: Missing payment references at ${valuePct}% (safe limit: ${thresholdPct}%). Payments without a bank or UTR reference cannot be confirmed or evidenced by Zord.`
   }
 
   if (code === 'SETTLEMENT_GAP' && valuePct != null && thresholdPct != null) {
-    return `${headline} · ${RISK_SIGNAL_HEADLINES.SETTLEMENT_GAP} — ${valuePct}% of this batch has no confirmed settlement yet (limit ${thresholdPct}%). The bank/settlement file may not be uploaded, or funds haven't settled.`
+    return `${headline}: Settlement gap at ${valuePct}% of this batch (limit: ${thresholdPct}%). The bank or settlement file may be pending upload, or funds have not yet settled.`
   }
 
   if (code === 'HIGH_VARIANCE_RATIO' && valuePct != null && thresholdPct != null) {
-    return `${headline} · ${RISK_SIGNAL_HEADLINES.HIGH_VARIANCE_RATIO} — ${valuePct}% of payments differ from the instructed amount (limit ${thresholdPct}%). Review variance before close.`
+    return `${headline}: Payment variance at ${valuePct}% (limit: ${thresholdPct}%). Settled amounts differ from instructed values. Review variance before batch close.`
   }
 
   const label = RISK_SIGNAL_HEADLINES[code] || code.replace(/_/g, ' ').toLowerCase()
   if (valuePct != null && thresholdPct != null) {
-    return `${headline} · ${label} — ${valuePct}% vs limit ${thresholdPct}%.`
+    return `${headline}: ${label} at ${valuePct}% (limit: ${thresholdPct}%).`
   }
-  return `${headline} · ${label}.`
+  return `${headline}: ${label}.`
 }
 
 export function formatPatternBatchInsight(batchId: string, riskTier: string | undefined): string {
-  return `Latest analysis — Batch ${batchId} · Overall risk: ${(riskTier || '—').toUpperCase()}`
+  return `Batch ${batchId} analysis complete. Overall risk level: ${(riskTier || 'Unknown').toUpperCase()}`
 }
 
 export function formatRcaConcentration(pct: number): string {
-  const rounded = Math.round(pct * 100)
-  return `Most issues share one root cause — ${rounded}% trace back to source-data defects (errors in the uploaded payout/settlement files). Fixing the file at source resolves the majority.`
+  const rounded = Math.round(pct)
+  return `${rounded}% of issues trace back to source data errors in uploaded payout or settlement files. Correcting the source file will resolve the majority of these cases.`
 }
 
 type FormattedRecommendation = {

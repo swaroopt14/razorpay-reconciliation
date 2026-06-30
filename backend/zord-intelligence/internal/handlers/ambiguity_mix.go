@@ -17,11 +17,11 @@ func buildAmbiguityMixSegments(
 	lowConfidenceRate float64,
 	avgAttachmentConfidence float64,
 ) ([]ambiguityMixSegment, float64) {
-	missing := roundPct(providerRefMissingRate * 100)
-	ambiguous := roundPct(ambiguityRate * 100)
-	lowConf := roundPct(lowConfidenceRate * 100)
+	missing := roundPct(providerRefMissingRate)
+	ambiguous := roundPct(ambiguityRate)
+	lowConf := roundPct(lowConfidenceRate)
 	if lowConfidenceRate <= 0 {
-		derived := roundPct((1-avgAttachmentConfidence)*100) - ambiguous
+		derived := roundPct(1-avgAttachmentConfidence) - ambiguous
 		if derived < 0 {
 			derived = 0
 		}
@@ -46,6 +46,6 @@ func buildAmbiguityMixSegments(
 		segments = append(segments, ambiguityMixSegment{Name: "Missing Refs", Pct: missing})
 	}
 
-	clearingPct := roundPct(avgAttachmentConfidence * 100)
+	clearingPct := roundPct(avgAttachmentConfidence)
 	return segments, clearingPct
 }

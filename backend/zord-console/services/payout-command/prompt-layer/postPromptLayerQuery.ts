@@ -26,10 +26,25 @@ export function sessionTenantForPromptLayer(
   }
   return { ok: true, tenantId: tid }
 }
+export type PromptLayerUIContextMetric = {
+  label: string
+  value: string
+}
 
+export type PromptLayerUIContext = {
+  scope?: string
+  scope_level?: 'tenant' | 'batch'
+  source_page?: string
+  section_title?: string
+  selected_title?: string
+  selected_description?: string
+  selected_metrics?: PromptLayerUIContextMetric[]
+  batch_id?: string
+}
 export type PostPromptLayerQueryBody = {
   query: string
   top_k: number
+  ui_context?: PromptLayerUIContext
 }
 export type PromptLayerRequestContext = {
   tenantId: string

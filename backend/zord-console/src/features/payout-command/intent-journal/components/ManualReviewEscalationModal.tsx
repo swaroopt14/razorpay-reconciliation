@@ -2,10 +2,9 @@
 
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
-import { useSessionTenant } from '@/services/auth/useSessionTenantId'
 import { formatJournalMoney } from '../formatJournalMoney'
 import type { JournalFailureRow } from '@/services/payout-command/prod-api/mapIntentEngineBatch'
-import { createSupportTicket, loadSupportTickets, saveSupportTickets } from '@/services/payout-command/support/supportTickets'
+import { createSupportTicketRemote } from '@/services/payout-command/support/supportTicketsApi'
 import {
   HOME_BODY_IMPERIAL_SM,
   HOME_TITLE_BLACK,
@@ -23,7 +22,6 @@ export function ManualReviewEscalationModal({
   onClose,
 }: ManualReviewEscalationModalProps) {
   const router = useRouter()
-  const { tenantId } = useSessionTenant()
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -36,37 +34,37 @@ export function ManualReviewEscalationModal({
   const handleSendToSupport = () => {
     setSubmitting(true)
     setError(null)
-    try {
-      const description = [
-        `DLQ ID: ${row.requestId}`,
-        `Batch: ${row.batchId}`,
-        row.sourceRowNum != null ? `Row: ${row.sourceRowNum}` : null,
-        `Beneficiary: ${beneficiary}`,
-        `Amount: ${amountLabel}`,
-        `Error: ${errorDetail}`,
-        row.dlqStatus ? `DLQ status: ${row.dlqStatus}` : null,
-      ]
-        .filter(Boolean)
-        .join('\n')
 
-      const ticket = createSupportTicket({
-        category: 'Payment processing',
-        topic: `Manual review — batch ${row.batchId}`,
-        description,
-        priority: 'urgent',
+    const description = [
+      `DLQ ID: ${row.requestId}`,
+      `Batch: ${row.batchId}`,
+      row.sourceRowNum != null ? `Row: ${row.sourceRowNum}` : null,
+      `Beneficiary: ${beneficiary}`,
+      `Amount: ${amountLabel}`,
+      `Error: ${errorDetail}`,
+      row.dlqStatus ? `DLQ status: ${row.dlqStatus}` : null,
+    ]
+      .filter(Boolean)
+      .join('\n')
+
+    void createSupportTicketRemote({
+      category: 'Payment processing',
+      topic: `Manual review — batch ${row.batchId}`,
+      description,
+      priority: 'urgent',
+      source: 'manual_review',
+    })
+      .then(() => {
+        onClose()
+        const supportPath = isSandboxRoute
+          ? '/sandbox?dock=support&accountTab=Zord%20Support'
+          : '/payout-command-view/today?dock=support&accountTab=Zord%20Support'
+        router.push(supportPath)
       })
-      const existing = loadSupportTickets(tenantId || 'default')
-      saveSupportTickets(tenantId || 'default', [ticket, ...existing])
-
-      onClose()
-      const supportPath = isSandboxRoute
-        ? '/sandbox?dock=support&accountTab=Zord%20Support'
-        : '/payout-command-view/today?dock=support&accountTab=Zord%20Support'
-      router.push(supportPath)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not create support ticket.')
-      setSubmitting(false)
-    }
+      .catch((e) => {
+        setError(e instanceof Error ? e.message : 'Could not create support ticket.')
+        setSubmitting(false)
+      })
   }
 
   return (

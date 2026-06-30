@@ -358,7 +358,7 @@ type LeakageValue struct {
 //	  "ambiguous_intent_count": 78,
 //	  "ambiguous_amount_minor": 1100000,
 //	  "unresolved_settlement_count": 20,
-//	  "value_at_risk_minor": 1850000,
+//	  "value_at_risk_minor": 1100000,
 //	  "avg_attachment_confidence": 0.83,
 //	  "confidence_sum": 831.4,
 //	  "confidence_count": 1001,
@@ -375,9 +375,8 @@ type AmbiguityValue struct {
 	UnresolvedSettlementCount int             `json:"unresolved_settlement_count"` // MATCH_UNRESOLVED decisions
 
 	// ── Value at risk ─────────────────────────────────────────────────────
-	// Spec Section 10.2: "Ambiguous Value-at-Risk =
-	//   sum(intended_amount_minor for MATCH_AMBIGUOUS or MATCH_UNRESOLVED)"
-	// This is the headline number finance cares about.
+	// Kept for API compatibility. Business meaning is ambiguous intent exposure:
+	// sum(intended_amount_minor for MATCH_AMBIGUOUS).
 	ValueAtRiskMinor decimal.Decimal `json:"value_at_risk_minor"`
 
 	// ── Running average confidence (incremental sum / count) ──────────────
@@ -506,6 +505,20 @@ type DefensibilityValue struct {
 	// Stored as a free-form string to avoid a schema migration per Phase 4.
 	// Format: "corridor:{corridor_id}" or "source:{source_system_id}"
 	WeakestProofRef string `json:"weakest_proof_ref,omitempty"`
+
+	// ── Dispute Readiness components ──────────────────────────────────────
+	// These four signals replace the old boolean-count formula for dispute_ready_pct.
+	// New formula: (avg_intent_quality + avg_mapping_confidence + avg_pack_completeness + proof_readiness) / 4
+
+	// Accumulated from IntentCreatedEvent.IntentQualityScore.
+	IntentQualitySum      float64 `json:"intent_quality_sum"`
+	IntentQualityCount    int     `json:"intent_quality_count"`
+	AvgIntentQualityScore float64 `json:"avg_intent_quality_score"`
+
+	// Accumulated from CanonicalSettlementCreatedEvent.MappingConfidence.
+	MappingConfidenceSum   float64 `json:"mapping_confidence_sum"`
+	MappingConfidenceCount int     `json:"mapping_confidence_count"`
+	AvgMappingConfidence   float64 `json:"avg_mapping_confidence"`
 
 	// ── Pattern Intelligence extensions: missing leaf tracking ────────────
 	// Required to compute missing_leaf_rate = (total_required_leaves - actual_leaves) / total_required_leaves.
@@ -912,7 +925,8 @@ type AmbiguityBySourceValue struct {
 	CandidateSetSizeSum   int `json:"candidate_set_size_sum"`   // running sum for average
 
 	// ── Value at risk ─────────────────────────────────────────────────────
-	// Sum of intended_amount_minor for MATCH_AMBIGUOUS and MATCH_UNRESOLVED decisions.
+	// Kept for API compatibility. Business meaning is ambiguous intent exposure:
+	// sum(intended_amount_minor for MATCH_AMBIGUOUS).
 	ValueAtRiskMinor decimal.Decimal `json:"value_at_risk_minor"`
 
 	// ── Derived rates (recomputed after every increment) ─────────────────

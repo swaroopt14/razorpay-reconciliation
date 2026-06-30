@@ -1,3 +1,5 @@
+import type { LeakageComparisonChartPoint } from '../leakage-portfolio/utils/mapLeakageComparisonSeries'
+
 export type RoutingTimeWindow = '24h' | '7d' | '30d'
 
 export type ConnectorType = 'PSP' | 'Bank' | 'Rail'
@@ -81,16 +83,17 @@ export type LeakageCompositionSlice = {
   amountMinor: number
 }
 
+export type { LeakageComparisonChartPoint }
+
 /** Raw leakage / recommendation totals from intelligence APIs (no connector allocation). */
 export type RoutingApiTotals = {
-  totalIntendedMinor: number
-  moneyAtRiskMinor: number
-  preventableLeakageMinor: number
+  totalIntendedMinor: number | null
+  moneyAtRiskMinor: number | null
+  preventableLeakageMinor: number | null
 }
 
 export type RoutingKpiSnapshot = {
   generatedAtIso: string
-  staleAfterMinutes: number
   /** Direct API totals for hero KPIs — avoids summed/rounded connector shares. */
   apiTotals?: RoutingApiTotals
   /** A9 decision success rate from patterns dashboard (0–100). */
@@ -100,6 +103,8 @@ export type RoutingKpiSnapshot = {
   correlationInsights: CorrelationInsight[]
   actionRecommendations: ActionRecommendation[]
   leakageComposition: LeakageCompositionSlice[]
-  networkHealthTrend: Array<{ label: string; successPct: number; latencyIndex: number }>
+  /** Current vs predicted leakage from leakage-exposure timeseries API. */
+  leakageExposureTrend: LeakageComparisonChartPoint[]
+  leakageExposureTrendLive: boolean
   drilldowns: ConnectorDrilldown[]
 }

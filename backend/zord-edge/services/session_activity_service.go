@@ -10,23 +10,14 @@ import (
 
 // RecordSessionActivity updates last_activity_at and idle_expires_at for a
 // session. Rate-limited: only writes if last_recorded_at is older than 45 s.
+// auth_session_activity table is created at startup in ensureAuthSchema —
+// NOT here, to avoid DDL cancellation on short-lived request contexts.
 func RecordSessionActivity(ctx context.Context, db *sql.DB, sessionID uuid.UUID) error {
 	now := time.Now().UTC()
 
-	// Create table if not exists for the rate limiter.
-	_, err := db.ExecContext(ctx, `
-		CREATE TABLE IF NOT EXISTS auth_session_activity (
-			session_id UUID PRIMARY KEY,
-			last_recorded_at TIMESTAMPTZ NOT NULL DEFAULT now()
-		)
-	`)
-	if err != nil {
-		return err
-	}
-
 	// Try to get last recorded activity time.
 	var lastRecorded time.Time
-	err = db.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, `
 		SELECT last_recorded_at FROM auth_session_activity WHERE session_id = $1
 	`, sessionID).Scan(&lastRecorded)
 
@@ -56,11 +47,15 @@ func RecordSessionActivity(ctx context.Context, db *sql.DB, sessionID uuid.UUID)
 		return err
 	}
 
+	// Cast $1 explicitly to TIMESTAMPTZ so Postgres can resolve the type
+	// unambiguously when $1 appears in both a direct column assignment and
+	// an interval arithmetic expression. Without the cast, Postgres raises:
+	// "inconsistent types deduced for parameter $1: interval versus timestamptz"
 	_, err = tx.ExecContext(ctx, `
 		UPDATE auth_refresh_tokens
-		SET last_activity_at = $1,
-		    idle_expires_at = $1 + ($2 * INTERVAL '1 second'),
-		    updated_at = $1
+		SET last_activity_at = $1::TIMESTAMPTZ,
+		    idle_expires_at = $1::TIMESTAMPTZ + ($2 * INTERVAL '1 second'),
+		    updated_at = $1::TIMESTAMPTZ
 		WHERE session_id = $3 AND revoked_at IS NULL
 	`, now, int(idleWindow.Seconds()), sessionID)
 	if err != nil {

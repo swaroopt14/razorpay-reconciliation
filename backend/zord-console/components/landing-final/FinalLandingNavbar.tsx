@@ -103,7 +103,7 @@ const navItems: NavItem[] = [
       },
       {
         label: 'Contact Arealis',
-        href: 'mailto:hello@arelais.com?subject=Talk%20to%20Arealis',
+        href: 'mailto:Support@zordnet.com?subject=Talk%20to%20Arealis',
         note: 'Speak with the team building ZORD and the wider Arealis product fabric.',
       },
     ],
@@ -431,20 +431,20 @@ export function FinalLandingNavbar({
 
         <div className="relative z-10 ml-auto flex shrink-0 items-center gap-2 sm:gap-3">
           <Link
-            href="/signin/tenant"
+            href="/signin"
             className="hidden h-14 items-center rounded-[20px] border border-white/12 px-6 text-[16px] font-semibold text-slate-100/90 shadow-[0_14px_24px_rgba(0,0,0,0.14)] transition hover:border-white/18 hover:text-white lg:inline-flex"
             style={frostedNavTrackStyle}
           >
             Sign in
           </Link>
 
-          <a
-            href="mailto:hello@arelais.com?subject=Book%20Demo%20for%20Zord"
+          <Link
+            href="/signup"
             className="flex h-14 items-center gap-2 rounded-[20px] bg-[#c6efcf] px-6 text-[16px] font-semibold text-[#09110c] shadow-[0_16px_30px_rgba(198,239,207,0.16)] transition hover:bg-[#d6f5dc]"
           >
             <NavIcon name="arrow-up-right" className="h-4 w-4" />
             <span>Book Demo</span>
-          </a>
+          </Link>
 
           <button
             type="button"
@@ -535,18 +535,19 @@ export function FinalLandingNavbar({
 
               <div className="flex items-center gap-3 pt-2">
                 <Link
-                  href="/signin/tenant"
+                  href="/signin"
                   onClick={() => setMobileOpen(false)}
                   className="flex-1 rounded-[20px] border border-white/10 bg-white/[0.03] px-4 py-3 text-center text-[15px] font-semibold text-slate-200"
                 >
                   Sign in
                 </Link>
-                <a
-                  href="mailto:hello@arelais.com?subject=Book%20Demo%20for%20Zord"
+                <Link
+                  href="/signup"
+                  onClick={() => setMobileOpen(false)}
                   className="flex-1 rounded-[20px] bg-[#c6efcf] px-4 py-3 text-center text-[15px] font-semibold text-[#09110c]"
                 >
                   Book Demo
-                </a>
+                </Link>
               </div>
             </div>
           </div>

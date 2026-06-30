@@ -21,14 +21,14 @@ const footerColumns = [
       { label: 'Home', href: '/' },
       { label: 'How it works', href: '/final-landing/how-it-works' },
       { label: 'Pricing', href: '/final-landing/pricing' },
-      { label: 'Console', href: '/signin/tenant' },
+      { label: 'Console', href: '/signin' },
     ],
   },
   {
     title: 'Company',
     links: [
-      { label: 'Book demo', href: 'mailto:hello@arelais.com?subject=Book%20Demo%20for%20Zord' },
-      { label: 'Contact', href: 'mailto:hello@arelais.com?subject=Talk%20to%20Zord' },
+      { label: 'Book demo', href: '/signup' },
+      { label: 'Contact', href: 'mailto:Support@zordnet.com?subject=Talk%20to%20Zord' },
       { label: 'Resources', href: '/final-landing/resources' },
       { label: 'About Arealis', href: '/final-landing/company' },
     ],

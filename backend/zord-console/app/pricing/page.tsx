@@ -139,7 +139,7 @@ const engagementPlans: readonly EngagementPlan[] = [
       'Explore the payout workspace, connector views, and Evidence Pack flows with illustrative data before production rollout.',
     features: ['Workspace preview', 'Product walkthrough', 'Technical fit review', 'Standard onboarding docs'],
     cta: 'Start in sandbox',
-    href: '/signin/tenant',
+    href: '/signin',
   },
   {
     title: 'Growth',
@@ -209,7 +209,7 @@ const supportCards = [
     copy:
       'Discuss sandbox fit, production rollout, security review, enterprise commercials, or implementation support for Payment Command Center.',
     cta: 'Contact sales',
-    href: 'mailto:hello@arelais.com?subject=Zord%20pricing%20conversation',
+    href: 'mailto:Support@zordnet.com?subject=Zord%20pricing%20conversation',
   },
   {
     id: 'docs',
@@ -255,8 +255,8 @@ const footerColumns = [
     links: [
       { label: 'About Zord', href: '/' },
       { label: 'Customers', href: '#trust' },
-      { label: 'Book demo', href: 'mailto:hello@arelais.com?subject=Book%20Demo%20for%20Zord' },
-      { label: 'Contact', href: 'mailto:hello@arelais.com' },
+      { label: 'Book demo', href: 'mailto:Support@zordnet.com?subject=Book%20Demo%20for%20Zord' },
+      { label: 'Contact', href: 'mailto:Support@zordnet.com' },
     ],
   },
   {
@@ -479,7 +479,7 @@ export default function PricingPage() {
             </Link>
 
             <a
-              href="mailto:hello@arelais.com?subject=Book%20Demo%20for%20Zord"
+              href="mailto:Support@zordnet.com?subject=Book%20Demo%20for%20Zord"
               className="hidden h-12 items-center rounded-[18px] bg-[#c6efcf] px-5 text-[15px] font-semibold text-[#09110c] shadow-[0_16px_34px_rgba(198,239,207,0.16)] transition hover:bg-[#d7f5dd] md:flex"
             >
               Book Demo
@@ -549,7 +549,7 @@ export default function PricingPage() {
                       Sign in
                     </Link>
                     <a
-                      href="mailto:hello@arelais.com?subject=Book%20Demo%20for%20Zord"
+                      href="mailto:Support@zordnet.com?subject=Book%20Demo%20for%20Zord"
                       className="rounded-[18px] bg-[#c6efcf] px-4 py-3 text-center text-[14px] font-semibold text-[#09110c]"
                     >
                       Book Demo
@@ -583,7 +583,7 @@ export default function PricingPage() {
                   <ArrowUpRightIcon className="h-4 w-4" />
                 </Link>
                 <a
-                  href="mailto:hello@arelais.com?subject=Zord%20pricing%20discussion"
+                  href="mailto:Support@zordnet.com?subject=Zord%20pricing%20discussion"
                   className="inline-flex items-center justify-center gap-2 rounded-full border border-white/12 bg-white/[0.04] px-7 py-4 text-[15px] font-semibold text-white transition hover:bg-white/[0.08]"
                 >
                   Contact sales
@@ -749,7 +749,7 @@ export default function PricingPage() {
                         Sign up
                       </Link>
                       <a
-                        href="mailto:hello@arelais.com?subject=Talk%20to%20sales%20about%20Zord%20pricing"
+                        href="mailto:Support@zordnet.com?subject=Talk%20to%20sales%20about%20Zord%20pricing"
                         className="inline-flex items-center justify-center gap-2 rounded-full border border-white/12 bg-white/[0.04] px-6 py-3.5 text-[14px] font-semibold text-white transition hover:bg-white/[0.08]"
                       >
                         Talk to sales
@@ -974,7 +974,7 @@ export default function PricingPage() {
                   Sign up
                 </Link>
                 <a
-                  href="mailto:hello@arelais.com?subject=Book%20Demo%20for%20Zord"
+                  href="mailto:Support@zordnet.com?subject=Book%20Demo%20for%20Zord"
                   className="inline-flex items-center justify-center rounded-full border border-white/12 bg-white/[0.06] px-7 py-4 text-[15px] font-semibold text-white transition hover:bg-white/[0.1]"
                 >
                   Book demo

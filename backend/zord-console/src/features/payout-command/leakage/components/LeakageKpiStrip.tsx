@@ -1,7 +1,7 @@
 'use client'
 
 import type { PortfolioLeakageViewModel } from '../../leakage-portfolio/normalizeLeakagePayload'
-import { formatMinorInr } from '../../leakage-portfolio/utils/formatMinorInr'
+import { displayApiField, formatKpiMoneyMinor } from '../../shared/formatApiKpiFields'
 import { leakageCopy, mapReviewPriorityLabel, mapReviewPriorityShort } from '../copy/leakageCopy'
 
 const SECONDARY = [
@@ -34,14 +34,13 @@ export function LeakageKpiStrip({ data, loading }: LeakageKpiStripProps) {
     )
   }
 
-  const gapRate = `${(data.paymentGapRate <= 1 ? data.paymentGapRate * 100 : data.paymentGapRate).toFixed(1)}%`
-  const reviewValue = formatMinorInr(data.valueNeedingReviewMinor)
+  const gapRate = displayApiField(data.paymentGapRate)
+  const heroValue = formatKpiMoneyMinor(data.openFinancialExceptionValueMinor)
 
   return (
     <div className="flex h-full flex-col gap-4" data-testid="leakage-kpi-strip">
-      {/* Top Hero Card - Value Needing Review */}
-      <article 
-        className="relative flex flex-col justify-between overflow-hidden rounded-2xl border border-white/10 p-5 shadow-sm min-h-[140px]"
+      <article
+        className="relative flex min-h-[140px] flex-col justify-between overflow-hidden rounded-2xl border border-white/10 p-5 shadow-sm"
         style={{ background: 'linear-gradient(145deg,#0f172a 0%,#111827 56%,#1f2937 100%)' }}
         data-testid="leakage-kpi-hero"
       >
@@ -50,11 +49,11 @@ export function LeakageKpiStrip({ data, loading }: LeakageKpiStripProps) {
           style={{ background: 'radial-gradient(circle, rgba(255,255,255,0.3) 0%, transparent 70%)' }}
           aria-hidden
         />
-        <p className="relative text-[14px] font-medium text-white/80">{leakageCopy.kpi.valueNeedingReview}</p>
+        <p className="relative text-[14px] font-medium text-white/80">
+          {leakageCopy.kpi.openFinancialExceptionValue}
+        </p>
         <div className="relative mt-4 flex items-end gap-3">
-          <p className="text-[2.25rem] font-bold leading-none tabular-nums text-white">
-            {reviewValue}
-          </p>
+          <p className="text-[2.25rem] font-bold leading-none tabular-nums text-white">{heroValue}</p>
           <span className="mb-1 inline-flex items-center rounded-full bg-white/20 px-2 py-0.5 text-[12px] font-semibold text-white">
             ↗ {gapRate}
           </span>
@@ -80,8 +79,8 @@ export function LeakageKpiStrip({ data, loading }: LeakageKpiStripProps) {
                 <div className="h-3 w-1 rounded-full bg-white/65" />
                 <p className="text-[13px] font-medium leading-relaxed text-white/80">{item.label}</p>
               </div>
-              <p className="mt-3 text-[1.1rem] font-semibold tabular-nums text-white">
-                {formatMinorInr(data[item.key])}
+              <p className="mt-3 text-[1.15rem] font-semibold tabular-nums text-white">
+                {formatKpiMoneyMinor(data[item.key])}
               </p>
             </div>
           </article>

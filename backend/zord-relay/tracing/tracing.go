@@ -31,17 +31,11 @@ func Init(ctx context.Context, serviceName, environment, otlpEndpoint string) (*
 		return nil, fmt.Errorf("creating OTLP exporter: %w", err)
 	}
 
-	res, err := resource.Merge(
-		resource.Default(),
-		resource.NewWithAttributes(
-			semconv.SchemaURL,
-			semconv.ServiceName(serviceName),
-			semconv.DeploymentEnvironment(environment),
-		),
+	res := resource.NewWithAttributes(
+		semconv.SchemaURL,
+		semconv.ServiceName(serviceName),
+		semconv.DeploymentEnvironment(environment),
 	)
-	if err != nil {
-		return nil, fmt.Errorf("building OTel resource: %w", err)
-	}
 
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exp),

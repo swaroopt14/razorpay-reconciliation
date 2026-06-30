@@ -2,11 +2,36 @@ package kafka
 
 import (
 	"context"
-	"encoding/json"
 	"log"
 
 	"github.com/IBM/sarama"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
+
+// SaramaHeaderCarrier implements propagation.TextMapCarrier for Kafka headers.
+// Enables extracting W3C traceparent from Kafka message headers for end-to-end tracing.
+type SaramaHeaderCarrier []*sarama.RecordHeader
+
+func (c SaramaHeaderCarrier) Get(key string) string {
+	for _, h := range c {
+		if string(h.Key) == key {
+			return string(h.Value)
+		}
+	}
+	return ""
+}
+
+func (c SaramaHeaderCarrier) Set(key string, value string) {}
+
+func (c SaramaHeaderCarrier) Keys() []string {
+	keys := make([]string, len(c))
+	for i, h := range c {
+		keys[i] = string(h.Key)
+	}
+	return keys
+}
 
 type MessageHandler func(ctx context.Context, key string, payload []byte) error
 
@@ -19,25 +44,46 @@ func NewConsumer(handler MessageHandler) *Consumer {
 }
 
 func (c *Consumer) Setup(sess sarama.ConsumerGroupSession) error {
-	// log.Printf("evidence.kafka.session_setup claims=%v member_id=%s", sess.Claims(), sess.MemberID())
 	return nil
 }
+
 func (c *Consumer) Cleanup(sess sarama.ConsumerGroupSession) error {
 	log.Printf("evidence.kafka.session_cleanup member_id=%s", sess.MemberID())
 	return nil
 }
 
 func (c *Consumer) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
+	tracer := otel.Tracer("zord-evidence/consumer")
+
 	for msg := range claim.Messages() {
+		// Extract trace context from Kafka headers (W3C traceparent)
+		carrier := SaramaHeaderCarrier(msg.Headers)
+		ctx := otel.GetTextMapPropagator().Extract(sess.Context(), carrier)
+
+		// Start a consumer span linked to the producer's trace
+		ctx, span := tracer.Start(ctx, "consume."+msg.Topic,
+			trace.WithSpanKind(trace.SpanKindConsumer),
+			trace.WithAttributes(
+				attribute.String("messaging.system", "kafka"),
+				attribute.String("messaging.destination", msg.Topic),
+				attribute.Int64("messaging.kafka.partition", int64(msg.Partition)),
+				attribute.Int64("messaging.kafka.offset", msg.Offset),
+				attribute.String("messaging.kafka.key", string(msg.Key)),
+			),
+		)
+
 		log.Printf("evidence.kafka.message_received topic=%s partition=%d offset=%d key=%s payload_bytes=%d", msg.Topic, msg.Partition, msg.Offset, string(msg.Key), len(msg.Value))
 
-		if err := c.handler(sess.Context(), string(msg.Key), msg.Value); err != nil {
+		if err := c.handler(ctx, string(msg.Key), msg.Value); err != nil {
+			span.RecordError(err)
 			log.Printf("evidence.kafka.consume_error topic=%s partition=%d offset=%d err=%v", msg.Topic, msg.Partition, msg.Offset, err)
+			span.End()
 			continue
 		}
+
 		sess.MarkMessage(msg, "")
 		log.Printf("evidence.kafka.message_committed topic=%s partition=%d offset=%d key=%s", msg.Topic, msg.Partition, msg.Offset, string(msg.Key))
-
+		span.End()
 	}
 	return nil
 }
@@ -66,6 +112,7 @@ func StartConsumer(ctx context.Context, brokers []string, groupID, topic string,
 	}()
 	return nil
 }
+
 func StartConsumerForTopics(ctx context.Context, brokers []string, groupID string, topics []string, handler MessageHandler) error {
 	cfg := sarama.NewConfig()
 	cfg.Version = sarama.V2_6_0_0
@@ -93,13 +140,4 @@ func StartConsumerForTopics(ctx context.Context, brokers []string, groupID strin
 	}()
 
 	return nil
-}
-
-// ParsePayloadMap is useful for event-based enrichment hooks.
-func ParsePayloadMap(raw []byte) (map[string]any, error) {
-	m := map[string]any{}
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil, err
-	}
-	return m, nil
 }

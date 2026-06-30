@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"log"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -163,10 +164,10 @@ type ScoreBreakdown struct {
 type CandidateScore struct {
 	SettlementObservationID uuid.UUID
 	IntentID                uuid.UUID
-	Breakdown        ScoreBreakdown
-	BreakdownJSON    []byte
-	Total            float64
-	ConfidenceBucket string
+	Breakdown               ScoreBreakdown
+	BreakdownJSON           []byte
+	Total                   float64
+	ConfidenceBucket        string
 
 	// Match flags (written directly into AttachmentCandidate)
 	ExactRefMatch      bool
@@ -222,22 +223,26 @@ func ScoreCandidate(
 		cs.ExactRefMatch = true
 	}
 
-	// batch_id + source_row_ref exact match: +90
-	// if intent.ClientBatchRef != nil && obs.BatchReference != nil &&
-	// 	strings.EqualFold(*intent.ClientBatchRef, *obs.BatchReference) && *intent.ClientBatchRef != "" {
-	// 	bd.BatchContextScore += 90
-	// 	cs.BatchMatch = true
-	// 	cs.ExactRefMatch = true
-	// }
+	// source_row_ref match: +50 (batch-context signal only — never grants ExactRefMatch).
+	// SourceRowNum is a positional identifier within a file/batch, not a cryptographic or
+	// business identity carrier. Without a matching ClientPayoutRef or ZordSignature, a
+	// SourceRowNum-only match must resolve as MATCH_AMBIGUOUS or lower.
+	if intent.SourceRowNum != nil && obs.SourceRowRef != "" {
+		if sourceRowRef, err := strconv.Atoi(obs.SourceRowRef); err == nil &&
+			*intent.SourceRowNum == sourceRowRef {
 
-	// ── NOTE: Provider Reference and Bank Reference matching are currently disabled.
-	// CanonicalIntent does not store ProviderReference or BankReference (these are
-	// generated post-dispatch). The previous logic erroneously compared intent.ProviderHint
-	// (which is the source system name, e.g. "cashfree") against obs.ProviderReference
-	// (e.g. "UTR-12345"), which triggered an incorrect -70 Conflict Penalty and forced
-	// valid candidates into the INVALID bucket (resulting in MATCH_UNRESOLVED).
+			bd.BatchContextScore += 50
+			cs.BatchMatch = true
+			// Intentionally NOT setting cs.ExactRefMatch.
+		}
+	}
 
-	// provider reference match: +85
+	// ── NOTE: Provider Reference matching remains disabled.
+	// CanonicalIntent does not store ProviderReference (assigned post-dispatch).
+	// The previous logic erroneously compared intent.ProviderHint (source system name)
+	// against obs.ProviderReference (e.g. "UTR-12345"), causing false conflict penalties.
+
+	// provider reference match: +85 (disabled — no matchable field on intent)
 	// if intent.ProviderHint != nil && obs.ProviderReference != nil && *intent.ProviderHint != "" {
 	// 	if strings.EqualFold(*intent.ProviderHint, *obs.ProviderReference) {
 	// 		bd.ProviderBankReferenceScore += 85
@@ -249,12 +254,14 @@ func ScoreCandidate(
 	// 	}
 	// }
 
-	// bank reference match: +85
-	// if intent.ProviderHint != nil && obs.BankReference != nil && *intent.ProviderHint != "" &&
-	// 	strings.EqualFold(*intent.ProviderHint, *obs.BankReference) {
-	// 	bd.ProviderBankReferenceScore += 85
-	// 	cs.BankRefMatch = true
-	// }
+	// bank reference: +85 if observation carries a bank reference.
+	// The intent cannot hold a bank reference (assigned by the bank post-dispatch), so presence
+	// alone scores. BankRefMatch does NOT set ExactRefMatch — it can lift a candidate to
+	// MATCH_HIGH_CONFIDENCE but never to MATCH_EXACT without a business reference anchor.
+	if obs.BankReference != nil && *obs.BankReference != "" {
+		bd.ProviderBankReferenceScore += 85
+		cs.BankRefMatch = true
+	}
 
 	// beneficiary_fingerprint match: +35
 	if intent.BeneficiaryFingerprint != nil && obs.BeneficiaryFingerprint != nil &&
@@ -369,8 +376,21 @@ func ClassifyConfidenceContext(top CandidateScore, ranked []CandidateScore, thre
 		return models.ConfidenceInvalid
 	}
 
-	// EXACT: has top-tier exact carrier + amount + currency + no strong conflict + dominant margin
-	if top.ExactRefMatch && top.AmountMatch && top.CurrencyMatch && !top.HasAnyConflict {
+	// CAP AT MEDIUM: If a candidate lacks a business identity match (e.g. ClientPayoutRef),
+	// it can NEVER be auto-attached (High/Exact). However, if it still scored highly
+	// (e.g., BankRef + Amount + Date matched), we route it to MATCH_AMBIGUOUS so a human can review it.
+	if !top.ExactRefMatch {
+		if top.Total >= thresholds.MinScoreForAutoAttach {
+			return models.ConfidenceMedium
+		}
+		return models.ConfidenceLow
+	}
+
+	// EXACT: has a business-identity exact carrier (ClientPayoutRef or ZordSignature)
+	// + amount + currency + no conflict + dominant margin.
+	// SourceRowNum and BankReference alone are NOT sufficient for MATCH_EXACT.
+	if top.ExactRefMatch && (top.ClientRefMatch || top.ZordSignatureMatch) &&
+		top.AmountMatch && top.CurrencyMatch && !top.HasAnyConflict {
 		if len(ranked) == 1 || margin >= thresholds.ExactMarginThreshold {
 			return models.ConfidenceExact
 		}
@@ -680,8 +700,10 @@ func ComputeMatchConfidence(cs CandidateScore) float64 {
 		cs.Breakdown.TimingScore
 
 	// Theoretical max based on current scoring weights for a perfect match:
-	// ClientRef(100) + Amount(30) + Batch(15) + Time(20) = 165
-	const maxTheoreticalScore = 165.0
+	// ClientRef(100) + Amount(30) + Currency(10) + BankRef(85) + SourceRowNum(50) + BatchFamily(15) + Time(20) = 310
+	// BatchContextScore can carry both source_row_num (+50) and batch_family (+15).
+	// The result is capped at 1.0 so going over is safe.
+	const maxTheoreticalScore = 310.0
 
 	matchConfidence := nativeScore / maxTheoreticalScore
 	if matchConfidence > 1.0 {

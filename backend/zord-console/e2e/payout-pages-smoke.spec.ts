@@ -203,12 +203,96 @@ function packFull(packId: string, intentId: string, mode: string) {
   }
 }
 
+function smokeBatchRows() {
+  const partners = ['razorpay', 'cashfree']
+  return Array.from({ length: 10 }, (_, i) => {
+    const n = i + 1
+    const batchId = `smoke-batch-${String(n).padStart(2, '0')}`
+    const intended = 850_000 + n * 520_000
+    const leakagePct = Number((0.04 + (i % 8) * 0.012).toFixed(4))
+    const variance = Math.round(intended * (0.015 + (i % 4) * 0.005)) * (i % 2 === 0 ? -1 : 1)
+    const sparse = i === 9
+    return {
+      batch_id: batchId,
+      tenant_id: SESSION_TENANT,
+      finality_status: i % 3 === 0 ? 'OPEN' : i % 3 === 1 ? 'PARTIALLY_SETTLED' : 'FULLY_SETTLED',
+      total_count: 10 + ((i * 5 + 7) % 22),
+      success_count: 8 + (i % 5),
+      failed_count: 1,
+      pending_count: 1,
+      source_reference: partners[i % partners.length],
+      ...(sparse
+        ? {}
+        : {
+            total_intended_amount_minor: intended,
+            total_variance_minor: variance,
+            reversal_exposure_minor: Math.round(intended * 0.006),
+            leakage_percentage: leakagePct,
+          }),
+    }
+  })
+}
+
 function emptyProdBody(path: string): unknown {
   if (path.endsWith('/intents/batch-ids')) {
     return { items: [{ batch_id: BATCH_ID, intent_count: 0 }] }
   }
+  if (path.endsWith('/operations/summary')) {
+    return {
+      data_available: true,
+      tenant_id: SESSION_TENANT,
+      computed_at: '2026-06-02T07:00:00Z',
+      settlement_confirmation_coverage_pct: 87.4,
+      confirmed_matched_value_minor: 42_000_000,
+      total_intended_amount_minor: 48_000_000,
+      open_exception_queue_count: 12,
+      open_exception_queue_value_minor: 18_500_000,
+      batch_close_readiness: {
+        blocked_batch_count: 3,
+        close_ready_batch_count: 5,
+        blocked_batch_ids: ['batch_blocked_01'],
+        close_ready_batch_ids: ['batch_ready_01'],
+      },
+    }
+  }
+  if (path.endsWith('/exceptions/summary')) {
+    return {
+      data_available: true,
+      tenant_id: SESSION_TENANT,
+      open_financial_exception_count: 12,
+      open_financial_exception_value_minor: 18_500_000,
+    }
+  }
+  if (path.endsWith('/home/disbursement-trend')) {
+    return {
+      data_available: true,
+      tenant_id: SESSION_TENANT,
+      range: 'month',
+      buckets: [
+        {
+          label: 'Week 1',
+          total_amount: 1_200_000,
+          confirmed_amount: 1_050_000,
+          review_amount: 80_000,
+          intent_count: 42,
+        },
+        {
+          label: 'Week 2',
+          total_amount: 1_400_000,
+          confirmed_amount: 1_220_000,
+          review_amount: 95_000,
+          intent_count: 48,
+        },
+      ],
+    }
+  }
   if (path.endsWith('/intelligence/batches')) {
-    return { tenant_id: SESSION_TENANT, batches: [{ batch_id: BATCH_ID, finality_status: 'OPEN', total_count: 1 }] }
+    return {
+      tenant_id: SESSION_TENANT,
+      intelligence_mode: 'GRADE_A',
+      status_filter: '',
+      batches: smokeBatchRows(),
+    }
   }
   if (path.includes('/intelligence/batches/')) {
     return {
@@ -285,40 +369,69 @@ function emptyProdBody(path: string): unknown {
       data_available: true,
       tenant_id: SESSION_TENANT,
       computed_at: '2026-06-02T07:00:00Z',
+      total_amount_minor: 200_000,
       total_intended_amount_minor: 5_000_000,
       unmatched_amount_minor: 120_000,
       under_settlement_amount_minor: 80_000,
       orphan_amount_minor: 0,
       reversal_exposure_minor: 0,
       total_observed_settled_amount_minor: 4_200_000,
+      ambiguous_value_at_risk_minor: 250_000,
+      risk_adjusted_leakage_minor: 262_500,
       leakage_percentage: 0.04,
       risk_tier: 'MEDIUM',
+      exposure_bands: [
+        { band: 'Unmatched Payment Value', amount_minor: 120_000, share_pct: 60 },
+        { band: 'Short-Settled Value', amount_minor: 80_000, share_pct: 40 },
+        { band: 'Unlinked Settlement Value', amount_minor: 0, share_pct: 0 },
+        { band: 'Reversal Exposure', amount_minor: 0, share_pct: 0 },
+      ],
+      segment_roll_rates: [
+        { from_band: 'settled', to_band: 'unmatched', roll_pct: 4.2 },
+        { from_band: 'settled', to_band: 'short_settled', roll_pct: 2.1 },
+        { from_band: 'short_settled', to_band: 'orphan', roll_pct: 0.8 },
+        { from_band: 'orphan', to_band: 'reversal', roll_pct: 0.4 },
+      ],
     }
   }
   if (path.endsWith('/intelligence/ambiguity/heatmap')) {
     return {
       data_available: true,
       tenant_id: SESSION_TENANT,
+      intelligence_mode: 'GRADE_A',
       batches: [
         {
-          batch_id: 'route-batch-a',
-          total_count: 100,
-          exact_match_count: 62,
-          high_confidence_count: 26,
-          ambiguous_count: 8,
-          unresolved_count: 3,
-          conflicted_count: 1,
+          batch_id: 'smoke-batch-01',
+          total_count: 18,
+          exact_match_count: 12,
+          high_confidence_count: 4,
+          ambiguous_count: 1,
+          unresolved_count: 1,
+          conflicted_count: 0,
           aggregate_score: 0.88,
+          finality_status: 'SETTLED',
         },
         {
-          batch_id: 'route-batch-b',
-          total_count: 100,
-          exact_match_count: 68,
-          high_confidence_count: 22,
-          ambiguous_count: 6,
-          unresolved_count: 3,
+          batch_id: 'smoke-batch-02',
+          total_count: 22,
+          exact_match_count: 10,
+          high_confidence_count: 5,
+          ambiguous_count: 4,
+          unresolved_count: 2,
           conflicted_count: 1,
-          aggregate_score: 0.9,
+          aggregate_score: 0.79,
+          finality_status: 'REQUIRES_REVIEW',
+        },
+        {
+          batch_id: 'smoke-batch-03',
+          total_count: 15,
+          exact_match_count: 6,
+          high_confidence_count: 3,
+          ambiguous_count: 5,
+          unresolved_count: 1,
+          conflicted_count: 0,
+          aggregate_score: 0.71,
+          finality_status: 'PROCESSING',
         },
       ],
     }
@@ -332,13 +445,70 @@ function emptyProdBody(path: string): unknown {
       avg_attachment_confidence: 0.82,
       provider_ref_missing_rate: 0.16,
       ambiguous_intent_count: 12,
-      ambiguity_rate: 0.08,
+      ambiguity_rate: 0.082,
+      ambiguous_amount_minor: 410_000,
+      total_variance_minor: 75_000,
+      reversal_exposure_minor: 22_000,
+      unresolved_amount_minor: 18_000,
+      unresolved_count: 12,
+      total_intended_amount_minor: 34_200_000,
+      total_observed_settled_amount_minor: 26_000_000,
       clearing_pct: 82,
+      intelligence_headline: '12 intents need match review in the latest ambiguity window.',
+      intelligence_body: 'Missing reference cluster on ICICI rail is the top driver.',
       ambiguity_mix_segments: [
         { name: 'High Confidence', pct: 68 },
         { name: 'Low Confidence', pct: 8 },
         { name: 'Ambiguous', pct: 8 },
         { name: 'Missing Refs', pct: 16 },
+      ],
+      signal_clarity_subtitle: '₹34.2Cr book across 780 intents · ₹8.4Cr needing review',
+      signal_clarity_roll_rates: [
+        { from_band: 'Current', to_band: 'SMA-0', roll_pct: 9 },
+        { from_band: 'SMA-0', to_band: 'SMA-1', roll_pct: 18 },
+        { from_band: 'SMA-1', to_band: 'SMA-2', roll_pct: 31 },
+        { from_band: 'SMA-2', to_band: 'NPA', roll_pct: 22 },
+      ],
+      signal_clarity_bands: [
+        {
+          band: 'Current',
+          amount_minor: 26_000_000,
+          item_count: 645,
+          share_pct: 76,
+          tone: 'green',
+        },
+        {
+          band: 'SMA-0',
+          amount_minor: 4_100_000,
+          item_count: 67,
+          share_pct: 12,
+          roll_pct: 9,
+          tone: 'lime',
+        },
+        {
+          band: 'SMA-1',
+          amount_minor: 2_200_000,
+          item_count: 38,
+          share_pct: 6.4,
+          roll_pct: 18,
+          tone: 'amber',
+        },
+        {
+          band: 'SMA-2',
+          amount_minor: 1_500_000,
+          item_count: 18,
+          share_pct: 4.4,
+          roll_pct: 31,
+          tone: 'orange',
+        },
+        {
+          band: 'NPA-2',
+          amount_minor: 400_000,
+          item_count: 12,
+          share_pct: 1.2,
+          roll_pct: 22,
+          tone: 'red',
+        },
       ],
     }
   }
@@ -367,6 +537,8 @@ function emptyProdBody(path: string): unknown {
             weakest_source_system: 'manual_excel',
             weakest_source_missing_ref_rate: 0.42,
             weakest_provider_id: 'cashfree',
+            network_success_pct: '88.2%',
+            network_latency_index: 80,
           },
         },
       ],
@@ -398,13 +570,33 @@ function emptyProdBody(path: string): unknown {
       },
       batch_anomaly_score: 0.31,
       anomaly_level: 'MEDIUM',
-      batch_risk_score: 0.39,
+      batch_risk_score: 0.68,
       risk_tier: 'MEDIUM',
       finality_status: 'FULLY_SETTLED',
       total_count: 100,
       success_count: 82,
       failed_count: 4,
       pending_count: 14,
+      ambiguous_count: 46,
+      unresolved_count: 9,
+      risk_driver_breakdown: [
+        { label: 'High ambiguity rate', count: 46, share_pct: 72 },
+        { label: 'Missing references', count: 12, share_pct: 19 },
+        { label: 'Unresolved decisions', count: 9, share_pct: 14 },
+        { label: 'Reversal exposure', count: 5, share_pct: 8 },
+      ],
+      network_health_trend: [
+        { label: '28 May', success_pct: '82.0%', latency_index: 72 },
+        { label: '29 May', success_pct: '84.5%', latency_index: 74 },
+        { label: '30 May', success_pct: '86.0%', latency_index: 76 },
+        { label: '31 May', success_pct: '88.0%', latency_index: 78 },
+        { label: '01 Jun', success_pct: '88.2%', latency_index: 80 },
+      ],
+      summary_stats: {
+        flagged_decision_count: 72,
+        match_confidence_pct: 64,
+        total_decision_count: 612,
+      },
     }
   }
   if (path.endsWith('/intelligence/pattern')) {
@@ -512,6 +704,21 @@ function emptyProdBody(path: string): unknown {
         { source_row_ref: '2', error_stage: 'PARSING', reason_code: 'EMPTY_RAW_ROW', severity: 'LOW' },
       ],
       pagination: { page: 1, page_size: 4, total: 4 },
+    }
+  }
+  if (path.endsWith('/intelligence/defensibility')) {
+    return {
+      data_available: true,
+      tenant_id: SESSION_TENANT,
+      computed_at: '2026-06-02T07:00:00Z',
+      defensibility_score: 58,
+      defensibility_tier: 'STRONG',
+      evidence_pack_rate: 0.75,
+      audit_ready_pct: 0.72,
+      weak_evidence_count: 4,
+      governance_coverage_pct: 0.85,
+      replayability_pct: 0.9,
+      dispute_ready_pct: 0.65,
     }
   }
   if (path.includes('/intelligence/')) {
@@ -937,7 +1144,7 @@ test.describe('payout console pages smoke (empty prod → preview fallbacks)', (
   test('navy KPI heroes render all expected bucket counts', async ({ page }) => {
     await page.goto('/payout-command-view/today?dock=grid')
     await expect(page.getByTestId('intent-kpi-hero')).toBeVisible({ timeout: 20_000 })
-    await expect(page.locator('[data-testid^="intent-kpi-hero-bucket-"]')).toHaveCount(5)
+    await expect(page.locator('[data-testid^="intent-kpi-hero-bucket-"]')).toHaveCount(4)
 
     await page.goto('/payout-command-view/today?dock=settlement')
     await expect(page.getByTestId('settlement-kpi-hero')).toBeVisible({ timeout: 20_000 })
@@ -945,11 +1152,23 @@ test.describe('payout console pages smoke (empty prod → preview fallbacks)', (
 
     await page.goto('/payout-command-view/today?dock=ambiguity')
     await expect(page.getByTestId('ambiguity-kpi-hero')).toBeVisible({ timeout: 20_000 })
-    await expect(page.locator('[data-testid^="ambiguity-kpi-hero-bucket-"]')).toHaveCount(4)
+    await expect(page.getByTestId('signal-clarity-bar')).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByTestId('matching-execution-log')).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByTestId('matching-heatmap-focus-panel')).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByTestId('ambiguity-batch-queue')).toBeVisible({ timeout: 20_000 })
 
     await page.goto('/payout-command-view/today?dock=proof')
     await expect(page.getByTestId('evidence-kpi-hero')).toBeVisible({ timeout: 20_000 })
-    await expect(page.locator('[data-testid^="evidence-kpi-hero-bucket-"]')).toHaveCount(5)
+    await expect(page.locator('[data-testid^="evidence-kpi-hero-bucket-"]')).toHaveCount(3)
+  })
+
+  test('home payment health cards render from intelligence APIs', async ({ page }) => {
+    await page.goto('/payout-command-view/today?dock=home')
+    await expect(page.getByText('Settlement Value Observed')).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByText('Unmatched Intent Value')).toBeVisible()
+    await expect(page.getByText('Match Confidence')).toBeVisible()
+    await expect(page.getByText('Proof Readiness')).toBeVisible()
+    await expect(page.getByText('75%')).toBeVisible({ timeout: 20_000 })
   })
 
   test('leakage keeps 2x2 KPI structure with dark hero styling', async ({ page }) => {
@@ -958,7 +1177,9 @@ test.describe('payout console pages smoke (empty prod → preview fallbacks)', (
     const hero = page.getByTestId('leakage-kpi-hero')
     await expect(hero).toBeVisible({ timeout: 20_000 })
     await expect(hero).toHaveAttribute('style', /0f172a/i)
+    await expect(hero).toContainText('Value needing review')
     await expect(page.locator('[data-testid^="leakage-kpi-secondary-"]')).toHaveCount(4)
+    await expect(page.getByTestId('leakage-batch-watchlist')).toBeVisible({ timeout: 20_000 })
   })
 
   test('view batches navigates from ambiguity dock header', async ({ page }) => {
@@ -991,7 +1212,7 @@ test.describe('payout console pages smoke (empty prod → preview fallbacks)', (
 
   test('ambiguity shows awaiting-live state when velocity scatter is empty', async ({ page }) => {
     await page.goto('/payout-command-view/today?dock=ambiguity')
-    await expect(page.getByText('Ambiguity Velocity')).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByTestId('ambiguity-velocity-chart')).toBeVisible({ timeout: 20_000 })
     await expect(page.getByText('Awaiting live data', { exact: true })).toBeVisible({
       timeout: 20_000,
     })
@@ -1012,7 +1233,7 @@ test.describe('payout console pages smoke (empty prod → preview fallbacks)', (
       timeout: 25_000,
     })
     await expect(page.getByTestId('routing-kpi-bar')).toBeVisible({ timeout: 25_000 })
-    await expect(page.getByTestId('network-health-chart')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('leakage-exposure-chart')).toBeVisible({ timeout: 15_000 })
     await expect(page.getByTestId('leakage-composition-chart')).toBeVisible({ timeout: 15_000 })
     await expect(page.getByTestId('connector-grid')).toContainText('Cashfree', { timeout: 15_000 })
     await expect(page.getByTestId('connector-grid')).toContainText('Strengthen provider contract')
@@ -1047,6 +1268,7 @@ test.describe('payout console pages smoke (empty prod → preview fallbacks)', (
     await expect(page.getByTestId('routing-kpi-bar')).toHaveCount(0)
     await expect(page.getByTestId('connector-grid')).toHaveCount(0)
     await expect(page.getByText('Razorpay')).toHaveCount(0)
+    await expect(page.getByTestId('preventable-leakage-impact')).toHaveCount(0)
   })
 
   test('evidence shows empty pack state when no live packs', async ({ page }) => {

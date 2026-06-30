@@ -80,7 +80,7 @@ export function SettlementJournalBatchSidebar({
               : selected && observationTotalLoading
                 ? 'Loading observations…'
                 : cached
-                  ? 'Match confidence cached'
+                  ? cached.label
                   : '—'
 
           return (

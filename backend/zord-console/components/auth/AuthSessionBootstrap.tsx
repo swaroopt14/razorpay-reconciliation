@@ -5,13 +5,12 @@ import { usePathname, useRouter } from 'next/navigation'
 import { clearAuth, getCurrentUser, hasSessionHint, hydrateSession } from '@/services/auth'
 import { UserRole } from '@/types/auth'
 
-function getLoginRoute(pathname: string, searchSuffix: string) {
-  const q = searchSuffix.startsWith('?') ? searchSuffix : searchSuffix ? `?${searchSuffix}` : ''
+function getLoginRoute(pathname: string, _searchSuffix: string) {
   if (pathname.startsWith('/payout-command-view')) {
-    return `/signin/tenant?next=${encodeURIComponent(pathname + q)}`
+    return '/signin'
   }
   if (pathname.startsWith('/sandbox')) {
-    return `/signin?next=${encodeURIComponent(pathname + q)}`
+    return '/signin'
   }
   if (pathname.startsWith('/admin')) return '/admin/login'
   if (pathname.startsWith('/ops')) return '/ops/login'
@@ -35,8 +34,8 @@ function isProtectedPath(pathname: string) {
 function isLoginPath(pathname: string) {
   return (
     pathname === '/signin' ||
-    pathname === '/signin/tenant' ||
     pathname === '/signup' ||
+    pathname === '/register' ||
     pathname === '/console/login' ||
     pathname === '/customer/login' ||
     pathname === '/ops/login' ||
@@ -71,14 +70,9 @@ export function AuthSessionBootstrap() {
 
     const searchSuffix = typeof window !== 'undefined' ? window.location.search : ''
 
-    // The hint cookie prevents immediate false redirects on hard refresh while
-    // the real session is still being revalidated through /api/auth/me.
-    if (!hasSessionHint() && !getCurrentUser()) {
-      clearAuth()
-      router.replace(getLoginRoute(pathname, searchSuffix))
-      return
-    }
-
+    // Middleware already verified HttpOnly session cookies before this page loaded.
+    // Always revalidate through /api/auth/me — do not redirect based on hint/localStorage
+    // alone, or hard refresh drops users back to /signin while cookies are still valid.
     let cancelled = false
 
     void hydrateSession()
@@ -86,8 +80,7 @@ export function AuthSessionBootstrap() {
         if (cancelled) return
 
         if (!user) {
-          // Distinguish "no session" (cleared in hydrateSession) from transient
-          // network failure (fetch threw or aborted — auth not cleared).
+          // hydrateSession clears client auth only on 401/403; transient failures keep hints.
           if (!hasSessionHint() && !getCurrentUser()) {
             router.replace(getLoginRoute(pathname, searchSuffix))
           }

@@ -52,18 +52,18 @@ export function EvidencePackBreakdownChart({ segments, mixArea, mixSeries, previ
   const hasChart = mixArea.length > 0 && mixSeries.length > 0
 
   return (
-    <article className={`flex h-full min-h-[280px] flex-col ${EVIDENCE_CARD}`}>
+    <article className={`flex min-h-[280px] flex-col ${EVIDENCE_CARD}`}>
       <EvidenceSectionHeader
         title="Pack Status Mix"
-        subtitle="Distribution of proof-ready, partial, and missing packs in scope"
+        subtitle="Complete (covered by a payment intent) vs incomplete packs in scope"
         badge={preview ? 'Awaiting live data' : undefined}
         live={!preview && hasChart}
       />
-      <div className="flex flex-1 flex-col px-3 pb-4 pt-1">
+      <div className="px-3 pb-4 pt-1">
         {hasChart ? (
           <>
-            <div className="min-h-[220px] flex-1">
-              <ResponsiveContainer width="100%" height="100%">
+            <div className="h-[220px]">
+              <ResponsiveContainer width="100%" height={220}>
                 <AreaChart data={mixArea} margin={{ top: 12, right: 8, left: 0, bottom: 4 }}>
                   <defs>
                     {mixSeries.map((s) => (
@@ -131,7 +131,7 @@ export function EvidencePackBreakdownChart({ segments, mixArea, mixSeries, previ
             </div>
           </>
         ) : (
-          <p className="flex flex-1 items-center justify-center px-4 text-center text-[13px] font-medium text-[#00239C]">
+          <p className="flex h-[220px] items-center justify-center px-4 text-center text-[13px] font-medium text-[#00239C]">
             No pack mix data yet.
           </p>
         )}

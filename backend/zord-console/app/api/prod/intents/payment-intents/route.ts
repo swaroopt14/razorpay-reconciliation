@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { BACKEND_SERVICES } from '@/config/api.endpoints'
-import {
-  applyRefreshedSessionCookies,
-  requireSessionTenantForProdProxy,
-  TENANT_MISMATCH_BODY,
-} from '@/services/auth/resolvePayoutTenant.server'
+import { applyRefreshedSessionCookies } from '@/services/auth/resolvePayoutTenant.server'
 import { readIntentQualityScore } from '@/services/payout-command/prod-api/resolveIntentQualityScore'
+import {
+  intentEngineForwardHeaders,
+  requireIntentEngineProxyGate,
+} from '../_intentEngineProxy'
 
 export const dynamic = 'force-dynamic'
 
@@ -68,15 +68,8 @@ function inferRailHint(item: PaymentIntentLiteUpstream): string | undefined {
 /** BFF: GET /api/prod/intents/payment-intents?batch_id= → intent-engine journal lite API. */
 export async function GET(request: NextRequest) {
   const batchId = request.nextUrl.searchParams.get('batch_id')?.trim()
-  const gate = await requireSessionTenantForProdProxy(request)
+  const gate = await requireIntentEngineProxyGate(request)
   if (!gate.ok) return gate.response
-
-  const queryTenant = request.nextUrl.searchParams.get('tenant_id')?.trim()
-  if (queryTenant && queryTenant !== gate.tenantId) {
-    const res = NextResponse.json(TENANT_MISMATCH_BODY, { status: 403 })
-    applyRefreshedSessionCookies(res, gate.refreshedPayload)
-    return res
-  }
 
   if (!batchId) {
     const res = NextResponse.json({ error: 'batch_id query parameter is required' }, { status: 400 })
@@ -84,22 +77,13 @@ export async function GET(request: NextRequest) {
     return res
   }
 
-  const upstreamParams = new URLSearchParams({
-    tenant_id: gate.tenantId,
-    batch_id: batchId,
-  })
+  const upstreamParams = new URLSearchParams({ batch_id: batchId })
   const url = `${BACKEND_SERVICES.INTENT_ENGINE.BASE_URL}/api/prod/intents/payment-intents?${upstreamParams.toString()}`
 
   try {
     const upstream = await fetch(url, {
       method: 'GET',
-      headers: {
-        'content-type': 'application/json',
-        'x-tenant-id': gate.tenantId,
-        'tenant-id': gate.tenantId,
-        tenant_id: gate.tenantId,
-        batch_id: batchId,
-      },
+      headers: intentEngineForwardHeaders(gate.tenantId, gate.authorization, batchId),
       cache: 'no-store',
     })
 

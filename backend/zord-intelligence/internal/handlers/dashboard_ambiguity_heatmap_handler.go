@@ -22,6 +22,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -148,7 +149,7 @@ func (h *DashboardAmbiguityHandler) GetBatchMatchHeatmap(w http.ResponseWriter, 
 			row.AmbiguousCount = health.AmbiguousCount
 			row.UnresolvedCount = health.UnresolvedCount
 			row.ConflictedCount = health.ConflictedCount
-			row.AggregateScore = health.AggregateScore
+			row.AggregateScore = math.Round(health.AggregateScore*10000) / 100
 		}
 		result = append(result, row)
 	}

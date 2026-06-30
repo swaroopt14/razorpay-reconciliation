@@ -60,9 +60,6 @@ export function DisputeResolverPanel({ packRows }: DisputeResolverPanelProps) {
     <section className={`${EVIDENCE_CARD} lg:sticky lg:top-4`}>
       <EvidenceSectionHeader title={evidenceCopy.dispute.title} />
       <div className="space-y-4 px-5 pb-5">
-        <p className="rounded-xl border border-amber-200/90 bg-gradient-to-r from-amber-50 to-amber-50/40 px-3 py-2.5 text-[12px] font-medium leading-relaxed text-amber-900">
-          {evidenceCopy.dispute.apiBanner}
-        </p>
         <label className="block space-y-1.5">
           <span className="text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-500">
             {evidenceCopy.dispute.paymentRef}

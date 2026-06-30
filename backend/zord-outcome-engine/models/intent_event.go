@@ -34,4 +34,5 @@ type IntentPayload struct {
 	CanonicalHash          string     `json:"canonical_hash,omitempty"`
 	GovernanceState        string     `json:"governance_state,omitempty"`
 	CanonicalSnapshotRef   string     `json:"canonical_snapshot_ref,omitempty"`
+	SourceRowNum           *int       `json:"source_row_num,omitempty"`
 }

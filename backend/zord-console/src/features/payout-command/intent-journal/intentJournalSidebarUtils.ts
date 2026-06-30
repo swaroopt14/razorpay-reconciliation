@@ -156,7 +156,7 @@ export function batchStatus(score: number): BatchStatus {
   return batchStatusFromAggregateScore(score)
 }
 
-/** Sidebar batch score: intent-engine `aggregate_confidence_score` only (0–1 → percent). */
+/** Sidebar batch score: API aggregate_confidence_score only — no fallback calculation. */
 export function confidencePctFromBatch(batch: BatchRecord): number | null {
   if (typeof batch.aggregateConfidenceScore !== 'number' || !Number.isFinite(batch.aggregateConfidenceScore)) {
     return null

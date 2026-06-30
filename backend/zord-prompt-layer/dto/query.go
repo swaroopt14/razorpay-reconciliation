@@ -1,14 +1,30 @@
 // Return extracted entities explicitly for frontend rendering/debug
 package dto
 
+type UIContextMetric struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
+type UIContext struct {
+	Scope               string            `json:"scope,omitempty"`
+	ScopeLevel          string            `json:"scope_level,omitempty"`
+	SourcePage          string            `json:"source_page,omitempty"`
+	SectionTitle        string            `json:"section_title,omitempty"`
+	SelectedTitle       string            `json:"selected_title,omitempty"`
+	SelectedDescription string            `json:"selected_description,omitempty"`
+	SelectedMetrics     []UIContextMetric `json:"selected_metrics,omitempty"`
+	BatchID             string            `json:"batch_id,omitempty"`
+}
 type QueryRequest struct {
-	TenantID  string `json:"tenant_id,omitempty"`
-	UserID    string `json:"-"`
-	SessionID string `json:"-"`
-	Query     string `json:"query" binding:"required"`
-	IntentID  string `json:"intent_id,omitempty"`
-	TraceID   string `json:"trace_id,omitempty"`
-	TopK      int    `json:"top_k,omitempty"`
+	TenantID  string     `json:"tenant_id,omitempty"`
+	UserID    string     `json:"-"`
+	SessionID string     `json:"-"`
+	Query     string     `json:"query" binding:"required"`
+	IntentID  string     `json:"intent_id,omitempty"`
+	TraceID   string     `json:"trace_id,omitempty"`
+	TopK      int        `json:"top_k,omitempty"`
+	UIContext *UIContext `json:"ui_context,omitempty"`
 }
 
 type Citation struct {

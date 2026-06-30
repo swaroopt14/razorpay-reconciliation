@@ -1,4 +1,5 @@
 import type { DisbursementTrendRange } from '@/services/payout-command/prod-api/disbursementTrendTypes'
+import { trendWindowDateQuery } from '@/services/payout-command/prod-api/disbursementTrendWindow'
 
 /** Unified period for Payment Command Center KPIs + chart. */
 export type CommandCenterPeriod = 'week' | 'month' | 'quarter' | 'year'
@@ -11,22 +12,8 @@ export type IntelligenceDateQuery = {
   to_date: string
 }
 
-function toIsoDate(d: Date): string {
-  return d.toISOString().slice(0, 10)
-}
-
-function dateRangeFromDaysBack(days: number): IntelligenceDateQuery {
-  const to = new Date()
-  const from = new Date(to)
-  from.setUTCDate(to.getUTCDate() - days)
-  return { from_date: toIsoDate(from), to_date: toIsoDate(to) }
-}
-
 export function commandPeriodToDateRange(period: CommandCenterPeriod): IntelligenceDateQuery {
-  if (period === 'week') return dateRangeFromDaysBack(7)
-  if (period === 'month') return dateRangeFromDaysBack(30)
-  if (period === 'quarter') return dateRangeFromDaysBack(91)
-  return dateRangeFromDaysBack(365)
+  return trendWindowDateQuery(period)
 }
 
 export function commandPeriodToTrendRange(period: CommandCenterPeriod): DisbursementTrendRange {
@@ -37,9 +24,9 @@ export function commandPeriodToTrendRange(period: CommandCenterPeriod): Disburse
 }
 
 export function carouselPeriodToDateRange(period: CarouselInsightPeriod): IntelligenceDateQuery {
-  if (period === 'daily') return dateRangeFromDaysBack(1)
-  if (period === 'weekly') return dateRangeFromDaysBack(7)
-  return dateRangeFromDaysBack(91)
+  if (period === 'daily') return trendWindowDateQuery('week')
+  if (period === 'weekly') return trendWindowDateQuery('week')
+  return trendWindowDateQuery('quarter')
 }
 
 export function carouselPeriodToTrendRange(period: CarouselInsightPeriod): DisbursementTrendRange {

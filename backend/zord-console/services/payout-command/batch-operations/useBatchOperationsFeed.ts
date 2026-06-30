@@ -42,6 +42,8 @@ import { apiTrimmedString } from '@/services/payout-command/prod-api/coerceApiFi
 import type { BatchSummary } from '@/services/payout-command/batch-model'
 
 export const BATCH_OPERATIONS_POLL_MS = 8_000
+/** When no batch is selected, poll the sidebar list less aggressively. */
+export const BATCH_OPERATIONS_IDLE_POLL_MS = 30_000
 
 export type SettlementBatchSummary = {
   observationCount: number
@@ -182,6 +184,7 @@ export function useBatchOperationsFeed(options: {
 
   const batchIdRef = useRef(batchId)
   batchIdRef.current = batchId
+  const loadSeqRef = useRef(0)
 
   const refreshRecentBatches = useCallback(async () => {
     const fetchRes = await getProdIntentEngineBatchesForSession()
@@ -214,6 +217,7 @@ export function useBatchOperationsFeed(options: {
   const loadBatchScoped = useCallback(async (bid: string) => {
     const id = bid.trim()
     if (!id) {
+      loadSeqRef.current += 1
       setIntentRows([])
       setFailureRows([])
       setIntelBatchDetail(null)
@@ -223,9 +227,11 @@ export function useBatchOperationsFeed(options: {
       setDefensibilityKpi(null)
       setSettlementSummary(null)
       setSettlementObservationRows([])
+      setDetailLoading(false)
       return
     }
 
+    const seq = ++loadSeqRef.current
     setDetailLoading(true)
     setFeedError(null)
 
@@ -237,9 +243,11 @@ export function useBatchOperationsFeed(options: {
           getPatternsKpis(id),
           getLeakageKpis(undefined, id),
           getAmbiguityKpis(undefined, id),
-          getDefensibilityKpis(),
+          getDefensibilityKpis(undefined, id),
           getSettlementObservationsForClientBatch(id),
         ])
+
+      if (seq !== loadSeqRef.current) return
 
       if (engineRes?.batchDetails && engineRes.batchDetails.batchId === id) {
         const { batchDetails } = engineRes
@@ -275,11 +283,15 @@ export function useBatchOperationsFeed(options: {
         setSettlementSummary(null)
       }
     } catch {
-      setFeedError('Could not refresh batch operations feed.')
+      if (seq === loadSeqRef.current) {
+        setFeedError('Could not refresh batch operations feed.')
+      }
     } finally {
-      setDetailLoading(false)
+      if (seq === loadSeqRef.current) {
+        setDetailLoading(false)
+      }
     }
-  }, [])
+  }, [tenantId])
 
   const refreshBatchFeed = useCallback(async () => {
     if (!tenantReady) return
@@ -292,6 +304,8 @@ export function useBatchOperationsFeed(options: {
   const setBatchId = useCallback((_id: string) => {
     /* controlled by parent — noop placeholder for API symmetry */
   }, [])
+
+  const effectivePollMs = batchId.trim() ? pollMs : BATCH_OPERATIONS_IDLE_POLL_MS
 
   useEffect(() => {
     if (!enabled || !tenantReady || !pageVisible) {
@@ -316,12 +330,12 @@ export function useBatchOperationsFeed(options: {
     }
 
     void tick()
-    const intervalId = window.setInterval(() => void tick(), pollMs)
+    const intervalId = window.setInterval(() => void tick(), effectivePollMs)
     return () => {
       cancelled = true
       window.clearInterval(intervalId)
     }
-  }, [enabled, tenantReady, pageVisible, pollMs, refreshRecentBatches, loadBatchScoped])
+  }, [enabled, tenantReady, pageVisible, effectivePollMs, refreshRecentBatches, loadBatchScoped])
 
   useEffect(() => {
     if (!enabled || !tenantReady) return

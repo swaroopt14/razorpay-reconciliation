@@ -37,8 +37,8 @@ export type PaymentHealthCardsProps = {
   reviewValue: string
   reviewSub: string
   reviewFooter?: string
-  unmatchedDisplay: string
   shortSettledDisplay: string
+  overSettledDisplay: string
   unlinkedDisplay: string
   reversalDisplay: string
   reviewHref: string
@@ -67,8 +67,8 @@ export function PaymentHealthCards({
   reviewValue,
   reviewSub,
   reviewFooter,
-  unmatchedDisplay,
   shortSettledDisplay,
+  overSettledDisplay,
   unlinkedDisplay,
   reversalDisplay,
   reviewHref,
@@ -125,8 +125,8 @@ export function PaymentHealthCards({
           </p>
           <p className={`mt-2 text-center text-[14px] font-medium ${HOME_BODY_IMPERIAL_SM}`}>{reviewSub}</p>
           <div className="mt-4">
-            <BreakdownRow label="Unmatched payments" value={unmatchedDisplay} />
             <BreakdownRow label="Short-settled value" value={shortSettledDisplay} />
+            <BreakdownRow label="Over-settled value" value={overSettledDisplay} />
             <BreakdownRow label="Unlinked settlement" value={unlinkedDisplay} />
             <BreakdownRow label="Reversal exposure" value={reversalDisplay} />
           </div>

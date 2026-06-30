@@ -23,6 +23,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"time"
 
@@ -131,21 +132,23 @@ func (h *DashboardRCAHandler) GetRCAKPIs(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	pct := func(v float64) float64 { return math.Round(v*10000) / 100 }
+
 	resp.DataAvailable = true
 	resp.SnapshotID = snap.SnapshotID
 	resp.WindowStart = &snap.WindowStart
 	resp.WindowEnd = &snap.WindowEnd
 	resp.ComputedAt = &snap.CreatedAt
-	resp.RCAConcentration = kpis.RCAConcentration
-	resp.ParserWeaknessRate = kpis.ParserWeaknessRate
+	resp.RCAConcentration = pct(kpis.RCAConcentration)
+	resp.ParserWeaknessRate = pct(kpis.ParserWeaknessRate)
 	resp.WeakParseCount = kpis.WeakParseCount
-	resp.MappingWeaknessRate = kpis.MappingWeaknessRate
+	resp.MappingWeaknessRate = pct(kpis.MappingWeaknessRate)
 	resp.WeakMappingCount = kpis.WeakMappingCount
-	resp.SourceSystemDefectRate = kpis.SourceSystemDefectRate
+	resp.SourceSystemDefectRate = pct(kpis.SourceSystemDefectRate)
 	if len(kpis.SourceSystemDefects) > 0 {
 		defectRates := make(map[string]float64, len(kpis.SourceSystemDefects))
 		for src, d := range kpis.SourceSystemDefects {
-			defectRates[src] = d.DefectRate
+			defectRates[src] = pct(d.DefectRate)
 		}
 		resp.SourceSystemDefects = defectRates
 	}

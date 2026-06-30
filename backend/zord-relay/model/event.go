@@ -74,6 +74,7 @@ type OutboxEvent struct {
 	CanonicalIntentCreated    *time.Time `json:"canonical_intent_created,omitempty"`
 
 	ClientPayoutRef *string `json:"client_payout_ref,omitempty"`
+	SourceRowNum *int `json:"source_row_num,omitempty"`
 	Amount	decimal.Decimal `json:"amount,omitempty"`
 	Currency string `json:"currency,omitempty"`
 

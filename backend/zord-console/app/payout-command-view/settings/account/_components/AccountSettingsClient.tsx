@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react'
 import { useSessionAccountProfile } from '@/app/payout-command-view/_components/account/useSessionAccountProfile'
+import { useRegisterPayoutPageActions } from '@/features/payout-command/layout/PayoutPageActionsContext'
 
 function formatSessionExpiry(iso: string) {
   const date = new Date(iso)
@@ -17,7 +18,12 @@ function formatSessionExpiry(iso: string) {
 }
 
 export function AccountSettingsClient() {
-  const { profile, loading } = useSessionAccountProfile()
+  const { profile, loading, refresh } = useSessionAccountProfile()
+
+  useRegisterPayoutPageActions({
+    refresh,
+    refreshing: loading,
+  })
 
   const workspaceValue = useMemo(() => {
     if (!profile) return loading ? 'Loading…' : '—'

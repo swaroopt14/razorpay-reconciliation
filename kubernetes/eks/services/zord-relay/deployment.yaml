@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: zord-relay
 spec:
-  replicas: 2
+  replicas: 1
   minReadySeconds: 10
   strategy:
     type: RollingUpdate
@@ -46,7 +46,7 @@ spec:
               app.kubernetes.io/name: zord-relay
       containers:
         - name: zord-relay
-          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-relay:v4
+          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-relay:v12
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8082
@@ -70,10 +70,7 @@ spec:
             - name: RELAY_TRACING_ENABLED
               value: "true"
             - name: RELAY_TRACING_OTLP_ENDPOINT
-              valueFrom:
-                configMapKeyRef:
-                  name: zord-aws-config
-                  key: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "otel-collector.tracing.svc.cluster.local:4318"
             - name: RELAY_SERVICES_0_AUTH_TOKEN
               valueFrom:
                 secretKeyRef:

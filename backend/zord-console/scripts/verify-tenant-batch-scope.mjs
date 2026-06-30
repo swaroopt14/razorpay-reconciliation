@@ -23,14 +23,15 @@ const checks = [
     label: 'intelligence BFF injects session tenant',
   },
   {
-    file: 'app/api/prod/intents/_proxyIntentEngineGet.ts',
-    mustInclude: ['requireSessionTenantForProdProxy', 'upstreamParams.set'],
-    label: 'intent-engine proxy injects tenant',
+    file: 'app/api/prod/intents/_intentEngineProxy.ts',
+    mustInclude: ['requireIntentEngineProxyGate', 'X-Tenant-ID', 'Authorization'],
+    label: 'intent-engine proxy injects tenant + bearer headers',
   },
   {
     file: 'app/api/prod/intents/payment-intents/route.ts',
-    mustInclude: ['batch_id'],
-    label: 'payment-intents requires batch_id',
+    mustInclude: ['batch_id', 'intentEngineForwardHeaders'],
+    mustNotInclude: ['tenant_id: gate.tenantId'],
+    label: 'payment-intents forwards batch_id + header-scoped tenant',
   },
   {
     file: 'app/api/prod/settlement/observations/batches/route.ts',
