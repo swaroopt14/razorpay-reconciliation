@@ -228,7 +228,7 @@ func (h *IntentHandler) ListPaymentIntentLiteByBatch(w http.ResponseWriter, r *h
 		return
 	}
 
-	// Lite query includes intent_quality_score; returns every row for batchid (no pagination cap).
+	// Lite query includes intent_quality_score; returns safety-capped list.
 	items, err := h.queryRepo.ListPaymentIntentLiteByBatch(ctx, tenantID, batchID)
 	if err != nil {
 		respondError(w, "DATABASE_ERROR", "Failed to fetch payment intent data", http.StatusInternalServerError, err)
@@ -248,7 +248,7 @@ func (h *IntentHandler) ListPaymentIntentLiteByBatch(w http.ResponseWriter, r *h
 		Items: items,
 		Pagination: TablePagination{
 			Page:     1,
-			PageSize: total,
+			PageSize: 5000, // Serve up to safety cap
 			Total:    total,
 		},
 	})
