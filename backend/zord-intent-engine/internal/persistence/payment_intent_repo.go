@@ -873,36 +873,10 @@ func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, 
         WHERE tenant_id = $1 AND batchid = $2 AND governance_state IN ('FLAGGED','REQUIRES_REVIEW')
     `, tenantID, batchID).Scan(&reviewCount)
 
-	// Step 4: Full denominator and invariant drift check
-	// Look up the batch state in the ingest system to find actual rows sent (source truth).
-	var totalRowsSource, acceptedRowsSource, failedRowsSource int
-	var sourceStatus string
-	err = r.db.QueryRowContext(ctx, `
-		SELECT COALESCE(total_rows, 0), COALESCE(accepted_rows, 0), COALESCE(failed_rows, 0), COALESCE(status, '')
-		FROM intent_ingest_runs
-		WHERE tenant_id = $1 AND batch_id = $2
-	`, tenantID, batchID).Scan(&totalRowsSource, &acceptedRowsSource, &failedRowsSource, &sourceStatus)
-
-	var pendingCount int
-	if err == nil && totalRowsSource > 0 {
-		// Pending is the remainder of rows not yet marked as final in either table.
-		pendingCount = totalRowsSource - canonicalized - dlqCount
-		if pendingCount < 0 {
-			pendingCount = 0
-		}
-	}
-
-	received := canonicalized + dlqCount + pendingCount
+	// Step 4: Full denominator — received = canonicalized + dlq
+	received := canonicalized + dlqCount
 	if received == 0 {
 		return 0, nil
-	}
-
-	// Validate invariant: received = canonicalized + dlq + pending.
-	// If a drift is detected or source metadata doesn't exist, we fallback safely.
-	if totalRowsSource > 0 && received != totalRowsSource {
-		log.Printf("⚠️ BATCH_AGGREGATE_DRIFT: Batch %s has mismatch. Ingest source claims %d rows, but calculated %d (canonicalized: %d, DLQ: %d, pending: %d). Reconciling to source truth.",
-			batchID, totalRowsSource, received, canonicalized, dlqCount, pendingCount)
-		received = totalRowsSource
 	}
 
 	canonRate := float64(canonicalized) / float64(received)
@@ -963,7 +937,6 @@ func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, 
 		"received_count":              received,
 		"canonicalized_count":         canonicalized,
 		"dlq_count":                   dlqCount,
-		"pending_count":               pendingCount,
 		"review_count":                reviewCount,
 		"canonicalization_rate":       canonRate,
 		"dlq_rate":                    dlqRate,
@@ -1004,25 +977,24 @@ func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, 
 	// Step 7: UPSERT into canonical_batches (New Table)
 	upsertBatchQuery := `
     INSERT INTO canonical_batches (
-        batch_id, tenant_id, source_system, received_count, canonicalized_count, dlq_count, pending_count, review_count,
+        batch_id, tenant_id, source_system, received_count, canonicalized_count, dlq_count, review_count,
         low_matchability_count, low_proof_readiness_count, duplicate_risk_count,
         canonicalization_success_rate, avg_schema_completeness_score,
         avg_mapping_confidence_score, avg_matchability_score, avg_proof_readiness_score,
         avg_intent_quality_score, duplicate_risk_amount_minor, batch_quality_score,
         score_breakdown_json, total_amount, updated_at
     ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8,
-        $9, $10, $11,
-        $12, $13, $14, $15, $16,
-        $17, $18, $19,
-        $20, $21, now()
+        $1, $2, $3, $4, $5, $6, $7,
+        $8, $9, $10,
+        $11, $12, $13, $14, $15,
+        $16, $17, $18,
+        $19, $20, now()
     ) ON CONFLICT (tenant_id, batch_id) DO UPDATE SET
         tenant_id = EXCLUDED.tenant_id,
         source_system = EXCLUDED.source_system,
         received_count = EXCLUDED.received_count,
         canonicalized_count = EXCLUDED.canonicalized_count,
         dlq_count = EXCLUDED.dlq_count,
-        pending_count = EXCLUDED.pending_count,
         review_count = EXCLUDED.review_count,
         low_matchability_count = EXCLUDED.low_matchability_count,
         low_proof_readiness_count = EXCLUDED.low_proof_readiness_count,
@@ -1040,7 +1012,7 @@ func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, 
         updated_at = now()
     `
 	_, err = r.db.ExecContext(ctx, upsertBatchQuery,
-		batchID, tenantID, sourceSystem, received, canonicalized, dlqCount, pendingCount, reviewCount,
+		batchID, tenantID, sourceSystem, received, canonicalized, dlqCount, reviewCount,
 		lowMatchCount, lowProofCount, dupRiskCount,
 		canonRate, safeFloat(avgSchema),
 		safeFloat(avgMapping), safeFloat(avgMatchability), safeFloat(avgProof),
