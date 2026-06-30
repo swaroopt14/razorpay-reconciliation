@@ -541,8 +541,9 @@ func (s *EvidenceService) GeneratePack(ctx context.Context, req models.GenerateE
 	for _, leaf := range leaves {
 		inclusionProofs = append(inclusionProofs, models.InclusionProof{
 			EvidencePackID: packID,
+			LeafIndex:      leaf.Index,
 			LeafHash:       leaf.LeafHash,
-			ProofPath:      proofPaths[leaf.LeafHash],
+			ProofPath:      proofPaths[leaf.Index],
 			CreatedAt:      now,
 		})
 	}
@@ -764,8 +765,9 @@ func (s *EvidenceService) GenerateBatchPack(ctx context.Context, req models.Gene
 	for _, leaf := range leaves {
 		inclusionProofs = append(inclusionProofs, models.InclusionProof{
 			EvidencePackID: packID,
+			LeafIndex:      leaf.Index,
 			LeafHash:       leaf.LeafHash,
-			ProofPath:      proofPaths[leaf.LeafHash],
+			ProofPath:      proofPaths[leaf.Index],
 			CreatedAt:      now,
 		})
 	}
