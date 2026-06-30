@@ -68,7 +68,7 @@ func (p *MerchantParser) parseRow(rowNum int, row []string, colIndex map[string]
 	if err != nil {
 		errs = append(errs, ParseRowError{RowIndex: rowNum, Field: "amount", Message: err.Error()})
 	} else {
-		shape.Amount.Value = fmt.Sprintf("%.2f", amt)
+		shape.Amount.Value = amt.String()
 		shape.Amount.Currency = get("amount.currency", "currency", "INR")
 	}
 
@@ -118,9 +118,10 @@ func (p *MerchantParser) parseRow(rowNum int, row []string, colIndex map[string]
 	// ── Tax — Gateway fee GST (informational, not validated strictly) ─────
 	rawFee := get("gateway_fee", "gateway fee")
 	if rawFee != "" {
-		fee, err := p.parseAmount(rawFee)
-		if err == nil {
-			shape.NetPayable = amt - fee
+		fee, feeErr := p.parseAmount(rawFee)
+		if feeErr == nil {
+			// Decimal subtraction; convert to float64 for downstream model field
+			shape.NetPayable = amt.Sub(fee).InexactFloat64()
 		}
 	}
 
