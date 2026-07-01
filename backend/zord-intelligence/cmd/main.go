@@ -195,6 +195,7 @@ func main() {
 	patternHandler := handlers.NewPatternHandler(intelBase)
 	recommendationHandler := handlers.NewRecommendationHandler(intelBase)
 	batchHandler := handlers.NewBatchHandler(batchRepo, projRepo, projectionService)
+	batchIntelligenceHandler := handlers.NewBatchIntelligenceHandler(intelBase)
 	leakageTimeseriesHandler := handlers.NewLeakageTimeseriesHandler(batchRepo)
 	historyHandler := handlers.NewHistoryHandler(projectionService, snapshotRepo)
 	explanationHandler := handlers.NewExplanationHandler(explSvc)
@@ -224,6 +225,7 @@ func main() {
 		patternHandler,
 		recommendationHandler,
 		batchHandler,
+		batchIntelligenceHandler,
 		leakageTimeseriesHandler,
 		historyHandler,
 		explanationHandler,

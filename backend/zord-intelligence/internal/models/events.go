@@ -657,6 +657,7 @@ type GovernanceDecisionCreatedEvent struct {
 	GovernanceDecisionID string `json:"governance_decision_id"` // "gdec_" + uuid
 	IntentID             string `json:"intent_id"`              // which payout this covers
 	ContractID           string `json:"contract_id"`
+	BatchID              string `json:"batch_id"` // which batch this intent belongs to
 	EvidencePackID       string `json:"evidence_pack_id"` // which evidence pack contains this decision
 
 	// ── Decision outcome ──────────────────────────────────────────────────────

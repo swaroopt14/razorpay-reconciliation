@@ -190,6 +190,55 @@ func (s *AmbiguityIntelligenceService) ComputeAndSave(
 	return nil
 }
 
+// ComputeAndSaveForBatch is the batch-scoped twin of ComputeAndSave.
+//
+// Reads the batch-scoped ambiguity projection (ambiguity.batch.{batchID}) and
+// writes a deterministic-only snapshot — no Logistic Regression risk
+// prediction is invoked at batch scope (RiskPredictionScore/Level stay at
+// their zero values), matching the "no ML anomaly detection for batch scope"
+// rule.
+func (s *AmbiguityIntelligenceService) ComputeAndSaveForBatch(
+	ctx context.Context,
+	tenantID, batchID string,
+) error {
+	amb, err := s.projRepo.GetAmbiguitySummaryForBatch(ctx, tenantID, batchID)
+	if err != nil {
+		return fmt.Errorf("ambiguity_svc.ComputeAndSaveForBatch GetAmbiguitySummaryForBatch tenant=%s batch=%s: %w", tenantID, batchID, err)
+	}
+	if amb == nil || amb.TotalDecisions == 0 {
+		return nil
+	}
+
+	snap := s.buildSnapshot(amb)
+
+	projRefs := []string{fmt.Sprintf("ambiguity.batch.%s", batchID)}
+	projRefsJSON, _ := json.Marshal(projRefs)
+	snapJSON, err := json.Marshal(snap)
+	if err != nil {
+		return fmt.Errorf("ambiguity_svc.ComputeAndSaveForBatch marshal tenant=%s batch=%s: %w", tenantID, batchID, err)
+	}
+
+	snapID := "snap_" + uuid.New().String()
+	modelVer := "deterministic_v1"
+	if err := s.snapshotRepo.Create(ctx, persistence.IntelligenceSnapshot{
+		SnapshotID:         snapID,
+		TenantID:           tenantID,
+		SnapshotType:       "AMBIGUITY",
+		ScopeType:          "BATCH",
+		ScopeRef:           &batchID,
+		WindowStart:        persistence.BatchProjectionWindowStart,
+		WindowEnd:          persistence.BatchProjectionWindowEnd,
+		ProjectionRefsJSON: projRefsJSON,
+		SnapshotJSON:       snapJSON,
+		ModelVersion:       &modelVer,
+		CreatedAt:          time.Now().UTC(),
+	}); err != nil {
+		return fmt.Errorf("ambiguity_svc.ComputeAndSaveForBatch Create snapshot tenant=%s batch=%s: %w", tenantID, batchID, err)
+	}
+
+	return nil
+}
+
 func (s *AmbiguityIntelligenceService) buildSnapshot(av *models.AmbiguityValue) AmbiguitySnapshot {
 	snap := AmbiguitySnapshot{
 		ValueAtRiskMinor:          av.AmbiguousAmountMinor,
