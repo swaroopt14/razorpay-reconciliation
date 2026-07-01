@@ -162,8 +162,8 @@ func (s *ProjectionService) HandleIntentCreated(
 		log.Printf("HandleIntentCreated: could not parse amount=%q intent=%s tenant=%s: %v",
 			e.Amount, e.IntentID, e.TenantID, err)
 	} else if intendedMinor.IsPositive() {
-		if err := s.projRepo.AtomicIncrementLeakageIntendedTotal(
-			ctx, e.TenantID, intendedMinor, window.start, window.end,
+		if err := s.projRepo.AtomicIncrementLeakageIntendedTotalBothScopes(
+			ctx, e.TenantID, e.ClientBatchRef, intendedMinor, window.start, window.end,
 		); err != nil {
 			return fmt.Errorf("HandleIntentCreated leakage denominator intent=%s: %w", e.IntentID, err)
 		}
@@ -179,8 +179,8 @@ func (s *ProjectionService) HandleIntentCreated(
 	// ── L7: Duplicate risk exposure (tenant-level) ────────────────────────────
 	if e.DuplicateRiskFlag {
 		if amt, parseErr := decimal.NewFromString(e.Amount); parseErr == nil && amt.IsPositive() {
-			if err := s.projRepo.AtomicIncrementLeakageDuplicateRisk(
-				ctx, e.TenantID, amt, window.start, window.end,
+			if err := s.projRepo.AtomicIncrementLeakageDuplicateRiskBothScopes(
+				ctx, e.TenantID, e.ClientBatchRef, amt, window.start, window.end,
 			); err != nil {
 				log.Printf("HandleIntentCreated: AtomicIncrementLeakageDuplicateRisk failed intent=%s: %v",
 					e.IntentID, err)
@@ -307,8 +307,8 @@ func (s *ProjectionService) HandleIntentCreated(
 
 	// ── Dispute Readiness: intent quality component ───────────────────────────
 	if e.IntentQualityScore > 0 {
-		if err := s.projRepo.AtomicRecordDefensibilityIntentQuality(
-			ctx, e.TenantID, e.IntentQualityScore, window.start, window.end,
+		if err := s.projRepo.AtomicRecordDefensibilityIntentQualityBothScopes(
+			ctx, e.TenantID, e.ClientBatchRef, e.IntentQualityScore, window.start, window.end,
 		); err != nil {
 			log.Printf("HandleIntentCreated: AtomicRecordDefensibilityIntentQuality failed intent=%s: %v",
 				e.IntentID, err)
@@ -727,26 +727,29 @@ func (s *ProjectionService) HandleEvidencePackReady(
 	// PHASE 4: Update DEFENSIBILITY projection — this intent now has an evidence pack.
 	// Grade A already derives total_intents from attachment decisions, so evidence
 	// coverage must update only the numerator here.
-	if err := s.projRepo.AtomicIncrementDefensibilityEvidencePack(
-		ctx, e.TenantID, window.start, window.end,
+	if err := s.projRepo.AtomicIncrementDefensibilityEvidencePackBothScopes(
+		ctx, e.TenantID, e.BatchID, window.start, window.end,
 	); err != nil {
 		// Log but don't fail — legacy evidence_readiness was already updated
-		log.Printf("HandleEvidencePackReady: AtomicIncrementDefensibilityEvidencePack failed tenant=%s: %v",
+		log.Printf("HandleEvidencePackReady: AtomicIncrementDefensibilityEvidencePackBothScopes failed tenant=%s: %v",
 			e.TenantID, err)
 	} else {
 		// ── D2/D4/D5: Record pack completeness and leaf presence ──────────────
-		if err := s.projRepo.AtomicRecordEvidencePackQuality(
-			ctx, e.TenantID, e.PackCompletenessScore,
+		if err := s.projRepo.AtomicRecordEvidencePackQualityBothScopes(
+			ctx, e.TenantID, e.BatchID, e.PackCompletenessScore,
 			e.SettlementLeafPresentFlag, e.AttachmentDecisionLeafPresentFlag,
 			window.start, window.end,
 		); err != nil {
-			log.Printf("HandleEvidencePackReady: AtomicRecordEvidencePackQuality failed tenant=%s: %v",
+			log.Printf("HandleEvidencePackReady: AtomicRecordEvidencePackQualityBothScopes failed tenant=%s: %v",
 				e.TenantID, err)
 		}
 		// Recompute defensibility snapshot now that evidence pack rate changed
 		if err := s.defensibilitySvc.ComputeAndSave(ctx, e.TenantID, "", window.start, window.end); err != nil {
 			log.Printf("HandleEvidencePackReady: defensibilitySvc failed tenant=%s: %v",
 				e.TenantID, err)
+		}
+		if err := s.defensibilitySvc.ComputeAndSaveForBatch(ctx, e.TenantID, e.BatchID); err != nil {
+			log.Printf("HandleEvidencePackReady: defensibilitySvc batch failed pack=%s: %v", e.EvidencePackID, err)
 		}
 	}
 
@@ -832,6 +835,12 @@ func (s *ProjectionService) HandleDLQItem(
 	// Trigger recommendation recompute — manual review data affects source-fix recommendations.
 	if err := s.recommendationSvc.ComputeAndSave(ctx, e.TenantID, window.start, window.end); err != nil {
 		log.Printf("HandleDLQItem: recommendationSvc failed intent=%s: %v", e.IntentID, err)
+	}
+
+	if e.BatchID != "" {
+		if err := s.recommendationSvc.ComputeAndSaveForBatch(ctx, e.TenantID, e.BatchID); err != nil {
+			log.Printf("HandleDLQItem: recommendationSvc batch failed intent=%s: %v", e.IntentID, err)
+		}
 	}
 
 	if err := s.projRepo.MarkProcessed(ctx, e.TenantID, e.EventID); err != nil {
@@ -1037,21 +1046,26 @@ func (s *ProjectionService) HandleSettlementCreated(
 	// has no attachment candidates at all.
 	// POOR means Service 5B scored this settlement too low to find any candidate intent.
 	if e.StatusObservation == "SETTLED" && readiness == "POOR" {
-		if err := s.projRepo.AtomicRecordLeakage(
+		if err := s.projRepo.AtomicRecordLeakageBothScopes(
 			ctx,
 			e.TenantID,
+			e.BatchID,
 			"ORPHAN_SETTLEMENT",
 			decimal.Zero,         // intendedMinor = 0 (no intent found)
 			e.SettledAmountMinor, // orphanMinor = settled amount
 			window.start, window.end,
 		); err != nil {
-			log.Printf("HandleSettlementCreated: AtomicRecordLeakage failed settlement=%s: %v",
+			log.Printf("HandleSettlementCreated: AtomicRecordLeakageBothScopes failed settlement=%s: %v",
 				e.SettlementID, err)
 		} else {
 			// Recompute leakage intelligence snapshot
 			if err := s.leakageSvc.ComputeAndSave(ctx, e.TenantID, window.start, window.end); err != nil {
 				log.Printf("HandleSettlementCreated: leakageSvc.ComputeAndSave failed tenant=%s: %v",
 					e.TenantID, err)
+			}
+			if err := s.leakageSvc.ComputeAndSaveForBatch(ctx, e.TenantID, e.BatchID); err != nil {
+				log.Printf("HandleSettlementCreated: leakageSvc.ComputeAndSaveForBatch failed settlement=%s: %v",
+					e.SettlementID, err)
 			}
 		}
 		// Per-batch attribution: orphan settlement amount
@@ -1068,10 +1082,10 @@ func (s *ProjectionService) HandleSettlementCreated(
 	// ── L2: Accumulate total observed settled volume for ALL settlements ──
 	// Tracks every confirmed settled amount regardless of attachment readiness.
 	// Numerator and denominator for leakage rate are computed separately.
-	if err := s.projRepo.AtomicIncrementSettledVolume(
-		ctx, e.TenantID, e.SettledAmountMinor, window.start, window.end,
+	if err := s.projRepo.AtomicIncrementSettledVolumeBothScopes(
+		ctx, e.TenantID, e.BatchID, e.SettledAmountMinor, window.start, window.end,
 	); err != nil {
-		log.Printf("HandleSettlementCreated: AtomicIncrementSettledVolume failed settlement=%s: %v",
+		log.Printf("HandleSettlementCreated: AtomicIncrementSettledVolumeBothScopes failed settlement=%s: %v",
 			e.SettlementID, err)
 	}
 
@@ -1175,8 +1189,8 @@ func (s *ProjectionService) HandleSettlementCreated(
 
 	// ── Dispute Readiness: mapping confidence component ──────────────────────
 	if e.MappingConfidence > 0 {
-		if err := s.projRepo.AtomicRecordDefensibilityMappingConfidence(
-			ctx, e.TenantID, e.MappingConfidence, window.start, window.end,
+		if err := s.projRepo.AtomicRecordDefensibilityMappingConfidenceBothScopes(
+			ctx, e.TenantID, e.BatchID, e.MappingConfidence, window.start, window.end,
 		); err != nil {
 			log.Printf("HandleSettlementCreated: AtomicRecordDefensibilityMappingConfidence failed settlement=%s: %v",
 				e.SettlementID, err)
@@ -1244,15 +1258,16 @@ func (s *ProjectionService) HandleAttachmentDecision(
 	// Service 5C could not find any matching intent for it — or an intent
 	// exists with no matching settlement. The full intended amount is at risk.
 	if isUnresolvedDecision {
-		if err := s.projRepo.AtomicRecordLeakage(
+		if err := s.projRepo.AtomicRecordLeakageBothScopes(
 			ctx,
 			e.TenantID,
+			e.BatchID,
 			"UNMATCHED_INTENT",
 			intendedAmountMinor,
 			decimal.Zero,
 			window.start, window.end,
 		); err != nil {
-			return fmt.Errorf("HandleAttachmentDecision AtomicRecordLeakage decision=%s: %w",
+			return fmt.Errorf("HandleAttachmentDecision AtomicRecordLeakageBothScopes decision=%s: %w",
 				e.DecisionID, err)
 		}
 	}
@@ -1272,8 +1287,8 @@ func (s *ProjectionService) HandleAttachmentDecision(
 
 	// ── L7b: Confirmed duplicate exposure for MATCH_DUPLICATE ────────────
 	if strings.EqualFold(e.DecisionType, "MATCH_DUPLICATE") {
-		if err := s.projRepo.AtomicIncrementLeakageConfirmedDuplicate(
-			ctx, e.TenantID, intendedAmountMinor, window.start, window.end,
+		if err := s.projRepo.AtomicIncrementLeakageConfirmedDuplicateBothScopes(
+			ctx, e.TenantID, e.BatchID, intendedAmountMinor, window.start, window.end,
 		); err != nil {
 			log.Printf("HandleAttachmentDecision: AtomicIncrementLeakageConfirmedDuplicate failed decision=%s: %v",
 				e.DecisionID, err)
@@ -1294,9 +1309,10 @@ func (s *ProjectionService) HandleAttachmentDecision(
 	isSuccessfulDecision := e.AmbiguityScore <= 0.30 &&
 		e.CandidateSetSize <= 1 &&
 		e.SettledAmountMinor.Equal(e.IntendedAmountMinor)
-	if err := s.projRepo.AtomicRecordAttachmentDecision(
+	if err := s.projRepo.AtomicRecordAttachmentDecisionBothScopes(
 		ctx,
 		e.TenantID,
+		e.BatchID,
 		e.DecisionType,
 		e.ConfidenceScore,
 		intendedAmountMinor,
@@ -1307,7 +1323,7 @@ func (s *ProjectionService) HandleAttachmentDecision(
 		isSuccessfulDecision,
 		window.start, window.end,
 	); err != nil {
-		return fmt.Errorf("HandleAttachmentDecision AtomicRecordAttachmentDecision decision=%s: %w",
+		return fmt.Errorf("HandleAttachmentDecision AtomicRecordAttachmentDecisionBothScopes decision=%s: %w",
 			e.DecisionID, err)
 	}
 
@@ -1337,10 +1353,10 @@ func (s *ProjectionService) HandleAttachmentDecision(
 	// In Grade A mode there are no intent.created or evidence.pack.ready events,
 	// so total_intents must be driven from attachment decisions. Each decision
 	// is 1 intent. hasEvidencePack=false — evidence pack info is not in this event.
-	if err := s.projRepo.AtomicIncrementDefensibilityIntent(
-		ctx, e.TenantID, false, window.start, window.end,
+	if err := s.projRepo.AtomicIncrementDefensibilityIntentBothScopes(
+		ctx, e.TenantID, e.BatchID, false, window.start, window.end,
 	); err != nil {
-		log.Printf("HandleAttachmentDecision: AtomicIncrementDefensibilityIntent failed decision=%s: %v",
+		log.Printf("HandleAttachmentDecision: AtomicIncrementDefensibilityIntentBothScopes failed decision=%s: %v",
 			e.DecisionID, err)
 	}
 
@@ -1362,6 +1378,16 @@ func (s *ProjectionService) HandleAttachmentDecision(
 	if err := s.recommendationSvc.ComputeAndSave(ctx, e.TenantID, window.start, window.end); err != nil {
 		log.Printf("HandleAttachmentDecision: recommendationSvc failed decision=%s: %v",
 			e.DecisionID, err)
+	}
+
+	if err := s.leakageSvc.ComputeAndSaveForBatch(ctx, e.TenantID, e.BatchID); err != nil {
+		log.Printf("HandleAttachmentDecision: leakageSvc batch failed decision=%s: %v", e.DecisionID, err)
+	}
+	if err := s.ambiguitySvc.ComputeAndSaveForBatch(ctx, e.TenantID, e.BatchID); err != nil {
+		log.Printf("HandleAttachmentDecision: ambiguitySvc batch failed decision=%s: %v", e.DecisionID, err)
+	}
+	if err := s.recommendationSvc.ComputeAndSaveForBatch(ctx, e.TenantID, e.BatchID); err != nil {
+		log.Printf("HandleAttachmentDecision: recommendationSvc batch failed decision=%s: %v", e.DecisionID, err)
 	}
 
 	// ── Step 4: Trigger policy evaluation ────────────────────────────────
@@ -1555,10 +1581,10 @@ func (s *ProjectionService) HandleVarianceRecord(
 	// ── Pattern Intelligence: Track OVER_SETTLEMENT separately ───────────────
 	// Previously skipped entirely; now recorded for over-settlement pattern detection.
 	if e.VarianceType == "OVER_SETTLEMENT" {
-		if err := s.projRepo.AtomicRecordOverSettlement(
-			ctx, e.TenantID, e.VarianceAmountMinor.Abs(), window.start, window.end,
+		if err := s.projRepo.AtomicRecordOverSettlementBothScopes(
+			ctx, e.TenantID, e.BatchID, e.VarianceAmountMinor.Abs(), window.start, window.end,
 		); err != nil {
-			log.Printf("HandleVarianceRecord: AtomicRecordOverSettlement failed variance=%s: %v",
+			log.Printf("HandleVarianceRecord: AtomicRecordOverSettlementBothScopes failed variance=%s: %v",
 				e.VarianceID, err)
 		}
 	}
@@ -1573,16 +1599,17 @@ func (s *ProjectionService) HandleVarianceRecord(
 			varianceMinor = varianceMinor.Neg() // ensure positive for leakage calculation
 		}
 
-		if err := s.projRepo.AtomicRecordVariance(
+		if err := s.projRepo.AtomicRecordVarianceBothScopes(
 			ctx,
 			e.TenantID,
+			e.BatchID,
 			e.VarianceType,
 			varianceMinor,
 			e.IntendedAmountMinor,
 			e.IsWhitelisted,
 			window.start, window.end,
 		); err != nil {
-			return fmt.Errorf("HandleVarianceRecord AtomicRecordVariance variance=%s: %w",
+			return fmt.Errorf("HandleVarianceRecord AtomicRecordVarianceBothScopes variance=%s: %w",
 				e.VarianceID, err)
 		}
 
@@ -1592,8 +1619,8 @@ func (s *ProjectionService) HandleVarianceRecord(
 		// AtomicRecordVariance (non-reversal path with zero amount), but we
 		// also keep a dedicated counter in the leakage projection for P7 rate.
 		if e.VarianceType == "VALUE_DATE_MISMATCH" {
-			if err := s.projRepo.AtomicIncrementValueDateMismatch(
-				ctx, e.TenantID, window.start, window.end,
+			if err := s.projRepo.AtomicIncrementValueDateMismatchBothScopes(
+				ctx, e.TenantID, e.BatchID, window.start, window.end,
 			); err != nil {
 				log.Printf("HandleVarianceRecord: AtomicIncrementValueDateMismatch failed variance=%s: %v",
 					e.VarianceID, err)
@@ -1612,10 +1639,17 @@ func (s *ProjectionService) HandleVarianceRecord(
 				e.VarianceID, err)
 		}
 
+		if err := s.leakageSvc.ComputeAndSaveForBatch(ctx, e.TenantID, e.BatchID); err != nil {
+			log.Printf("HandleVarianceRecord: leakageSvc batch failed variance=%s: %v", e.VarianceID, err)
+		}
+		if err := s.recommendationSvc.ComputeAndSaveForBatch(ctx, e.TenantID, e.BatchID); err != nil {
+			log.Printf("HandleVarianceRecord: recommendationSvc batch failed variance=%s: %v", e.VarianceID, err)
+		}
+
 		// ── D7: Weak evidence tracking ────────────────────────────────────────
 		if e.EvidenceGapFlag {
-			if err := s.projRepo.AtomicIncrementDefensibilityWeakEvidence(
-				ctx, e.TenantID, window.start, window.end,
+			if err := s.projRepo.AtomicIncrementDefensibilityWeakEvidenceBothScopes(
+				ctx, e.TenantID, e.BatchID, window.start, window.end,
 			); err != nil {
 				log.Printf("HandleVarianceRecord: AtomicIncrementDefensibilityWeakEvidence failed variance=%s: %v",
 					e.VarianceID, err)
@@ -1904,6 +1938,22 @@ func (s *ProjectionService) HandleBatchSummaryUpdated(
 		log.Printf("HandleBatchSummaryUpdated: rcaSvc.ComputeAndSaveGradeA failed batch=%s: %v", e.BatchID, err)
 	}
 
+	// Terminal safety net: recompute all four batch-scoped intelligence layers
+	// here so they are guaranteed up to date even if an earlier per-event
+	// trigger was missed.
+	if err := s.leakageSvc.ComputeAndSaveForBatch(ctx, e.TenantID, e.BatchID); err != nil {
+		log.Printf("HandleBatchSummaryUpdated: leakageSvc batch failed batch=%s: %v", e.BatchID, err)
+	}
+	if err := s.ambiguitySvc.ComputeAndSaveForBatch(ctx, e.TenantID, e.BatchID); err != nil {
+		log.Printf("HandleBatchSummaryUpdated: ambiguitySvc batch failed batch=%s: %v", e.BatchID, err)
+	}
+	if err := s.defensibilitySvc.ComputeAndSaveForBatch(ctx, e.TenantID, e.BatchID); err != nil {
+		log.Printf("HandleBatchSummaryUpdated: defensibilitySvc batch failed batch=%s: %v", e.BatchID, err)
+	}
+	if err := s.recommendationSvc.ComputeAndSaveForBatch(ctx, e.TenantID, e.BatchID); err != nil {
+		log.Printf("HandleBatchSummaryUpdated: recommendationSvc batch failed batch=%s: %v", e.BatchID, err)
+	}
+
 	if err := s.projRepo.MarkProcessed(ctx, e.TenantID, e.EventID); err != nil {
 		return fmt.Errorf("HandleBatchSummaryUpdated MarkProcessed event_id=%s: %w", e.EventID, err)
 	}
@@ -1964,16 +2014,17 @@ func (s *ProjectionService) HandleGovernanceDecision(
 
 	// Step 1: Update DEFENSIBILITY projection with this governance decision.
 	// This is the primary atomic write — must succeed before snapshot computation.
-	if err := s.projRepo.AtomicRecordGovernanceCoverage(
+	if err := s.projRepo.AtomicRecordGovernanceCoverageBothScopes(
 		ctx,
 		e.TenantID,
+		e.BatchID,
 		e.DecisionOutcome,
 		e.KYCChecked,
 		e.AMLChecked,
 		e.ReplayEquivalent,
 		window.start, window.end,
 	); err != nil {
-		return fmt.Errorf("HandleGovernanceDecision AtomicRecordGovernanceCoverage gdec=%s: %w",
+		return fmt.Errorf("HandleGovernanceDecision AtomicRecordGovernanceCoverageBothScopes gdec=%s: %w",
 			e.GovernanceDecisionID, err)
 	}
 
@@ -1994,6 +2045,13 @@ func (s *ProjectionService) HandleGovernanceDecision(
 	); err != nil {
 		log.Printf("HandleGovernanceDecision: recommendationSvc failed gdec=%s: %v",
 			e.GovernanceDecisionID, err)
+	}
+
+	if err := s.defensibilitySvc.ComputeAndSaveForBatch(ctx, e.TenantID, e.BatchID); err != nil {
+		log.Printf("HandleGovernanceDecision: defensibilitySvc batch failed gdec=%s: %v", e.GovernanceDecisionID, err)
+	}
+	if err := s.recommendationSvc.ComputeAndSaveForBatch(ctx, e.TenantID, e.BatchID); err != nil {
+		log.Printf("HandleGovernanceDecision: recommendationSvc batch failed gdec=%s: %v", e.GovernanceDecisionID, err)
 	}
 
 	// Step 4: Trigger policy evaluation.

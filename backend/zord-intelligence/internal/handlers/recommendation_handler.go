@@ -21,6 +21,12 @@ func (h *RecommendationHandler) GetRecommendation(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, "tenant_id is required")
 		return
 	}
+	if batchID := r.URL.Query().Get("batch_id"); batchID != "" {
+		resp := h.base.buildSnapshotResponse(r, tenantID, "RECOMMENDATION", "BATCH", &batchID)
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
 	resp := h.base.buildSnapshotResponse(r, tenantID, "RECOMMENDATION", "TENANT", nil)
 	writeJSON(w, http.StatusOK, resp)
 }
