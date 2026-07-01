@@ -21,6 +21,140 @@ import (
 type SettlementCanonicalizeService struct {
 }
 
+const canonicalObservationInsertColCount = 48
+
+const canonicalObservationInsertCols = `settlement_observation_id, tenant_id, trace_id,
+				settlement_envelope_id, ingest_run_id, settlement_batch_id,
+				source_file_ref, source_row_ref, source_system,
+				observation_kind, source_strength_class,
+				client_reference_candidate, provider_reference, bank_id, bank_reference,
+				external_reference, batch_reference,
+				amount, settled_amount, fee_amount, deduction_amount,
+				currency_code, settlement_status,
+				retry_flag, reversal_flag, return_flag,
+				observation_timestamp, value_date,
+				provider_ref_status,
+				mapping_profile_id, mapping_profile_version, parser_version,
+				parse_confidence, mapping_confidence,
+				carrier_richness_score, attachment_readiness_score, score_breakdown_json, score_reason_codes_json, score_version,
+				canonical_hash, client_batch_id,
+				source_strength, source_type, source_system_id,
+				corridor_id, warnings_json,
+				created_at, updated_at`
+
+type canonicalObservationPersistItem struct {
+	Obs               models.CanonicalSettlementObservation
+	EnvelopeID        uuid.UUID
+	IngestRunID       string
+	SettlementBatchID string
+	ClientBatchID     string
+}
+
+func canonicalObservationInsertArgs(item canonicalObservationPersistItem) []interface{} {
+	obs := item.Obs
+	return []interface{}{
+		obs.SettlementObservationID, obs.TenantID, obs.TraceID,
+		obs.SettlementEnvelopeID, item.IngestRunID, item.SettlementBatchID,
+		obs.SourceFileRef, obs.SourceRowRef, obs.SourceSystem,
+		obs.ObservationKind, obs.SourceStrengthClass,
+		obs.ClientReferenceCandidate, obs.ProviderReference, obs.BankID, obs.BankReference,
+		obs.ExternalReference, obs.BatchReference,
+		obs.Amount, obs.SettledAmount, obs.FeeAmount,
+		obs.DeductionAmount, obs.CurrencyCode, obs.SettlementStatus, obs.RetryFlag,
+		obs.ReversalFlag, obs.ReturnFlag, obs.ObservationTimestamp, obs.ValueDate,
+		obs.ProviderRefStatus, obs.MappingProfileID, obs.MappingProfileVersion, obs.MappingProfileVersion,
+		obs.ParseConfidence, obs.MappingConfidence, obs.CarrierRichnessScore,
+		obs.AttachmentReadinessScore, obs.ScoreBreakdownJSON, obs.ScoreReasonCodesJSON, obs.ScoreVersion, obs.CanonicalHash, obs.ClientBatchID,
+		obs.SourceStrength, obs.SourceType, obs.SourceSystemID,
+		obs.CorridorID, obs.WarningsJSON,
+		obs.CreatedAt, obs.UpdatedAt,
+	}
+}
+
+func insertCanonicalObservation(ctx context.Context, item canonicalObservationPersistItem) error {
+	_, err := db.DB.ExecContext(ctx, fmt.Sprintf(`
+			INSERT INTO canonical_settlement_observations (%s) VALUES (
+				$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
+				$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
+				$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,
+				$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,
+				$41,$42,$43,$44,$45,$46,$47,$48
+			) ON CONFLICT (settlement_observation_id) DO NOTHING`, canonicalObservationInsertCols),
+		canonicalObservationInsertArgs(item)...,
+	)
+	return err
+}
+
+func (s *SettlementCanonicalizeService) persistCanonicalObservationsBatch(
+	ctx context.Context,
+	tenantID uuid.UUID,
+	jobID string,
+	profile models.MappingProfile,
+	items []canonicalObservationPersistItem,
+) ([]models.CanonicalSettlementObservation, int, int) {
+	var (
+		observations       []models.CanonicalSettlementObservation
+		canonicalized      int
+		canonicalizeFailed int
+	)
+	if len(items) == 0 {
+		return observations, canonicalized, canonicalizeFailed
+	}
+
+	ingestSvc := &SettlementIngestService{}
+	for start := 0; start < len(items); start += batchInsertChunkSize {
+		end := start + batchInsertChunkSize
+		if end > len(items) {
+			end = len(items)
+		}
+		chunk := items[start:end]
+
+		args := make([]interface{}, 0, len(chunk)*canonicalObservationInsertColCount)
+		var valuePlaceholders strings.Builder
+		for i, item := range chunk {
+			rowArgs := canonicalObservationInsertArgs(item)
+			if i > 0 {
+				valuePlaceholders.WriteString(",")
+			}
+			argBase := i*canonicalObservationInsertColCount + 1
+			valuePlaceholders.WriteString("(")
+			for j := 0; j < canonicalObservationInsertColCount; j++ {
+				if j > 0 {
+					valuePlaceholders.WriteString(",")
+				}
+				valuePlaceholders.WriteString(fmt.Sprintf("$%d", argBase+j))
+			}
+			valuePlaceholders.WriteString(")")
+			args = append(args, rowArgs...)
+		}
+
+		query := fmt.Sprintf(
+			`INSERT INTO canonical_settlement_observations (%s) VALUES %s ON CONFLICT (settlement_observation_id) DO NOTHING`,
+			canonicalObservationInsertCols, valuePlaceholders.String(),
+		)
+		if _, err := db.DB.ExecContext(ctx, query, args...); err != nil {
+			for _, item := range chunk {
+				if err := insertCanonicalObservation(ctx, item); err != nil {
+					log.Printf("settlement.canonicalize.insert_failed job_id=%s row=%s err=%v", jobID, item.Obs.SourceRowRef, err)
+					_ = ingestSvc.PersistParseError(ctx, tenantID, jobID, item.EnvelopeID, item.Obs.SourceRowRef, "CANONICALIZATION", "CANONICAL_PERSIST_FAILED", profile, item.IngestRunID, item.SettlementBatchID, item.ClientBatchID)
+					canonicalizeFailed++
+					continue
+				}
+				canonicalized++
+				observations = append(observations, item.Obs)
+			}
+			continue
+		}
+
+		for _, item := range chunk {
+			canonicalized++
+			observations = append(observations, item.Obs)
+		}
+	}
+
+	return observations, canonicalized, canonicalizeFailed
+}
+
 // RunForJob executes the canonicalization pipeline for a specific ingest job.
 // profile is passed so the canonical observations record the correct mapping profile.
 // 1. Load all raw parsed rows from the DB.
@@ -57,6 +191,7 @@ func (s *SettlementCanonicalizeService) RunForJob(ctx context.Context, jobID str
 
 	// Grouping for batch context.
 	batchGroups := make(map[string][]models.CanonicalSettlementObservation)
+	var pendingObservations []canonicalObservationPersistItem
 
 	for rows.Next() {
 		var (
@@ -97,69 +232,23 @@ func (s *SettlementCanonicalizeService) RunForJob(ctx context.Context, jobID str
 		obs.IngestRunID = ingestRunID
 		obs.SettlementBatchID = settlementBatchID
 
-		// 3. Insert into Postgres.
-		_, err = db.DB.ExecContext(ctx, `
-			INSERT INTO canonical_settlement_observations (
-				settlement_observation_id, tenant_id, trace_id,
-				settlement_envelope_id, ingest_run_id, settlement_batch_id,
-				source_file_ref, source_row_ref, source_system,
-				observation_kind, source_strength_class,
-				client_reference_candidate, provider_reference, bank_id, bank_reference,
-				external_reference, batch_reference,
-				amount, settled_amount, fee_amount, deduction_amount,
-				currency_code, settlement_status,
-				retry_flag, reversal_flag, return_flag,
-				observation_timestamp, value_date,
-				provider_ref_status,
-				mapping_profile_id, mapping_profile_version, parser_version,
-				parse_confidence, mapping_confidence,
-				carrier_richness_score, attachment_readiness_score, score_breakdown_json, score_reason_codes_json, score_version,
-				canonical_hash, client_batch_id,
-				source_strength, source_type, source_system_id,
-				corridor_id, warnings_json,
-				created_at, updated_at
-			) VALUES (
-				$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
-				$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-				$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,
-				$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,
-				$41,$42,$43,$44,$45,$46,$47,$48
-			) ON CONFLICT (settlement_observation_id) DO NOTHING`,
-			obs.SettlementObservationID, obs.TenantID, obs.TraceID,
-			obs.SettlementEnvelopeID, ingestRunID, settlementBatchID,
-			obs.SourceFileRef, obs.SourceRowRef, obs.SourceSystem,
-			obs.ObservationKind, obs.SourceStrengthClass,
-			obs.ClientReferenceCandidate, obs.ProviderReference, obs.BankID, obs.BankReference,
-			obs.ExternalReference, obs.BatchReference,
-			obs.Amount, obs.SettledAmount, obs.FeeAmount,
-			obs.DeductionAmount, obs.CurrencyCode, obs.SettlementStatus, obs.RetryFlag,
-			obs.ReversalFlag, obs.ReturnFlag, obs.ObservationTimestamp, obs.ValueDate,
-			obs.ProviderRefStatus, obs.MappingProfileID, obs.MappingProfileVersion, obs.MappingProfileVersion,
-			obs.ParseConfidence, obs.MappingConfidence, obs.CarrierRichnessScore,
-			obs.AttachmentReadinessScore, obs.ScoreBreakdownJSON, obs.ScoreReasonCodesJSON, obs.ScoreVersion, obs.CanonicalHash, obs.ClientBatchID,
-			obs.SourceStrength, obs.SourceType, obs.SourceSystemID,
-			obs.CorridorID, obs.WarningsJSON,
-			obs.CreatedAt, obs.UpdatedAt,
-		)
-
-		if err != nil {
-			log.Printf("settlement.canonicalize.insert_failed job_id=%s row=%s err=%v", jobID, sourceRowRef, err)
-			svc := &SettlementIngestService{}
-			_ = svc.PersistParseError(ctx, tenantID, jobID, envelopeID, sourceRowRef, "CANONICALIZATION", "CANONICAL_PERSIST_FAILED", profile, ingestRunID, settlementBatchID, clientBatchID)
-			canonicalizeFailed++
-			continue
-		}
-
-		canonicalized++
-		observations = append(observations, obs)
-
-		// Group valid observations for batch-level summary.
-		// All rows in this run belong to the single client batch.
-		batchGroups[clientBatchID] = append(batchGroups[clientBatchID], obs)
+		pendingObservations = append(pendingObservations, canonicalObservationPersistItem{
+			Obs:               obs,
+			EnvelopeID:        envelopeID,
+			IngestRunID:       ingestRunID,
+			SettlementBatchID: settlementBatchID,
+			ClientBatchID:     clientBatchID,
+		})
 	}
 
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("canonicalize: cursor iteration error: %w", err)
+	}
+
+	observations, canonicalized, persistFailed := s.persistCanonicalObservationsBatch(ctx, tenantID, jobID, profile, pendingObservations)
+	canonicalizeFailed += persistFailed
+	for _, obs := range observations {
+		batchGroups[obs.ClientBatchID] = append(batchGroups[obs.ClientBatchID], obs)
 	}
 
 	var parsedRowCount, parseErrorCount int
