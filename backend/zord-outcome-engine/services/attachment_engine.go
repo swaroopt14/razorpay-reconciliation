@@ -275,17 +275,15 @@ func (e *AttachmentEngine) runAttachment(
 	matchedObservationIDs := make(map[uuid.UUID]bool)
 	obsDecisionTypes := make(map[uuid.UUID][]string)
 
-	previouslyDecidedObservationIDs, err := loadPreviouslyDecidedObservationIDs(ctx, tenantID)
-	if err != nil {
-		return nil, fmt.Errorf("attachment.engine: load previously decided observations: %w", err)
-	}
 	var (
 		allDecisions              []models.AttachmentDecision
 		allVariances              []models.VarianceRecord
 		allCandidates             []models.AttachmentCandidate
 		totalIntendedAmount       decimal.Decimal
 		clientBatchRef            *string
-		claimedObservationIDs     = previouslyDecidedObservationIDs
+		// Observations strongly matched earlier in this job. Cross-job claims are
+		// excluded by the NOT EXISTS clause in findCandidateObservations.
+		claimedObservationIDs     = make(map[uuid.UUID]bool)
 		allScannedObservationsMap = make(map[uuid.UUID]models.CanonicalSettlementObservation)
 	)
 
@@ -678,35 +676,11 @@ func performReverseScanOrphans(
 // CANDIDATE DISCOVERY
 // ─────────────────────────────────────────────────────────────────────────────
 
-// loadPreviouslyDecidedIntentIDs fetches all intent IDs for the tenant that have already
-// been strongly matched in the past. We preload this into a map at the start of a job
-// to avoid executing N+1 EXISTS queries in the database.
-// loadPreviouslyDecidedObservationIDs fetches all observation IDs for the tenant that have already
-// been strongly matched in the past.
-func loadPreviouslyDecidedObservationIDs(ctx context.Context, tenantID uuid.UUID) (map[uuid.UUID]bool, error) {
-	rows, err := db.DB.QueryContext(ctx, `
-		SELECT settlement_observation_id FROM attachment_decisions 
-		WHERE tenant_id = $1 AND decision_type IN ('MATCH_EXACT', 'MATCH_HIGH_CONFIDENCE')
-		  AND settlement_observation_id IS NOT NULL
-	`, tenantID)
-	if err != nil {
-		return nil, fmt.Errorf("query attachment_decisions: %w", err)
-	}
-	defer rows.Close()
-
-	excluded := make(map[uuid.UUID]bool)
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		excluded[id] = true
-	}
-	return excluded, rows.Err()
-}
-
 // findCandidateObservations builds the candidate observation set for one canonical intent.
 // Multi-index search: tenant + references, source system, and amount/currency/time.
+// excludedObservationIDs holds observations already claimed during the current job
+// (decisions are not committed until the job finishes, so the NOT EXISTS subquery
+// alone cannot prevent two intents in the same run from selecting the same row).
 func findCandidateObservations(
 	ctx context.Context,
 	tenantID uuid.UUID,
@@ -825,7 +799,7 @@ func findCandidateObservations(
 			continue
 		}
 		if excludedObservationIDs[o.SettlementObservationID] {
-			continue // Skip already claimed observations
+			continue // Skip observations already claimed in this job
 		}
 		observations = append(observations, o)
 	}
