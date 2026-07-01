@@ -53,8 +53,9 @@ func (e *AttachmentEngine) RunForBatch(
 	ctx context.Context,
 	tenantID uuid.UUID,
 	batchRef string,
+	preRegisteredJobID uuid.UUID,
 ) (*models.AttachmentJob, error) {
-	log.Printf("attachment.engine.start scope=INTENT_BATCH tenant=%s batch_ref=%s", tenantID, batchRef)
+	log.Printf("attachment.engine.start scope=INTENT_BATCH tenant=%s batch_ref=%s job=%s", tenantID, batchRef, preRegisteredJobID)
 
 	// Load intents for this batch.
 	intentMap, err := loadMasterIntentsByBatchRef(ctx, tenantID, batchRef)
@@ -70,28 +71,29 @@ func (e *AttachmentEngine) RunForBatch(
 		intents = append(intents, intent)
 	}
 
-	return e.runAttachment(ctx, tenantID, models.JobScopeSettlementBatch, batchRef, intents)
+	return e.runAttachment(ctx, tenantID, models.JobScopeSettlementBatch, batchRef, intents, preRegisteredJobID)
 }
 
 // RunForJob triggers attachment for one settlement ingest run.
 func (e *AttachmentEngine) RunForJob(
 	ctx context.Context,
 	tenantID uuid.UUID,
-	jobID string,
+	ingestRunID string,
+	preRegisteredJobID uuid.UUID,
 ) (*models.AttachmentJob, error) {
-	jobID = strings.TrimSpace(jobID)
-	if jobID == "" {
+	ingestRunID = strings.TrimSpace(ingestRunID)
+	if ingestRunID == "" {
 		return nil, fmt.Errorf("attachment.RunForJob: ingest_run_id is required")
 	}
 
-	log.Printf("attachment.engine.start scope=INGEST_RUN tenant=%s ingest_run_id=%s", tenantID, jobID)
+	log.Printf("attachment.engine.start scope=INGEST_RUN tenant=%s ingest_run_id=%s job=%s", tenantID, ingestRunID, preRegisteredJobID)
 
-	observations, err := loadObservationsByJobID(ctx, tenantID, jobID)
+	observations, err := loadObservationsByJobID(ctx, tenantID, ingestRunID)
 	if err != nil {
 		return nil, fmt.Errorf("attachment.RunForJob: load observations: %w", err)
 	}
 	if len(observations) == 0 {
-		return nil, fmt.Errorf("attachment.RunForJob: no observations found for ingest_run_id=%s", jobID)
+		return nil, fmt.Errorf("attachment.RunForJob: no observations found for ingest_run_id=%s", ingestRunID)
 	}
 
 	intentMap, err := loadIntentsForIngestRunObservations(ctx, tenantID, observations)
@@ -99,7 +101,7 @@ func (e *AttachmentEngine) RunForJob(
 		return nil, fmt.Errorf("attachment.RunForJob: load intents: %w", err)
 	}
 	if len(intentMap) == 0 {
-		return nil, fmt.Errorf("attachment.RunForJob: no intents found for ingest_run_id=%s using client_batch_id, batch_reference, or client_reference_candidate", jobID)
+		return nil, fmt.Errorf("attachment.RunForJob: no intents found for ingest_run_id=%s using client_batch_id, batch_reference, or client_reference_candidate", ingestRunID)
 	}
 
 	intents := make([]models.CanonicalIntent, 0, len(intentMap))
@@ -110,7 +112,7 @@ func (e *AttachmentEngine) RunForJob(
 		return intents[i].IntentID.String() < intents[j].IntentID.String()
 	})
 
-	return e.runAttachment(ctx, tenantID, models.JobScopeIngestRun, jobID, intents)
+	return e.runAttachment(ctx, tenantID, models.JobScopeIngestRun, ingestRunID, intents, preRegisteredJobID)
 }
 
 // RunForSingleIntent triggers an attachment job for one specific intent.
@@ -118,8 +120,9 @@ func (e *AttachmentEngine) RunForSingleIntent(
 	ctx context.Context,
 	tenantID uuid.UUID,
 	intentID uuid.UUID,
+	preRegisteredJobID uuid.UUID,
 ) (*models.AttachmentJob, error) {
-	log.Printf("attachment.engine.start scope=SINGLE_INTENT tenant=%s intent=%s", tenantID, intentID)
+	log.Printf("attachment.engine.start scope=SINGLE_INTENT tenant=%s intent=%s job=%s", tenantID, intentID, preRegisteredJobID)
 
 	intent, err := loadIntentByID(ctx, tenantID, intentID)
 	if err != nil {
@@ -133,7 +136,7 @@ func (e *AttachmentEngine) RunForSingleIntent(
 		scopeRef = *intent.ClientBatchRef
 	}
 
-	return e.runAttachment(ctx, tenantID, models.JobScopeSingleIntent, scopeRef, []models.CanonicalIntent{*intent})
+	return e.runAttachment(ctx, tenantID, models.JobScopeSingleIntent, scopeRef, []models.CanonicalIntent{*intent}, preRegisteredJobID)
 }
 
 func loadIntentsForIngestRunObservations(
@@ -198,6 +201,11 @@ func (e *AttachmentEngine) runAttachment(
 	scopeType string,
 	scopeRef string,
 	intents []models.CanonicalIntent,
+	// preRegisteredJobID is the attachment_job UUID inserted by the HTTP handler
+	// before the goroutine started. The engine reuses this ID so that the 202
+	// response the caller received maps to the same row that gets updated to
+	// COMPLETED — eliminating the ghost-row bug where two different UUIDs existed.
+	preRegisteredJobID uuid.UUID,
 ) (*models.AttachmentJob, error) {
 
 	lockKey := advisoryLockKey(tenantID, scopeType+"|"+scopeRef)
@@ -223,21 +231,24 @@ func (e *AttachmentEngine) runAttachment(
 	}
 	policy := parseRuleProfile(profile)
 
+	now := time.Now().UTC()
 	job := &models.AttachmentJob{
-		AttachmentJobID:        uuid.New(),
+		// Reuse the UUID the handler already inserted so the row the caller is
+		// polling is the same row that persistAttachmentOutputs updates to COMPLETED.
+		AttachmentJobID:        preRegisteredJobID,
 		TenantID:               tenantID,
 		JobScopeType:           scopeType,
 		ScopeRef:               scopeRef,
 		MatchingRulesetVersion: RulesetVersion,
 		Status:                 "RUNNING",
-		CreatedAt:              time.Now().UTC(),
+		CreatedAt:              now,
 	}
-	now := time.Now().UTC()
 	job.StartedAt = &now
 
-	if err := insertAttachmentJob(ctx, job); err != nil {
-		return nil, fmt.Errorf("attachment.engine: insert job: %w", err)
-	}
+	// NOTE: We do NOT call insertAttachmentJob here. The handler pre-inserted
+	// the row (with status=RUNNING) before launching this goroutine so the
+	// caller could receive the job_id in the 202 response immediately.
+	// insertAttachmentJob would create a duplicate row with a different UUID.
 
 	// ── Reverse scan setup: load master observation list ──────────────────
 	var masterObservationMap map[uuid.UUID]models.CanonicalSettlementObservation
@@ -268,7 +279,6 @@ func (e *AttachmentEngine) runAttachment(
 	if err != nil {
 		return nil, fmt.Errorf("attachment.engine: load previously decided observations: %w", err)
 	}
-
 	var (
 		allDecisions              []models.AttachmentDecision
 		allVariances              []models.VarianceRecord
