@@ -36,17 +36,17 @@ type OutboxEvent struct {
 	CorridorID  *string         `json:"corridor_id"`
 
 	// Intent Metadata (Synchronized from payment_intents)
-	IdempotencyKey   string          `json:"idempotency_key,omitempty" db:"idempotency_key"`
-	SalientHash      string          `json:"salient_hash,omitempty" db:"salient_hash"`
-	IntentType       string          `json:"intent_type,omitempty" db:"intent_type"`
-	CanonicalVersion string          `json:"canonical_version,omitempty" db:"canonical_version"`
-	IntendedExecutionAt   *time.Time      `json:"intended_execution_at,omitempty" db:"intended_execution_at"`
-	Constraints      json.RawMessage `json:"constraints,omitempty" db:"constraints"`
-	BeneficiaryType  string          `json:"beneficiary_type,omitempty" db:"beneficiary_type"`
-	PIITokens        json.RawMessage `json:"pii_tokens,omitempty" db:"pii_tokens"`
-	Beneficiary      json.RawMessage `json:"beneficiary,omitempty" db:"beneficiary"`
-	IntentStatus     string          `json:"intent_status,omitempty" db:"intent_status"`
-	ConfidenceScore  *float64        `json:"confidence_score,omitempty" db:"confidence_score"`
+	IdempotencyKey      string          `json:"idempotency_key,omitempty" db:"idempotency_key"`
+	SalientHash         string          `json:"salient_hash,omitempty" db:"salient_hash"`
+	IntentType          string          `json:"intent_type,omitempty" db:"intent_type"`
+	CanonicalVersion    string          `json:"canonical_version,omitempty" db:"canonical_version"`
+	IntendedExecutionAt *time.Time      `json:"intended_execution_at,omitempty" db:"intended_execution_at"`
+	Constraints         json.RawMessage `json:"constraints,omitempty" db:"constraints"`
+	BeneficiaryType     string          `json:"beneficiary_type,omitempty" db:"beneficiary_type"`
+	PIITokens           json.RawMessage `json:"pii_tokens,omitempty" db:"pii_tokens"`
+	Beneficiary         json.RawMessage `json:"beneficiary,omitempty" db:"beneficiary"`
+	IntentStatus        string          `json:"intent_status,omitempty" db:"intent_status"`
+	ConfidenceScore     *float64        `json:"confidence_score,omitempty" db:"confidence_score"`
 
 	CanonicalHash         string `json:"canonical_hash,omitempty" db:"canonical_hash"`
 	CanonicalSnapshotRef  string `json:"canonical_snapshot_ref,omitempty" db:"canonical_snapshot_ref"`
@@ -66,7 +66,7 @@ type OutboxEvent struct {
 	SourceSystem          string          `json:"source_system,omitempty" db:"source_system"`
 
 	PaymentInstructionReceived *time.Time `json:"payment_instruction_received,omitempty" db:"payment_instruction_received"`
-	CanonicalIntentCreated    *time.Time `json:"canonical_intent_created,omitempty" db:"canonical_intent_created"`
+	CanonicalIntentCreated     *time.Time `json:"canonical_intent_created,omitempty" db:"canonical_intent_created"`
 
 	BusinessIdempotencyKey    string          `json:"business_idempotency_key,omitempty" db:"business_idempotency_key"`
 	BeneficiaryFingerprint    string          `json:"beneficiary_fingerprint,omitempty" db:"beneficiary_fingerprint"`

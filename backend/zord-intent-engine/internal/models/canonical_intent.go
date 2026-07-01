@@ -76,7 +76,7 @@ type CanonicalIntent struct {
 	ClientBatchRef            string          `json:"client_batch_ref,omitempty" db:"client_batch_ref"`
 
 	UpdatedAt                *time.Time `json:"updated_at,omitempty"`
-	BatchID                  *string    `json:"batchid,omitempty" db:"batchid"`
+	BatchID                  *string    `json:"batch_id,omitempty" db:"batchid"`
 	SourceRowNum             *int       `json:"source_row_num,omitempty" db:"source_row_num"`
 	AggregateConfidenceScore *float64   `json:"aggregate_confidence_score,omitempty" db:"aggregate_confidence_score"` // NEW
 
