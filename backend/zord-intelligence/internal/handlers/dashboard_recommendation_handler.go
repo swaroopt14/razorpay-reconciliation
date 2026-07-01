@@ -116,9 +116,18 @@ func (h *DashboardRecommendationHandler) GetRecommendationKPIs(w http.ResponseWr
 	// ── Rec1 / Rec2: fetch RECOMMENDATION snapshot ────────────────────────────
 	// Fetched unconditionally — these KPIs are written by the intelligence service
 	// independently of whether any action contracts exist yet.
+	// batch_id, if present, scopes Rec1/Rec2 to a single batch's RECOMMENDATION
+	// snapshot. action_acceptance_rate / action_resolution_rate stay tenant-wide —
+	// action_contracts has no batch dimension.
 	if h.snapshotRepo != nil {
+		scopeType := "TENANT"
+		var scopeRef *string
+		if batchID := r.URL.Query().Get("batch_id"); batchID != "" {
+			scopeType = "BATCH"
+			scopeRef = &batchID
+		}
 		recSnap, recErr := h.snapshotRepo.GetLatestByTypeFiltered(
-			r.Context(), tenantID, "RECOMMENDATION", "TENANT", nil, from, to,
+			r.Context(), tenantID, "RECOMMENDATION", scopeType, scopeRef, from, to,
 		)
 		if recErr == nil && recSnap != nil {
 			var recKPIs recSnapshotFields

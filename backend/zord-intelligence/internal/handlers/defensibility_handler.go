@@ -21,6 +21,12 @@ func (h *DefensibilityHandler) GetDefensibility(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "tenant_id is required")
 		return
 	}
+	if batchID := r.URL.Query().Get("batch_id"); batchID != "" {
+		resp := h.base.buildSnapshotResponse(r, tenantID, "DEFENSIBILITY", "BATCH", &batchID)
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
 	resp := h.base.buildSnapshotResponse(r, tenantID, "DEFENSIBILITY", "TENANT", nil)
 	writeJSON(w, http.StatusOK, resp)
 }

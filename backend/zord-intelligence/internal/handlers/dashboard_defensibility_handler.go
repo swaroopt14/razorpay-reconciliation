@@ -103,9 +103,17 @@ func (h *DashboardDefensibilityHandler) GetDefensibilityKPIs(w http.ResponseWrit
 
 	from, to := parseDateRangeParams(r)
 
+	batchID := r.URL.Query().Get("batch_id")
+	scopeType := "TENANT"
+	var scopeRef *string
+	if batchID != "" {
+		scopeType = "BATCH"
+		scopeRef = &batchID
+	}
+
 	snap, err := h.snapshotRepo.GetLatestByTypeFiltered(
 		r.Context(),
-		tenantID, "DEFENSIBILITY", "TENANT", nil,
+		tenantID, "DEFENSIBILITY", scopeType, scopeRef,
 		from, to,
 	)
 	if err != nil {

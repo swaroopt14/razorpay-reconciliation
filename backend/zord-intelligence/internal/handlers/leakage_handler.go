@@ -36,6 +36,23 @@ func (h *LeakageHandler) GetLeakage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	batchID := r.URL.Query().Get("batch_id")
+
+	if batchID != "" {
+		snap := h.base.buildSnapshotResponse(r, tenantID, "LEAKAGE", "BATCH", &batchID)
+		var totalAmountMinor, overSettlementAmountMinor decimal.Decimal
+		if lv, err := h.projRepo.GetLeakageSummaryForBatch(r.Context(), tenantID, batchID); err == nil && lv != nil {
+			totalAmountMinor = lv.TotalAmountMinor
+			overSettlementAmountMinor = lv.OverSettlementAmountMinor
+		}
+		writeJSON(w, http.StatusOK, leakageResponse{
+			intelligenceResponse:      snap,
+			TotalAmountMinor:          totalAmountMinor,
+			OverSettlementAmountMinor: overSettlementAmountMinor,
+		})
+		return
+	}
+
 	snap := h.base.buildSnapshotResponse(r, tenantID, "LEAKAGE", "TENANT", nil)
 
 	var totalAmountMinor, overSettlementAmountMinor decimal.Decimal
