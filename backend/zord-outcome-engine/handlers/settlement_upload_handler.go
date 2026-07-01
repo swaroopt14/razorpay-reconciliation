@@ -248,8 +248,7 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 			return
 		}
 
-		var rowCountParsed, rowCountFailed int
-		var confidenceSum float64
+		var rowCountFailed int
 		var parsedRowItems []services.ParsedRowBatchItem
 		var parseErrorItems []services.ParseErrorBatchItem
 
@@ -281,12 +280,12 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 				Result: result,
 				Status: "PARSED",
 			})
-			rowCountParsed++
-			confidenceSum += result.Confidence
 		}
 
-		_ = svc.PersistParsedRowsBatch(bgCtx, bgTenant, bgIngestRunID, bgEnvelope, bgRef, pspProfile, bgSettlementBatchID, bgClientBatchID, parsedRowItems)
+		persistResult, _ := svc.PersistParsedRowsBatch(bgCtx, bgTenant, bgIngestRunID, bgEnvelope, bgRef, pspProfile, bgSettlementBatchID, bgClientBatchID, parsedRowItems)
 		_ = svc.PersistParseErrorsBatch(bgCtx, bgTenant, bgIngestRunID, bgEnvelope, pspProfile, bgSettlementBatchID, bgClientBatchID, parseErrorItems)
+		rowCountParsed := persistResult.ParsedCount
+		confidenceSum := persistResult.ConfidenceSum
 
 		avgConfidence := 0.0
 		if rowCountParsed > 0 {

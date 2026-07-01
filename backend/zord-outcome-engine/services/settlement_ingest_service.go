@@ -38,6 +38,12 @@ type ParseErrorBatchItem struct {
 	Reason     string
 }
 
+// PersistParsedRowsBatchResult reports PARSED rows actually written to settlement_parsed_rows.
+type PersistParsedRowsBatchResult struct {
+	ParsedCount   int
+	ConfidenceSum float64
+}
+
 // SettlementIngestService provides granular methods for settlement file ingestion.
 // Orchestration is handled at the controller/handler level to maintain a flat flow.
 type SettlementIngestService struct {
@@ -269,6 +275,7 @@ func (s *SettlementIngestService) PersistParsedRow(
 
 // PersistParsedRowsBatch inserts parsed rows in multi-row chunks, falling back to
 // single-row inserts when a chunk fails so per-row error isolation is preserved.
+// ParsedCount and ConfidenceSum reflect only PARSED-status rows that were successfully inserted.
 func (s *SettlementIngestService) PersistParsedRowsBatch(
 	ctx context.Context,
 	tenantID uuid.UUID,
@@ -279,7 +286,8 @@ func (s *SettlementIngestService) PersistParsedRowsBatch(
 	settlementBatchID string,
 	clientBatchID string,
 	rows []ParsedRowBatchItem,
-) error {
+) (PersistParsedRowsBatchResult, error) {
+	var result PersistParsedRowsBatchResult
 	const parsedRowInsertColCount = 19
 	parsedRowInsertCols := `parsed_row_id, ingest_run_id, settlement_batch_id,
 			tenant_id, settlement_envelope_id,
@@ -350,14 +358,28 @@ func (s *SettlementIngestService) PersistParsedRowsBatch(
 					item.Result, profile,
 					ingestRunID, settlementBatchID, clientBatchID,
 					item.Status, item.FailureReasonCode,
-				); persistErr != nil && item.Status != "FAILED" {
-					log.Printf("settlement.upload.row_persist_error job_id=%s row=%s err=%v",
-						ingestRunID, item.RowRef, persistErr)
+				); persistErr != nil {
+					if item.Status != "FAILED" {
+						log.Printf("settlement.upload.row_persist_error job_id=%s row=%s err=%v",
+							ingestRunID, item.RowRef, persistErr)
+					}
+					continue
+				}
+				if item.Status == "PARSED" {
+					result.ParsedCount++
+					result.ConfidenceSum += item.Result.Confidence
+				}
+			}
+		} else {
+			for _, item := range chunk {
+				if item.Status == "PARSED" {
+					result.ParsedCount++
+					result.ConfidenceSum += item.Result.Confidence
 				}
 			}
 		}
 	}
-	return nil
+	return result, nil
 }
 
 // FinalizeJob updates the job status, counts, and overall confidence.
