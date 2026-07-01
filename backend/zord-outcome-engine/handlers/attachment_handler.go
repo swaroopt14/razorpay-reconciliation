@@ -63,6 +63,10 @@ func (h *Handler) RunAttachmentHandler(c *gin.Context) {
 
 	engine := &services.AttachmentEngine{}
 
+	// Pre-generate the job UUID before the switch so all fn closures can capture it.
+	// The row is inserted after the switch (once scopeRef is known).
+	jobID := uuid.New()
+
 	// Validate scope-specific fields and determine which engine method to call
 	// before spawning the goroutine — validation errors must return 400, not 202.
 	type runFunc func() (*models.AttachmentJob, error)
@@ -78,7 +82,7 @@ func (h *Handler) RunAttachmentHandler(c *gin.Context) {
 		ref := *req.SettlementBatchRef
 		scopeRef = ref
 		fn = func() (*models.AttachmentJob, error) {
-			return engine.RunForBatch(context.Background(), tenantID, ref)
+			return engine.RunForBatch(context.Background(), tenantID, ref, jobID)
 		}
 
 	case models.JobScopeSingleIntent:
@@ -93,7 +97,7 @@ func (h *Handler) RunAttachmentHandler(c *gin.Context) {
 		}
 		scopeRef = intentID.String()
 		fn = func() (*models.AttachmentJob, error) {
-			return engine.RunForSingleIntent(context.Background(), tenantID, intentID)
+			return engine.RunForSingleIntent(context.Background(), tenantID, intentID, jobID)
 		}
 
 	case models.JobScopeIngestRun:
@@ -104,7 +108,7 @@ func (h *Handler) RunAttachmentHandler(c *gin.Context) {
 		runID := *req.IngestRunID
 		scopeRef = runID
 		fn = func() (*models.AttachmentJob, error) {
-			return engine.RunForJob(context.Background(), tenantID, runID)
+			return engine.RunForJob(context.Background(), tenantID, runID, jobID)
 		}
 
 	default:
@@ -114,7 +118,6 @@ func (h *Handler) RunAttachmentHandler(c *gin.Context) {
 
 	// Pre-register the job row as RUNNING so the caller can see it immediately
 	// via GET /v1/attachment/batch/:ref, even before the goroutine starts.
-	jobID := uuid.New()
 	now := time.Now().UTC()
 	if _, dbErr := db.DB.ExecContext(c.Request.Context(), `
 		INSERT INTO attachment_jobs (

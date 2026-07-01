@@ -296,11 +296,33 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 			if err := svc.ActivateRun(bgCtx, bgSettlementBatchID, bgIngestRunID, bgPreviousRunID, bgRunNumber); err != nil {
 				log.Printf("settlement.upload.activate_run_error run_id=%s err=%v", bgIngestRunID, err)
 			}
-			// Trigger attachment engine automatically on success
-			log.Printf("settlement.upload.attachment_start job_id=%s", bgIngestRunID)
+			// Trigger attachment engine automatically on success.
+			// Pre-insert the attachment_job row as RUNNING so the engine can
+			// reuse the same UUID it was handed — same contract as the explicit
+			// POST /v1/attachment/run handler.
+			attachJobID := uuid.New()
+			attachNow := time.Now().UTC()
+			if _, insErr := db.DB.ExecContext(bgCtx, `
+				INSERT INTO attachment_jobs (
+					attachment_job_id, tenant_id, job_scope_type, scope_ref,
+					matching_ruleset_version, status,
+					candidate_count_total, exact_match_count, high_confidence_count,
+					ambiguous_count, unresolved_count, conflicted_count,
+					started_at, created_at
+				) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+				attachJobID, bgTenant, "INGEST_RUN", bgIngestRunID,
+				services.RulesetVersion, "RUNNING",
+				0, 0, 0, 0, 0, 0,
+				attachNow, attachNow,
+			); insErr != nil {
+				log.Printf("settlement.upload.attachment_preregister_failed job_id=%s err=%v", bgIngestRunID, insErr)
+				// Continue without pre-registration — engine will still run but
+				// the job row won't be pollable via the attachment API.
+			}
+			log.Printf("settlement.upload.attachment_start ingest_run=%s attachment_job=%s", bgIngestRunID, attachJobID)
 			engine := &services.AttachmentEngine{}
-			if _, err := engine.RunForJob(bgCtx, bgTenant, bgIngestRunID); err != nil {
-				log.Printf("settlement.upload.attachment_error job_id=%s err=%v", bgIngestRunID, err)
+			if _, err := engine.RunForJob(bgCtx, bgTenant, bgIngestRunID, attachJobID); err != nil {
+				log.Printf("settlement.upload.attachment_error ingest_run=%s attachment_job=%s err=%v", bgIngestRunID, attachJobID, err)
 			}
 		}
 	}(context.Background(), profile, ingestRunID, settlementBatchID, previousRunID, runNumber, tenantID, envelopeID, objRef, clientBatchID, fileBytes)
