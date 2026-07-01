@@ -20,7 +20,7 @@ The Zord Edge service handles request processing, authentication, and routing fo
 
 ## Technology Stack
 
-- **Language**: Go 1.24.1
+- **Language**: Go 1.25.0
 - **Framework**: Gin Gonic
 - **Database**: PostgreSQL 16
 - **Tracing**: OpenTelemetry + Jaeger
@@ -32,7 +32,7 @@ The Zord Edge service handles request processing, authentication, and routing fo
 ### Local Development
 
 #### Prerequisites
-- Go 1.24.1 or higher
+- Go 1.25.0 or higher
 - PostgreSQL 16+
 
 #### Setup
@@ -81,9 +81,41 @@ docker-compose down -v
 
 ## API Endpoints
 
-- **Health Check**: `GET /health` - Service health check
-- **Intent Ingestion**: `POST /v1/ingest` - Submit intent request
-- **Tenant Registration**: `POST /v1/tenantReg` - Register tenant
+### Public Endpoints
+- **Health Check**: `GET /health` or `GET /v1/health` - Service health status
+- **Metrics**: `GET /metrics` - Prometheus metrics
+
+### Ingestion Endpoints (API Key or JWT Authenticated)
+- **JSON Ingestion**: `POST /v1/ingest` - Submit single intent request (requires idempotency header)
+- **Bulk Ingestion**: `POST /v1/bulk-ingest` - Submit CSV/Excel file for per-row ingestion (multipart form upload)
+
+### Admin Endpoints (Admin Token Authenticated)
+- **Tenant Registration**: `POST /v1/admin/tenantReg` - Register a new tenant prefix/keys
+- **List Tenants**: `GET /v1/admin/tenants` - List all registered tenants
+- **Get Tenant by ID**: `GET /v1/admin/tenants/:tenant_id` - Fetch tenant configuration by ID
+
+### Webhook Endpoints
+- **Connector Webhooks**: `POST /v1/raw/envelopes/webhooks/:provider/:connectorID` - Raw webhook ingestion (signature verified)
+
+### Public Authentication Endpoints (JWT / Session)
+- **Signup**: `POST /v1/auth/signup` - Register first tenant admin user
+- **Login**: `POST /v1/auth/login` - Authenticate user credentials and issues tokens
+- **Refresh**: `POST /v1/auth/refresh` - Refresh access credentials using refresh token
+- **Logout**: `POST /v1/auth/logout` - Revoke current user session refresh token
+
+### Protected Authentication Endpoints (JWT Authenticated)
+- **Current User Profile**: `GET /v1/auth/me` - Fetch details of authenticated user
+- **Current Principal Detail**: `GET /v1/auth/principal` - Fetch principal identity details (role, email, tenant, etc.)
+
+### Session Management Endpoints (Console JWT Authenticated)
+- **Session Status**: `GET /v1/session/status` - Check current console session expiry and idle limits
+- **Session Refresh**: `POST /v1/session/refresh` - Validate refresh token and rotate tokens
+- **Logout All Sessions**: `POST /v1/session/logout-all` - Terminate all user session tokens
+
+### Internal Outbox Endpoints (Internal usage only)
+- **Lease Outbox Records**: `GET /internal/outbox/lease` - Lease pending outbox records
+- **Acknowledge Output**: `POST /internal/outbox/ack` - Mark record as successfully published
+- **Negative Acknowledge**: `POST /internal/outbox/nack` - Release lease on failed publisher delivery attempts
 
 ## Configuration
 

@@ -217,6 +217,7 @@ type EvidencePackReadyEvent struct {
 	TenantID                          string    `json:"tenant_id"`
 	IntentID                          string    `json:"intent_id"`
 	ContractID                        string    `json:"contract_id"`
+	BatchID							  string    `json:"batch_id"`	
 	EvidencePackID                    string    `json:"evidence_pack_id"`
 	MerkleRoot                        string    `json:"merkle_root"` // cryptographic proof of evidence contents
 	OccurredAt                        time.Time `json:"occurred_at"`

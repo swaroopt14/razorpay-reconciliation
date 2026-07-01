@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/shopspring/decimal"
 	"zord-edge/model"
 )
 
@@ -85,7 +87,7 @@ func (p *VendorParser) parseRow(rowNum int, row []string, colIndex map[string]in
 	if err != nil {
 		errs = append(errs, ParseRowError{RowIndex: rowNum, Field: "amount", Message: err.Error()})
 	} else {
-		shape.Amount.Value = fmt.Sprintf("%.2f", amt)
+		shape.Amount.Value = amt.String()
 		shape.Amount.Currency = get("amount.currency", "currency", "INR")
 	}
 
@@ -146,7 +148,7 @@ func (p *VendorParser) parseRow(rowNum int, row []string, colIndex map[string]in
 		if err != nil {
 			errs = append(errs, ParseRowError{RowIndex: rowNum, Field: "taxable_value", Message: err.Error()})
 		} else {
-			shape.TaxableValue = tv
+			shape.TaxableValue = tv.InexactFloat64()
 		}
 	}
 
@@ -155,13 +157,13 @@ func (p *VendorParser) parseRow(rowNum int, row []string, colIndex map[string]in
 		rate, err := p.parseAmount(rawGSTRate)
 		if err != nil {
 			errs = append(errs, ParseRowError{RowIndex: rowNum, Field: "gst_rate", Message: err.Error()})
-		} else if !validGSTRates[rate] {
+		} else if !validGSTRates[rate.InexactFloat64()] {
 			errs = append(errs, ParseRowError{
 				RowIndex: rowNum, Field: "gst_rate",
-				Message: fmt.Sprintf("invalid GST rate %.0f — must be 0, 5, 12, 18, or 28", rate),
+				Message: fmt.Sprintf("invalid GST rate %.0f — must be 0, 5, 12, 18, or 28", rate.InexactFloat64()),
 			})
 		} else {
-			shape.GSTRate = rate
+			shape.GSTRate = rate.InexactFloat64()
 		}
 	}
 
@@ -169,6 +171,7 @@ func (p *VendorParser) parseRow(rowNum int, row []string, colIndex map[string]in
 
 	if !shape.ReverseCharge && shape.TaxableValue > 0 && shape.GSTRate > 0 {
 		expectedGST := math.Round(shape.TaxableValue*shape.GSTRate/100*100) / 100
+		expectedGSTDec := decimal.NewFromFloat(expectedGST)
 
 		switch shape.GSTType {
 		case "IGST":
@@ -176,11 +179,11 @@ func (p *VendorParser) parseRow(rowNum int, row []string, colIndex map[string]in
 			if err != nil {
 				errs = append(errs, ParseRowError{RowIndex: rowNum, Field: "igst_amount", Message: err.Error()})
 			} else {
-				shape.IGSTAmount = igst
-				if math.Abs(igst-expectedGST) > amountToleranceINR {
+				shape.IGSTAmount = igst.InexactFloat64()
+				if igst.Sub(expectedGSTDec).Abs().GreaterThan(decimal.NewFromFloat(amountToleranceINR)) {
 					errs = append(errs, ParseRowError{
 						RowIndex: rowNum, Field: "igst_amount",
-						Message: fmt.Sprintf("igst_amount %.2f does not match taxable_value × gst_rate = %.2f", igst, expectedGST),
+						Message: fmt.Sprintf("igst_amount %s does not match taxable_value × gst_rate = %.2f", igst.String(), expectedGST),
 					})
 				}
 			}
@@ -195,13 +198,13 @@ func (p *VendorParser) parseRow(rowNum int, row []string, colIndex map[string]in
 				errs = append(errs, ParseRowError{RowIndex: rowNum, Field: "sgst_amount", Message: err2.Error()})
 			}
 			if err1 == nil && err2 == nil {
-				shape.CGSTAmount = cgst
-				shape.SGSTAmount = sgst
-				totalGST := math.Round((cgst+sgst)*100) / 100
-				if math.Abs(totalGST-expectedGST) > amountToleranceINR {
+				shape.CGSTAmount = cgst.InexactFloat64()
+				shape.SGSTAmount = sgst.InexactFloat64()
+				totalGSTDec := cgst.Add(sgst)
+				if totalGSTDec.Sub(expectedGSTDec).Abs().GreaterThan(decimal.NewFromFloat(amountToleranceINR)) {
 					errs = append(errs, ParseRowError{
 						RowIndex: rowNum, Field: "cgst_amount",
-						Message: fmt.Sprintf("cgst+sgst %.2f does not match expected GST %.2f", totalGST, expectedGST),
+						Message: fmt.Sprintf("cgst+sgst %s does not match expected GST %.2f", totalGSTDec.String(), expectedGST),
 					})
 				}
 			}
@@ -233,7 +236,7 @@ func (p *VendorParser) parseRow(rowNum int, row []string, colIndex map[string]in
 		if err != nil {
 			errs = append(errs, ParseRowError{RowIndex: rowNum, Field: "tds_rate", Message: err.Error()})
 		} else {
-			shape.TDSRate = rate
+			shape.TDSRate = rate.InexactFloat64()
 		}
 	}
 
@@ -243,13 +246,13 @@ func (p *VendorParser) parseRow(rowNum int, row []string, colIndex map[string]in
 		if err != nil {
 			errs = append(errs, ParseRowError{RowIndex: rowNum, Field: "tds_amount", Message: err.Error()})
 		} else {
-			shape.TDSAmount = tds
+			shape.TDSAmount = tds.InexactFloat64()
 			if shape.TaxableValue > 0 && shape.TDSRate > 0 {
 				expectedTDS := math.Round(shape.TaxableValue*shape.TDSRate/100*100) / 100
-				if math.Abs(tds-expectedTDS) > amountToleranceINR {
+				if tds.Sub(decimal.NewFromFloat(expectedTDS)).Abs().GreaterThan(decimal.NewFromFloat(amountToleranceINR)) {
 					errs = append(errs, ParseRowError{
 						RowIndex: rowNum, Field: "tds_amount",
-						Message: fmt.Sprintf("tds_amount %.2f does not match taxable_value × tds_rate = %.2f", tds, expectedTDS),
+						Message: fmt.Sprintf("tds_amount %s does not match taxable_value × tds_rate = %.2f", tds.String(), expectedTDS),
 					})
 				}
 			}
@@ -258,11 +261,11 @@ func (p *VendorParser) parseRow(rowNum int, row []string, colIndex map[string]in
 
 	totalGST := shape.IGSTAmount + shape.CGSTAmount + shape.SGSTAmount
 	shape.NetPayable = shape.TaxableValue + totalGST - shape.TDSAmount
-	if amt > 0 && shape.NetPayable > 0 {
-		if math.Abs(amt-shape.NetPayable) > amountToleranceINR {
+	if !amt.IsZero() && shape.NetPayable > 0 {
+		if decimal.NewFromFloat(amt.InexactFloat64() - shape.NetPayable).Abs().GreaterThan(decimal.NewFromFloat(amountToleranceINR)) {
 			errs = append(errs, ParseRowError{
 				RowIndex: rowNum, Field: "amount",
-				Message: fmt.Sprintf("amount %.2f does not match net_payable (taxable+gst-tds) = %.2f", amt, shape.NetPayable),
+				Message: fmt.Sprintf("amount %s does not match net_payable (taxable+gst-tds) = %.2f", amt.String(), shape.NetPayable),
 			})
 		}
 	}

@@ -126,15 +126,6 @@ func (s *EvidenceService) HandleLeafUpdate(ctx context.Context, tenantID, envelo
 				Hash:          l.Hash,
 				SchemaVersion: l.SchemaVersion,
 			})
-		} else if requiredType == models.LeafTypeVarianceDecision {
-			// Special case: VARIANCE_DECISION is required but can be synthesized if missing
-			items = append(items, models.EvidenceItem{
-				Type:          models.LeafTypeVarianceDecision,
-				Ref:           intentID, // Fallback to intentID if missing
-				Hash:          models.ZeroVarianceHash,
-				SchemaVersion: "v1",
-			})
-			log.Printf("evidence.service.readiness_check intent=%s VARIANCE_DECISION missing — using ZeroVarianceHash", intentID)
 		} else {
 			allPresent = false
 			missing = append(missing, requiredType)
@@ -541,7 +532,7 @@ func (s *EvidenceService) GeneratePack(ctx context.Context, req models.GenerateE
 		CreatedAt:      now,
 	}
 	if err := s.repo.SaveArchive(ctx, archiveRecord); err != nil {
-		fmt.Printf("warn: save archive record failed: %v\n", err)
+		return nil, fmt.Errorf("save archive record failed: %w", err)
 	}
 
 	// --- Persist §14.4 inclusion proofs ---
@@ -550,13 +541,14 @@ func (s *EvidenceService) GeneratePack(ctx context.Context, req models.GenerateE
 	for _, leaf := range leaves {
 		inclusionProofs = append(inclusionProofs, models.InclusionProof{
 			EvidencePackID: packID,
+			LeafIndex:      leaf.Index,
 			LeafHash:       leaf.LeafHash,
-			ProofPath:      proofPaths[leaf.LeafHash],
+			ProofPath:      proofPaths[leaf.Index],
 			CreatedAt:      now,
 		})
 	}
 	if err := s.repo.SaveInclusionProofs(ctx, packID, inclusionProofs); err != nil {
-		fmt.Printf("warn: save inclusion proofs failed: %v\n", err)
+		return nil, fmt.Errorf("save inclusion proofs failed: %w", err)
 	}
 
 	// --- Mark old pack superseded if this is a lifecycle version update (§23 Phase 5) ---
@@ -626,6 +618,7 @@ func (s *EvidenceService) GeneratePack(ctx context.Context, req models.GenerateE
 		EventType:                         eventType,
 		EvidencePackID:                    packID,
 		TenantID:                          req.TenantID,
+		BatchID:                           req.ClientBatchID,
 		IntentID:                          req.IntentID,
 		ContractID:                        req.ContractID,
 		Mode:                              req.Mode,
@@ -765,7 +758,7 @@ func (s *EvidenceService) GenerateBatchPack(ctx context.Context, req models.Gene
 		CreatedAt:      now,
 	}
 	if err := s.repo.SaveArchive(ctx, archiveRecord); err != nil {
-		fmt.Printf("warn: save archive record failed: %v\n", err)
+		return nil, fmt.Errorf("save archive record failed: %w", err)
 	}
 
 	proofPaths := utils.BuildInclusionProofs(leaves)
@@ -773,26 +766,25 @@ func (s *EvidenceService) GenerateBatchPack(ctx context.Context, req models.Gene
 	for _, leaf := range leaves {
 		inclusionProofs = append(inclusionProofs, models.InclusionProof{
 			EvidencePackID: packID,
+			LeafIndex:      leaf.Index,
 			LeafHash:       leaf.LeafHash,
-			ProofPath:      proofPaths[leaf.LeafHash],
+			ProofPath:      proofPaths[leaf.Index],
 			CreatedAt:      now,
 		})
 	}
 	if err := s.repo.SaveInclusionProofs(ctx, packID, inclusionProofs); err != nil {
-		fmt.Printf("warn: save inclusion proofs failed: %v\n", err)
+		return nil, fmt.Errorf("save inclusion proofs failed: %w", err)
 	}
 
 	packEvent := kafka.PackEvent{
 		EventType:      kafka.EventPackCreated,
 		EvidencePackID: packID,
 		TenantID:       req.TenantID,
+		BatchID:        req.ClientBatchID,
 		Mode:           req.Mode,
 		MerkleRoot:     merkleRoot,
 		RulesetVersion: req.RulesetVersion,
 		OccurredAt:     now,
-		Extra: map[string]any{
-			"batch_id": req.ClientBatchID,
-		},
 	}
 	payloadBytes, _ := json.Marshal(packEvent)
 
