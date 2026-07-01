@@ -250,6 +250,8 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 
 		var rowCountParsed, rowCountFailed int
 		var confidenceSum float64
+		var parsedRowItems []services.ParsedRowBatchItem
+		var parseErrorItems []services.ParseErrorBatchItem
 
 		// ── PHASE 4: PERSISTENCE ─────────────────────────────────────────────────
 		for _, result := range results {
@@ -260,24 +262,31 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 					bgIngestRunID, result.RowIndex, result.FailureReason)
 				rowCountFailed++
 
-				// Insert the failed row into settlement_parsed_rows for full row ledger visibility.
-				_ = svc.PersistParsedRow(bgCtx, bgTenant, bgIngestRunID, bgEnvelope, bgRef, rowRef, result, pspProfile, bgIngestRunID, bgSettlementBatchID, bgClientBatchID, "FAILED", result.FailureReason)
-
-				// Also mirror to settlement_parse_errors as the audit/error log.
-				if err := svc.PersistParseError(bgCtx, bgTenant, bgIngestRunID, bgEnvelope, rowRef, "PARSING", result.FailureReason, pspProfile, bgIngestRunID, bgSettlementBatchID, bgClientBatchID); err != nil {
-					log.Printf("settlement.upload.persist_error_failed job_id=%s row=%d err=%v", bgIngestRunID, result.RowIndex, err)
-				}
+				parsedRowItems = append(parsedRowItems, services.ParsedRowBatchItem{
+					RowRef:            rowRef,
+					Result:            result,
+					Status:            "FAILED",
+					FailureReasonCode: result.FailureReason,
+				})
+				parseErrorItems = append(parseErrorItems, services.ParseErrorBatchItem{
+					RowRef:     rowRef,
+					ErrorStage: "PARSING",
+					Reason:     result.FailureReason,
+				})
 				continue
 			}
 
-			if err := svc.PersistParsedRow(bgCtx, bgTenant, bgIngestRunID, bgEnvelope, bgRef, rowRef, result, pspProfile, bgIngestRunID, bgSettlementBatchID, bgClientBatchID, "PARSED", ""); err != nil {
-				log.Printf("settlement.upload.row_persist_error job_id=%s row=%s err=%v", bgIngestRunID, rowRef, err)
-				continue
-			}
-
+			parsedRowItems = append(parsedRowItems, services.ParsedRowBatchItem{
+				RowRef: rowRef,
+				Result: result,
+				Status: "PARSED",
+			})
 			rowCountParsed++
 			confidenceSum += result.Confidence
 		}
+
+		_ = svc.PersistParsedRowsBatch(bgCtx, bgTenant, bgIngestRunID, bgEnvelope, bgRef, pspProfile, bgSettlementBatchID, bgClientBatchID, parsedRowItems)
+		_ = svc.PersistParseErrorsBatch(bgCtx, bgTenant, bgIngestRunID, bgEnvelope, pspProfile, bgSettlementBatchID, bgClientBatchID, parseErrorItems)
 
 		avgConfidence := 0.0
 		if rowCountParsed > 0 {

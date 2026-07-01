@@ -1544,6 +1544,58 @@ func advisoryLockKey(tenantID uuid.UUID, scopeRef string) int64 {
 	return int64(key)
 }
 
+// execTxChunkedInsert runs multi-row INSERT statements in chunks within an open transaction.
+func execTxChunkedInsert[T any](
+	ctx context.Context,
+	tx *sql.Tx,
+	table string,
+	columns string,
+	onConflictClause string,
+	items []T,
+	valueCount int,
+	buildArgs func(T) []interface{},
+	errLabel string,
+) error {
+	if len(items) == 0 {
+		return nil
+	}
+	for start := 0; start < len(items); start += batchInsertChunkSize {
+		end := start + batchInsertChunkSize
+		if end > len(items) {
+			end = len(items)
+		}
+		chunk := items[start:end]
+
+		args := make([]interface{}, 0, len(chunk)*valueCount)
+		var valuePlaceholders strings.Builder
+		for i, item := range chunk {
+			rowArgs := buildArgs(item)
+			if i > 0 {
+				valuePlaceholders.WriteString(",")
+			}
+			argBase := i*valueCount + 1
+			valuePlaceholders.WriteString("(")
+			for j := 0; j < valueCount; j++ {
+				if j > 0 {
+					valuePlaceholders.WriteString(",")
+				}
+				fmt.Fprintf(&valuePlaceholders, "$%d", argBase+j)
+			}
+			valuePlaceholders.WriteString(")")
+			args = append(args, rowArgs...)
+		}
+
+		query := fmt.Sprintf("INSERT INTO %s (%s) VALUES %s", table, columns, valuePlaceholders.String())
+		if onConflictClause != "" {
+			query += " " + onConflictClause
+		}
+		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+			return fmt.Errorf("persistAttachmentOutputs: insert %s chunk: %w", errLabel, err)
+		}
+	}
+	return nil
+}
+
 func insertAttachmentJob(ctx context.Context, job *models.AttachmentJob) error {
 	_, err := db.DB.ExecContext(ctx, `
 		INSERT INTO attachment_jobs (
@@ -1585,46 +1637,43 @@ func persistAttachmentOutputs(
 	}()
 
 	// Persist candidates.
-	for _, c := range candidates {
-		if _, err = tx.ExecContext(ctx, `
-			INSERT INTO attachment_candidates (
-				candidate_id, attachment_job_id, tenant_id,
+	if err = execTxChunkedInsert(ctx, tx, "attachment_candidates",
+		`candidate_id, attachment_job_id, tenant_id,
 				settlement_observation_id, intent_id, candidate_rank,
 				exact_ref_match_flag, client_ref_match_flag, provider_ref_match_flag,
 				bank_ref_match_flag, batch_match_flag,
 				amount_match_flag, currency_match_flag, time_window_match_flag,
 				source_system_match_flag, zord_signature_match_flag, composite_match_flag,
-				score_total, score_breakdown_json, confidence_bucket, created_at
-			) VALUES (
-				$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
-			) ON CONFLICT DO NOTHING`,
-			c.CandidateID, c.AttachmentJobID, c.TenantID,
-			c.SettlementObservationID, c.IntentID, c.CandidateRank,
-			c.ExactRefMatchFlag, c.ClientRefMatchFlag, c.ProviderRefMatchFlag,
-			c.BankRefMatchFlag, c.BatchMatchFlag,
-			c.AmountMatchFlag, c.CurrencyMatchFlag, c.TimeWindowMatchFlag,
-			c.SourceSystemMatchFlag, c.ZordSignatureMatchFlag, c.CompositeMatchFlag,
-			c.ScoreTotal, c.ScoreBreakdownJSON, c.ConfidenceBucket, c.CreatedAt,
-		); err != nil {
-			return fmt.Errorf("persistAttachmentOutputs: insert candidate: %w", err)
-		}
+				score_total, score_breakdown_json, confidence_bucket, created_at`,
+		"ON CONFLICT DO NOTHING",
+		candidates, 21,
+		func(c models.AttachmentCandidate) []interface{} {
+			return []interface{}{
+				c.CandidateID, c.AttachmentJobID, c.TenantID,
+				c.SettlementObservationID, c.IntentID, c.CandidateRank,
+				c.ExactRefMatchFlag, c.ClientRefMatchFlag, c.ProviderRefMatchFlag,
+				c.BankRefMatchFlag, c.BatchMatchFlag,
+				c.AmountMatchFlag, c.CurrencyMatchFlag, c.TimeWindowMatchFlag,
+				c.SourceSystemMatchFlag, c.ZordSignatureMatchFlag, c.CompositeMatchFlag,
+				c.ScoreTotal, c.ScoreBreakdownJSON, c.ConfidenceBucket, c.CreatedAt,
+			}
+		},
+		"candidate",
+	); err != nil {
+		return err
 	}
 
 	// Persist decisions (upsert by intent+job to allow replays).
-	for _, d := range decisions {
-		if _, err = tx.ExecContext(ctx, `
-			INSERT INTO attachment_decisions (
-				attachment_decision_id, tenant_id,
+	if err = execTxChunkedInsert(ctx, tx, "attachment_decisions",
+		`attachment_decision_id, tenant_id,
 				settlement_observation_id, intent_id, attachment_job_id,
 				decision_type, decision_reason_code, decision_reason_detail_json,
 				matching_ruleset_version,
 				winning_score, runner_up_score, score_margin,relative_score_margin,
 				confidence_score, match_confidence, ambiguity_score,
 				supporting_carriers_json, candidate_set_hash, candidate_set_size,
-				created_at, updated_at
-			) VALUES (
-				$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
-			) ON CONFLICT (intent_id, attachment_job_id) DO UPDATE SET
+				created_at, updated_at`,
+		`ON CONFLICT (intent_id, attachment_job_id) DO UPDATE SET
 				settlement_observation_id = EXCLUDED.settlement_observation_id,
 				decision_type              = EXCLUDED.decision_type,
 				decision_reason_code       = EXCLUDED.decision_reason_code,
@@ -1641,24 +1690,27 @@ func persistAttachmentOutputs(
 				candidate_set_size         = EXCLUDED.candidate_set_size,
 				intent_id                  = EXCLUDED.intent_id,
 				updated_at                 = EXCLUDED.updated_at`,
-			d.AttachmentDecisionID, d.TenantID,
-			d.SettlementObservationID, d.IntentID, d.AttachmentJobID,
-			d.DecisionType, d.DecisionReasonCode, d.DecisionReasonDetailJSON,
-			d.MatchingRulesetVersion,
-			d.WinningScore, d.RunnerUpScore, d.ScoreMargin, d.RelativeScoreMargin,
-			d.ConfidenceScore, d.MatchConfidence, d.AmbiguityScore,
-			d.SupportingCarriersJSON, d.CandidateSetHash, d.CandidateSetSize,
-			d.CreatedAt, d.UpdatedAt,
-		); err != nil {
-			return fmt.Errorf("persistAttachmentOutputs: insert decision: %w", err)
-		}
+		decisions, 21,
+		func(d models.AttachmentDecision) []interface{} {
+			return []interface{}{
+				d.AttachmentDecisionID, d.TenantID,
+				d.SettlementObservationID, d.IntentID, d.AttachmentJobID,
+				d.DecisionType, d.DecisionReasonCode, d.DecisionReasonDetailJSON,
+				d.MatchingRulesetVersion,
+				d.WinningScore, d.RunnerUpScore, d.ScoreMargin, d.RelativeScoreMargin,
+				d.ConfidenceScore, d.MatchConfidence, d.AmbiguityScore,
+				d.SupportingCarriersJSON, d.CandidateSetHash, d.CandidateSetSize,
+				d.CreatedAt, d.UpdatedAt,
+			}
+		},
+		"decision",
+	); err != nil {
+		return err
 	}
 
 	// Persist variance records (includes new variance_type and whitelist columns).
-	for _, v := range variances {
-		if _, err = tx.ExecContext(ctx, `
-			INSERT INTO variance_records (
-				variance_record_id, tenant_id,
+	if err = execTxChunkedInsert(ctx, tx, "variance_records",
+		`variance_record_id, tenant_id,
 				attachment_decision_id, intent_id, settlement_observation_id,
 				amount_variance, deduction_variance, fee_variance,
 				currency_match_flag, status_variance_flag,
@@ -1668,96 +1720,103 @@ func persistAttachmentOutputs(
 				variance_severity, variance_reason_codes_json,
 				is_whitelisted, whitelist_policy_id, whitelist_policy_version,
 				whitelist_reason_code, whitelist_explanation,
-				created_at
-			) VALUES (
-				$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25
-			) ON CONFLICT DO NOTHING`,
-			v.VarianceRecordID, v.TenantID,
-			v.AttachmentDecisionID, v.IntentID, v.SettlementObservationID,
-			v.AmountVariance, v.DeductionVariance, v.FeeVariance,
-			v.CurrencyMatchFlag, v.StatusVarianceFlag,
-			v.ValueDateMismatchFlag, v.SettlementDelayDays, v.CrossPeriodFlag,
-			v.ProviderRefMissingFlag, v.BankRefMissingFlag, v.EvidenceGapFlag,
-			v.VarianceType,
-			v.VarianceSeverity, v.VarianceReasonCodesJSON,
-			v.IsWhitelisted, v.WhitelistPolicyID, v.WhitelistPolicyVersion,
-			v.WhitelistReasonCode, v.WhitelistExplanation,
-			v.CreatedAt,
-		); err != nil {
-			return fmt.Errorf("persistAttachmentOutputs: insert variance: %w", err)
-		}
+				created_at`,
+		"ON CONFLICT DO NOTHING",
+		variances, 25,
+		func(v models.VarianceRecord) []interface{} {
+			return []interface{}{
+				v.VarianceRecordID, v.TenantID,
+				v.AttachmentDecisionID, v.IntentID, v.SettlementObservationID,
+				v.AmountVariance, v.DeductionVariance, v.FeeVariance,
+				v.CurrencyMatchFlag, v.StatusVarianceFlag,
+				v.ValueDateMismatchFlag, v.SettlementDelayDays, v.CrossPeriodFlag,
+				v.ProviderRefMissingFlag, v.BankRefMissingFlag, v.EvidenceGapFlag,
+				v.VarianceType,
+				v.VarianceSeverity, v.VarianceReasonCodesJSON,
+				v.IsWhitelisted, v.WhitelistPolicyID, v.WhitelistPolicyVersion,
+				v.WhitelistReasonCode, v.WhitelistExplanation,
+				v.CreatedAt,
+			}
+		},
+		"variance",
+	); err != nil {
+		return err
 	}
 
 	// Persist orphaned observations (reverse scan output).
-	for _, o := range allOrphans {
-		if _, err = tx.ExecContext(ctx, `
-			INSERT INTO orphan_settlement_records (
-				orphan_id, tenant_id, attachment_job_id,
+	if err = execTxChunkedInsert(ctx, tx, "orphan_settlement_records",
+		`orphan_id, tenant_id, attachment_job_id,
 				settlement_observation_id, batch_id,
-				unresolved_reason, amount, currency_code, created_at
-			) VALUES (
-				$1,$2,$3,$4,$5,$6,$7,$8,$9
-			) ON CONFLICT DO NOTHING`,
-			o.OrphanID, o.TenantID, o.AttachmentJobID,
-			o.SettlementObservationID, o.BatchID,
-			o.UnresolvedReason, o.Amount, o.CurrencyCode, o.CreatedAt,
-		); err != nil {
-			return fmt.Errorf("persistAttachmentOutputs: insert orphan: %w", err)
-		}
+				unresolved_reason, amount, currency_code, created_at`,
+		"ON CONFLICT DO NOTHING",
+		allOrphans, 9,
+		func(o models.OrphanSettlementRecord) []interface{} {
+			return []interface{}{
+				o.OrphanID, o.TenantID, o.AttachmentJobID,
+				o.SettlementObservationID, o.BatchID,
+				o.UnresolvedReason, o.Amount, o.CurrencyCode, o.CreatedAt,
+			}
+		},
+		"orphan",
+	); err != nil {
+		return err
 	}
 
 	// Persist ambiguous intents (reverse scan output).
-	for _, a := range ambiguousIntents {
-		if _, err = tx.ExecContext(ctx, `
-			INSERT INTO ambiguous_intent_records (
-				ambiguous_id, tenant_id, attachment_job_id,
+	if err = execTxChunkedInsert(ctx, tx, "ambiguous_intent_records",
+		`ambiguous_id, tenant_id, attachment_job_id,
 				intent_id, batch_id, expected_window_end,
-				reason_code, amount, currency_code, created_at
-			) VALUES (
-				$1,$2,$3,$4,$5,$6,$7,$8,$9,$10
-			) ON CONFLICT DO NOTHING`,
-			a.AmbiguousID, a.TenantID, a.AttachmentJobID,
-			a.IntentID, a.BatchID, a.ExpectedWindowEnd,
-			a.ReasonCode, a.Amount, a.CurrencyCode, a.CreatedAt,
-		); err != nil {
-			return fmt.Errorf("persistAttachmentOutputs: insert ambiguous intent: %w", err)
-		}
+				reason_code, amount, currency_code, created_at`,
+		"ON CONFLICT DO NOTHING",
+		ambiguousIntents, 10,
+		func(a models.AmbiguousIntentRecord) []interface{} {
+			return []interface{}{
+				a.AmbiguousID, a.TenantID, a.AttachmentJobID,
+				a.IntentID, a.BatchID, a.ExpectedWindowEnd,
+				a.ReasonCode, a.Amount, a.CurrencyCode, a.CreatedAt,
+			}
+		},
+		"ambiguous intent",
+	); err != nil {
+		return err
 	}
 
 	// Persist conflicted intents (reverse scan output).
-	for _, c := range conflictedIntents {
-		if _, err = tx.ExecContext(ctx, `
-			INSERT INTO conflicted_intent_records (
-				conflicted_id, tenant_id, attachment_job_id,
+	if err = execTxChunkedInsert(ctx, tx, "conflicted_intent_records",
+		`conflicted_id, tenant_id, attachment_job_id,
 				intent_id, batch_id, expected_window_end,
-				reason_code, amount, currency_code, created_at
-			) VALUES (
-				$1,$2,$3,$4,$5,$6,$7,$8,$9,$10
-			) ON CONFLICT DO NOTHING`,
-			c.ConflictedID, c.TenantID, c.AttachmentJobID,
-			c.IntentID, c.BatchID, c.ExpectedWindowEnd,
-			c.ReasonCode, c.Amount, c.CurrencyCode, c.CreatedAt,
-		); err != nil {
-			return fmt.Errorf("persistAttachmentOutputs: insert conflicted intent: %w", err)
-		}
+				reason_code, amount, currency_code, created_at`,
+		"ON CONFLICT DO NOTHING",
+		conflictedIntents, 10,
+		func(c models.ConflictedIntentRecord) []interface{} {
+			return []interface{}{
+				c.ConflictedID, c.TenantID, c.AttachmentJobID,
+				c.IntentID, c.BatchID, c.ExpectedWindowEnd,
+				c.ReasonCode, c.Amount, c.CurrencyCode, c.CreatedAt,
+			}
+		},
+		"conflicted intent",
+	); err != nil {
+		return err
 	}
 
 	// Persist unresolved intents (reverse scan output).
-	for _, u := range unresolvedIntents {
-		if _, err = tx.ExecContext(ctx, `
-			INSERT INTO unresolved_intent_records (
-				unresolved_id, tenant_id, attachment_job_id,
+	if err = execTxChunkedInsert(ctx, tx, "unresolved_intent_records",
+		`unresolved_id, tenant_id, attachment_job_id,
 				intent_id, batch_id, expected_window_end,
-				reason_code, amount, currency_code, created_at
-			) VALUES (
-				$1,$2,$3,$4,$5,$6,$7,$8,$9,$10
-			) ON CONFLICT DO NOTHING`,
-			u.UnresolvedID, u.TenantID, u.AttachmentJobID,
-			u.IntentID, u.BatchID, u.ExpectedWindowEnd,
-			u.ReasonCode, u.Amount, u.CurrencyCode, u.CreatedAt,
-		); err != nil {
-			return fmt.Errorf("persistAttachmentOutputs: insert unresolved intent: %w", err)
-		}
+				reason_code, amount, currency_code, created_at`,
+		"ON CONFLICT DO NOTHING",
+		unresolvedIntents, 10,
+		func(u models.UnresolvedIntentRecord) []interface{} {
+			return []interface{}{
+				u.UnresolvedID, u.TenantID, u.AttachmentJobID,
+				u.IntentID, u.BatchID, u.ExpectedWindowEnd,
+				u.ReasonCode, u.Amount, u.CurrencyCode, u.CreatedAt,
+			}
+		},
+		"unresolved intent",
+	); err != nil {
+		return err
 	}
 
 	// Persist batch summary atomically with all other outputs.

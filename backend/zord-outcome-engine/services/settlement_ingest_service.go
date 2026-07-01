@@ -8,6 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"strconv"
+	"strings"
 	"time"
 
 	"zord-outcome-engine/db"
@@ -17,6 +20,23 @@ import (
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 )
+
+const batchInsertChunkSize = 500
+
+// ParsedRowBatchItem carries per-row inputs for batch persistence.
+type ParsedRowBatchItem struct {
+	RowRef            string
+	Result            ParsedRowResult
+	Status            string
+	FailureReasonCode string
+}
+
+// ParseErrorBatchItem carries per-row inputs for batch parse-error persistence.
+type ParseErrorBatchItem struct {
+	RowRef     string
+	ErrorStage string
+	Reason     string
+}
 
 // SettlementIngestService provides granular methods for settlement file ingestion.
 // Orchestration is handled at the controller/handler level to maintain a flat flow.
@@ -247,6 +267,99 @@ func (s *SettlementIngestService) PersistParsedRow(
 	return err
 }
 
+// PersistParsedRowsBatch inserts parsed rows in multi-row chunks, falling back to
+// single-row inserts when a chunk fails so per-row error isolation is preserved.
+func (s *SettlementIngestService) PersistParsedRowsBatch(
+	ctx context.Context,
+	tenantID uuid.UUID,
+	ingestRunID string,
+	envelopeID uuid.UUID,
+	objRef string,
+	profile models.MappingProfile,
+	settlementBatchID string,
+	clientBatchID string,
+	rows []ParsedRowBatchItem,
+) error {
+	const parsedRowInsertColCount = 19
+	parsedRowInsertCols := `parsed_row_id, ingest_run_id, settlement_batch_id,
+			tenant_id, settlement_envelope_id,
+			source_file_ref, source_row_ref, raw_line_hash,
+			raw_columns_json, parsed_candidates_json,
+			parse_confidence, parse_quality_label, mapping_profile_id, mapping_profile_version, parser_version,
+			client_batch_id, status, failure_reason_code, created_at`
+
+	for start := 0; start < len(rows); start += batchInsertChunkSize {
+		end := start + batchInsertChunkSize
+		if end > len(rows) {
+			end = len(rows)
+		}
+		chunk := rows[start:end]
+
+		args := make([]interface{}, 0, len(chunk)*parsedRowInsertColCount)
+		now := time.Now().UTC()
+		var valuePlaceholders strings.Builder
+		for i, item := range chunk {
+			parsedRowID := uuid.New()
+			rawColsJSON, _ := json.Marshal(item.Result.RawColumns)
+			shapeJSON, _ := json.Marshal(item.Result.Shape)
+
+			contentHash := sha256.Sum256(rawColsJSON)
+			lineageStr := hex.EncodeToString(contentHash[:]) + item.RowRef + profile.ProfileVersion
+			finalHash := sha256.Sum256([]byte(lineageStr))
+			rawLineHash := hex.EncodeToString(finalHash[:])
+			parseQualityLabel := ComputeParseQualityLabel(item.Result.Confidence)
+
+			var failureCode interface{}
+			if item.FailureReasonCode != "" {
+				failureCode = item.FailureReasonCode
+			}
+
+			if i > 0 {
+				valuePlaceholders.WriteString(",")
+			}
+			argBase := i*parsedRowInsertColCount + 1
+			valuePlaceholders.WriteString("(")
+			for j := 0; j < parsedRowInsertColCount; j++ {
+				if j > 0 {
+					valuePlaceholders.WriteString(",")
+				}
+				valuePlaceholders.WriteString(fmt.Sprintf("$%d", argBase+j))
+			}
+			valuePlaceholders.WriteString(")")
+
+			args = append(args,
+				parsedRowID, ingestRunID, settlementBatchID,
+				tenantID, envelopeID,
+				objRef, item.RowRef, rawLineHash,
+				rawColsJSON, shapeJSON,
+				item.Result.Confidence, parseQualityLabel, profile.ProfileID, profile.ProfileVersion, profile.ProfileVersion,
+				clientBatchID, item.Status, failureCode, now,
+			)
+		}
+
+		query := fmt.Sprintf(
+			`INSERT INTO settlement_parsed_rows (%s) VALUES %s`,
+			parsedRowInsertCols, valuePlaceholders.String(),
+		)
+		if _, err := db.DB.ExecContext(ctx, query, args...); err != nil {
+			for _, item := range chunk {
+				if persistErr := s.PersistParsedRow(
+					ctx,
+					tenantID, ingestRunID, envelopeID,
+					objRef, item.RowRef,
+					item.Result, profile,
+					ingestRunID, settlementBatchID, clientBatchID,
+					item.Status, item.FailureReasonCode,
+				); persistErr != nil && item.Status != "FAILED" {
+					log.Printf("settlement.upload.row_persist_error job_id=%s row=%s err=%v",
+						ingestRunID, item.RowRef, persistErr)
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // FinalizeJob updates the job status, counts, and overall confidence.
 // This is called after all rows have been processed in the persistence phase.
 func (s *SettlementIngestService) FinalizeJob(
@@ -303,6 +416,78 @@ func (s *SettlementIngestService) PersistParseError(
 		"ERROR", profile.ProfileID, profile.ProfileVersion, profile.ProfileVersion, clientBatchID, time.Now().UTC(),
 	)
 	return err
+}
+
+// PersistParseErrorsBatch inserts parse errors in multi-row chunks, falling back to
+// single-row inserts when a chunk fails so per-row error isolation is preserved.
+func (s *SettlementIngestService) PersistParseErrorsBatch(
+	ctx context.Context,
+	tenantID uuid.UUID,
+	ingestRunID string,
+	envID uuid.UUID,
+	profile models.MappingProfile,
+	settlementBatchID string,
+	clientBatchID string,
+	errs []ParseErrorBatchItem,
+) error {
+	const parseErrorInsertColCount = 14
+	parseErrorInsertCols := `error_id, tenant_id, ingest_run_id, settlement_batch_id,
+			settlement_envelope_id,
+			source_row_ref, error_stage, reason_code,
+			severity, mapping_profile_id, mapping_profile_version, parser_version, client_batch_id, created_at`
+
+	for start := 0; start < len(errs); start += batchInsertChunkSize {
+		end := start + batchInsertChunkSize
+		if end > len(errs) {
+			end = len(errs)
+		}
+		chunk := errs[start:end]
+
+		args := make([]interface{}, 0, len(chunk)*parseErrorInsertColCount)
+		now := time.Now().UTC()
+		var valuePlaceholders strings.Builder
+		for i, item := range chunk {
+			if i > 0 {
+				valuePlaceholders.WriteString(",")
+			}
+			argBase := i*parseErrorInsertColCount + 1
+			valuePlaceholders.WriteString("(")
+			for j := 0; j < parseErrorInsertColCount; j++ {
+				if j > 0 {
+					valuePlaceholders.WriteString(",")
+				}
+				valuePlaceholders.WriteString(fmt.Sprintf("$%d", argBase+j))
+			}
+			valuePlaceholders.WriteString(")")
+
+			args = append(args,
+				uuid.New(), tenantID, ingestRunID, settlementBatchID,
+				envID,
+				item.RowRef, item.ErrorStage, item.Reason,
+				"ERROR", profile.ProfileID, profile.ProfileVersion, profile.ProfileVersion, clientBatchID, now,
+			)
+		}
+
+		query := fmt.Sprintf(
+			`INSERT INTO settlement_parse_errors (%s) VALUES %s`,
+			parseErrorInsertCols, valuePlaceholders.String(),
+		)
+		if _, err := db.DB.ExecContext(ctx, query, args...); err != nil {
+			for _, item := range chunk {
+				rowIndex, _ := strconv.Atoi(item.RowRef)
+				if persistErr := s.PersistParseError(
+					ctx,
+					tenantID, ingestRunID, envID,
+					item.RowRef, item.ErrorStage, item.Reason,
+					profile, ingestRunID, settlementBatchID, clientBatchID,
+				); persistErr != nil {
+					log.Printf("settlement.upload.persist_error_failed job_id=%s row=%d err=%v",
+						ingestRunID, rowIndex, persistErr)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // -- Pointer Helpers --
