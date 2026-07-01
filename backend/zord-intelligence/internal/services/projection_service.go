@@ -144,8 +144,8 @@ func (s *ProjectionService) HandleIntentCreated(
 		corridorID = "UNKNOWN"
 	}
 
-	log.Printf("[intent.created] RECEIVED event_id=%s tenant=%s intent=%s source=%s amount=%s corridor=%s dup_risk=%v",
-		e.EventID, e.TenantID, e.IntentID, e.SourceSystem, e.Amount, e.CorridorID, e.DuplicateRiskFlag)
+	log.Printf("[intent.created] RECEIVED event_id=%s tenant=%s intent=%s source=%s amount=%s corridor=%s dup_risk=%v batchId=%v",
+		e.EventID, e.TenantID, e.IntentID, e.SourceSystem, e.Amount, e.CorridorID, e.DuplicateRiskFlag, e.ClientBatchRef)
 
 	processed, err := s.projRepo.IsProcessed(ctx, e.TenantID, e.EventID)
 	if err != nil {
@@ -1836,40 +1836,40 @@ func (s *ProjectionService) HandleBatchSummaryUpdated(
 
 	// Issue 10 Fix: Upsert batch to contracts immediately alongside projection window to keep Batch API aligned.
 	bc := persistence.BatchContract{
-		BatchID:                    e.BatchID,
-		TenantID:                   e.TenantID,
-		SourceReference:            nil, // Mapped if upstream adds it via Event Schema
-		TotalCount:                 e.TotalCount,
-		SuccessCount:               e.SuccessCount,
-		FailedCount:                e.FailedCount,
-		PendingCount:               e.PendingCount,
-		ReversedCount:              e.ReversedCount,
-		PartialReconCount:          e.PartialReconCount,
-		TotalIntendedAmountMinor:   e.TotalIntendedAmountMinor,
-		TotalConfirmedAmountMinor:  e.TotalConfirmedAmountMinor,
-		OriginalSettledAmountMinor: e.OriginalSettledAmountMinor,
-		TotalVarianceMinor:         e.TotalVarianceMinor,
-		BatchFinalityStatus:        e.BatchFinalityStatus,
-		AmbiguityScore:             &e.AmbiguityScore,
-		MatchConfidence:            &e.MatchConfidence,
-		TotalIntentCount:           e.TotalIntentCount,
-		MatchedIntentCount:         e.MatchedIntentCount,
-		AmbiguousCount:             e.AmbiguousCount,
-		UnresolvedIntentCount:      e.UnresolvedCount,
-		ConflictedCount:            e.ConflictedCount,
-		OrphanObservationCount:     e.OrphanObservationCount,
-		OriginalIntendedAmountMinor: e.OriginalIntendedAmount,
-		AmbiguousAmountMinor:       e.AmbiguousAmount,
-		UnresolvedIntendedAmountMinor: e.UnresolvedIntendedAmount,
-		ConflictedAmountMinor:      e.ConflictedAmount,
-		OrphanObservedAmountMinor:  e.OrphanObservedAmount,
-		NetBatchDeltaMinor:         e.NetBatchDelta,
-		IntentCountCoverage:        e.IntentCountCoverage,
-		IntentValueCoverage:        e.IntentValueCoverage,
+		BatchID:                         e.BatchID,
+		TenantID:                        e.TenantID,
+		SourceReference:                 nil, // Mapped if upstream adds it via Event Schema
+		TotalCount:                      e.TotalCount,
+		SuccessCount:                    e.SuccessCount,
+		FailedCount:                     e.FailedCount,
+		PendingCount:                    e.PendingCount,
+		ReversedCount:                   e.ReversedCount,
+		PartialReconCount:               e.PartialReconCount,
+		TotalIntendedAmountMinor:        e.TotalIntendedAmountMinor,
+		TotalConfirmedAmountMinor:       e.TotalConfirmedAmountMinor,
+		OriginalSettledAmountMinor:      e.OriginalSettledAmountMinor,
+		TotalVarianceMinor:              e.TotalVarianceMinor,
+		BatchFinalityStatus:             e.BatchFinalityStatus,
+		AmbiguityScore:                  &e.AmbiguityScore,
+		MatchConfidence:                 &e.MatchConfidence,
+		TotalIntentCount:                e.TotalIntentCount,
+		MatchedIntentCount:              e.MatchedIntentCount,
+		AmbiguousCount:                  e.AmbiguousCount,
+		UnresolvedIntentCount:           e.UnresolvedCount,
+		ConflictedCount:                 e.ConflictedCount,
+		OrphanObservationCount:          e.OrphanObservationCount,
+		OriginalIntendedAmountMinor:     e.OriginalIntendedAmount,
+		AmbiguousAmountMinor:            e.AmbiguousAmount,
+		UnresolvedIntendedAmountMinor:   e.UnresolvedIntendedAmount,
+		ConflictedAmountMinor:           e.ConflictedAmount,
+		OrphanObservedAmountMinor:       e.OrphanObservedAmount,
+		NetBatchDeltaMinor:              e.NetBatchDelta,
+		IntentCountCoverage:             e.IntentCountCoverage,
+		IntentValueCoverage:             e.IntentValueCoverage,
 		ObservedCountAllocationCoverage: e.ObservationCountCoverage,
 		ObservedValueAllocationCoverage: e.ObservationValueCoverage,
-		LastUpdatedAt:              time.Now(),
-		CreatedAt:                  time.Now(),
+		LastUpdatedAt:                   time.Now(),
+		CreatedAt:                       time.Now(),
 	}
 	if err := s.batchRepo.Upsert(ctx, bc); err != nil {
 		return fmt.Errorf("HandleBatchSummaryUpdated batchRepo.Upsert batch=%s: %w", e.BatchID, err)
