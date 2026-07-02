@@ -150,11 +150,11 @@ func loadIntentsForIngestRunObservations(
 
 	for _, obs := range observations {
 		if ref := strings.TrimSpace(obs.ClientBatchID); ref != "" {
-			batchRefs[ref] = struct{}{}
+			batchRefs[strings.ToLower(ref)] = struct{}{}
 		}
 		if obs.BatchReference != nil {
 			if ref := strings.TrimSpace(*obs.BatchReference); ref != "" {
-				batchRefs[ref] = struct{}{}
+				batchRefs[strings.ToLower(ref)] = struct{}{}
 			}
 		}
 		if obs.ClientReferenceCandidate != nil {
@@ -164,14 +164,18 @@ func loadIntentsForIngestRunObservations(
 		}
 	}
 
-	for batchRef := range batchRefs {
-		intents, err := loadMasterIntentsByBatchRef(ctx, tenantID, batchRef)
-		if err != nil {
-			return nil, err
-		}
-		for id, intent := range intents {
-			result[id] = intent
-		}
+	batchRefList := make([]string, 0, len(batchRefs))
+	for ref := range batchRefs {
+		batchRefList = append(batchRefList, ref)
+	}
+	sort.Strings(batchRefList)
+
+	batchIntents, err := loadMasterIntentsByBatchRefs(ctx, tenantID, batchRefList)
+	if err != nil {
+		return nil, err
+	}
+	for id, intent := range batchIntents {
+		result[id] = intent
 	}
 
 	refs := make([]string, 0, len(clientRefs))
@@ -819,6 +823,39 @@ func loadMasterIntentsByBatchRef(
 	tenantID uuid.UUID,
 	batchRef string,
 ) (map[uuid.UUID]models.CanonicalIntent, error) {
+	return loadMasterIntentsByBatchRefs(ctx, tenantID, []string{batchRef})
+}
+
+// loadMasterIntentsByBatchRefs fetches canonical intents for any of the given
+// client_batch_ref values in a single query (case-insensitive).
+func loadMasterIntentsByBatchRefs(
+	ctx context.Context,
+	tenantID uuid.UUID,
+	batchRefs []string,
+) (map[uuid.UUID]models.CanonicalIntent, error) {
+	result := make(map[uuid.UUID]models.CanonicalIntent)
+	if len(batchRefs) == 0 {
+		return result, nil
+	}
+
+	normalized := make([]string, 0, len(batchRefs))
+	seen := make(map[string]struct{}, len(batchRefs))
+	for _, ref := range batchRefs {
+		lower := strings.ToLower(strings.TrimSpace(ref))
+		if lower == "" {
+			continue
+		}
+		if _, dup := seen[lower]; dup {
+			continue
+		}
+		seen[lower] = struct{}{}
+		normalized = append(normalized, lower)
+	}
+	if len(normalized) == 0 {
+		return result, nil
+	}
+	sort.Strings(normalized)
+
 	rows, err := db.DB.QueryContext(ctx, `
 		SELECT
 			intent_id, tenant_id,
@@ -831,18 +868,15 @@ func loadMasterIntentsByBatchRef(
 			source_row_num,
 			created_at
 		FROM canonical_intents
-		WHERE tenant_id = $1 AND LOWER(client_batch_ref) = LOWER($2)
+		WHERE tenant_id = $1 AND LOWER(client_batch_ref) = ANY($2)
 		ORDER BY intent_id`,
-		// ↑ case-insensitive match: observations may carry a different case
-		// for the batch ref than the intents table.
-		tenantID, batchRef,
+		tenantID, pq.Array(normalized),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("loadMasterIntentsByBatchRef: query: %w", err)
+		return nil, fmt.Errorf("loadMasterIntentsByBatchRefs: query: %w", err)
 	}
 	defer rows.Close()
 
-	result := make(map[uuid.UUID]models.CanonicalIntent)
 	for rows.Next() {
 		var intent models.CanonicalIntent
 		if err := rows.Scan(
@@ -856,7 +890,7 @@ func loadMasterIntentsByBatchRef(
 			&intent.SourceRowNum,
 			&intent.CreatedAt,
 		); err != nil {
-			log.Printf("loadMasterIntentsByBatchRef: scan: %v", err)
+			log.Printf("loadMasterIntentsByBatchRefs: scan: %v", err)
 			continue
 		}
 		result[intent.IntentID] = intent
