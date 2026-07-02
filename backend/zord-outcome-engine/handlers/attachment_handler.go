@@ -69,7 +69,7 @@ func (h *Handler) RunAttachmentHandler(c *gin.Context) {
 
 	// Validate scope-specific fields and determine which engine method to call
 	// before spawning the goroutine — validation errors must return 400, not 202.
-	type runFunc func() (*models.AttachmentJob, error)
+	type runFunc func(ctx context.Context) (*models.AttachmentJob, error)
 	var fn runFunc
 	var scopeRef string
 
@@ -81,8 +81,8 @@ func (h *Handler) RunAttachmentHandler(c *gin.Context) {
 		}
 		ref := *req.SettlementBatchRef
 		scopeRef = ref
-		fn = func() (*models.AttachmentJob, error) {
-			return engine.RunForBatch(context.Background(), tenantID, ref, jobID)
+		fn = func(ctx context.Context) (*models.AttachmentJob, error) {
+			return engine.RunForBatch(ctx, tenantID, ref, jobID)
 		}
 
 	case models.JobScopeSingleIntent:
@@ -96,8 +96,8 @@ func (h *Handler) RunAttachmentHandler(c *gin.Context) {
 			return
 		}
 		scopeRef = intentID.String()
-		fn = func() (*models.AttachmentJob, error) {
-			return engine.RunForSingleIntent(context.Background(), tenantID, intentID, jobID)
+		fn = func(ctx context.Context) (*models.AttachmentJob, error) {
+			return engine.RunForSingleIntent(ctx, tenantID, intentID, jobID)
 		}
 
 	case models.JobScopeIngestRun:
@@ -107,8 +107,8 @@ func (h *Handler) RunAttachmentHandler(c *gin.Context) {
 		}
 		runID := *req.IngestRunID
 		scopeRef = runID
-		fn = func() (*models.AttachmentJob, error) {
-			return engine.RunForJob(context.Background(), tenantID, runID, jobID)
+		fn = func(ctx context.Context) (*models.AttachmentJob, error) {
+			return engine.RunForJob(ctx, tenantID, runID, jobID)
 		}
 
 	default:
@@ -140,7 +140,17 @@ func (h *Handler) RunAttachmentHandler(c *gin.Context) {
 	// Launch the engine asynchronously. Any error is written back to the
 	// attachment_jobs row so the polling endpoint can surface it.
 	go func() {
-		job, runErr := fn()
+		ctx, cancel := backgroundJobContext()
+		defer cancel()
+		// ── CONCURRENCY GATE ─────────────────────────────────────────────────────
+		// Block until a background-job slot is free. The 202 and the
+		// RUNNING job row have already been committed above, so this does
+		// not affect HTTP response timing or the pollable job status.
+		waitStart := acquireJobSlot()
+		defer releaseJobSlot()
+		log.Printf("attachment.handler.slot_acquired tenant=%s job=%s wait_ms=%d", tenantID, jobID, time.Since(waitStart).Milliseconds())
+
+		job, runErr := fn(ctx)
 		if runErr != nil {
 			log.Printf("attachment.handler.async_run_failed tenant=%s job=%s err=%v", tenantID, jobID, runErr)
 			if _, updErr := db.DB.ExecContext(context.Background(), `
