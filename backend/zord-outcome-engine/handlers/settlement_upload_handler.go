@@ -227,6 +227,13 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 		bgClientBatchID string,
 		data []byte,
 	) {
+		// ── CONCURRENCY GATE ─────────────────────────────────────────────────────
+		// Block until a background-job slot is free. The 202 has already been
+		// sent to the caller above, so this does not affect HTTP response timing.
+		waitStart := acquireJobSlot()
+		defer releaseJobSlot()
+		log.Printf("settlement.upload.slot_acquired job_id=%s wait_ms=%d", bgIngestRunID, time.Since(waitStart).Milliseconds())
+
 		// ── PHASE 3: PARSING ─────────────────────────────────────────────────────
 		parser, err := services.GetParser(pspProfile.ParserKey)
 		if err != nil {

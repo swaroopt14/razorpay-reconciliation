@@ -140,6 +140,14 @@ func (h *Handler) RunAttachmentHandler(c *gin.Context) {
 	// Launch the engine asynchronously. Any error is written back to the
 	// attachment_jobs row so the polling endpoint can surface it.
 	go func() {
+		// ── CONCURRENCY GATE ─────────────────────────────────────────────────────
+		// Block until a background-job slot is free. The 202 and the
+		// RUNNING job row have already been committed above, so this does
+		// not affect HTTP response timing or the pollable job status.
+		waitStart := acquireJobSlot()
+		defer releaseJobSlot()
+		log.Printf("attachment.handler.slot_acquired tenant=%s job=%s wait_ms=%d", tenantID, jobID, time.Since(waitStart).Milliseconds())
+
 		job, runErr := fn()
 		if runErr != nil {
 			log.Printf("attachment.handler.async_run_failed tenant=%s job=%s err=%v", tenantID, jobID, runErr)
