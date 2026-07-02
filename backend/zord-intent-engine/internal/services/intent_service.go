@@ -131,6 +131,11 @@ type CanonicalIntentRepository interface {
 		registry *models.BusinessIdempotencyEntry,
 	) (models.CanonicalIntent, error)
 
+	SaveBatch(
+		ctx context.Context,
+		items []models.SaveBatchItem,
+	) ([]models.CanonicalIntent, []models.DLQEntry, error)
+
 	FindByEnvelope(
 		ctx context.Context,
 		tenantID string,
@@ -873,10 +878,24 @@ func (s *IntentService) ApplyPolicy(nir *models.NormalizedIngestRecord, req mode
 /* ---------------- Pipeline ---------------- */
 
 // ProcessIncomingIntent is the ONLY entrypoint.
-func (s *IntentService) ProcessIncomingIntent(
+func (s *IntentService) processIncomingIntentInternal(
 	ctx context.Context,
 	event *models.Event,
-) (retCanonical *models.CanonicalIntent, retDlq *models.DLQEntry, retErr error) {
+) (
+	retIn *models.IncomingIntent,
+	retProfile *models.MappingProfile,
+	retDecrypted []byte,
+	retRawAudit []byte,
+	retAuditProfileID string,
+	retAuditProfileVersion string,
+	retSourceRowNum *int,
+	retNir *models.NormalizedIngestRecord,
+	retCanonical *models.CanonicalIntent,
+	retOutbox *models.OutboxEvent,
+	retRegistry *models.BusinessIdempotencyEntry,
+	retDlq *models.DLQEntry,
+	retErr error,
+) {
 
 	//Unmarshal Payload into IncomingIntent struct
 	var in *models.IncomingIntent
@@ -906,114 +925,7 @@ func (s *IntentService) ProcessIncomingIntent(
 	var sourceRowNum *int
 	var err error
 
-	defer func() {
-		if retDlq != nil && retDlq.SourceRowNum == nil && sourceRowNum != nil {
-			retDlq.SourceRowNum = sourceRowNum
-		}
-
-		if in.BatchID == nil || *in.BatchID == "" {
-			return
-		}
-
-		if retErr != nil {
-			return
-		}
-
-		var status = "ACCEPTED"
-		var errDetail = ""
-		var mappingID = ""
-		var profileIDHint = ""
-
-		if retDlq != nil {
-			if retDlq.ReasonCode == "DUPLICATE_BUSINESS_KEY" || retDlq.ReasonCode == "DUPLICATE_IDEMPOTENCY_KEY" {
-				status = "DUPLICATE"
-			} else {
-				status = "FAILED"
-			}
-			errDetail = retDlq.ReasonCode
-		}
-
-		if resolvedProfile != nil {
-			mappingID = resolvedProfile.ProfileID
-			profileIDHint = resolvedProfile.ProfileVersion
-		} else if auditProfileID != "" {
-			mappingID = auditProfileID
-			profileIDHint = auditProfileVersion
-		}
-
-		auditPayload := rawAuditPayload
-		if len(auditPayload) == 0 {
-			auditPayload = decryptedPayload
-		}
-		rowIndex := 0
-		if sourceRowNum != nil {
-			rowIndex = *sourceRowNum
-		} else if extracted := extractSourceRowNumFromPayload(auditPayload); extracted != nil {
-			rowIndex = *extracted
-		}
-
-		fileName := ""
-		fileHash := ""
-		var totalRows int = 0
-
-		if in.FileName != nil {
-			fileName = *in.FileName
-		}
-		if in.FileContentHash != nil {
-			fileHash = *in.FileContentHash
-		}
-		if in.RowCountEstimate != nil {
-			totalRows = *in.RowCountEstimate
-		}
-
-		errInsert := db.InsertIngestRow(ctx, s.db,
-			*in.BatchID, in.TenantID.String(), mappingID, profileIDHint,
-			rowIndex, in.IdempotencyKey, status, errDetail, in.SourceSystem,
-			fileName, fileHash, auditPayload,
-		)
-		if errInsert != nil {
-			log.Printf("⚠️ Audit: failed to insert row audit for batch=%s row=%d: %v", *in.BatchID, rowIndex, errInsert)
-		}
-
-		acceptedCount := 0
-		failedCount := 0
-		duplicateCount := 0
-		errStats := s.db.QueryRowContext(ctx, `
-			SELECT
-				COUNT(*) FILTER (WHERE status = 'ACCEPTED'),
-				COUNT(*) FILTER (WHERE status = 'FAILED'),
-				COUNT(*) FILTER (WHERE status = 'DUPLICATE')
-			FROM intent_ingest_rows
-			WHERE batch_id = $1`,
-			*in.BatchID,
-		).Scan(&acceptedCount, &failedCount, &duplicateCount)
-
-		if errStats != nil {
-			log.Printf("⚠️ Audit: failed to query batch stats for batch=%s: %v", *in.BatchID, errStats)
-			return
-		}
-
-		processedRows := acceptedCount + failedCount + duplicateCount
-		hasTotalRows := totalRows > 0
-		if !hasTotalRows {
-			totalRows = processedRows
-		}
-
-		runStatus := "PROCESSING"
-		if hasTotalRows && processedRows >= totalRows {
-			runStatus = "COMPLETED"
-		}
-
-		errUpsert := db.UpsertIngestRun(ctx, s.db,
-			uuid.New().String(), *in.BatchID, in.TenantID.String(),
-			mappingID, profileIDHint, fileName, fileHash,
-			totalRows, acceptedCount, failedCount, duplicateCount,
-			runStatus,
-		)
-		if errUpsert != nil {
-			log.Printf("⚠️ Audit: failed to upsert run audit for batch=%s: %v", *in.BatchID, errUpsert)
-		}
-	}()
+	
 
 	// -------- STEP 0: Transport guards --------
 
@@ -1021,7 +933,12 @@ func (s *IntentService) ProcessIncomingIntent(
 
 	if in.Source == "WEBHOOK" {
 		log.Printf("ProcessIncomingIntent: Routing to processWebhook for EnvelopeID=%s", in.EnvelopeID)
-		return s.processWebhook(ctx, in)
+		webhookCanonical, webhookDlq, webhookErr := s.processWebhook(ctx, in)
+	retIn = in
+	retCanonical = webhookCanonical
+	retDlq = webhookDlq
+	retErr = webhookErr
+	return
 	}
 
 	batchIDStr := ""
@@ -1030,67 +947,115 @@ func (s *IntentService) ProcessIncomingIntent(
 	}
 
 	if len(in.EncryptedPayload) == 0 {
-		return nil, &models.DLQEntry{
+		retIn = in
+	retProfile = resolvedProfile
+	retDecrypted = decryptedPayload
+	retRawAudit = rawAuditPayload
+	retAuditProfileID = auditProfileID
+	retAuditProfileVersion = auditProfileVersion
+	retSourceRowNum = sourceRowNum
+	retDlq = &models.DLQEntry{
 			ReasonCode:  "EMPTY_PAYLOAD",
 			ErrorDetail: "payload content is empty",
 			DLQStatus:   models.ClassifyDLQ("EMPTY_PAYLOAD"),
 			BatchID:     batchIDStr,
 			TraceID:     in.TraceID.String(),
-		}, nil
+		}
+	return
 	}
 
 	if in.TraceID == uuid.Nil {
-		return nil, &models.DLQEntry{
+		retIn = in
+	retProfile = resolvedProfile
+	retDecrypted = decryptedPayload
+	retRawAudit = rawAuditPayload
+	retAuditProfileID = auditProfileID
+	retAuditProfileVersion = auditProfileVersion
+	retSourceRowNum = sourceRowNum
+	retDlq = &models.DLQEntry{
 			ReasonCode:  "MISSING_TRACE_ID",
 			ErrorDetail: "trace_id is required but missing",
 			DLQStatus:   models.ClassifyDLQ("MISSING_TRACE_ID"),
 			BatchID:     batchIDStr,
 			TraceID:     in.TraceID.String(),
-		}, nil
+		}
+	return
 	}
 
 	if in.EnvelopeID == uuid.Nil {
-		return nil, &models.DLQEntry{
+		retIn = in
+	retProfile = resolvedProfile
+	retDecrypted = decryptedPayload
+	retRawAudit = rawAuditPayload
+	retAuditProfileID = auditProfileID
+	retAuditProfileVersion = auditProfileVersion
+	retSourceRowNum = sourceRowNum
+	retDlq = &models.DLQEntry{
 			ReasonCode:  "MISSING_ENVELOPE_ID",
 			ErrorDetail: "envelope_id is required but missing",
 			DLQStatus:   models.ClassifyDLQ("MISSING_ENVELOPE_ID"),
 			BatchID:     batchIDStr,
 			TraceID:     in.TraceID.String(),
-		}, nil
+		}
+	return
 	}
 
 	if in.TenantID == uuid.Nil {
-		return nil, &models.DLQEntry{
+		retIn = in
+	retProfile = resolvedProfile
+	retDecrypted = decryptedPayload
+	retRawAudit = rawAuditPayload
+	retAuditProfileID = auditProfileID
+	retAuditProfileVersion = auditProfileVersion
+	retSourceRowNum = sourceRowNum
+	retDlq = &models.DLQEntry{
 			ReasonCode:  "MISSING_TENANT_ID",
 			ErrorDetail: "tenant_id is required but missing",
 			DLQStatus:   models.ClassifyDLQ("MISSING_TENANT_ID"),
 			BatchID:     batchIDStr,
 			TraceID:     in.TraceID.String(),
-		}, nil
+		}
+	return
 	}
 
 	if in.ObjectRef == "" {
-		return nil, &models.DLQEntry{
+		retIn = in
+	retProfile = resolvedProfile
+	retDecrypted = decryptedPayload
+	retRawAudit = rawAuditPayload
+	retAuditProfileID = auditProfileID
+	retAuditProfileVersion = auditProfileVersion
+	retSourceRowNum = sourceRowNum
+	retDlq = &models.DLQEntry{
 			ReasonCode:  "MISSING_OBJECT_REF",
 			ErrorDetail: "object_ref is required but missing",
 			DLQStatus:   models.ClassifyDLQ("MISSING_OBJECT_REF"),
 			BatchID:     batchIDStr,
 			TraceID:     in.TraceID.String(),
-		}, nil
+		}
+	return
 	}
 
 	// -------- STEP 5: Parse raw payload into domain model --------
 	decryptedPayload, err = vault.DecryptPayload(in.EncryptedPayload)
 	if err != nil {
 		log.Printf("⚠️ Payload decryption failed for EnvelopeID=%s: %v", in.EnvelopeID, err)
-		return nil, &models.DLQEntry{
+		retIn = in
+	retProfile = resolvedProfile
+	retDecrypted = decryptedPayload
+	retRawAudit = rawAuditPayload
+	retAuditProfileID = auditProfileID
+	retAuditProfileVersion = auditProfileVersion
+	retSourceRowNum = sourceRowNum
+	retDlq = &models.DLQEntry{
 			Stage:       "SECURITY_DLQ",
 			ReasonCode:  "PAYLOAD_DECRYPTION_FAILED",
 			ErrorDetail: "payload decryption failed: " + err.Error(),
 			DLQStatus:   models.ClassifyDLQ("PAYLOAD_DECRYPTION_FAILED"),
 			BatchID:     batchIDStr,
 			TraceID:     in.TraceID.String(),
-		}, nil
+		}
+	return
 	}
 
 	rawAuditPayload = append([]byte(nil), decryptedPayload...)
@@ -1103,37 +1068,61 @@ func (s *IntentService) ProcessIncomingIntent(
 	hexRawHash := hex.EncodeToString(rawHash[:])
 	if in.PayloadHash == "" {
 		log.Printf("⚠️ Missing raw payload hash for EnvelopeID=%s", in.EnvelopeID)
-		return nil, &models.DLQEntry{
+		retIn = in
+	retProfile = resolvedProfile
+	retDecrypted = decryptedPayload
+	retRawAudit = rawAuditPayload
+	retAuditProfileID = auditProfileID
+	retAuditProfileVersion = auditProfileVersion
+	retSourceRowNum = sourceRowNum
+	retDlq = &models.DLQEntry{
 			Stage:       "SECURITY_DLQ",
 			ReasonCode:  "MISSING_RAW_PAYLOAD_HASH",
 			ErrorDetail: "payload_hash is required but missing",
 			DLQStatus:   models.ClassifyDLQ("MISSING_RAW_PAYLOAD_HASH"),
 			BatchID:     batchIDStr,
 			TraceID:     in.TraceID.String(),
-		}, nil
+		}
+	return
 	}
 
 	if len(in.PayloadHash) != 64 {
 		log.Printf("⚠️ Invalid raw payload hash length for EnvelopeID=%s (expected 64, got %d)", in.EnvelopeID, len(in.PayloadHash))
-		return nil, &models.DLQEntry{
+		retIn = in
+	retProfile = resolvedProfile
+	retDecrypted = decryptedPayload
+	retRawAudit = rawAuditPayload
+	retAuditProfileID = auditProfileID
+	retAuditProfileVersion = auditProfileVersion
+	retSourceRowNum = sourceRowNum
+	retDlq = &models.DLQEntry{
 			Stage:       "SECURITY_DLQ",
 			ReasonCode:  "INVALID_RAW_PAYLOAD_HASH_LENGTH",
 			ErrorDetail: "invalid payload_hash length (expected 64 chars)",
 			DLQStatus:   models.ClassifyDLQ("INVALID_RAW_PAYLOAD_HASH_LENGTH"),
 			BatchID:     batchIDStr,
 			TraceID:     in.TraceID.String(),
-		}, nil
+		}
+	return
 	}
 	if in.PayloadHash != "" && hexRawHash != in.PayloadHash {
 		log.Printf("⚠️ Raw payload hash mismatch for EnvelopeID=%s", in.EnvelopeID)
-		return nil, &models.DLQEntry{
+		retIn = in
+	retProfile = resolvedProfile
+	retDecrypted = decryptedPayload
+	retRawAudit = rawAuditPayload
+	retAuditProfileID = auditProfileID
+	retAuditProfileVersion = auditProfileVersion
+	retSourceRowNum = sourceRowNum
+	retDlq = &models.DLQEntry{
 			Stage:       "SECURITY_DLQ",
 			ReasonCode:  "RAW_PAYLOAD_INTEGRITY_FAILED",
 			ErrorDetail: "payload integrity validation failed: hash mismatch",
 			DLQStatus:   models.ClassifyDLQ("RAW_PAYLOAD_INTEGRITY_FAILED"),
 			BatchID:     batchIDStr,
 			TraceID:     in.TraceID.String(),
-		}, nil
+		}
+	return
 	}
 
 	in.SourceSystem = strings.ToUpper(strings.TrimSpace(in.SourceSystem))
@@ -1205,13 +1194,21 @@ func (s *IntentService) ProcessIncomingIntent(
 
 	var parsed models.ParsedIncomingIntent
 	if err := json.Unmarshal(decryptedPayload, &parsed); err != nil {
-		return nil, &models.DLQEntry{
+		retIn = in
+	retProfile = resolvedProfile
+	retDecrypted = decryptedPayload
+	retRawAudit = rawAuditPayload
+	retAuditProfileID = auditProfileID
+	retAuditProfileVersion = auditProfileVersion
+	retSourceRowNum = sourceRowNum
+	retDlq = &models.DLQEntry{
 			ReasonCode:  "INVALID_JSON_PAYLOAD",
 			ErrorDetail: "malformed JSON payload: " + err.Error(),
 			DLQStatus:   models.ClassifyDLQ("INVALID_JSON_PAYLOAD"),
 			BatchID:     batchIDStr,
 			TraceID:     in.TraceID.String(),
-		}, nil
+		}
+	return
 	}
 	parsed.SchemaVersion = "v1"
 
@@ -1394,9 +1391,17 @@ func (s *IntentService) ProcessIncomingIntent(
 		savedDLQ, err := s.validator.DLQRepo().Save(ctx, dlqEntry)
 		if err != nil {
 			log.Printf("Failed to save POLICY_DLQ entry: %v", err)
-			return nil, &dlqEntry, nil
+			retIn = in
+	retProfile = resolvedProfile
+	retDecrypted = decryptedPayload
+	retRawAudit = rawAuditPayload
+	retAuditProfileID = auditProfileID
+	retAuditProfileVersion = auditProfileVersion
+	retSourceRowNum = sourceRowNum
+	retDlq = &dlqEntry
+	return
 		}
-		return nil, &savedDLQ, nil
+retDlq = &savedDLQ; return
 	}
 
 	// FIX: Compute GovernanceHash early (UPDATED)
@@ -1422,11 +1427,23 @@ func (s *IntentService) ProcessIncomingIntent(
 		in.EnvelopeID.String(),
 	)
 	if err != nil {
-		return nil, nil, err
+		retIn = in
+	retProfile = resolvedProfile
+	retDecrypted = decryptedPayload
+	retRawAudit = rawAuditPayload
+	retAuditProfileID = auditProfileID
+	retAuditProfileVersion = auditProfileVersion
+	retSourceRowNum = sourceRowNum
+	retErr = err
+	return
 	}
 
 	if existing != nil {
-		return existing, nil, nil
+		// Idempotency cache hit: return immediately, no DB write needed.
+		// Set retIn so the wrapper's defer can run audit correctly.
+		retIn = in
+		retCanonical = existing
+		return
 	}
 
 	// -------- STEP 6: VALIDATION --------
@@ -1444,15 +1461,32 @@ func (s *IntentService) ProcessIncomingIntent(
 		batchIDStr, // ← NEW
 	)
 	if err != nil {
-		return nil, nil, err
+		retIn = in
+	retProfile = resolvedProfile
+	retDecrypted = decryptedPayload
+	retRawAudit = rawAuditPayload
+	retAuditProfileID = auditProfileID
+	retAuditProfileVersion = auditProfileVersion
+	retSourceRowNum = sourceRowNum
+	retErr = err
+	return
 	}
 
 	if dlq != nil {
-		return nil, dlq, nil
+retDlq = dlq; return
 	}
 
 	if intent == nil {
-		return nil, nil, errors.New("validator returned nil intent")
+		retIn = in
+	retProfile = resolvedProfile
+	retDecrypted = decryptedPayload
+	retRawAudit = rawAuditPayload
+	retAuditProfileID = auditProfileID
+	retAuditProfileVersion = auditProfileVersion
+	retSourceRowNum = sourceRowNum
+	retErr = err
+retErr = errors.New("validator returned nil intent")
+return
 	}
 
 	// -------- STEP 7: CANONICALIZATION --------
@@ -1464,7 +1498,7 @@ func (s *IntentService) ProcessIncomingIntent(
 	if dlq := guards.RunPreGuards(in, canonicalInput); dlq != nil {
 		dlq.TraceID = in.TraceID.String()
 		dlq.IntentContext = models.BuildIntentContext(dlq.DLQStatus, *intent)
-		return nil, dlq, nil
+retDlq = dlq; return
 	}
 
 	// Governance hash computed early at step 6.5
@@ -1499,7 +1533,15 @@ func (s *IntentService) ProcessIncomingIntent(
 		// -------- KAFKA FALLBACK --------
 
 		if s.tokenizeQueue == nil {
-			return nil, nil, err
+			retIn = in
+	retProfile = resolvedProfile
+	retDecrypted = decryptedPayload
+	retRawAudit = rawAuditPayload
+	retAuditProfileID = auditProfileID
+	retAuditProfileVersion = auditProfileVersion
+	retSourceRowNum = sourceRowNum
+	retErr = err
+	return
 		}
 
 		req := models.TokenizeRequestEvent{
@@ -1518,13 +1560,21 @@ func (s *IntentService) ProcessIncomingIntent(
 		err = s.tokenizeQueue.PublishTokenizeRequest(ctx, req)
 		if err != nil {
 			log.Printf("Kafka publish failed: %v", err)
-			return nil, nil, err
+			retIn = in
+	retProfile = resolvedProfile
+	retDecrypted = decryptedPayload
+	retRawAudit = rawAuditPayload
+	retAuditProfileID = auditProfileID
+	retAuditProfileVersion = auditProfileVersion
+	retSourceRowNum = sourceRowNum
+	retErr = err
+	return
 		}
 
 		log.Printf("Tokenization request queued in Kafka for EnvelopeID=%s", in.EnvelopeID)
 
 		// Stop pipeline for now
-		return nil, nil, nil
+return
 	}
 
 	// Persist full token map in pii_tokens JSONB
@@ -1560,7 +1610,15 @@ func (s *IntentService) ProcessIncomingIntent(
 	// -------- STEP 8.7: Business Idempotency Registry Check (NEW) --------
 	registryDuplicate, err := s.repo.CheckIdempotencyRegistry(ctx, in.TenantID.String(), bIdemKey)
 	if err != nil {
-		return nil, nil, err
+		retIn = in
+	retProfile = resolvedProfile
+	retDecrypted = decryptedPayload
+	retRawAudit = rawAuditPayload
+	retAuditProfileID = auditProfileID
+	retAuditProfileVersion = auditProfileVersion
+	retSourceRowNum = sourceRowNum
+	retErr = err
+	return
 	}
 
 	dupRisk := false
@@ -1775,57 +1833,209 @@ func (s *IntentService) ProcessIncomingIntent(
 		canonical.GovernanceHash = s.computeGovernanceHash(&canonical)
 	}
 
-	// -------- STEP 10: OUTBOX + PERSISTENCE (ATOMIC DB) --------
-
+	// -------- RETURN PREPARED VALUES --------
 	canonicalPayload, err := json.Marshal(canonical)
 	if err != nil {
-		log.Printf("⚠️ Failed to marshal canonical intent for EnvelopeID=%s: %v", in.EnvelopeID, err)
-		return nil, nil, err
+		log.Printf("⚠️ Failed to marshal canonical intent: %v", err)
+		retErr = err
+		return
 	}
 
 	outbox, err := CanonicalIntentToOutboxEvent(canonical, canonicalPayload, "intent.created.v1")
 	if err != nil {
-		log.Printf("⚠️ Failed to create outbox event for EnvelopeID=%s: %v", in.EnvelopeID, err)
-		return nil, nil, err
+		log.Printf("⚠️ Failed to create outbox event: %v", err)
+		retErr = err
+		return
 	}
 
-	saved, err := s.repo.Save(ctx, nir, canonical, outbox, registryEntry)
+	retIn = in
+	retProfile = resolvedProfile
+	retDecrypted = decryptedPayload
+	retRawAudit = rawAuditPayload
+	retAuditProfileID = auditProfileID
+	retAuditProfileVersion = auditProfileVersion
+	retSourceRowNum = sourceRowNum
+	retNir = nir
+	retCanonical = &canonical
+	retOutbox = &outbox
+	retRegistry = registryEntry
+	return
+}
+
+func (s *IntentService) ProcessIncomingIntent(
+	ctx context.Context,
+	event *models.Event,
+) (retCanonical *models.CanonicalIntent, retDlq *models.DLQEntry, retErr error) {
+
+	var in *models.IncomingIntent
+	var resolvedProfile *models.MappingProfile
+	var decryptedPayload []byte
+	var rawAuditPayload []byte
+	var auditProfileID string
+	var auditProfileVersion string
+	var sourceRowNum *int
+
+	defer func() {
+		if retDlq != nil && retDlq.SourceRowNum == nil && sourceRowNum != nil {
+			retDlq.SourceRowNum = sourceRowNum
+		}
+
+		if in == nil || in.BatchID == nil || *in.BatchID == "" {
+			return
+		}
+
+		if retErr != nil {
+			return
+		}
+
+		var status = "ACCEPTED"
+		var errDetail = ""
+		var mappingID = ""
+		var profileIDHint = ""
+
+		if retDlq != nil {
+			if retDlq.ReasonCode == "DUPLICATE_BUSINESS_KEY" || retDlq.ReasonCode == "DUPLICATE_IDEMPOTENCY_KEY" {
+				status = "DUPLICATE"
+			} else {
+				status = "FAILED"
+			}
+			errDetail = retDlq.ReasonCode
+		}
+
+		if resolvedProfile != nil {
+			mappingID = resolvedProfile.ProfileID
+			profileIDHint = resolvedProfile.ProfileVersion
+		} else if auditProfileID != "" {
+			mappingID = auditProfileID
+			profileIDHint = auditProfileVersion
+		}
+
+		auditPayload := rawAuditPayload
+		if len(auditPayload) == 0 {
+			auditPayload = decryptedPayload
+		}
+		rowIndex := 0
+		if sourceRowNum != nil {
+			rowIndex = *sourceRowNum
+		} else if extracted := extractSourceRowNumFromPayload(auditPayload); extracted != nil {
+			rowIndex = *extracted
+		}
+
+		fileName := ""
+		fileHash := ""
+		var totalRows int = 0
+
+		if in.FileName != nil {
+			fileName = *in.FileName
+		}
+		if in.FileContentHash != nil {
+			fileHash = *in.FileContentHash
+		}
+		if in.RowCountEstimate != nil {
+			totalRows = *in.RowCountEstimate
+		}
+
+		errInsert := db.InsertIngestRow(ctx, s.db,
+			*in.BatchID, in.TenantID.String(), mappingID, profileIDHint,
+			rowIndex, in.IdempotencyKey, status, errDetail, in.SourceSystem,
+			fileName, fileHash, auditPayload,
+		)
+		if errInsert != nil {
+			log.Printf("⚠️ Audit: failed to insert row audit for batch=%s row=%d: %v", *in.BatchID, rowIndex, errInsert)
+		}
+
+		acceptedCount := 0
+		failedCount := 0
+		duplicateCount := 0
+		errStats := s.db.QueryRowContext(ctx, `
+			SELECT
+				COUNT(*) FILTER (WHERE status = 'ACCEPTED'),
+				COUNT(*) FILTER (WHERE status = 'FAILED'),
+				COUNT(*) FILTER (WHERE status = 'DUPLICATE')
+			FROM intent_ingest_rows
+			WHERE batch_id = $1`,
+			*in.BatchID,
+		).Scan(&acceptedCount, &failedCount, &duplicateCount)
+
+		if errStats != nil {
+			log.Printf("⚠️ Audit: failed to query batch stats for batch=%s: %v", *in.BatchID, errStats)
+			return
+		}
+
+		processedRows := acceptedCount + failedCount + duplicateCount
+		hasTotalRows := totalRows > 0
+		if !hasTotalRows {
+			totalRows = processedRows
+		}
+
+		runStatus := "PROCESSING"
+		if hasTotalRows && processedRows >= totalRows {
+			runStatus = "COMPLETED"
+		}
+
+		errUpsert := db.UpsertIngestRun(ctx, s.db,
+			uuid.New().String(), *in.BatchID, in.TenantID.String(),
+			mappingID, profileIDHint, fileName, fileHash,
+			totalRows, acceptedCount, failedCount, duplicateCount,
+			runStatus,
+		)
+		if errUpsert != nil {
+			log.Printf("⚠️ Audit: failed to upsert run audit for batch=%s: %v", *in.BatchID, errUpsert)
+		}
+	}()
+
+	var nir *models.NormalizedIngestRecord
+	var canonical *models.CanonicalIntent
+	var outbox *models.OutboxEvent
+	var registryEntry *models.BusinessIdempotencyEntry
+
+	in, resolvedProfile, decryptedPayload, rawAuditPayload, auditProfileID, auditProfileVersion, sourceRowNum,
+		nir, canonical, outbox, registryEntry, retDlq, retErr = s.processIncomingIntentInternal(ctx, event)
+	if retErr != nil {
+		return nil, nil, retErr
+	}
+	if retDlq != nil {
+		if in.Source == "WEBHOOK" {
+			// Webhook saves itself inside processWebhook
+			return nil, retDlq, nil
+		}
+		// DLQ entries are saved by the caller in main.go
+		return nil, retDlq, nil
+	}
+
+	if in.Source == "WEBHOOK" {
+		// Webhook has already been saved inside processWebhook
+		return canonical, nil, nil
+	}
+
+	// Idempotency cache hit: outbox is nil because no new intent was built.
+	// Return the existing canonical directly — no DB write.
+	if outbox == nil {
+		return canonical, nil, nil
+	}
+
+	saved, err := s.repo.Save(ctx, nir, *canonical, *outbox, registryEntry)
 	if err != nil {
 		log.Printf("⚠️ Repo.Save failed for EnvelopeID=%s: %v", in.EnvelopeID, err)
+		retErr = err
 		return nil, nil, err
 	}
 
-	// If Save detected a concurrent duplicate (ON CONFLICT DO NOTHING triggered),
-	// use the updated saved intent which has DuplicateRiskFlag=true set by the repo.
-	canonical = saved
-
-	// -------- STEP 11: WORM SNAPSHOT (S3) --------
-
+	canonicalVal := saved
 	version := 1
-
-	prevHash, err := s.repo.GetPreviousTenantCanonicalHash(
-		ctx,
-		saved.TenantID,
-		saved.IntentID,
-	)
+	prevHash, err := s.repo.GetPreviousTenantCanonicalHash(ctx, saved.TenantID, saved.IntentID)
 	if err != nil {
+		retErr = err
 		return nil, nil, err
 	}
 
 	canonicalBytes, err := json.Marshal(saved)
 	if err != nil {
+		retErr = err
 		return nil, nil, err
 	}
 
-	canonicalRef, hash, err := s.s3.StoreSnapshot(
-		ctx,
-		"canonical",
-		saved.TenantID,
-		saved.IntentID,
-		version,
-		canonicalBytes,
-		prevHash,
-	)
+	canonicalRef, hash, err := s.s3.StoreSnapshot(ctx, "canonical", saved.TenantID, saved.IntentID, version, canonicalBytes, prevHash)
 	if err != nil {
 		log.Printf("⚠️ S3 Canonical Snapshot failed: %v. Warning: WORM metadata will remain null.", err)
 		return &saved, nil, nil
@@ -1838,24 +2048,15 @@ func (s *IntentService) ProcessIncomingIntent(
 		log.Printf("⚠️ S3 NIR Snapshot failed: %v", err)
 	}
 
-	govBytes := []byte(`{"state":"` + canonical.GovernanceState + `"}`)
+	govBytes := []byte(`{"state":"` + canonicalVal.GovernanceState + `"}`)
 	govRef, _, err := s.s3.StoreSnapshot(ctx, "governance", saved.TenantID, saved.IntentID, version, govBytes, "")
 	if err != nil {
 		log.Printf("⚠️ S3 Governance Snapshot failed: %v", err)
 	}
 
-	// -------- STEP 12: UPDATE DB WITH WORM METADATA --------
-
-	err = s.repo.UpdateSnapshotRefs(
-		ctx,
-		saved.IntentID,
-		canonicalRef,
-		nirRef,
-		govRef,
-		hash,
-		prevHash,
-	)
+	err = s.repo.UpdateSnapshotRefs(ctx, saved.IntentID, canonicalRef, nirRef, govRef, hash, prevHash)
 	if err != nil {
+		retErr = err
 		return nil, nil, err
 	}
 
@@ -1877,6 +2078,215 @@ func (s *IntentService) ProcessIncomingIntent(
 	return &saved, nil, nil
 }
 
+func (s *IntentService) ProcessIncomingIntentsBatch(
+	ctx context.Context,
+	events []*models.Event,
+) ([]models.CanonicalIntent, []models.DLQEntry, error) {
+	if len(events) == 0 {
+		return nil, nil, nil
+	}
+
+	var batchItems []models.SaveBatchItem
+	var ingestRows []db.IngestRowItem
+
+	var firstIn *models.IncomingIntent
+	var resolvedMappingID string
+	var resolvedProfileVersion string
+
+	for _, event := range events {
+		in, resolvedProfile, decryptedPayload, rawAuditPayload, auditProfileID, auditProfileVersion, sourceRowNum,
+			nir, canonical, outbox, registryEntry, dlq, err := s.processIncomingIntentInternal(ctx, event)
+		if err != nil {
+			log.Printf("⚠️ ProcessIncomingIntentsBatch: system error preparing intent: %v", err)
+			continue
+		}
+
+		if firstIn == nil && in != nil {
+			firstIn = in
+			if resolvedProfile != nil {
+				resolvedMappingID = resolvedProfile.ProfileID
+				resolvedProfileVersion = resolvedProfile.ProfileVersion
+			} else if auditProfileID != "" {
+				resolvedMappingID = auditProfileID
+				resolvedProfileVersion = auditProfileVersion
+			}
+		}
+
+		status := "ACCEPTED"
+		errDetail := ""
+		mappingID := ""
+		profileIDHint := ""
+
+		if dlq != nil {
+			if dlq.ReasonCode == "DUPLICATE_BUSINESS_KEY" || dlq.ReasonCode == "DUPLICATE_IDEMPOTENCY_KEY" {
+				status = "DUPLICATE"
+			} else {
+				status = "FAILED"
+			}
+			errDetail = dlq.ReasonCode
+			if dlq.SourceRowNum == nil && sourceRowNum != nil {
+				dlq.SourceRowNum = sourceRowNum
+			}
+		}
+
+		if resolvedProfile != nil {
+			mappingID = resolvedProfile.ProfileID
+			profileIDHint = resolvedProfile.ProfileVersion
+		} else if auditProfileID != "" {
+			mappingID = auditProfileID
+			profileIDHint = auditProfileVersion
+		}
+
+		auditPayload := rawAuditPayload
+		if len(auditPayload) == 0 {
+			auditPayload = decryptedPayload
+		}
+		rowIndex := 0
+		if sourceRowNum != nil {
+			rowIndex = *sourceRowNum
+		} else if extracted := extractSourceRowNumFromPayload(auditPayload); extracted != nil {
+			rowIndex = *extracted
+		}
+
+		fileName := ""
+		fileHash := ""
+		if in != nil {
+			if in.FileName != nil {
+				fileName = *in.FileName
+			}
+			if in.FileContentHash != nil {
+				fileHash = *in.FileContentHash
+			}
+
+			ingestRows = append(ingestRows, db.IngestRowItem{
+				BatchID:        *in.BatchID,
+				TenantID:       in.TenantID.String(),
+				MappingID:      mappingID,
+				ProfileID:      profileIDHint,
+				RowIndex:       rowIndex,
+				IdempotencyKey: in.IdempotencyKey,
+				Status:         status,
+				ErrorDetail:    errDetail,
+				SourceSystem:   in.SourceSystem,
+				FileName:       fileName,
+				FileHash:       fileHash,
+				RawRowJSON:     auditPayload,
+			})
+		}
+
+		// Skip idempotency cache hits and webhook paths — outbox is nil, nothing to write.
+		if outbox != nil || dlq != nil {
+			batchItems = append(batchItems, models.SaveBatchItem{
+				Nir:           nir,
+				Intent:        canonical,
+				Outbox:        outbox,
+				RegistryEntry: registryEntry,
+				DlqEntry:      dlq,
+			})
+		}
+	}
+
+	savedIntents, savedDLQs, err := s.repo.SaveBatch(ctx, batchItems)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ProcessIncomingIntentsBatch: SaveBatch failed: %w", err)
+	}
+
+	for _, saved := range savedIntents {
+		version := 1
+		prevHash, err := s.repo.GetPreviousTenantCanonicalHash(ctx, saved.TenantID, saved.IntentID)
+		if err != nil {
+			log.Printf("⚠️ Batch S3 Snapshot: failed to get previous hash for intent %s: %v", saved.IntentID, err)
+			continue
+		}
+
+		canonicalBytes, err := json.Marshal(saved)
+		if err != nil {
+			continue
+		}
+
+		canonicalRef, hash, err := s.s3.StoreSnapshot(ctx, "canonical", saved.TenantID, saved.IntentID, version, canonicalBytes, prevHash)
+		if err != nil {
+			log.Printf("⚠️ Batch S3 Canonical Snapshot failed: %v", err)
+			continue
+		}
+
+		var nirRef string
+		for _, item := range batchItems {
+			if item.Intent != nil && item.Intent.IntentID == saved.IntentID && item.Nir != nil {
+				nirBytes, _ := json.Marshal(item.Nir)
+				nirRef, _, _ = s.s3.StoreSnapshot(ctx, "nir", saved.TenantID, saved.IntentID, version, nirBytes, "")
+				break
+			}
+		}
+
+		govBytes := []byte(`{"state":"` + saved.GovernanceState + `"}`)
+		govRef, _, _ := s.s3.StoreSnapshot(ctx, "governance", saved.TenantID, saved.IntentID, version, govBytes, "")
+
+		err = s.repo.UpdateSnapshotRefs(ctx, saved.IntentID, canonicalRef, nirRef, govRef, hash, prevHash)
+		if err != nil {
+			log.Printf("⚠️ Batch S3: UpdateSnapshotRefs failed for intent %s: %v", saved.IntentID, err)
+		}
+	}
+
+	if len(ingestRows) > 0 {
+		errAudit := db.InsertIngestRowsBatch(ctx, s.db, ingestRows)
+		if errAudit != nil {
+			log.Printf("⚠️ Batch Audit: failed to insert row audits: %v", errAudit)
+		}
+	}
+
+	if firstIn != nil && firstIn.BatchID != nil && *firstIn.BatchID != "" {
+		// Use the counts we actually just wrote as the ground truth.
+		// Do NOT re-query intent_ingest_rows here — that table may not yet reflect
+		// all rows (chunked inserts just finished) and would produce a stale count
+		// that UpdateBatchAggregateConfidence then uses to override canonicalized_count.
+		actualAccepted := len(savedIntents)
+		actualFailed := len(savedDLQs)
+		actualDuplicate := 0 // duplicates were handled inside SaveBatch (ON CONFLICT)
+
+		totalRows := actualAccepted + actualFailed + actualDuplicate
+		if firstIn.RowCountEstimate != nil && *firstIn.RowCountEstimate > totalRows {
+			// Trust the file's declared row count if higher (some rows may still be
+			// pending from a concurrent per-event path on the same batch).
+			totalRows = *firstIn.RowCountEstimate
+		}
+
+		fileName := ""
+		fileHash := ""
+		if firstIn.FileName != nil {
+			fileName = *firstIn.FileName
+		}
+		if firstIn.FileContentHash != nil {
+			fileHash = *firstIn.FileContentHash
+		}
+
+		runStatus := "COMPLETED"
+		if firstIn.RowCountEstimate != nil && *firstIn.RowCountEstimate > actualAccepted+actualFailed {
+			// Declared file size exceeds what we wrote — still more rows expected.
+			runStatus = "PROCESSING"
+		}
+
+		errUpsert := db.UpsertIngestRun(ctx, s.db,
+			uuid.New().String(), *firstIn.BatchID, firstIn.TenantID.String(),
+			resolvedMappingID, resolvedProfileVersion, fileName, fileHash,
+			totalRows, actualAccepted, actualFailed, actualDuplicate,
+			runStatus,
+		)
+		if errUpsert != nil {
+			log.Printf("⚠️ Batch Audit: failed to upsert run audit for batch=%s: %v", *firstIn.BatchID, errUpsert)
+		}
+
+		batchKey := fmt.Sprintf("%s|%s", firstIn.TenantID.String(), *firstIn.BatchID)
+		_, err, _ := batchAggregateGroup.Do(batchKey, func() (interface{}, error) {
+			return s.repo.UpdateBatchAggregateConfidence(context.Background(), firstIn.TenantID.String(), *firstIn.BatchID)
+		})
+		if err != nil {
+			log.Printf("⚠️ Failed to update batch aggregate confidence for batch=%s: %v", *firstIn.BatchID, err)
+		}
+	}
+
+	return savedIntents, savedDLQs, nil
+}
 /* ---------------- ASYNC TOKENIZATION RESULT (KAFKA) ---------------- */
 
 // ProcessTokenizeResult resumes the pipeline when tokenization

@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
+	"strings"
 
 	"github.com/shopspring/decimal"
 
@@ -1064,3 +1066,482 @@ func safeFloat(n sql.NullFloat64) float64 {
 	}
 	return 0.0
 }
+
+func (r *PaymentIntentRepo) SaveBatch(
+	ctx context.Context,
+	items []models.SaveBatchItem,
+) ([]models.CanonicalIntent, []models.DLQEntry, error) {
+	var savedIntents []models.CanonicalIntent
+	var savedDLQs []models.DLQEntry
+
+	if len(items) == 0 {
+		return savedIntents, savedDLQs, nil
+	}
+
+	const chunkSize = 500
+
+	for start := 0; start < len(items); start += chunkSize {
+		end := start + chunkSize
+		if end > len(items) {
+			end = len(items)
+		}
+		chunk := items[start:end]
+
+		err := r.execSaveBatchChunk(ctx, chunk)
+		if err != nil {
+			log.Printf("⚠️ SaveBatch chunk insert failed, falling back to single-row inserts: %v", err)
+			dlqRepo := NewDLQRepo(r.db)
+			for _, item := range chunk {
+				if item.DlqEntry != nil {
+					savedDlq, err := dlqRepo.Save(ctx, *item.DlqEntry)
+					if err != nil {
+						log.Printf("⚠️ Fallback DLQ Save failed: %v", err)
+					} else {
+						savedDLQs = append(savedDLQs, savedDlq)
+					}
+				} else if item.Intent != nil && item.Outbox != nil {
+					savedIntent, err := r.Save(ctx, item.Nir, *item.Intent, *item.Outbox, item.RegistryEntry)
+					if err != nil {
+						log.Printf("⚠️ Fallback Intent Save failed: %v", err)
+					} else {
+						savedIntents = append(savedIntents, savedIntent)
+					}
+				}
+			}
+		} else {
+			for _, item := range chunk {
+				if item.DlqEntry != nil {
+					savedDLQs = append(savedDLQs, *item.DlqEntry)
+				} else if item.Intent != nil {
+					savedIntents = append(savedIntents, *item.Intent)
+				}
+			}
+		}
+	}
+
+	return savedIntents, savedDLQs, nil
+}
+
+func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []models.SaveBatchItem) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// 1. Insert Normalized Ingest Records
+	var nirs []*models.NormalizedIngestRecord
+	for _, item := range chunk {
+		if item.Nir != nil {
+			nirs = append(nirs, item.Nir)
+		}
+	}
+	if len(nirs) > 0 {
+		const nirCols = 13
+		var placeholders strings.Builder
+		args := make([]interface{}, 0, len(nirs)*nirCols)
+		for i, nir := range nirs {
+			if i > 0 {
+				placeholders.WriteString(",")
+			}
+			base := i * nirCols
+			placeholders.WriteString(fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+				base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10, base+11, base+12, base+13))
+			args = append(args,
+				nir.NIRID, nir.EnvelopeID, nir.TenantID,
+				nir.DetectedFormat, nir.ProfileID, nir.ProfileVersion,
+				nir.FieldsJSON, nir.FieldConfidenceSummary, nir.UnmappedJSON, nir.MappingUncertainFlag,
+				nir.RequiredFieldGapCount, nir.LowConfidenceFieldCount,
+				nir.CreatedAt,
+			)
+		}
+		q := fmt.Sprintf(`INSERT INTO normalized_ingest_records (
+			nir_id, envelope_id, tenant_id,
+			detected_format, profile_id, profile_version,
+			fields_json, field_confidence_summary, unmapped_json, mapping_uncertain_flag,
+			required_field_gap_count, low_confidence_field_count,
+			created_at
+		) VALUES %s`, placeholders.String())
+		_, err = tx.ExecContext(ctx, q, args...)
+		if err != nil {
+			return fmt.Errorf("batch insert normalized_ingest_records: %w", err)
+		}
+	}
+
+	// 2. Insert Payment Intents
+	var intents []*models.CanonicalIntent
+	for _, item := range chunk {
+		if item.Intent != nil {
+			intents = append(intents, item.Intent)
+		}
+	}
+	if len(intents) > 0 {
+		const piCols = 62
+		var placeholders strings.Builder
+		args := make([]interface{}, 0, len(intents)*piCols)
+		for i, intent := range intents {
+			if i > 0 {
+				placeholders.WriteString(",")
+			}
+			base := i * piCols
+			placeholders.WriteString("(")
+			for j := 0; j < piCols; j++ {
+				if j > 0 {
+					placeholders.WriteString(",")
+				}
+				placeholders.WriteString(fmt.Sprintf("$%d", base+j+1))
+			}
+			placeholders.WriteString(")")
+			args = append(args,
+				intent.IntentID,                   // $1
+				intent.EnvelopeID,                 // $2
+				intent.TenantID,                   // $3
+				intent.ContractID,                 // $4
+				intent.TraceID,                    // $5
+				intent.IdempotencyKey,             // $6
+				intent.SalientHash,                // $7
+				intent.PayloadHash,                // $8
+				intent.IntentType,                 // $9
+				intent.CanonicalVersion,           // $10
+				intent.SchemaVersion,              // $11
+				intent.Amount,                     // $12
+				intent.Currency,                   // $13
+				intent.IntendedExecutionAt,        // $14
+				intent.Constraints,                // $15
+				intent.BeneficiaryType,            // $16
+				intent.PIITokens,                  // $17
+				intent.Beneficiary,                // $18
+				intent.Status,                     // $19
+				intent.ConfidenceScore,            // $20
+				intent.CanonicalSnapshotRef,       // $21
+				intent.NIRSnapshotRef,             // $22
+				intent.GovernanceSnapshotRef,      // $23
+				intent.GovernanceHash,             // $24
+				intent.CanonicalHash,              // $25
+				intent.CreatedAt,                  // $26
+				intent.ClientPayoutRef,            // $27
+				intent.ProviderHint,               // $28
+				intent.RequestFingerprint,         // $29
+				intent.RoutingHintsJSON,           // $30
+				intent.GovernanceState,            // $31
+				intent.BusinessState,              // $32
+				intent.DuplicateRiskFlag,          // $33
+				intent.MappingProfileID,           // $34
+				intent.MappingProfileVersion,      // $35
+				intent.SourceSystem,               // $36
+				intent.UpdatedAt,                  // $37
+				intent.BusinessIdempotencyKey,     // $38
+				intent.BeneficiaryFingerprint,     // $39
+				intent.ProofReadinessScore,        // $40
+				intent.MatchabilityScore,          // $41
+				intent.IntentQualityScore,         // $42
+				intent.MappingConfidenceScore,     // $43
+				intent.SchemaCompletenessScore,    // $44
+				intent.GovernanceReasonCodesJSON,  // $45
+				intent.DuplicateReasonCode,        // $46
+				intent.ClientBatchRef,             // $47
+				intent.BatchID,                    // $48
+				intent.SourceRowNum,               // $49
+				intent.AggregateConfidenceScore,   // $50
+				intent.ReferenceQualityScore,      // $51
+				intent.DuplicateRiskScore,         // $52
+				intent.ScoreVersion,               // $53
+				intent.ScoreValidityStatus,        // $54
+				intent.ScoreBreakdownJSON,         // $55
+				intent.ScoreReasonCodesJSON,       // $56
+				intent.ScoredAt,                   // $57
+				intent.RequiredFieldsStatus,       // $58
+				intent.TokenizationStatus,         // $59
+				intent.GovernanceDecision,         // $60
+				intent.PaymentInstructionReceived, // $61
+				intent.CanonicalIntentCreated,     // $62
+			)
+		}
+		q := fmt.Sprintf(`INSERT INTO payment_intents (
+			intent_id, envelope_id, tenant_id, contract_id,
+			trace_id, idempotency_key, salient_hash, payload_hash,
+			intent_type, canonical_version, schema_version,
+			amount, currency, intended_execution_at,
+			constraints, beneficiary_type, pii_tokens, beneficiary,
+			status, confidence_score,
+			canonical_snapshot_ref, nir_snapshot_ref, governance_snapshot_ref, governance_hash,
+			canonical_hash,
+			created_at,
+			client_payout_ref, provider_hint, request_fingerprint, routing_hints_json,
+			governance_state, business_state, duplicate_risk_flag,
+			mapping_profile_id, mapping_profile_version, source_system, updated_at,
+			business_idempotency_key, beneficiary_fingerprint,
+			proof_readiness_score, matchability_score, intent_quality_score,
+			mapping_confidence_score,
+			schema_completeness_score,
+			governance_reason_codes_json,
+			duplicate_reason_code, client_batch_ref,
+			batchid,
+			source_row_num,
+			aggregate_confidence_score,
+			reference_quality_score,
+			duplicate_risk_score,
+			score_version,
+			score_validity_status,
+			score_breakdown_json,
+			score_reason_codes_json,
+			scored_at,
+			required_fields_status,
+			tokenization_status,
+			governance_decision,
+			payment_instruction_received,
+			canonical_intent_created
+		) VALUES %s`, placeholders.String())
+		_, err = tx.ExecContext(ctx, q, args...)
+		if err != nil {
+			return fmt.Errorf("batch insert payment_intents: %w", err)
+		}
+	}
+
+	// 3. Insert Outbox
+	var outboxes []*models.OutboxEvent
+	for _, item := range chunk {
+		if item.Outbox != nil && item.Intent != nil {
+			item.Outbox.ContractID = item.Intent.ContractID
+			outboxes = append(outboxes, item.Outbox)
+		}
+	}
+	if len(outboxes) > 0 {
+		const outboxCols = 60
+		var placeholders strings.Builder
+		args := make([]interface{}, 0, len(outboxes)*outboxCols)
+		for i, outbox := range outboxes {
+			if i > 0 {
+				placeholders.WriteString(",")
+			}
+			base := i * outboxCols
+			placeholders.WriteString("(")
+			for j := 0; j < outboxCols; j++ {
+				if j > 0 {
+					placeholders.WriteString(",")
+				}
+				placeholders.WriteString(fmt.Sprintf("$%d", base+j+1))
+			}
+			placeholders.WriteString(")")
+			args = append(args,
+				outbox.TraceID,                    // $1
+				outbox.EnvelopeID,                 // $2
+				outbox.TenantID,                   // $3
+				outbox.ContractID,                 // $4
+				outbox.AggregateType,              // $5
+				outbox.AggregateID,                // $6
+				outbox.EventType,                  // $7
+				outbox.SchemaVersion,              // $8
+				outbox.Amount,                     // $9
+				outbox.Currency,                   // $10
+				outbox.IdempotencyKey,             // $11
+				outbox.SalientHash,                // $12
+				outbox.IntentType,                 // $13
+				outbox.CanonicalVersion,           // $14
+				outbox.IntendedExecutionAt,        // $15
+				outbox.Constraints,                // $16
+				outbox.BeneficiaryType,            // $17
+				outbox.PIITokens,                  // $18
+				outbox.Beneficiary,                // $19
+				outbox.IntentStatus,               // $20
+				outbox.ConfidenceScore,            // $21
+				outbox.CanonicalHash,              // $22
+				outbox.CanonicalSnapshotRef,       // $23
+				outbox.NIRSnapshotRef,             // $24
+				outbox.GovernanceSnapshotRef,      // $25
+				outbox.GovernanceHash,             // $26
+				outbox.ClientPayoutRef,            // $27
+				outbox.ProviderHint,               // $28
+				outbox.RequestFingerprint,         // $29
+				outbox.RoutingHintsJSON,           // $30
+				outbox.GovernanceState,            // $31
+				outbox.BusinessState,              // $32
+				outbox.DuplicateRiskFlag,          // $33
+				outbox.MappingProfileID,           // $34
+				outbox.MappingProfileVersion,      // $35
+				outbox.SourceSystem,               // $36
+				outbox.BusinessIdempotencyKey,     // $37
+				outbox.BeneficiaryFingerprint,     // $38
+				outbox.ProofReadinessScore,        // $39
+				outbox.MatchabilityScore,          // $40
+				outbox.IntentQualityScore,         // $41
+				outbox.MappingConfidenceScore,     // $42
+				outbox.SchemaCompletenessScore,    // $43
+				outbox.GovernanceReasonCodesJSON,  // $44
+				outbox.DuplicateReasonCode,        // $45
+				outbox.ClientBatchRef,             // $46
+				outbox.Payload,                    // $47
+				outbox.PayloadHash,                // $48
+				outbox.Status,                     // $49
+				outbox.RetryCount,                 // $50
+				outbox.NextRetryAt,                // $51
+				outbox.CreatedAt,                  // $52
+				outbox.BatchID,                    // $53
+				outbox.SourceRowNum,               // $54
+				outbox.AggregateConfidenceScore,   // $55
+				outbox.RequiredFieldsStatus,       // $56
+				outbox.TokenizationStatus,         // $57
+				outbox.GovernanceDecision,         // $58
+				outbox.PaymentInstructionReceived, // $59
+				outbox.CanonicalIntentCreated,     // $60
+			)
+		}
+		q := fmt.Sprintf(`INSERT INTO outbox (
+			trace_id, envelope_id, tenant_id, contract_id,
+			aggregate_type, aggregate_id, event_type, schema_version,
+			amount, currency, idempotency_key, salient_hash,
+			intent_type, canonical_version, intended_execution_at,
+			constraints, beneficiary_type, pii_tokens, beneficiary,
+			intent_status, confidence_score, canonical_hash,
+			canonical_snapshot_ref, nir_snapshot_ref, governance_snapshot_ref, governance_hash,
+			client_payout_ref, provider_hint, request_fingerprint, routing_hints_json,
+			governance_state, business_state, duplicate_risk_flag,
+			mapping_profile_id, mapping_profile_version, source_system,
+			business_idempotency_key, beneficiary_fingerprint,
+			proof_readiness_score, matchability_score, intent_quality_score,
+			mapping_confidence_score, schema_completeness_score,
+			governance_reason_codes_json, duplicate_reason_code,
+			client_batch_ref, payload, payload_hash, status,
+			retry_count, next_attempt_at, created_at, batchid,
+			source_row_num, aggregate_confidence_score,
+			required_fields_status, tokenization_status, governance_decision,
+			payment_instruction_received, canonical_intent_created
+		) VALUES %s`, placeholders.String())
+		_, err = tx.ExecContext(ctx, q, args...)
+		if err != nil {
+			return fmt.Errorf("batch insert outbox: %w", err)
+		}
+	}
+
+	// 4. Insert Business Idempotency Registry
+	var registryEntries []*models.BusinessIdempotencyEntry
+	for _, item := range chunk {
+		if item.RegistryEntry != nil {
+			registryEntries = append(registryEntries, item.RegistryEntry)
+		}
+	}
+	if len(registryEntries) > 0 {
+		const regCols = 9
+		var placeholders strings.Builder
+		args := make([]interface{}, 0, len(registryEntries)*regCols)
+		for i, reg := range registryEntries {
+			if i > 0 {
+				placeholders.WriteString(",")
+			}
+			base := i * regCols
+			placeholders.WriteString(fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+				base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9))
+			args = append(args,
+				reg.TenantID, reg.BusinessIdempotencyKey, reg.IntentID,
+				reg.BeneficiaryFingerprint, reg.AmountMinor, reg.CurrencyCode,
+				reg.TimeBucket, reg.DuplicateReasonCode, reg.CreatedAt,
+			)
+		}
+		q := fmt.Sprintf(`INSERT INTO business_idempotency_registry (
+			tenant_id, business_idempotency_key, intent_id,
+			beneficiary_fingerprint, amount_minor, currency_code,
+			time_bucket, duplicate_reason_code, created_at
+		) VALUES %s ON CONFLICT (tenant_id, business_idempotency_key) DO NOTHING
+		RETURNING tenant_id, business_idempotency_key`, placeholders.String())
+
+		rows, err := tx.QueryContext(ctx, q, args...)
+		if err != nil {
+			return fmt.Errorf("batch insert business_idempotency_registry: %w", err)
+		}
+		defer rows.Close()
+
+		insertedKeys := make(map[string]bool)
+		for rows.Next() {
+			var tID uuid.UUID
+			var bKey string
+			if err := rows.Scan(&tID, &bKey); err == nil {
+				insertedKeys[tID.String()+"|"+bKey] = true
+			}
+		}
+
+		// Reconcile conflicts
+		for _, item := range chunk {
+			if item.RegistryEntry != nil && item.Intent != nil {
+				key := item.RegistryEntry.TenantID.String() + "|" + item.RegistryEntry.BusinessIdempotencyKey
+				if !insertedKeys[key] {
+					item.Intent.DuplicateRiskFlag = true
+					if item.Intent.DuplicateReasonCode == "" || item.Intent.DuplicateReasonCode == "NONE" {
+						item.Intent.DuplicateReasonCode = "SAME_BENEFICIARY_AMOUNT_TIME"
+					}
+					item.Intent.GovernanceState = "FLAGGED"
+
+					_, err = tx.ExecContext(ctx, `
+						UPDATE payment_intents
+						SET duplicate_risk_flag = true,
+							duplicate_reason_code = $1,
+							governance_state = 'FLAGGED',
+							updated_at = now()
+						WHERE intent_id = $2`,
+						item.Intent.DuplicateReasonCode,
+						item.Intent.IntentID,
+					)
+					if err != nil {
+						return fmt.Errorf("update duplicate flags for intent %s: %w", item.Intent.IntentID, err)
+					}
+				}
+			}
+		}
+	}
+
+	// 5. Insert DLQ Items
+	var dlqEntries []*models.DLQEntry
+	for _, item := range chunk {
+		if item.DlqEntry != nil {
+			if item.DlqEntry.DLQID == "" {
+				item.DlqEntry.DLQID = uuid.NewString()
+			}
+			dlqEntries = append(dlqEntries, item.DlqEntry)
+		}
+	}
+	if len(dlqEntries) > 0 {
+		const dlqCols = 14
+		var placeholders strings.Builder
+		args := make([]interface{}, 0, len(dlqEntries)*dlqCols)
+		for i, dlq := range dlqEntries {
+			if i > 0 {
+				placeholders.WriteString(",")
+			}
+			base := i * dlqCols
+			placeholders.WriteString(fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+				base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10, base+11, base+12, base+13, base+14))
+			args = append(args,
+				dlq.DLQID,
+				dlq.TenantID,
+				dlq.EnvelopeID,
+				dlq.Stage,
+				dlq.ReasonCode,
+				dlq.ErrorDetail,
+				dlq.Replayable,
+				dlq.ClientBatchRef,
+				dlq.CreatedAt,
+				dlq.BatchID,
+				dlq.SourceRowNum,
+				dlq.DLQStatus,
+				dlq.IntentContext,
+				dlq.TraceID,
+			)
+		}
+		q := fmt.Sprintf(`INSERT INTO dlq_items (
+			dlq_id, tenant_id, envelope_id,
+			stage, reason_code, error_detail,
+			replayable, client_batch_ref, created_at, batch_id,
+			source_row_num, dlq_status, intent_context, trace_id
+		) VALUES %s`, placeholders.String())
+		_, err = tx.ExecContext(ctx, q, args...)
+		if err != nil {
+			return fmt.Errorf("batch insert dlq_items: %w", err)
+		}
+	}
+
+	return tx.Commit()
+}
+

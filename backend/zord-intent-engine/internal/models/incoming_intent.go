@@ -92,3 +92,12 @@ type Instrument struct {
 	// UPI
 	VPA string `json:"vpa,omitempty"`
 }
+
+type SaveBatchItem struct {
+	Nir           *NormalizedIngestRecord
+	Intent        *CanonicalIntent
+	Outbox        *OutboxEvent
+	RegistryEntry *BusinessIdempotencyEntry
+	DlqEntry      *DLQEntry
+}
+
