@@ -11,6 +11,8 @@ import (
 	"log"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 	"zord-evidence/kafka"
 	"zord-evidence/models"
@@ -50,8 +52,11 @@ type EvidenceService struct {
 	replayCompareStrict bool
 	publisher           kafka.EventPublisher
 
-	intentQueue chan IntentJob
-	batchQueue  chan BatchJob
+	intentQueue    chan IntentJob
+	batchQueue     chan BatchJob
+	workerWG       sync.WaitGroup
+	shutdownQueues sync.Once
+	shuttingDown   atomic.Bool
 }
 
 func NewEvidenceService(
@@ -170,6 +175,10 @@ func (s *EvidenceService) HandleLeafUpdate(ctx context.Context, tenantID, envelo
 	// The intent is ready. Pass it to the worker pool for async generation.
 	// This blocking send ensures we exert backpressure on the Kafka consumer
 	// if the workers (and the large buffer) fall behind, preventing OOMs.
+	if s.shuttingDown.Load() {
+		log.Printf("evidence.service.readiness_check intent=%s ready during shutdown — leaves buffered, pack deferred", intentID)
+		return nil
+	}
 	s.intentQueue <- IntentJob{
 		TenantID:   tenantID,
 		EnvelopeID: envelopeID,
@@ -231,6 +240,10 @@ func (s *EvidenceService) HandleBatchLeafUpdate(ctx context.Context, tenantID, b
 	// The batch is ready. Pass it to the worker pool for async generation.
 	// This blocking send ensures we exert backpressure on the Kafka consumer
 	// if the workers (and the large buffer) fall behind, preventing OOMs.
+	if s.shuttingDown.Load() {
+		log.Printf("evidence.service.batch_readiness_check batch=%s ready during shutdown — leaves buffered, pack deferred", batchID)
+		return nil
+	}
 	s.batchQueue <- BatchJob{
 		TenantID: tenantID,
 		BatchID:  batchID,
@@ -241,24 +254,77 @@ func (s *EvidenceService) HandleBatchLeafUpdate(ctx context.Context, tenantID, b
 }
 
 // StartWorkers spins up the async generation workers.
-func (s *EvidenceService) StartWorkers(ctx context.Context, workers int) {
+// Workers run until ShutdownWorkers closes the job queues and in-flight jobs finish.
+func (s *EvidenceService) StartWorkers(workers int) {
 	for i := 0; i < workers; i++ {
+		s.workerWG.Add(1)
 		go func(workerID int) {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case job := <-s.intentQueue:
-					if err := s.processIntentJob(ctx, job); err != nil {
-						log.Printf("evidence.service.worker id=%d intent=%s err=%v", workerID, job.IntentID, err)
-					}
-				case job := <-s.batchQueue:
-					if err := s.processBatchJob(ctx, job); err != nil {
-						log.Printf("evidence.service.worker id=%d batch=%s err=%v", workerID, job.BatchID, err)
-					}
-				}
-			}
+			defer s.workerWG.Done()
+			s.runWorker(workerID)
 		}(i)
+	}
+}
+
+func (s *EvidenceService) runWorker(workerID int) {
+	intentQ := s.intentQueue
+	batchQ := s.batchQueue
+
+	for intentQ != nil || batchQ != nil {
+		select {
+		case job, ok := <-intentQ:
+			if !ok {
+				intentQ = nil
+				continue
+			}
+			jobCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			err := s.processIntentJob(jobCtx, job)
+			cancel()
+			if err != nil {
+				log.Printf("evidence.service.worker id=%d intent=%s err=%v", workerID, job.IntentID, err)
+			}
+		case job, ok := <-batchQ:
+			if !ok {
+				batchQ = nil
+				continue
+			}
+			jobCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			err := s.processBatchJob(jobCtx, job)
+			cancel()
+			if err != nil {
+				log.Printf("evidence.service.worker id=%d batch=%s err=%v", workerID, job.BatchID, err)
+			}
+		}
+	}
+}
+
+// PrepareShutdown signals that the process is stopping. Kafka handlers may still
+// persist leaves, but no new pack-generation jobs are enqueued. Pending leaves
+// remain in the DB and will be picked up on the next process start.
+func (s *EvidenceService) PrepareShutdown() {
+	s.shuttingDown.Store(true)
+}
+
+// ShutdownWorkers closes the job queues and waits for all in-flight pack generation
+// to complete, or until ctx is cancelled.
+func (s *EvidenceService) ShutdownWorkers(ctx context.Context) error {
+	s.shutdownQueues.Do(func() {
+		log.Printf("evidence.service.shutdown closing worker queues")
+		close(s.intentQueue)
+		close(s.batchQueue)
+	})
+
+	done := make(chan struct{})
+	go func() {
+		s.workerWG.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		log.Printf("evidence.service.shutdown workers drained")
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("worker drain: %w", ctx.Err())
 	}
 }
 

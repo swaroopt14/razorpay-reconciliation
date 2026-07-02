@@ -74,7 +74,7 @@ func StartOutcomeConsumer(
 	groupID string,
 	topics []string,
 	pg PackGenerator,
-) error {
+) (*ConsumerHandle, error) {
 	log.Printf("outcome.consumer.start group=%s topics=%v brokers=%v", groupID, topics, brokers)
 	// buildOutcomeHandler returns a MessageHandler (func(ctx, key, []byte) error)
 	// which is exactly what StartConsumerForTopics expects.
