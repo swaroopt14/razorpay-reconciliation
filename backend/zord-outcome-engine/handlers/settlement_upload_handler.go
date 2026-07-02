@@ -214,6 +214,7 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 
 	// ── ASYNC BACKGROUND PIPELINE ───────────────────────────────────────────
 	// Push parsing and canonicalization to background to free up HTTP worker.
+	bgCtx, cancel := backgroundJobContext()
 	go func(
 		bgCtx context.Context,
 		pspProfile models.MappingProfile,
@@ -227,6 +228,7 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 		bgClientBatchID string,
 		data []byte,
 	) {
+		defer cancel()
 		// ── CONCURRENCY GATE ─────────────────────────────────────────────────────
 		// Block until a background-job slot is free. The 202 has already been
 		// sent to the caller above, so this does not affect HTTP response timing.
@@ -340,5 +342,5 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 				log.Printf("settlement.upload.attachment_error ingest_run=%s attachment_job=%s err=%v", bgIngestRunID, attachJobID, err)
 			}
 		}
-	}(context.Background(), profile, ingestRunID, settlementBatchID, previousRunID, runNumber, tenantID, envelopeID, objRef, clientBatchID, fileBytes)
+	}(bgCtx, profile, ingestRunID, settlementBatchID, previousRunID, runNumber, tenantID, envelopeID, objRef, clientBatchID, fileBytes)
 }
