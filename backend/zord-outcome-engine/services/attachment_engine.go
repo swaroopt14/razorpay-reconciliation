@@ -683,6 +683,8 @@ func performReverseScanOrphans(
 // alone cannot prevent two intents in the same run from selecting the same row).
 // Cross-job exclusion uses NOT EXISTS against attachment_decisions, backed by
 // attachment_decisions_obs_tenant_strong_match_idx (partial index on strong matches).
+// Reference matching uses LOWER(...) equality; backed by functional indexes on
+// canonical_settlement_observations (canonical_obs_tenant_*_lower_idx).
 func findCandidateObservations(
 	ctx context.Context,
 	tenantID uuid.UUID,
@@ -720,9 +722,9 @@ func findCandidateObservations(
 		        AND ad.decision_type IN ('MATCH_EXACT', 'MATCH_HIGH_CONFIDENCE')
 		  )
 		  AND (
-		    ($2 != '' AND LOWER(client_reference_candidate) = LOWER($2))
-		    OR ($3 != '' AND LOWER(batch_reference) = LOWER($3))
-		    OR ($3 != '' AND LOWER(client_batch_id) = LOWER($3))
+		    ($2 != '' AND LOWER(client_reference_candidate) = $2)
+		    OR ($3 != '' AND LOWER(batch_reference) = $3)
+		    OR ($3 != '' AND LOWER(client_batch_id) = $3)
 		    OR (
 		      amount = $4
 		      AND currency_code = $5
@@ -731,11 +733,11 @@ func findCandidateObservations(
 		  )
 		ORDER BY
 		  CASE
-		    WHEN $2 != '' AND LOWER(client_reference_candidate) = LOWER($2) THEN 0
-		    WHEN $3 != '' AND (LOWER(batch_reference) = LOWER($3) OR LOWER(client_batch_id) = LOWER($3))
+		    WHEN $2 != '' AND LOWER(client_reference_candidate) = $2 THEN 0
+		    WHEN $3 != '' AND (LOWER(batch_reference) = $3 OR LOWER(client_batch_id) = $3)
 		         AND amount = $4 AND currency_code = $5 AND observation_timestamp BETWEEN $6 AND $7 THEN 1
 		    WHEN amount = $4 AND currency_code = $5 AND observation_timestamp BETWEEN $6 AND $7 THEN 2
-		    WHEN $3 != '' AND (LOWER(batch_reference) = LOWER($3) OR LOWER(client_batch_id) = LOWER($3)) THEN 3
+		    WHEN $3 != '' AND (LOWER(batch_reference) = $3 OR LOWER(client_batch_id) = $3) THEN 3
 		    ELSE 4
 		  END,
 		  observation_timestamp,
@@ -753,11 +755,11 @@ func findCandidateObservations(
 
 	clientRef := ""
 	if intent.ClientPayoutRef != nil {
-		clientRef = *intent.ClientPayoutRef
+		clientRef = strings.ToLower(strings.TrimSpace(*intent.ClientPayoutRef))
 	}
 	batchRef := ""
 	if intent.ClientBatchRef != nil {
-		batchRef = *intent.ClientBatchRef
+		batchRef = strings.ToLower(strings.TrimSpace(*intent.ClientBatchRef))
 	}
 
 	rows, err := db.DB.QueryContext(ctx, query,
