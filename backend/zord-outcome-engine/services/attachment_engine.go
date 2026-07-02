@@ -213,8 +213,17 @@ func (e *AttachmentEngine) runAttachment(
 ) (*models.AttachmentJob, error) {
 
 	lockKey := advisoryLockKey(tenantID, scopeType+"|"+scopeRef)
+	// Session-scoped advisory locks must be acquired and released on the same
+	// Postgres connection. Pin one connection for the entire run so the lock
+	// is not lost when the pool hands a different connection to unlock.
+	lockConn, err := db.DB.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("attachment.engine: advisory lock conn: %w", err)
+	}
+	defer lockConn.Close()
+
 	var acquired bool
-	if err := db.DB.QueryRowContext(ctx,
+	if err := lockConn.QueryRowContext(ctx,
 		`SELECT pg_try_advisory_lock($1)`, lockKey,
 	).Scan(&acquired); err != nil {
 		return nil, fmt.Errorf("attachment.engine: advisory lock query: %w", err)
@@ -223,7 +232,7 @@ func (e *AttachmentEngine) runAttachment(
 		return nil, fmt.Errorf("attachment.engine: concurrent job already running for tenant=%s scope_ref=%s — try again shortly", tenantID, scopeRef)
 	}
 	defer func() {
-		if _, unlockErr := db.DB.ExecContext(ctx, `SELECT pg_advisory_unlock($1)`, lockKey); unlockErr != nil {
+		if _, unlockErr := lockConn.ExecContext(ctx, `SELECT pg_advisory_unlock($1)`, lockKey); unlockErr != nil {
 			log.Printf("attachment.engine.advisory_unlock_warn tenant=%s scope_ref=%s err=%v", tenantID, scopeRef, unlockErr)
 		}
 	}()
