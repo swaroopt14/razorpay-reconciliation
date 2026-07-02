@@ -470,6 +470,12 @@ CREATE TABLE IF NOT EXISTS settlement_outbox_events(
 			ON attachment_decisions(intent_id) WHERE intent_id IS NOT NULL;`,
 		`CREATE INDEX IF NOT EXISTS attachment_decisions_type_idx
 			ON attachment_decisions(decision_type);`,
+		// Partial index for findCandidateObservations NOT EXISTS anti-join: only
+		// rows that block re-matching (strong matches). Keeps each probe O(log n).
+		`CREATE INDEX IF NOT EXISTS attachment_decisions_obs_tenant_strong_match_idx
+			ON attachment_decisions(tenant_id, settlement_observation_id)
+			WHERE settlement_observation_id IS NOT NULL
+			  AND decision_type IN ('MATCH_EXACT', 'MATCH_HIGH_CONFIDENCE');`,
 
 		// ── variance_records ─────────────────────────────────────────────────
 		// Intent-vs-observation difference record. Created for every attached pair.
@@ -818,6 +824,10 @@ CREATE TABLE IF NOT EXISTS settlement_outbox_events(
 		`ALTER TABLE batch_attachment_summaries ADD COLUMN IF NOT EXISTS observed_value_allocation_coverage NUMERIC(10,6) NOT NULL DEFAULT 0;`,
 		`ALTER TABLE batch_attachment_summaries ADD COLUMN IF NOT EXISTS ambiguous_amount NUMERIC(20,2) NOT NULL DEFAULT 0;`,
 		`ALTER TABLE batch_attachment_summaries ADD COLUMN IF NOT EXISTS conflicted_amount NUMERIC(20,2) NOT NULL DEFAULT 0;`,
+		`CREATE INDEX IF NOT EXISTS attachment_decisions_obs_tenant_strong_match_idx
+			ON attachment_decisions(tenant_id, settlement_observation_id)
+			WHERE settlement_observation_id IS NOT NULL
+			  AND decision_type IN ('MATCH_EXACT', 'MATCH_HIGH_CONFIDENCE');`,
 	}
 
 	for _, s := range stmts {

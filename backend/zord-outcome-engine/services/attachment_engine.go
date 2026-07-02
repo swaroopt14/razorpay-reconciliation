@@ -681,6 +681,8 @@ func performReverseScanOrphans(
 // excludedObservationIDs holds observations already claimed during the current job
 // (decisions are not committed until the job finishes, so the NOT EXISTS subquery
 // alone cannot prevent two intents in the same run from selecting the same row).
+// Cross-job exclusion uses NOT EXISTS against attachment_decisions, backed by
+// attachment_decisions_obs_tenant_strong_match_idx (partial index on strong matches).
 func findCandidateObservations(
 	ctx context.Context,
 	tenantID uuid.UUID,
@@ -712,8 +714,9 @@ func findCandidateObservations(
 		WHERE tenant_id = $1
 		  AND ($8 = '' OR cso.ingest_run_id = $8)
 		  AND NOT EXISTS (
-		      SELECT 1 FROM attachment_decisions ad 
-		      WHERE ad.settlement_observation_id = cso.settlement_observation_id 
+		      SELECT 1 FROM attachment_decisions ad
+		      WHERE ad.tenant_id = cso.tenant_id
+		        AND ad.settlement_observation_id = cso.settlement_observation_id
 		        AND ad.decision_type IN ('MATCH_EXACT', 'MATCH_HIGH_CONFIDENCE')
 		  )
 		  AND (
