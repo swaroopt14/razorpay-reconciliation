@@ -2236,52 +2236,44 @@ func (s *IntentService) ProcessIncomingIntentsBatch(
 	}
 
 	if firstIn != nil && firstIn.BatchID != nil && *firstIn.BatchID != "" {
-		acceptedCount := 0
-		failedCount := 0
-		duplicateCount := 0
-		errStats := s.db.QueryRowContext(ctx, `
-			SELECT
-				COUNT(*) FILTER (WHERE status = 'ACCEPTED'),
-				COUNT(*) FILTER (WHERE status = 'FAILED'),
-				COUNT(*) FILTER (WHERE status = 'DUPLICATE')
-			FROM intent_ingest_rows
-			WHERE batch_id = $1`,
-			*firstIn.BatchID,
-		).Scan(&acceptedCount, &failedCount, &duplicateCount)
+		// Use the counts we actually just wrote as the ground truth.
+		// Do NOT re-query intent_ingest_rows here — that table may not yet reflect
+		// all rows (chunked inserts just finished) and would produce a stale count
+		// that UpdateBatchAggregateConfidence then uses to override canonicalized_count.
+		actualAccepted := len(savedIntents)
+		actualFailed := len(savedDLQs)
+		actualDuplicate := 0 // duplicates were handled inside SaveBatch (ON CONFLICT)
 
-		if errStats == nil {
-			processedRows := acceptedCount + failedCount + duplicateCount
-			totalRows := 0
-			if firstIn.RowCountEstimate != nil {
-				totalRows = *firstIn.RowCountEstimate
-			}
-			if totalRows <= 0 {
-				totalRows = processedRows
-			}
+		totalRows := actualAccepted + actualFailed + actualDuplicate
+		if firstIn.RowCountEstimate != nil && *firstIn.RowCountEstimate > totalRows {
+			// Trust the file's declared row count if higher (some rows may still be
+			// pending from a concurrent per-event path on the same batch).
+			totalRows = *firstIn.RowCountEstimate
+		}
 
-			runStatus := "PROCESSING"
-			if processedRows >= totalRows {
-				runStatus = "COMPLETED"
-			}
+		fileName := ""
+		fileHash := ""
+		if firstIn.FileName != nil {
+			fileName = *firstIn.FileName
+		}
+		if firstIn.FileContentHash != nil {
+			fileHash = *firstIn.FileContentHash
+		}
 
-			fileName := ""
-			fileHash := ""
-			if firstIn.FileName != nil {
-				fileName = *firstIn.FileName
-			}
-			if firstIn.FileContentHash != nil {
-				fileHash = *firstIn.FileContentHash
-			}
+		runStatus := "COMPLETED"
+		if firstIn.RowCountEstimate != nil && *firstIn.RowCountEstimate > actualAccepted+actualFailed {
+			// Declared file size exceeds what we wrote — still more rows expected.
+			runStatus = "PROCESSING"
+		}
 
-			errUpsert := db.UpsertIngestRun(ctx, s.db,
-				uuid.New().String(), *firstIn.BatchID, firstIn.TenantID.String(),
-				resolvedMappingID, resolvedProfileVersion, fileName, fileHash,
-				totalRows, acceptedCount, failedCount, duplicateCount,
-				runStatus,
-			)
-			if errUpsert != nil {
-				log.Printf("⚠️ Batch Audit: failed to upsert run audit for batch=%s: %v", *firstIn.BatchID, errUpsert)
-			}
+		errUpsert := db.UpsertIngestRun(ctx, s.db,
+			uuid.New().String(), *firstIn.BatchID, firstIn.TenantID.String(),
+			resolvedMappingID, resolvedProfileVersion, fileName, fileHash,
+			totalRows, actualAccepted, actualFailed, actualDuplicate,
+			runStatus,
+		)
+		if errUpsert != nil {
+			log.Printf("⚠️ Batch Audit: failed to upsert run audit for batch=%s: %v", *firstIn.BatchID, errUpsert)
 		}
 
 		batchKey := fmt.Sprintf("%s|%s", firstIn.TenantID.String(), *firstIn.BatchID)
