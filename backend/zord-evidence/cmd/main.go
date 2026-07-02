@@ -84,6 +84,9 @@ func main() {
 	outboxHandler := handlers.NewOutboxHandler(outboxPullRepo)
 	proofHandler := handlers.NewProofHandler(evidenceSvc, enrichRepo, database)
 
+	// Start 30 async workers for pack generation to prevent Kafka consumer stalls
+	evidenceSvc.StartWorkers(ctx, 30)
+
 	// --- Kafka consumers for Merkle leaf buffering ---
 	if len(cfg.KafkaBrokers) > 0 && cfg.KafkaBrokers[0] != "" {
 		// 1. Edge Consumer: captures ENVELOPE_HASH (Leaf 5)

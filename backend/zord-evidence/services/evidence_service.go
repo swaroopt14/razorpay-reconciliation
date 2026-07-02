@@ -25,6 +25,20 @@ import (
 // validModes are the three lifecycle operating modes defined in spec §3.2
 var validModes = []string{"INTELLIGENCE_ATTACH", "SECONDARY_DISPATCH", "FULL_CONTROL"}
 
+type IntentJob struct {
+	TenantID   string
+	EnvelopeID string
+	IntentID   string
+	ContractID string
+	TraceID    string
+}
+
+type BatchJob struct {
+	TenantID string
+	BatchID  string
+	IsFinal  bool
+}
+
 type EvidenceService struct {
 	repo                *repositories.EvidenceRepository
 	pendingLeafRepo     repositories.PendingLeafRepository
@@ -35,6 +49,9 @@ type EvidenceService struct {
 	archivePrefix       string
 	replayCompareStrict bool
 	publisher           kafka.EventPublisher
+
+	intentQueue chan IntentJob
+	batchQueue  chan BatchJob
 }
 
 func NewEvidenceService(
@@ -58,6 +75,8 @@ func NewEvidenceService(
 		archivePrefix:       archivePrefix,
 		replayCompareStrict: strict,
 		publisher:           publisher,
+		intentQueue:         make(chan IntentJob, 10000),
+		batchQueue:          make(chan BatchJob, 10000),
 	}
 }
 
@@ -147,163 +166,19 @@ func (s *EvidenceService) HandleLeafUpdate(ctx context.Context, tenantID, envelo
 		return nil // Not ready yet
 	}
 
-	// ── CONCURRENCY GUARD ────────────────────────────────────────────────────
-	// Open a transaction and attempt to acquire a Postgres advisory xact lock
-	// keyed on (tenant_id, intent_id). Only one goroutine at a time can proceed
-	// past this point for a given intent. The lock is held until tx.Commit/Rollback.
-	lockTx, err := s.repo.BeginTx(ctx)
-	if err != nil {
-		return fmt.Errorf("begin advisory lock tx: %w", err)
-	}
-	defer lockTx.Rollback() //nolint:errcheck
-
-	acquired, err := s.repo.AcquireIntentAdvisoryLock(ctx, lockTx, tenantID, intentID)
-	if err != nil {
-		return fmt.Errorf("advisory lock: %w", err)
-	}
-	if !acquired {
-		// Another goroutine is already generating the pack for this intent.
-		// This is not an error — it will finish the job. We return nil so the
-		// Kafka consumer can ACK the message without retry noise.
-		log.Printf("evidence.service.handle_leaf_update intent=%s advisory_lock_not_acquired — another goroutine is generating, skipping", intentID)
-		return nil
+	// ── ASYNC DELEGATION ─────────────────────────────────────────────────────
+	// The intent is ready. Pass it to the worker pool for async generation.
+	// This blocking send ensures we exert backpressure on the Kafka consumer
+	// if the workers (and the large buffer) fall behind, preventing OOMs.
+	s.intentQueue <- IntentJob{
+		TenantID:   tenantID,
+		EnvelopeID: envelopeID,
+		IntentID:   intentID,
+		ContractID: contractID,
+		TraceID:    traceID,
 	}
 
-	// Re-check: another process (e.g. a previous pod restart) may have already
-	// committed an ACTIVE pack while we were buffering leaves.
-	existingPacks, checkErr := s.repo.ListByIntentID(ctx, tenantID, intentID)
-	if checkErr == nil {
-		for _, ep := range existingPacks {
-			if ep.PackStatus == "ACTIVE" {
-				log.Printf("evidence.service.handle_leaf_update intent=%s pack already exists ep=%s — skipping generation", intentID, ep.EvidencePackID)
-				_ = s.pendingLeafRepo.DeleteForIntent(ctx, tenantID, intentID)
-				return nil
-			}
-		}
-	}
-	// ─────────────────────────────────────────────────────────────────────────
-
-	// 5b. Resolve contractID from buffered leaves if missing in argument
-	if contractID == "" {
-		for _, l := range leaves {
-			if l.ContractID != nil && *l.ContractID != "" {
-				contractID = *l.ContractID
-				break
-			}
-		}
-	}
-
-	// 5b.1 Resolve batchID from buffered leaves — intent leaves now carry the
-	// originating batch_id so the persisted pack can be queried by batch.
-	var batchID string
-	for _, l := range leaves {
-		if l.ClientBatchID != nil && *l.ClientBatchID != "" {
-			batchID = *l.ClientBatchID
-			break
-		}
-	}
-
-	// 5c. Defensive: ensure we have a traceID (even if hardcoded here) to satisfy NOT NULL constraints.
-	if traceID == "" {
-		traceID = "00000000-0000-0000-0000-000000000000"
-		log.Printf("evidence.service.readiness_check intent=%s trace_id missing — using zero UUID fallback", intentID)
-	}
-
-	log.Printf("evidence.service.readiness_check intent=%s ALL_LEAVES_PRESENT — triggering generation", intentID)
-
-	// 5d. Extract traceability metadata from leaves
-	var pir, cic *time.Time
-	var mpu, gd *string
-	var rfs, ts *bool
-	var srr, csc *time.Time
-	var br, cr, ad *string
-	var mc *float64
-	var vdc, am *bool
-
-	var clientPayoutRef *string
-	var amount decimal.Decimal
-	var currency string
-
-	for _, l := range leaves {
-		if l.ClientPayoutRef != nil {
-			clientPayoutRef = l.ClientPayoutRef
-			amount = l.Amount
-			currency = l.Currency
-		}
-		if l.PaymentInstructionReceived != nil {
-			pir = l.PaymentInstructionReceived
-			cic = l.CanonicalIntentCreated
-			mpu = l.MappingProfileUsed
-			rfs = l.RequiredFieldsStatus
-			ts = l.TokenizationStatus
-			gd = l.GovernanceDecision
-		}
-		if l.SettlementRecordReceived != nil {
-			srr = l.SettlementRecordReceived
-			csc = l.CanonicalSettlementCreated
-			br = l.BankReference
-			cr = l.ClientReference
-			ad = l.AttachmentDecision
-			mc = l.MatchConfidence
-			vdc = l.ValueDateCheck
-			am = l.AmountMatch
-		}
-	}
-
-	// 6. Generate the pack — pass the lock-holding transaction so the advisory
-	//    lock remains held through the INSERT and commits atomically with the pack.
-	req := models.GenerateEvidenceRequest{
-		TenantID:                   tenantID,
-		IntentID:                   intentID,
-		ClientBatchID:              batchID,
-		EnvelopeID:                 envelopeID,
-		TraceID:                    traceID,
-		ContractID:                 contractID,
-		Mode:                       "INTELLIGENCE_ATTACH",
-		RulesetVersion:             "v1",
-		SchemaVersions:             map[string]string{"intent_schema": "v1", "outcome_schema": "v1", "contract_schema": "v1", "attachment_schema": "v1"},
-		Items:                      items,
-		PaymentInstructionReceived: pir,
-		CanonicalIntentCreated:     cic,
-		MappingProfileUsed:         mpu,
-		RequiredFieldsStatus:       rfs,
-		TokenizationStatus:         ts,
-		GovernanceDecision:         gd,
-
-		SettlementRecordReceived:   srr,
-		CanonicalSettlementCreated: csc,
-		BankReference:              br,
-		ClientReference:            cr,
-		AttachmentDecision:         ad,
-		MatchConfidence:            mc,
-		ValueDateCheck:             vdc,
-		AmountMatch:                am,
-
-		ClientPayoutRef:            clientPayoutRef,
-		Amount:                     amount,
-		Currency:                   currency,
-	}
-
-	_, err = s.GeneratePackInTx(ctx, lockTx, req)
-	if err != nil {
-		if errors.Is(err, repositories.ErrPackAlreadyExists) {
-			// Another goroutine committed in the tiny gap between lock acquisition
-			// and INSERT. The pack exists — this is success.
-			log.Printf("evidence.service.handle_leaf_update intent=%s duplicate_pack_detected_at_insert — treating as success", intentID)
-			_ = s.pendingLeafRepo.DeleteForIntent(ctx, tenantID, intentID)
-			return nil
-		}
-		return fmt.Errorf("generate pack from buffered leaves: %w", err)
-	}
-
-	// lockTx is committed inside GeneratePackInTx (SavePackInTx commits when ownTx=false
-	// is not the case here — lockTx is passed as existingTx, so we must commit it here).
-	if err := lockTx.Commit(); err != nil {
-		return fmt.Errorf("commit advisory lock tx: %w", err)
-	}
-
-	// 7. Cleanup
-	return s.pendingLeafRepo.DeleteForIntent(ctx, tenantID, intentID)
+	return nil
 }
 
 // HandleBatchLeafUpdate orchestrates buffered leaf ingestion and pack generation for batches.
@@ -352,45 +227,225 @@ func (s *EvidenceService) HandleBatchLeafUpdate(ctx context.Context, tenantID, b
 		return nil // Not ready yet
 	}
 
+	// ── ASYNC DELEGATION ─────────────────────────────────────────────────────
+	// The batch is ready. Pass it to the worker pool for async generation.
+	// This blocking send ensures we exert backpressure on the Kafka consumer
+	// if the workers (and the large buffer) fall behind, preventing OOMs.
+	s.batchQueue <- BatchJob{
+		TenantID: tenantID,
+		BatchID:  batchID,
+		IsFinal:  isFinal,
+	}
+
+	return nil
+}
+
+// StartWorkers spins up the async generation workers.
+func (s *EvidenceService) StartWorkers(ctx context.Context, workers int) {
+	for i := 0; i < workers; i++ {
+		go func(workerID int) {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case job := <-s.intentQueue:
+					if err := s.processIntentJob(ctx, job); err != nil {
+						log.Printf("evidence.service.worker id=%d intent=%s err=%v", workerID, job.IntentID, err)
+					}
+				case job := <-s.batchQueue:
+					if err := s.processBatchJob(ctx, job); err != nil {
+						log.Printf("evidence.service.worker id=%d batch=%s err=%v", workerID, job.BatchID, err)
+					}
+				}
+			}
+		}(i)
+	}
+}
+
+// processIntentJob executes the pack generation for a ready intent.
+func (s *EvidenceService) processIntentJob(ctx context.Context, job IntentJob) error {
+	// Re-fetch leaves as they contain the data required for generation
+	leaves, err := s.pendingLeafRepo.GetLeavesForIntent(ctx, job.TenantID, job.IntentID)
+	if err != nil {
+		return err
+	}
+
+	// Re-build items
+	var items []models.EvidenceItem
+	for _, l := range leaves {
+		if slices.Contains(models.RequiredLeafTypes, l.LeafType) {
+			items = append(items, models.EvidenceItem{
+				Type:          l.LeafType,
+				Ref:           l.ItemRef,
+				Hash:          l.Hash,
+				SchemaVersion: l.SchemaVersion,
+			})
+		}
+	}
+
 	// ── CONCURRENCY GUARD ────────────────────────────────────────────────────
-	// Acquire a Postgres advisory xact lock keyed on (tenant_id, batch_id).
-	// Only one goroutine at a time can proceed past this point for a given batch.
+	lockTx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return fmt.Errorf("begin advisory lock tx: %w", err)
+	}
+	defer lockTx.Rollback() //nolint:errcheck
+
+	acquired, err := s.repo.AcquireIntentAdvisoryLock(ctx, lockTx, job.TenantID, job.IntentID)
+	if err != nil {
+		return fmt.Errorf("advisory lock: %w", err)
+	}
+	if !acquired {
+		log.Printf("evidence.service.process_intent intent=%s advisory_lock_not_acquired — another goroutine is generating, skipping", job.IntentID)
+		return nil
+	}
+
+	existingPacks, checkErr := s.repo.ListByIntentID(ctx, job.TenantID, job.IntentID)
+	if checkErr == nil {
+		for _, ep := range existingPacks {
+			if ep.PackStatus == "ACTIVE" {
+				log.Printf("evidence.service.process_intent intent=%s pack already exists ep=%s — skipping generation", job.IntentID, ep.EvidencePackID)
+				_ = s.pendingLeafRepo.DeleteForIntent(ctx, job.TenantID, job.IntentID)
+				return nil
+			}
+		}
+	}
+	// ─────────────────────────────────────────────────────────────────────────
+
+	// Extract traceability metadata
+	var pir, cic *time.Time
+	var mpu, gd *string
+	var rfs, ts *bool
+	var srr, csc *time.Time
+	var br, cr, ad *string
+	var mc *float64
+	var vdc, am *bool
+
+	var clientPayoutRef *string
+	var amount decimal.Decimal
+	var currency string
+	var batchID string
+
+	for _, l := range leaves {
+		if l.ClientBatchID != nil && *l.ClientBatchID != "" {
+			batchID = *l.ClientBatchID
+		}
+		if l.ClientPayoutRef != nil {
+			clientPayoutRef = l.ClientPayoutRef
+			amount = l.Amount
+			currency = l.Currency
+		}
+		if l.PaymentInstructionReceived != nil {
+			pir = l.PaymentInstructionReceived
+			cic = l.CanonicalIntentCreated
+			mpu = l.MappingProfileUsed
+			rfs = l.RequiredFieldsStatus
+			ts = l.TokenizationStatus
+			gd = l.GovernanceDecision
+		}
+		if l.SettlementRecordReceived != nil {
+			srr = l.SettlementRecordReceived
+			csc = l.CanonicalSettlementCreated
+			br = l.BankReference
+			cr = l.ClientReference
+			ad = l.AttachmentDecision
+			mc = l.MatchConfidence
+			vdc = l.ValueDateCheck
+			am = l.AmountMatch
+		}
+	}
+
+	req := models.GenerateEvidenceRequest{
+		TenantID:                   job.TenantID,
+		IntentID:                   job.IntentID,
+		ClientBatchID:              batchID,
+		EnvelopeID:                 job.EnvelopeID,
+		TraceID:                    job.TraceID,
+		ContractID:                 job.ContractID,
+		Mode:                       "INTELLIGENCE_ATTACH",
+		RulesetVersion:             "v1",
+		SchemaVersions:             map[string]string{"intent_schema": "v1", "outcome_schema": "v1", "contract_schema": "v1", "attachment_schema": "v1"},
+		Items:                      items,
+		PaymentInstructionReceived: pir,
+		CanonicalIntentCreated:     cic,
+		MappingProfileUsed:         mpu,
+		RequiredFieldsStatus:       rfs,
+		TokenizationStatus:         ts,
+		GovernanceDecision:         gd,
+
+		SettlementRecordReceived:   srr,
+		CanonicalSettlementCreated: csc,
+		BankReference:              br,
+		ClientReference:            cr,
+		AttachmentDecision:         ad,
+		MatchConfidence:            mc,
+		ValueDateCheck:             vdc,
+		AmountMatch:                am,
+
+		ClientPayoutRef:            clientPayoutRef,
+		Amount:                     amount,
+		Currency:                   currency,
+	}
+
+	_, err = s.GeneratePackInTx(ctx, lockTx, req)
+	if err != nil {
+		if errors.Is(err, repositories.ErrPackAlreadyExists) {
+			log.Printf("evidence.service.process_intent intent=%s duplicate_pack_detected_at_insert — treating as success", job.IntentID)
+			_ = s.pendingLeafRepo.DeleteForIntent(ctx, job.TenantID, job.IntentID)
+			return nil
+		}
+		return fmt.Errorf("generate pack from buffered leaves: %w", err)
+	}
+
+	if err := lockTx.Commit(); err != nil {
+		return fmt.Errorf("commit advisory lock tx: %w", err)
+	}
+
+	return s.pendingLeafRepo.DeleteForIntent(ctx, job.TenantID, job.IntentID)
+}
+
+// processBatchJob executes the pack generation for a ready batch.
+func (s *EvidenceService) processBatchJob(ctx context.Context, job BatchJob) error {
+	leaves, err := s.pendingLeafRepo.GetLeavesForBatch(ctx, job.TenantID, job.BatchID)
+	if err != nil {
+		return err
+	}
+
+	var items []models.EvidenceItem
+	for _, l := range leaves {
+		if slices.Contains(models.RequiredBatchLeafTypes, l.LeafType) {
+			items = append(items, models.EvidenceItem{
+				Type:          l.LeafType,
+				Ref:           l.ItemRef,
+				Hash:          l.Hash,
+				SchemaVersion: l.SchemaVersion,
+			})
+		}
+	}
+
+	// ── CONCURRENCY GUARD ────────────────────────────────────────────────────
 	lockTx, err := s.repo.BeginTx(ctx)
 	if err != nil {
 		return fmt.Errorf("begin batch advisory lock tx: %w", err)
 	}
 	defer lockTx.Rollback() //nolint:errcheck
 
-	acquired, err := s.repo.AcquireBatchAdvisoryLock(ctx, lockTx, tenantID, batchID)
+	acquired, err := s.repo.AcquireBatchAdvisoryLock(ctx, lockTx, job.TenantID, job.BatchID)
 	if err != nil {
 		return fmt.Errorf("batch advisory lock: %w", err)
 	}
 	if !acquired {
-		log.Printf("evidence.service.handle_batch_leaf_update batch=%s advisory_lock_not_acquired — another goroutine is generating, skipping", batchID)
+		log.Printf("evidence.service.process_batch batch=%s advisory_lock_not_acquired — another goroutine is generating, skipping", job.BatchID)
 		return nil
 	}
 
-	// Re-check inside the lock: another process may have already committed a pack.
-	existing, existErr := s.repo.GetPackByBatchID(ctx, tenantID, batchID)
+	existing, existErr := s.repo.GetPackByBatchID(ctx, job.TenantID, job.BatchID)
 	if existErr == nil && existing != nil {
-		log.Printf("evidence.service.batch_readiness_check batch=%s pack already exists — skipping generation", batchID)
-		_ = s.pendingLeafRepo.DeleteForBatch(ctx, tenantID, batchID)
+		log.Printf("evidence.service.process_batch batch=%s pack already exists — skipping generation", job.BatchID)
+		_ = s.pendingLeafRepo.DeleteForBatch(ctx, job.TenantID, job.BatchID)
 		return nil
 	}
 	// ─────────────────────────────────────────────────────────────────────────
 
-	// We only generate if all leaves are present AND we have received the final completion signal.
-	if !isFinal {
-		// Check if we already have the summary (which indicates completion)
-		if _, ok := leafMap[models.LeafTypeBatchAttachmentSummary]; !ok {
-			log.Printf("evidence.service.batch_readiness_check batch=%s leaves ready but waiting for final signal", batchID)
-			return nil
-		}
-	}
-
-	log.Printf("evidence.service.batch_readiness_check batch=%s ALL_LEAVES_PRESENT — triggering generation", batchID)
-
-	// Extract traceability metadata from leaves
 	var pir, cic *time.Time
 	var mpu, gd *string
 	var rfs, ts *bool
@@ -429,11 +484,10 @@ func (s *EvidenceService) HandleBatchLeafUpdate(ctx context.Context, tenantID, b
 		}
 	}
 
-	// Generate the pack!
 	req := models.GenerateEvidenceRequest{
-		TenantID:                   tenantID,
-		ClientBatchID:              batchID,
-		TraceID:                    "00000000-0000-0000-0000-000000000000", // or fetch from context/leaf if available
+		TenantID:                   job.TenantID,
+		ClientBatchID:              job.BatchID,
+		TraceID:                    "00000000-0000-0000-0000-000000000000",
 		Mode:                       "BATCH_ATTACH",
 		RulesetVersion:             "v1",
 		SchemaVersions:             map[string]string{"intent_schema": "v1", "outcome_schema": "v1", "contract_schema": "v1", "attachment_schema": "v1"},
@@ -462,8 +516,8 @@ func (s *EvidenceService) HandleBatchLeafUpdate(ctx context.Context, tenantID, b
 	_, err = s.GenerateBatchPackInTx(ctx, lockTx, req)
 	if err != nil {
 		if errors.Is(err, repositories.ErrPackAlreadyExists) {
-			log.Printf("evidence.service.handle_batch_leaf_update batch=%s duplicate_pack_detected_at_insert — treating as success", batchID)
-			_ = s.pendingLeafRepo.DeleteForBatch(ctx, tenantID, batchID)
+			log.Printf("evidence.service.process_batch batch=%s duplicate_pack_detected_at_insert — treating as success", job.BatchID)
+			_ = s.pendingLeafRepo.DeleteForBatch(ctx, job.TenantID, job.BatchID)
 			return nil
 		}
 		return fmt.Errorf("generate pack from buffered batch leaves: %w", err)
@@ -473,8 +527,7 @@ func (s *EvidenceService) HandleBatchLeafUpdate(ctx context.Context, tenantID, b
 		return fmt.Errorf("commit batch advisory lock tx: %w", err)
 	}
 
-	// Cleanup
-	return s.pendingLeafRepo.DeleteForBatch(ctx, tenantID, batchID)
+	return s.pendingLeafRepo.DeleteForBatch(ctx, job.TenantID, job.BatchID)
 }
 
 // GeneratePack is the core of Service 6 (spec §13 steps 1–11).
