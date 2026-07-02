@@ -150,11 +150,11 @@ func loadIntentsForIngestRunObservations(
 
 	for _, obs := range observations {
 		if ref := strings.TrimSpace(obs.ClientBatchID); ref != "" {
-			batchRefs[ref] = struct{}{}
+			batchRefs[strings.ToLower(ref)] = struct{}{}
 		}
 		if obs.BatchReference != nil {
 			if ref := strings.TrimSpace(*obs.BatchReference); ref != "" {
-				batchRefs[ref] = struct{}{}
+				batchRefs[strings.ToLower(ref)] = struct{}{}
 			}
 		}
 		if obs.ClientReferenceCandidate != nil {
@@ -164,14 +164,18 @@ func loadIntentsForIngestRunObservations(
 		}
 	}
 
-	for batchRef := range batchRefs {
-		intents, err := loadMasterIntentsByBatchRef(ctx, tenantID, batchRef)
-		if err != nil {
-			return nil, err
-		}
-		for id, intent := range intents {
-			result[id] = intent
-		}
+	batchRefList := make([]string, 0, len(batchRefs))
+	for ref := range batchRefs {
+		batchRefList = append(batchRefList, ref)
+	}
+	sort.Strings(batchRefList)
+
+	batchIntents, err := loadMasterIntentsByBatchRefs(ctx, tenantID, batchRefList)
+	if err != nil {
+		return nil, err
+	}
+	for id, intent := range batchIntents {
+		result[id] = intent
 	}
 
 	refs := make([]string, 0, len(clientRefs))
@@ -209,8 +213,17 @@ func (e *AttachmentEngine) runAttachment(
 ) (*models.AttachmentJob, error) {
 
 	lockKey := advisoryLockKey(tenantID, scopeType+"|"+scopeRef)
+	// Session-scoped advisory locks must be acquired and released on the same
+	// Postgres connection. Pin one connection for the entire run so the lock
+	// is not lost when the pool hands a different connection to unlock.
+	lockConn, err := db.DB.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("attachment.engine: advisory lock conn: %w", err)
+	}
+	defer lockConn.Close()
+
 	var acquired bool
-	if err := db.DB.QueryRowContext(ctx,
+	if err := lockConn.QueryRowContext(ctx,
 		`SELECT pg_try_advisory_lock($1)`, lockKey,
 	).Scan(&acquired); err != nil {
 		return nil, fmt.Errorf("attachment.engine: advisory lock query: %w", err)
@@ -219,7 +232,7 @@ func (e *AttachmentEngine) runAttachment(
 		return nil, fmt.Errorf("attachment.engine: concurrent job already running for tenant=%s scope_ref=%s — try again shortly", tenantID, scopeRef)
 	}
 	defer func() {
-		if _, unlockErr := db.DB.ExecContext(ctx, `SELECT pg_advisory_unlock($1)`, lockKey); unlockErr != nil {
+		if _, unlockErr := lockConn.ExecContext(ctx, `SELECT pg_advisory_unlock($1)`, lockKey); unlockErr != nil {
 			log.Printf("attachment.engine.advisory_unlock_warn tenant=%s scope_ref=%s err=%v", tenantID, scopeRef, unlockErr)
 		}
 	}()
@@ -275,17 +288,15 @@ func (e *AttachmentEngine) runAttachment(
 	matchedObservationIDs := make(map[uuid.UUID]bool)
 	obsDecisionTypes := make(map[uuid.UUID][]string)
 
-	previouslyDecidedObservationIDs, err := loadPreviouslyDecidedObservationIDs(ctx, tenantID)
-	if err != nil {
-		return nil, fmt.Errorf("attachment.engine: load previously decided observations: %w", err)
-	}
 	var (
 		allDecisions              []models.AttachmentDecision
 		allVariances              []models.VarianceRecord
 		allCandidates             []models.AttachmentCandidate
 		totalIntendedAmount       decimal.Decimal
 		clientBatchRef            *string
-		claimedObservationIDs     = previouslyDecidedObservationIDs
+		// Observations strongly matched earlier in this job. Cross-job claims are
+		// excluded by the NOT EXISTS clause in findCandidateObservations.
+		claimedObservationIDs     = make(map[uuid.UUID]bool)
 		allScannedObservationsMap = make(map[uuid.UUID]models.CanonicalSettlementObservation)
 	)
 
@@ -678,35 +689,15 @@ func performReverseScanOrphans(
 // CANDIDATE DISCOVERY
 // ─────────────────────────────────────────────────────────────────────────────
 
-// loadPreviouslyDecidedIntentIDs fetches all intent IDs for the tenant that have already
-// been strongly matched in the past. We preload this into a map at the start of a job
-// to avoid executing N+1 EXISTS queries in the database.
-// loadPreviouslyDecidedObservationIDs fetches all observation IDs for the tenant that have already
-// been strongly matched in the past.
-func loadPreviouslyDecidedObservationIDs(ctx context.Context, tenantID uuid.UUID) (map[uuid.UUID]bool, error) {
-	rows, err := db.DB.QueryContext(ctx, `
-		SELECT settlement_observation_id FROM attachment_decisions 
-		WHERE tenant_id = $1 AND decision_type IN ('MATCH_EXACT', 'MATCH_HIGH_CONFIDENCE')
-		  AND settlement_observation_id IS NOT NULL
-	`, tenantID)
-	if err != nil {
-		return nil, fmt.Errorf("query attachment_decisions: %w", err)
-	}
-	defer rows.Close()
-
-	excluded := make(map[uuid.UUID]bool)
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		excluded[id] = true
-	}
-	return excluded, rows.Err()
-}
-
 // findCandidateObservations builds the candidate observation set for one canonical intent.
 // Multi-index search: tenant + references, source system, and amount/currency/time.
+// excludedObservationIDs holds observations already claimed during the current job
+// (decisions are not committed until the job finishes, so the NOT EXISTS subquery
+// alone cannot prevent two intents in the same run from selecting the same row).
+// Cross-job exclusion uses NOT EXISTS against attachment_decisions, backed by
+// attachment_decisions_obs_tenant_strong_match_idx (partial index on strong matches).
+// Reference matching uses LOWER(...) equality; backed by functional indexes on
+// canonical_settlement_observations (canonical_obs_tenant_*_lower_idx).
 func findCandidateObservations(
 	ctx context.Context,
 	tenantID uuid.UUID,
@@ -738,14 +729,15 @@ func findCandidateObservations(
 		WHERE tenant_id = $1
 		  AND ($8 = '' OR cso.ingest_run_id = $8)
 		  AND NOT EXISTS (
-		      SELECT 1 FROM attachment_decisions ad 
-		      WHERE ad.settlement_observation_id = cso.settlement_observation_id 
+		      SELECT 1 FROM attachment_decisions ad
+		      WHERE ad.tenant_id = cso.tenant_id
+		        AND ad.settlement_observation_id = cso.settlement_observation_id
 		        AND ad.decision_type IN ('MATCH_EXACT', 'MATCH_HIGH_CONFIDENCE')
 		  )
 		  AND (
-		    ($2 != '' AND LOWER(client_reference_candidate) = LOWER($2))
-		    OR ($3 != '' AND LOWER(batch_reference) = LOWER($3))
-		    OR ($3 != '' AND LOWER(client_batch_id) = LOWER($3))
+		    ($2 != '' AND LOWER(client_reference_candidate) = $2)
+		    OR ($3 != '' AND LOWER(batch_reference) = $3)
+		    OR ($3 != '' AND LOWER(client_batch_id) = $3)
 		    OR (
 		      amount = $4
 		      AND currency_code = $5
@@ -754,11 +746,11 @@ func findCandidateObservations(
 		  )
 		ORDER BY
 		  CASE
-		    WHEN $2 != '' AND LOWER(client_reference_candidate) = LOWER($2) THEN 0
-		    WHEN $3 != '' AND (LOWER(batch_reference) = LOWER($3) OR LOWER(client_batch_id) = LOWER($3))
+		    WHEN $2 != '' AND LOWER(client_reference_candidate) = $2 THEN 0
+		    WHEN $3 != '' AND (LOWER(batch_reference) = $3 OR LOWER(client_batch_id) = $3)
 		         AND amount = $4 AND currency_code = $5 AND observation_timestamp BETWEEN $6 AND $7 THEN 1
 		    WHEN amount = $4 AND currency_code = $5 AND observation_timestamp BETWEEN $6 AND $7 THEN 2
-		    WHEN $3 != '' AND (LOWER(batch_reference) = LOWER($3) OR LOWER(client_batch_id) = LOWER($3)) THEN 3
+		    WHEN $3 != '' AND (LOWER(batch_reference) = $3 OR LOWER(client_batch_id) = $3) THEN 3
 		    ELSE 4
 		  END,
 		  observation_timestamp,
@@ -776,11 +768,11 @@ func findCandidateObservations(
 
 	clientRef := ""
 	if intent.ClientPayoutRef != nil {
-		clientRef = *intent.ClientPayoutRef
+		clientRef = strings.ToLower(strings.TrimSpace(*intent.ClientPayoutRef))
 	}
 	batchRef := ""
 	if intent.ClientBatchRef != nil {
-		batchRef = *intent.ClientBatchRef
+		batchRef = strings.ToLower(strings.TrimSpace(*intent.ClientBatchRef))
 	}
 
 	rows, err := db.DB.QueryContext(ctx, query,
@@ -825,7 +817,7 @@ func findCandidateObservations(
 			continue
 		}
 		if excludedObservationIDs[o.SettlementObservationID] {
-			continue // Skip already claimed observations
+			continue // Skip observations already claimed in this job
 		}
 		observations = append(observations, o)
 	}
@@ -840,6 +832,39 @@ func loadMasterIntentsByBatchRef(
 	tenantID uuid.UUID,
 	batchRef string,
 ) (map[uuid.UUID]models.CanonicalIntent, error) {
+	return loadMasterIntentsByBatchRefs(ctx, tenantID, []string{batchRef})
+}
+
+// loadMasterIntentsByBatchRefs fetches canonical intents for any of the given
+// client_batch_ref values in a single query (case-insensitive).
+func loadMasterIntentsByBatchRefs(
+	ctx context.Context,
+	tenantID uuid.UUID,
+	batchRefs []string,
+) (map[uuid.UUID]models.CanonicalIntent, error) {
+	result := make(map[uuid.UUID]models.CanonicalIntent)
+	if len(batchRefs) == 0 {
+		return result, nil
+	}
+
+	normalized := make([]string, 0, len(batchRefs))
+	seen := make(map[string]struct{}, len(batchRefs))
+	for _, ref := range batchRefs {
+		lower := strings.ToLower(strings.TrimSpace(ref))
+		if lower == "" {
+			continue
+		}
+		if _, dup := seen[lower]; dup {
+			continue
+		}
+		seen[lower] = struct{}{}
+		normalized = append(normalized, lower)
+	}
+	if len(normalized) == 0 {
+		return result, nil
+	}
+	sort.Strings(normalized)
+
 	rows, err := db.DB.QueryContext(ctx, `
 		SELECT
 			intent_id, tenant_id,
@@ -852,18 +877,15 @@ func loadMasterIntentsByBatchRef(
 			source_row_num,
 			created_at
 		FROM canonical_intents
-		WHERE tenant_id = $1 AND LOWER(client_batch_ref) = LOWER($2)
+		WHERE tenant_id = $1 AND LOWER(client_batch_ref) = ANY($2)
 		ORDER BY intent_id`,
-		// ↑ case-insensitive match: observations may carry a different case
-		// for the batch ref than the intents table.
-		tenantID, batchRef,
+		tenantID, pq.Array(normalized),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("loadMasterIntentsByBatchRef: query: %w", err)
+		return nil, fmt.Errorf("loadMasterIntentsByBatchRefs: query: %w", err)
 	}
 	defer rows.Close()
 
-	result := make(map[uuid.UUID]models.CanonicalIntent)
 	for rows.Next() {
 		var intent models.CanonicalIntent
 		if err := rows.Scan(
@@ -877,7 +899,7 @@ func loadMasterIntentsByBatchRef(
 			&intent.SourceRowNum,
 			&intent.CreatedAt,
 		); err != nil {
-			log.Printf("loadMasterIntentsByBatchRef: scan: %v", err)
+			log.Printf("loadMasterIntentsByBatchRefs: scan: %v", err)
 			continue
 		}
 		result[intent.IntentID] = intent

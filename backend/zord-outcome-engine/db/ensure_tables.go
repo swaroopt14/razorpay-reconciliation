@@ -293,7 +293,22 @@ CREATE TABLE IF NOT EXISTS canonical_settlement_observations(
 );`,
 		`CREATE INDEX IF NOT EXISTS canonical_settlement_observations_tenant_idx ON canonical_settlement_observations(tenant_id);`,
 		`CREATE INDEX IF NOT EXISTS canonical_obs_run_idx ON canonical_settlement_observations(ingest_run_id);`,
+		`CREATE INDEX IF NOT EXISTS canonical_obs_tenant_run_idx
+			ON canonical_settlement_observations(tenant_id, ingest_run_id);`,
 		`CREATE INDEX IF NOT EXISTS canonical_obs_batch_idx ON canonical_settlement_observations(settlement_batch_id);`,
+		// Case-insensitive reference lookups in findCandidateObservations (Service 5C).
+		`CREATE INDEX IF NOT EXISTS canonical_obs_tenant_client_ref_lower_idx
+			ON canonical_settlement_observations(tenant_id, LOWER(client_reference_candidate))
+			WHERE client_reference_candidate IS NOT NULL;`,
+		`CREATE INDEX IF NOT EXISTS canonical_obs_tenant_batch_ref_lower_idx
+			ON canonical_settlement_observations(tenant_id, LOWER(batch_reference))
+			WHERE batch_reference IS NOT NULL;`,
+		`CREATE INDEX IF NOT EXISTS canonical_obs_tenant_client_batch_id_lower_idx
+			ON canonical_settlement_observations(tenant_id, LOWER(client_batch_id))
+			WHERE client_batch_id IS NOT NULL AND client_batch_id <> '';`,
+		// Amount + currency + time-window fallback branch in findCandidateObservations.
+		`CREATE INDEX IF NOT EXISTS canonical_obs_tenant_curr_amt_ts_idx
+			ON canonical_settlement_observations(tenant_id, currency_code, amount, observation_timestamp);`,
 		`CREATE INDEX IF NOT EXISTS canonical_settlement_observations_envelope_idx ON canonical_settlement_observations(settlement_envelope_id);`,
 		`CREATE INDEX IF NOT EXISTS canonical_settlement_observations_trace_idx ON canonical_settlement_observations(trace_id);`,
 
@@ -470,6 +485,12 @@ CREATE TABLE IF NOT EXISTS settlement_outbox_events(
 			ON attachment_decisions(intent_id) WHERE intent_id IS NOT NULL;`,
 		`CREATE INDEX IF NOT EXISTS attachment_decisions_type_idx
 			ON attachment_decisions(decision_type);`,
+		// Partial index for findCandidateObservations NOT EXISTS anti-join: only
+		// rows that block re-matching (strong matches). Keeps each probe O(log n).
+		`CREATE INDEX IF NOT EXISTS attachment_decisions_obs_tenant_strong_match_idx
+			ON attachment_decisions(tenant_id, settlement_observation_id)
+			WHERE settlement_observation_id IS NOT NULL
+			  AND decision_type IN ('MATCH_EXACT', 'MATCH_HIGH_CONFIDENCE');`,
 
 		// ── variance_records ─────────────────────────────────────────────────
 		// Intent-vs-observation difference record. Created for every attached pair.
@@ -818,6 +839,23 @@ CREATE TABLE IF NOT EXISTS settlement_outbox_events(
 		`ALTER TABLE batch_attachment_summaries ADD COLUMN IF NOT EXISTS observed_value_allocation_coverage NUMERIC(10,6) NOT NULL DEFAULT 0;`,
 		`ALTER TABLE batch_attachment_summaries ADD COLUMN IF NOT EXISTS ambiguous_amount NUMERIC(20,2) NOT NULL DEFAULT 0;`,
 		`ALTER TABLE batch_attachment_summaries ADD COLUMN IF NOT EXISTS conflicted_amount NUMERIC(20,2) NOT NULL DEFAULT 0;`,
+		`CREATE INDEX IF NOT EXISTS attachment_decisions_obs_tenant_strong_match_idx
+			ON attachment_decisions(tenant_id, settlement_observation_id)
+			WHERE settlement_observation_id IS NOT NULL
+			  AND decision_type IN ('MATCH_EXACT', 'MATCH_HIGH_CONFIDENCE');`,
+		`CREATE INDEX IF NOT EXISTS canonical_obs_tenant_run_idx
+			ON canonical_settlement_observations(tenant_id, ingest_run_id);`,
+		`CREATE INDEX IF NOT EXISTS canonical_obs_tenant_client_ref_lower_idx
+			ON canonical_settlement_observations(tenant_id, LOWER(client_reference_candidate))
+			WHERE client_reference_candidate IS NOT NULL;`,
+		`CREATE INDEX IF NOT EXISTS canonical_obs_tenant_batch_ref_lower_idx
+			ON canonical_settlement_observations(tenant_id, LOWER(batch_reference))
+			WHERE batch_reference IS NOT NULL;`,
+		`CREATE INDEX IF NOT EXISTS canonical_obs_tenant_client_batch_id_lower_idx
+			ON canonical_settlement_observations(tenant_id, LOWER(client_batch_id))
+			WHERE client_batch_id IS NOT NULL AND client_batch_id <> '';`,
+		`CREATE INDEX IF NOT EXISTS canonical_obs_tenant_curr_amt_ts_idx
+			ON canonical_settlement_observations(tenant_id, currency_code, amount, observation_timestamp);`,
 	}
 
 	for _, s := range stmts {
