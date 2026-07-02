@@ -3,8 +3,10 @@ package services
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"slices"
@@ -60,6 +62,14 @@ func NewEvidenceService(
 }
 
 // HandleLeafUpdate orchestrates the buffered leaf ingestion and pack generation.
+//
+// Concurrency safety: a Postgres advisory lock (pg_try_advisory_xact_lock) is
+// acquired per (tenant_id, intent_id) before the readiness check and held through
+// the entire GeneratePack call. Only one goroutine can proceed at a time for a given
+// intent; any concurrent goroutine that cannot acquire the lock logs and returns nil
+// (the winning goroutine will have generated the pack). A DB-level partial unique index
+// (evidence_packs_active_intent_unique_idx) + INSERT ON CONFLICT DO NOTHING acts as
+// a final safety net so duplicate packs are impossible even under abnormal conditions.
 func (s *EvidenceService) HandleLeafUpdate(ctx context.Context, tenantID, envelopeID, intentID, contractID, traceID string, newLeaves []models.PendingLeafCandidate) error {
 	// 0. If intentID is missing but envelopeID is present, try to resolve it from existing leaves
 	if intentID == "" && envelopeID != "" {
@@ -137,6 +147,42 @@ func (s *EvidenceService) HandleLeafUpdate(ctx context.Context, tenantID, envelo
 		return nil // Not ready yet
 	}
 
+	// ── CONCURRENCY GUARD ────────────────────────────────────────────────────
+	// Open a transaction and attempt to acquire a Postgres advisory xact lock
+	// keyed on (tenant_id, intent_id). Only one goroutine at a time can proceed
+	// past this point for a given intent. The lock is held until tx.Commit/Rollback.
+	lockTx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return fmt.Errorf("begin advisory lock tx: %w", err)
+	}
+	defer lockTx.Rollback() //nolint:errcheck
+
+	acquired, err := s.repo.AcquireIntentAdvisoryLock(ctx, lockTx, tenantID, intentID)
+	if err != nil {
+		return fmt.Errorf("advisory lock: %w", err)
+	}
+	if !acquired {
+		// Another goroutine is already generating the pack for this intent.
+		// This is not an error — it will finish the job. We return nil so the
+		// Kafka consumer can ACK the message without retry noise.
+		log.Printf("evidence.service.handle_leaf_update intent=%s advisory_lock_not_acquired — another goroutine is generating, skipping", intentID)
+		return nil
+	}
+
+	// Re-check: another process (e.g. a previous pod restart) may have already
+	// committed an ACTIVE pack while we were buffering leaves.
+	existingPacks, checkErr := s.repo.ListByIntentID(ctx, tenantID, intentID)
+	if checkErr == nil {
+		for _, ep := range existingPacks {
+			if ep.PackStatus == "ACTIVE" {
+				log.Printf("evidence.service.handle_leaf_update intent=%s pack already exists ep=%s — skipping generation", intentID, ep.EvidencePackID)
+				_ = s.pendingLeafRepo.DeleteForIntent(ctx, tenantID, intentID)
+				return nil
+			}
+		}
+	}
+	// ─────────────────────────────────────────────────────────────────────────
+
 	// 5b. Resolve contractID from buffered leaves if missing in argument
 	if contractID == "" {
 		for _, l := range leaves {
@@ -204,7 +250,8 @@ func (s *EvidenceService) HandleLeafUpdate(ctx context.Context, tenantID, envelo
 		}
 	}
 
-	// 6. Generate the pack!
+	// 6. Generate the pack — pass the lock-holding transaction so the advisory
+	//    lock remains held through the INSERT and commits atomically with the pack.
 	req := models.GenerateEvidenceRequest{
 		TenantID:                   tenantID,
 		IntentID:                   intentID,
@@ -237,9 +284,22 @@ func (s *EvidenceService) HandleLeafUpdate(ctx context.Context, tenantID, envelo
 		Currency:                   currency,
 	}
 
-	_, err = s.GeneratePack(ctx, req)
+	_, err = s.GeneratePackInTx(ctx, lockTx, req)
 	if err != nil {
+		if errors.Is(err, repositories.ErrPackAlreadyExists) {
+			// Another goroutine committed in the tiny gap between lock acquisition
+			// and INSERT. The pack exists — this is success.
+			log.Printf("evidence.service.handle_leaf_update intent=%s duplicate_pack_detected_at_insert — treating as success", intentID)
+			_ = s.pendingLeafRepo.DeleteForIntent(ctx, tenantID, intentID)
+			return nil
+		}
 		return fmt.Errorf("generate pack from buffered leaves: %w", err)
+	}
+
+	// lockTx is committed inside GeneratePackInTx (SavePackInTx commits when ownTx=false
+	// is not the case here — lockTx is passed as existingTx, so we must commit it here).
+	if err := lockTx.Commit(); err != nil {
+		return fmt.Errorf("commit advisory lock tx: %w", err)
 	}
 
 	// 7. Cleanup
@@ -292,13 +352,32 @@ func (s *EvidenceService) HandleBatchLeafUpdate(ctx context.Context, tenantID, b
 		return nil // Not ready yet
 	}
 
-	// 3. Check if we already have a pack for this batch to prevent duplicate generation
-	existing, err := s.repo.GetPackByBatchID(ctx, tenantID, batchID)
-	if err == nil && existing != nil {
-		log.Printf("evidence.service.batch_readiness_check batch=%s pack already exists — skipping generation", batchID)
-		// Cleanup anyway as leaves are no longer needed
-		return s.pendingLeafRepo.DeleteForBatch(ctx, tenantID, batchID)
+	// ── CONCURRENCY GUARD ────────────────────────────────────────────────────
+	// Acquire a Postgres advisory xact lock keyed on (tenant_id, batch_id).
+	// Only one goroutine at a time can proceed past this point for a given batch.
+	lockTx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return fmt.Errorf("begin batch advisory lock tx: %w", err)
 	}
+	defer lockTx.Rollback() //nolint:errcheck
+
+	acquired, err := s.repo.AcquireBatchAdvisoryLock(ctx, lockTx, tenantID, batchID)
+	if err != nil {
+		return fmt.Errorf("batch advisory lock: %w", err)
+	}
+	if !acquired {
+		log.Printf("evidence.service.handle_batch_leaf_update batch=%s advisory_lock_not_acquired — another goroutine is generating, skipping", batchID)
+		return nil
+	}
+
+	// Re-check inside the lock: another process may have already committed a pack.
+	existing, existErr := s.repo.GetPackByBatchID(ctx, tenantID, batchID)
+	if existErr == nil && existing != nil {
+		log.Printf("evidence.service.batch_readiness_check batch=%s pack already exists — skipping generation", batchID)
+		_ = s.pendingLeafRepo.DeleteForBatch(ctx, tenantID, batchID)
+		return nil
+	}
+	// ─────────────────────────────────────────────────────────────────────────
 
 	// We only generate if all leaves are present AND we have received the final completion signal.
 	if !isFinal {
@@ -380,9 +459,18 @@ func (s *EvidenceService) HandleBatchLeafUpdate(ctx context.Context, tenantID, b
 		Currency:                   currency,
 	}
 
-	_, err = s.GenerateBatchPack(ctx, req)
+	_, err = s.GenerateBatchPackInTx(ctx, lockTx, req)
 	if err != nil {
+		if errors.Is(err, repositories.ErrPackAlreadyExists) {
+			log.Printf("evidence.service.handle_batch_leaf_update batch=%s duplicate_pack_detected_at_insert — treating as success", batchID)
+			_ = s.pendingLeafRepo.DeleteForBatch(ctx, tenantID, batchID)
+			return nil
+		}
 		return fmt.Errorf("generate pack from buffered batch leaves: %w", err)
+	}
+
+	if err := lockTx.Commit(); err != nil {
+		return fmt.Errorf("commit batch advisory lock tx: %w", err)
 	}
 
 	// Cleanup
@@ -390,8 +478,16 @@ func (s *EvidenceService) HandleBatchLeafUpdate(ctx context.Context, tenantID, b
 }
 
 // GeneratePack is the core of Service 6 (spec §13 steps 1–11).
-// evidence_pack_id is generated only here. All other IDs come from upstream.
+// It delegates to GeneratePackInTx with a nil transaction.
 func (s *EvidenceService) GeneratePack(ctx context.Context, req models.GenerateEvidenceRequest) (*models.EvidencePack, error) {
+	return s.GeneratePackInTx(ctx, nil, req)
+}
+
+// GeneratePackInTx is the transaction-aware core of GeneratePack.
+// When packTx is non-nil (advisory lock path), SavePackInTx reuses the transaction
+// keeping the lock held atomically through the INSERT. Caller must call tx.Commit().
+// When packTx is nil, SavePackInTx opens and commits its own transaction.
+func (s *EvidenceService) GeneratePackInTx(ctx context.Context, packTx *sql.Tx, req models.GenerateEvidenceRequest) (*models.EvidencePack, error) {
 	// --- Step 2: validate scope ---
 	if strings.TrimSpace(req.TenantID) == "" || strings.TrimSpace(req.IntentID) == "" {
 		return nil, fmt.Errorf("tenant_id and intent_id are required")
@@ -646,7 +742,7 @@ func (s *EvidenceService) GeneratePack(ctx context.Context, req models.GenerateE
 		CreatedAt:     now,
 	}
 
-	if err := s.repo.SavePack(ctx, pack, objectRef, outboxEvt); err != nil {
+	if err := s.repo.SavePackInTx(ctx, packTx, pack, objectRef, outboxEvt); err != nil {
 		log.Printf("evidence.service.generate_pack save_failed pack=%s err=%v", packID, err)
 		return nil, fmt.Errorf("save pack metadata: %w", err)
 	}
@@ -659,8 +755,14 @@ func (s *EvidenceService) GeneratePack(ctx context.Context, req models.GenerateE
 	return pack, nil
 }
 
+
 // GenerateBatchPack generates an evidence pack bound to a batch.
 func (s *EvidenceService) GenerateBatchPack(ctx context.Context, req models.GenerateEvidenceRequest) (*models.EvidencePack, error) {
+	return s.GenerateBatchPackInTx(ctx, nil, req)
+}
+
+// GenerateBatchPackInTx is the transaction-aware variant of GenerateBatchPack.
+func (s *EvidenceService) GenerateBatchPackInTx(ctx context.Context, packTx *sql.Tx, req models.GenerateEvidenceRequest) (*models.EvidencePack, error) {
 	if strings.TrimSpace(req.TenantID) == "" || strings.TrimSpace(req.ClientBatchID) == "" {
 		return nil, fmt.Errorf("tenant_id and batch_id are required")
 	}
@@ -799,7 +901,7 @@ func (s *EvidenceService) GenerateBatchPack(ctx context.Context, req models.Gene
 		CreatedAt:     now,
 	}
 
-	if err := s.repo.SavePack(ctx, pack, objectRef, outboxEvt); err != nil {
+	if err := s.repo.SavePackInTx(ctx, packTx, pack, objectRef, outboxEvt); err != nil {
 		log.Printf("evidence.service.generate_batch_pack save_failed pack=%s err=%v", packID, err)
 		return nil, fmt.Errorf("save batch pack metadata: %w", err)
 	}

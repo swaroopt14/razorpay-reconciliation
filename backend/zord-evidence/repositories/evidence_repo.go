@@ -4,12 +4,19 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"hash/fnv"
 	"time"
 	"zord-evidence/models"
 
 	"github.com/shopspring/decimal"
 )
+
+// ErrPackAlreadyExists is returned when a concurrent goroutine already committed
+// an ACTIVE evidence pack for the same (tenant_id, intent_id) or (tenant_id, batch_id).
+// The caller should treat this as a successful no-op — the pack exists, mission accomplished.
+var ErrPackAlreadyExists = errors.New("evidence pack already exists for this intent/batch")
 
 type EvidenceRepository struct {
 	db *sql.DB
@@ -26,21 +33,88 @@ func nullStr(s string) sql.NullString {
 	return sql.NullString{String: s, Valid: true}
 }
 
+// AcquireIntentAdvisoryLock attempts to acquire a Postgres session-level advisory
+// lock scoped to the given (tenantID, intentID) pair within an existing transaction.
+// The lock is automatically released when the transaction commits or rolls back,
+// so no explicit unlock is needed.
+//
+// Returns true if the lock was acquired (this goroutine "won"), false if another
+// session already holds it (another goroutine is generating the same pack).
+func (r *EvidenceRepository) AcquireIntentAdvisoryLock(ctx context.Context, tx *sql.Tx, tenantID, intentID string) (bool, error) {
+	lockKey := advisoryLockKey(tenantID + ":intent:" + intentID)
+	var acquired bool
+	err := tx.QueryRowContext(ctx, `SELECT pg_try_advisory_xact_lock($1)`, lockKey).Scan(&acquired)
+	if err != nil {
+		return false, fmt.Errorf("acquire intent advisory lock: %w", err)
+	}
+	return acquired, nil
+}
+
+// AcquireBatchAdvisoryLock is the batch-scoped equivalent of AcquireIntentAdvisoryLock.
+func (r *EvidenceRepository) AcquireBatchAdvisoryLock(ctx context.Context, tx *sql.Tx, tenantID, batchID string) (bool, error) {
+	lockKey := advisoryLockKey(tenantID + ":batch:" + batchID)
+	var acquired bool
+	err := tx.QueryRowContext(ctx, `SELECT pg_try_advisory_xact_lock($1)`, lockKey).Scan(&acquired)
+	if err != nil {
+		return false, fmt.Errorf("acquire batch advisory lock: %w", err)
+	}
+	return acquired, nil
+}
+
+// BeginTx exposes a transaction begin so the service layer can open a tx,
+// acquire the advisory lock, and pass the same tx to SavePack.
+func (r *EvidenceRepository) BeginTx(ctx context.Context) (*sql.Tx, error) {
+	return r.db.BeginTx(ctx, nil)
+}
+
+// advisoryLockKey converts an arbitrary string key into a stable int64
+// suitable for pg_try_advisory_xact_lock. Uses FNV-1a 64-bit for speed and
+// low collision probability across typical intent/batch ID namespaces.
+func advisoryLockKey(key string) int64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(key))
+	// Cast to int64 — wraps on overflow, which is fine for advisory locks.
+	return int64(h.Sum64())
+}
+
 // SavePack persists the full evidence pack in a single transaction:
 //   - evidence_packs row (§14.1)
 //   - evidence_items rows (§14.2)
 //   - evidence_signatures rows
 //   - evidence_outbox_events row (for relay polling)
+//
+// If an ACTIVE pack for the same (tenant_id, intent_id) already exists (inserted
+// by a concurrent goroutine that won the race), SavePack returns ErrPackAlreadyExists
+// so the caller can treat it as a clean no-op.
 func (r *EvidenceRepository) SavePack(ctx context.Context, pack *models.EvidencePack, objectRef string, outboxEvent *models.OutboxEvent) error {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
+	return r.SavePackInTx(ctx, nil, pack, objectRef, outboxEvent)
+}
+
+// SavePackInTx is like SavePack but reuses an existing transaction (used when the
+// caller has already acquired an advisory lock inside that transaction).
+func (r *EvidenceRepository) SavePackInTx(ctx context.Context, existingTx *sql.Tx, pack *models.EvidencePack, objectRef string, outboxEvent *models.OutboxEvent) error {
+	var tx *sql.Tx
+	var err error
+	ownTx := existingTx == nil
+	if ownTx {
+		tx, err = r.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback() //nolint:errcheck
+	} else {
+		tx = existingTx
 	}
-	defer tx.Rollback()
 
 	schemaVersionsJSON, _ := json.Marshal(pack.SchemaVersions)
 
-	_, err = tx.ExecContext(ctx, `
+	// INSERT ... ON CONFLICT DO NOTHING is the last line of defence against
+	// duplicate packs. The advisory lock acquired by the service layer is the
+	// primary guard; this handles the (unlikely) scenario where two processes
+	// race before the advisory lock is in place, or during a service restart.
+	// The partial unique index evidence_packs_active_intent_unique_idx /
+	// evidence_packs_active_batch_unique_idx enforces uniqueness at the DB level.
+	res, err := tx.ExecContext(ctx, `
 INSERT INTO evidence_packs(
 	evidence_pack_id, tenant_id, intent_id, contract_id, batch_id, client_payout_ref, amount, currency, mode, pack_status, merkle_root,
 	ruleset_version, schema_versions_json, signature_alg, signature_value, object_ref,
@@ -52,7 +126,8 @@ INSERT INTO evidence_packs(
 	client_reference, attachment_decision, match_confidence,
 	value_date_check, amount_match, zord_signature,
 	created_at, updated_at
-) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39)`,
+) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39)
+ON CONFLICT DO NOTHING`,
 		pack.EvidencePackID,
 		pack.TenantID,
 		nullStr(pack.IntentID),
@@ -96,6 +171,14 @@ INSERT INTO evidence_packs(
 	if err != nil {
 		return fmt.Errorf("insert pack: %w", err)
 	}
+	// If zero rows were affected, a concurrent goroutine already inserted an
+	// ACTIVE pack for this intent/batch. Treat it as a clean no-op.
+	if n, _ := res.RowsAffected(); n == 0 {
+		if ownTx {
+			_ = tx.Rollback()
+		}
+		return ErrPackAlreadyExists
+	}
 
 	for i, item := range pack.Items {
 		_, err = tx.ExecContext(ctx, `
@@ -131,7 +214,10 @@ VALUES($1,$2,$3,$4,$5)`,
 		}
 	}
 
-	return tx.Commit()
+	if ownTx {
+		return tx.Commit()
+	}
+	return nil
 }
 
 func (r *EvidenceRepository) SaveToOutbox(ctx context.Context, tx *sql.Tx, event *models.OutboxEvent) error {
