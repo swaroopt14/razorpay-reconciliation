@@ -8,8 +8,8 @@ import Image from 'next/image'
 import { ZordLogo } from '@/components/ZordLogo'
 
 const primaryLinks = [
-  { label: 'Products', href: '/#product' },
-  { label: 'Coverage', href: '/final-landing/solutions' },
+  { label: 'Platform', href: '/#product' },
+  { label: 'Integrations', href: '/final-landing/solutions' },
   { label: 'Developers', href: '/final-landing/pricing' },
   { label: 'Company', href: '/final-landing/resources' },
   { label: 'Demo', href: '/demo' },
@@ -31,7 +31,7 @@ export function LandingHeroTopBar() {
           className="shrink-0 flex items-center gap-2"
           aria-label="Zord home"
         >
-          <span className="font-extrabold text-2xl tracking-tighter text-[#111]">arealis</span>
+          <span className="font-extrabold text-2xl tracking-tighter text-[#111]">zord</span>
         </Link>
 
         <nav
