@@ -10,6 +10,7 @@ import (
 	"time"
 	"zord-evidence/models"
 
+	"github.com/lib/pq"
 	"github.com/shopspring/decimal"
 )
 
@@ -106,14 +107,133 @@ func (r *EvidenceRepository) SavePackInTx(ctx context.Context, existingTx *sql.T
 		tx = existingTx
 	}
 
+	if err := r.savePackCoreInTx(ctx, tx, pack, objectRef, outboxEvent); err != nil {
+		if ownTx && errors.Is(err, ErrPackAlreadyExists) {
+			_ = tx.Rollback()
+		}
+		return err
+	}
+
+	if ownTx {
+		return tx.Commit()
+	}
+	return nil
+}
+
+// SavePackDraftInTx persists a pack in DRAFT status plus archive metadata and inclusion
+// proofs in a single transaction. Outbox events are deferred until ActivatePackInTx.
+func (r *EvidenceRepository) SavePackDraftInTx(
+	ctx context.Context,
+	existingTx *sql.Tx,
+	pack *models.EvidencePack,
+	objectRef string,
+	archive *models.EvidenceArchive,
+	proofs []models.InclusionProof,
+) error {
+	var tx *sql.Tx
+	ownTx := existingTx == nil
+	if ownTx {
+		var err error
+		tx, err = r.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback() //nolint:errcheck
+	} else {
+		tx = existingTx
+	}
+
+	if err := r.savePackCoreInTx(ctx, tx, pack, objectRef, nil); err != nil {
+		if ownTx && errors.Is(err, ErrPackAlreadyExists) {
+			_ = tx.Rollback()
+		}
+		return err
+	}
+	if archive != nil {
+		if err := r.saveArchiveInTx(ctx, tx, archive); err != nil {
+			return fmt.Errorf("save archive draft: %w", err)
+		}
+	}
+	if err := r.saveInclusionProofsInTx(ctx, tx, pack.EvidencePackID, proofs); err != nil {
+		return fmt.Errorf("save inclusion proofs draft: %w", err)
+	}
+
+	if ownTx {
+		return tx.Commit()
+	}
+	return nil
+}
+
+// ActivatePackInTx marks a DRAFT pack ACTIVE, finalizes archive hash, and writes the outbox event.
+func (r *EvidenceRepository) ActivatePackInTx(
+	ctx context.Context,
+	existingTx *sql.Tx,
+	packID, objectRef, archiveHash string,
+	outboxEvent *models.OutboxEvent,
+) error {
+	var tx *sql.Tx
+	ownTx := existingTx == nil
+	if ownTx {
+		var err error
+		tx, err = r.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback() //nolint:errcheck
+	} else {
+		tx = existingTx
+	}
+
+	res, err := tx.ExecContext(ctx, `
+UPDATE evidence_packs
+SET pack_status=$2, object_ref=$3, updated_at=NOW()
+WHERE evidence_pack_id=$1 AND pack_status=$4`,
+		packID, models.PackStatusActive, objectRef, models.PackStatusDraft,
+	)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return ErrPackAlreadyExists
+		}
+		return fmt.Errorf("activate pack: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("activate pack: draft row not found for %s", packID)
+	}
+
+	if archiveHash != "" {
+		_, err = tx.ExecContext(ctx, `
+UPDATE evidence_archives
+SET archive_hash=$2
+WHERE evidence_pack_id=$1`, packID, archiveHash)
+		if err != nil {
+			return fmt.Errorf("finalize archive hash: %w", err)
+		}
+	}
+
+	if outboxEvent != nil {
+		if err := r.SaveToOutbox(ctx, tx, outboxEvent); err != nil {
+			return fmt.Errorf("save to outbox: %w", err)
+		}
+	}
+
+	if ownTx {
+		return tx.Commit()
+	}
+	return nil
+}
+
+func (r *EvidenceRepository) savePackCoreInTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	pack *models.EvidencePack,
+	objectRef string,
+	outboxEvent *models.OutboxEvent,
+) error {
 	schemaVersionsJSON, _ := json.Marshal(pack.SchemaVersions)
 
 	// INSERT ... ON CONFLICT DO NOTHING is the last line of defence against
-	// duplicate packs. The advisory lock acquired by the service layer is the
-	// primary guard; this handles the (unlikely) scenario where two processes
-	// race before the advisory lock is in place, or during a service restart.
-	// The partial unique index evidence_packs_active_intent_unique_idx /
-	// evidence_packs_active_batch_unique_idx enforces uniqueness at the DB level.
+	// duplicate packs. The partial unique index on ACTIVE rows is enforced at
+	// activation time via ActivatePackInTx.
 	res, err := tx.ExecContext(ctx, `
 INSERT INTO evidence_packs(
 	evidence_pack_id, tenant_id, intent_id, contract_id, batch_id, client_payout_ref, amount, currency, mode, pack_status, merkle_root,
@@ -137,7 +257,7 @@ ON CONFLICT DO NOTHING`,
 		pack.Amount,
 		pack.Currency,
 		pack.Mode,
-		"ACTIVE",
+		pack.PackStatus,
 		pack.MerkleRoot,
 		pack.RulesetVersion,
 		schemaVersionsJSON,
@@ -171,12 +291,7 @@ ON CONFLICT DO NOTHING`,
 	if err != nil {
 		return fmt.Errorf("insert pack: %w", err)
 	}
-	// If zero rows were affected, a concurrent goroutine already inserted an
-	// ACTIVE pack for this intent/batch. Treat it as a clean no-op.
 	if n, _ := res.RowsAffected(); n == 0 {
-		if ownTx {
-			_ = tx.Rollback()
-		}
 		return ErrPackAlreadyExists
 	}
 
@@ -214,10 +329,38 @@ VALUES($1,$2,$3,$4,$5)`,
 		}
 	}
 
-	if ownTx {
-		return tx.Commit()
+	return nil
+}
+
+func (r *EvidenceRepository) saveArchiveInTx(ctx context.Context, tx *sql.Tx, a *models.EvidenceArchive) error {
+	_, err := tx.ExecContext(ctx, `
+INSERT INTO evidence_archives(archive_id, evidence_pack_id, tenant_id, object_ref,
+	encryption_key_id, archive_hash, archive_version, created_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+		a.ArchiveID, a.EvidencePackID, a.TenantID, a.ObjectRef,
+		nullStr(a.EncryptionKeyID), a.ArchiveHash, a.ArchiveVersion, a.CreatedAt,
+	)
+	return err
+}
+
+func (r *EvidenceRepository) saveInclusionProofsInTx(ctx context.Context, tx *sql.Tx, packID string, proofs []models.InclusionProof) error {
+	for _, p := range proofs {
+		pathJSON, _ := json.Marshal(p.ProofPath)
+		_, err := tx.ExecContext(ctx, `
+INSERT INTO merkle_inclusion_proofs(evidence_pack_id,leaf_index, leaf_hash, proof_path_json, created_at)
+VALUES($1,$2,$3,$4,$5)
+ON CONFLICT (evidence_pack_id, leaf_index) DO NOTHING`,
+			packID, p.LeafIndex, p.LeafHash, pathJSON, p.CreatedAt)
+		if err != nil {
+			return fmt.Errorf("insert inclusion proof: %w", err)
+		}
 	}
 	return nil
+}
+
+func isUniqueViolation(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "23505"
 }
 
 func (r *EvidenceRepository) SaveToOutbox(ctx context.Context, tx *sql.Tx, event *models.OutboxEvent) error {
@@ -656,6 +799,17 @@ func (r *EvidenceRepository) GetPackByBatchID(ctx context.Context, tenantID, bat
 // MarkPackSuperseded updates old pack's status to SUPERSEDED (spec §23 Phase 5).
 func (r *EvidenceRepository) MarkPackSuperseded(ctx context.Context, oldPackID, newPackID string) error {
 	_, err := r.db.ExecContext(ctx, `
+		UPDATE evidence_packs SET pack_status='SUPERSEDED', updated_at=NOW()
+		WHERE evidence_pack_id=$1`, oldPackID)
+	if err != nil {
+		return fmt.Errorf("mark superseded: %w", err)
+	}
+	return nil
+}
+
+// MarkPackSupersededInTx is the transaction-scoped variant of MarkPackSuperseded.
+func (r *EvidenceRepository) MarkPackSupersededInTx(ctx context.Context, tx *sql.Tx, oldPackID, newPackID string) error {
+	_, err := tx.ExecContext(ctx, `
 		UPDATE evidence_packs SET pack_status='SUPERSEDED', updated_at=NOW()
 		WHERE evidence_pack_id=$1`, oldPackID)
 	if err != nil {

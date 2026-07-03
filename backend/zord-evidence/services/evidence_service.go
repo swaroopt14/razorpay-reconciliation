@@ -179,11 +179,12 @@ func (s *EvidenceService) HandleLeafUpdate(ctx context.Context, tenantID, envelo
 		log.Printf("evidence.service.readiness_check intent=%s ready during shutdown — leaves buffered, pack deferred", intentID)
 		return nil
 	}
+	resolvedContractID := resolveContractIDFromLeaves(leaves, contractID)
 	s.intentQueue <- IntentJob{
 		TenantID:   tenantID,
 		EnvelopeID: envelopeID,
 		IntentID:   intentID,
-		ContractID: contractID,
+		ContractID: resolvedContractID,
 		TraceID:    traceID,
 	}
 
@@ -368,7 +369,7 @@ func (s *EvidenceService) processIntentJob(ctx context.Context, job IntentJob) e
 	existingPacks, checkErr := s.repo.ListByIntentID(ctx, job.TenantID, job.IntentID)
 	if checkErr == nil {
 		for _, ep := range existingPacks {
-			if ep.PackStatus == "ACTIVE" {
+			if ep.PackStatus == models.PackStatusActive {
 				log.Printf("evidence.service.process_intent intent=%s pack already exists ep=%s — skipping generation", job.IntentID, ep.EvidencePackID)
 				_ = s.pendingLeafRepo.DeleteForIntent(ctx, job.TenantID, job.IntentID)
 				return nil
@@ -390,6 +391,7 @@ func (s *EvidenceService) processIntentJob(ctx context.Context, job IntentJob) e
 	var amount decimal.Decimal
 	var currency string
 	var batchID string
+	contractID := resolveContractIDFromLeaves(leaves, job.ContractID)
 
 	for _, l := range leaves {
 		if l.ClientBatchID != nil && *l.ClientBatchID != "" {
@@ -426,7 +428,7 @@ func (s *EvidenceService) processIntentJob(ctx context.Context, job IntentJob) e
 		ClientBatchID:              batchID,
 		EnvelopeID:                 job.EnvelopeID,
 		TraceID:                    job.TraceID,
-		ContractID:                 job.ContractID,
+		ContractID:                 contractID,
 		Mode:                       "INTELLIGENCE_ATTACH",
 		RulesetVersion:             "v1",
 		SchemaVersions:             map[string]string{"intent_schema": "v1", "outcome_schema": "v1", "contract_schema": "v1", "attachment_schema": "v1"},
@@ -467,6 +469,22 @@ func (s *EvidenceService) processIntentJob(ctx context.Context, job IntentJob) e
 	}
 
 	return s.pendingLeafRepo.DeleteForIntent(ctx, job.TenantID, job.IntentID)
+}
+
+// resolveContractIDFromLeaves returns contractID from the Kafka handler when present,
+// otherwise the first non-empty contract_id stored on buffered pending leaves.
+// Readiness is often triggered by the outcome consumer, whose relay envelope may omit
+// contract_id even though intent/edge leaves already captured it in Postgres.
+func resolveContractIDFromLeaves(leaves []models.PendingLeafCandidate, fromHandler string) string {
+	if strings.TrimSpace(fromHandler) != "" {
+		return strings.TrimSpace(fromHandler)
+	}
+	for _, l := range leaves {
+		if l.ContractID != nil && strings.TrimSpace(*l.ContractID) != "" {
+			return strings.TrimSpace(*l.ContractID)
+		}
+	}
+	return ""
 }
 
 // processBatchJob executes the pack generation for a ready batch.
@@ -673,7 +691,7 @@ func (s *EvidenceService) GeneratePackInTx(ctx context.Context, packTx *sql.Tx, 
 		ContractID:       req.ContractID,
 		ClientBatchID:    req.ClientBatchID,
 		Mode:             req.Mode,
-		PackStatus:       "ACTIVE",
+		PackStatus:       models.PackStatusDraft,
 		Items:            items,
 		MerkleRoot:       merkleRoot,
 		RulesetVersion:   req.RulesetVersion,
@@ -711,7 +729,7 @@ func (s *EvidenceService) GeneratePackInTx(ctx context.Context, packTx *sql.Tx, 
 
 	pack.ComputeCompletenessMetadata()
 
-	// --- Step 10a: encrypt and store archive body (§14.3 / §15.2) ---
+	// --- Step 10: encrypt archive (in memory); persist DB-first, then S3, then activate ---
 	archive, err := json.Marshal(pack)
 	if err != nil {
 		return nil, fmt.Errorf("marshal evidence pack: %w", err)
@@ -721,57 +739,11 @@ func (s *EvidenceService) GeneratePackInTx(ctx context.Context, packTx *sql.Tx, 
 		return nil, fmt.Errorf("encrypt evidence archive: %w", err)
 	}
 
-	// Object key uses intent_id as primary path anchor (contract_id may be absent in pivot mode)
 	anchorID := req.IntentID
 	if req.ContractID != "" {
 		anchorID = req.ContractID
 	}
 	objectKey := fmt.Sprintf("%s/%s/%s/%s.json.enc", s.archivePrefix, req.TenantID, anchorID, packID)
-	objectRef, err := s.s3.PutObject(ctx, objectKey, encryptedArchive)
-	if err != nil {
-		return nil, fmt.Errorf("store archive: %w", err)
-	}
-
-	// --- Step 10b: persist metadata and outbox event to Postgres ---
-	log.Printf("evidence.service.generate_pack saving metadata and outbox event pack=%s intent=%s", packID, req.IntentID)
-
-	// --- Persist §14.3 archive metadata row ---
-	archiveHash := sha256Hex(encryptedArchive)
-	archiveRecord := &models.EvidenceArchive{
-		ArchiveID:      "arc_" + uuid.NewString(),
-		EvidencePackID: packID,
-		TenantID:       req.TenantID,
-		ObjectRef:      objectRef,
-		ArchiveHash:    archiveHash,
-		ArchiveVersion: "v1",
-		CreatedAt:      now,
-	}
-	if err := s.repo.SaveArchive(ctx, archiveRecord); err != nil {
-		return nil, fmt.Errorf("save archive record failed: %w", err)
-	}
-
-	// --- Persist §14.4 inclusion proofs ---
-	proofPaths := utils.BuildInclusionProofs(leaves)
-	inclusionProofs := make([]models.InclusionProof, 0, len(leaves))
-	for _, leaf := range leaves {
-		inclusionProofs = append(inclusionProofs, models.InclusionProof{
-			EvidencePackID: packID,
-			LeafIndex:      leaf.Index,
-			LeafHash:       leaf.LeafHash,
-			ProofPath:      proofPaths[leaf.Index],
-			CreatedAt:      now,
-		})
-	}
-	if err := s.repo.SaveInclusionProofs(ctx, packID, inclusionProofs); err != nil {
-		return nil, fmt.Errorf("save inclusion proofs failed: %w", err)
-	}
-
-	// --- Mark old pack superseded if this is a lifecycle version update (§23 Phase 5) ---
-	if req.SupersedesPackID != "" {
-		if err := s.repo.MarkPackSuperseded(ctx, req.SupersedesPackID, packID); err != nil {
-			fmt.Printf("warn: mark superseded pack failed: %v\n", err)
-		}
-	}
 
 	// --- Compute Completeness Metadata for Event ---
 	hasRawSettlementFile := false
@@ -823,7 +795,6 @@ func (s *EvidenceService) GeneratePackInTx(ctx context.Context, packTx *sql.Tx, 
 		}
 	}
 
-	// --- Step 11: prepare outbox event for relay polling ---
 	eventType := kafka.EventPackCreated
 	if req.SupersedesPackID != "" {
 		eventType = kafka.EventPackReversalSupersed
@@ -861,17 +832,89 @@ func (s *EvidenceService) GeneratePackInTx(ctx context.Context, packTx *sql.Tx, 
 		CreatedAt:     now,
 	}
 
-	if err := s.repo.SavePackInTx(ctx, packTx, pack, objectRef, outboxEvt); err != nil {
+	log.Printf("evidence.service.generate_pack persisting draft pack=%s intent=%s", packID, req.IntentID)
+	if err := s.persistPackDBFirst(ctx, packTx, pack, leaves, objectKey, encryptedArchive, now, outboxEvt, req.SupersedesPackID); err != nil {
 		log.Printf("evidence.service.generate_pack save_failed pack=%s err=%v", packID, err)
-		return nil, fmt.Errorf("save pack metadata: %w", err)
+		return nil, err
 	}
 	log.Printf("evidence.service.generate_pack save_ok pack=%s", packID)
 
-	// Persist proof enrichment columns (status, score, components, signatures) immediately.
-	// This ensures proof_status, proof_score, and proof_components_json are never stale.
 	s.writeProofEnrichment(ctx, pack)
 
 	return pack, nil
+}
+
+func (s *EvidenceService) persistPackDBFirst(
+	ctx context.Context,
+	packTx *sql.Tx,
+	pack *models.EvidencePack,
+	leaves []utils.MerkleLeaf,
+	objectKey string,
+	encryptedArchive []byte,
+	now time.Time,
+	outboxEvt *models.OutboxEvent,
+	supersedesPackID string,
+) error {
+	plannedRef := s.s3.ObjectRef(objectKey)
+	pack.PackStatus = models.PackStatusDraft
+	archiveHash := sha256Hex(encryptedArchive)
+
+	archiveRecord := &models.EvidenceArchive{
+		ArchiveID:      "arc_" + uuid.NewString(),
+		EvidencePackID: pack.EvidencePackID,
+		TenantID:       pack.TenantID,
+		ObjectRef:      plannedRef,
+		ArchiveHash:    archiveHash,
+		ArchiveVersion: "v1",
+		CreatedAt:      now,
+	}
+
+	proofPaths := utils.BuildInclusionProofs(leaves)
+	inclusionProofs := make([]models.InclusionProof, 0, len(leaves))
+	for _, leaf := range leaves {
+		inclusionProofs = append(inclusionProofs, models.InclusionProof{
+			EvidencePackID: pack.EvidencePackID,
+			LeafIndex:      leaf.Index,
+			LeafHash:       leaf.LeafHash,
+			ProofPath:      proofPaths[leaf.Index],
+			CreatedAt:      now,
+		})
+	}
+
+	if err := s.repo.SavePackDraftInTx(ctx, packTx, pack, plannedRef, archiveRecord, inclusionProofs); err != nil {
+		if errors.Is(err, repositories.ErrPackAlreadyExists) {
+			return err
+		}
+		return fmt.Errorf("save pack draft: %w", err)
+	}
+
+	objectRef, err := s.s3.PutObject(ctx, objectKey, encryptedArchive)
+	if err != nil {
+		return fmt.Errorf("store archive: %w", err)
+	}
+
+	if err := s.repo.ActivatePackInTx(ctx, packTx, pack.EvidencePackID, objectRef, archiveHash, outboxEvt); err != nil {
+		if errors.Is(err, repositories.ErrPackAlreadyExists) {
+			return err
+		}
+		return fmt.Errorf("activate pack: %w", err)
+	}
+
+	pack.PackStatus = models.PackStatusActive
+
+	if supersedesPackID != "" {
+		var err error
+		if packTx != nil {
+			err = s.repo.MarkPackSupersededInTx(ctx, packTx, supersedesPackID, pack.EvidencePackID)
+		} else {
+			err = s.repo.MarkPackSuperseded(ctx, supersedesPackID, pack.EvidencePackID)
+		}
+		if err != nil {
+			log.Printf("warn: mark superseded pack failed: %v", err)
+		}
+	}
+
+	return nil
 }
 
 
@@ -931,7 +974,7 @@ func (s *EvidenceService) GenerateBatchPackInTx(ctx context.Context, packTx *sql
 		TenantID:       req.TenantID,
 		ClientBatchID:  req.ClientBatchID,
 		Mode:           req.Mode,
-		PackStatus:     "ACTIVE",
+		PackStatus:     models.PackStatusDraft,
 		Items:          items,
 		MerkleRoot:     merkleRoot,
 		RulesetVersion: req.RulesetVersion,
@@ -961,41 +1004,6 @@ func (s *EvidenceService) GenerateBatchPackInTx(ctx context.Context, packTx *sql
 	}
 
 	objectKey := fmt.Sprintf("%s/%s/batch/%s/%s.json.enc", s.archivePrefix, req.TenantID, req.ClientBatchID, packID)
-	objectRef, err := s.s3.PutObject(ctx, objectKey, encryptedArchive)
-	if err != nil {
-		return nil, fmt.Errorf("store archive: %w", err)
-	}
-
-	log.Printf("evidence.service.generate_batch_pack saving metadata and outbox event pack=%s batch=%s", packID, req.ClientBatchID)
-
-	archiveHash := sha256Hex(encryptedArchive)
-	archiveRecord := &models.EvidenceArchive{
-		ArchiveID:      "arc_" + uuid.NewString(),
-		EvidencePackID: packID,
-		TenantID:       req.TenantID,
-		ObjectRef:      objectRef,
-		ArchiveHash:    archiveHash,
-		ArchiveVersion: "v1",
-		CreatedAt:      now,
-	}
-	if err := s.repo.SaveArchive(ctx, archiveRecord); err != nil {
-		return nil, fmt.Errorf("save archive record failed: %w", err)
-	}
-
-	proofPaths := utils.BuildInclusionProofs(leaves)
-	inclusionProofs := make([]models.InclusionProof, 0, len(leaves))
-	for _, leaf := range leaves {
-		inclusionProofs = append(inclusionProofs, models.InclusionProof{
-			EvidencePackID: packID,
-			LeafIndex:      leaf.Index,
-			LeafHash:       leaf.LeafHash,
-			ProofPath:      proofPaths[leaf.Index],
-			CreatedAt:      now,
-		})
-	}
-	if err := s.repo.SaveInclusionProofs(ctx, packID, inclusionProofs); err != nil {
-		return nil, fmt.Errorf("save inclusion proofs failed: %w", err)
-	}
 
 	packEvent := kafka.PackEvent{
 		EventType:      kafka.EventPackCreated,
@@ -1013,20 +1021,20 @@ func (s *EvidenceService) GenerateBatchPackInTx(ctx context.Context, packTx *sql
 		TraceID:       req.TraceID,
 		TenantID:      req.TenantID,
 		AggregateType: "evidence_pack",
-		AggregateID:   req.ClientBatchID, // using batchID as the aggregate_id since it's a batch pack
+		AggregateID:   req.ClientBatchID,
 		EventType:     "evidence.batch.pack.created",
 		Payload:       payloadBytes,
 		Status:        "PENDING",
 		CreatedAt:     now,
 	}
 
-	if err := s.repo.SavePackInTx(ctx, packTx, pack, objectRef, outboxEvt); err != nil {
+	log.Printf("evidence.service.generate_batch_pack persisting draft pack=%s batch=%s", packID, req.ClientBatchID)
+	if err := s.persistPackDBFirst(ctx, packTx, pack, leaves, objectKey, encryptedArchive, now, outboxEvt, ""); err != nil {
 		log.Printf("evidence.service.generate_batch_pack save_failed pack=%s err=%v", packID, err)
-		return nil, fmt.Errorf("save batch pack metadata: %w", err)
+		return nil, err
 	}
 	log.Printf("evidence.service.generate_batch_pack save_ok pack=%s", packID)
 
-	// Persist proof enrichment columns immediately after batch pack generation.
 	s.writeProofEnrichment(ctx, pack)
 
 	return pack, nil

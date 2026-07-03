@@ -24,6 +24,11 @@ const (
 	LeafTypeFileContentHash        = "FILE_CONTENT_HASH"
 )
 
+const (
+	PackStatusDraft = "DRAFT"
+	PackStatusActive = "ACTIVE"
+)
+
 // RequiredLeafTypes are the 8 externally-supplied leaves that must be present
 // before GeneratePack() is triggered. Leaf 9 (FINAL_EVIDENCE_VIEW) is auto-added.
 var RequiredLeafTypes = []string{
