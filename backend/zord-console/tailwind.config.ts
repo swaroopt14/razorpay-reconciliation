@@ -93,6 +93,15 @@ const config: Config = {
       borderRadius: {
         'zord': '4px', // Consistent 4px radius
       },
+      keyframes: {
+        'cinematic-shimmer': {
+          '0%, 100%': { transform: 'translateX(-130%)' },
+          '50%': { transform: 'translateX(130%)' },
+        },
+      },
+      animation: {
+        'cinematic-shimmer': 'cinematic-shimmer 4.8s ease-in-out infinite',
+      },
     },
   },
   plugins: [],

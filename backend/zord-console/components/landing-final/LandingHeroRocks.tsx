@@ -1,7 +1,7 @@
 'use client'
 
 import Image from 'next/image'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 const ROCK_ASSETS = {
   left: {
@@ -36,6 +36,9 @@ const ROCK_ASSETS = {
 
 type MaskPoint = { x: number; y: number }
 
+/** Soft lag so moss trails the cursor instead of snapping. */
+const MASK_LERP = 0.065
+
 function buildMossMask(point: MaskPoint, radius: number, active: boolean) {
   if (!active) {
     return 'radial-gradient(circle 0px at 50% 50%, transparent 0%, transparent 100%)'
@@ -48,26 +51,47 @@ function InteractiveRock({ side }: { side: keyof typeof ROCK_ASSETS }) {
   const asset = ROCK_ASSETS[side]
   const containerRef = useRef<HTMLDivElement>(null)
   const [maskActive, setMaskActive] = useState(false)
+  const targetRef = useRef<MaskPoint>({ x: 0, y: 0 })
+  const smoothRef = useRef<MaskPoint>({ x: 0, y: 0 })
   const [maskPoint, setMaskPoint] = useState<MaskPoint>({ x: 0, y: 0 })
 
-  const updateMaskPoint = useCallback((clientX: number, clientY: number) => {
+  const updateTarget = useCallback((clientX: number, clientY: number) => {
     const container = containerRef.current
     if (!container) return
 
     const rect = container.getBoundingClientRect()
-    setMaskPoint({
+    targetRef.current = {
       x: clientX - rect.left,
       y: clientY - rect.top,
-    })
+    }
   }, [])
 
+  useEffect(() => {
+    if (!maskActive) return
+
+    let frame = 0
+    const tick = () => {
+      const target = targetRef.current
+      const smooth = smoothRef.current
+      smooth.x += (target.x - smooth.x) * MASK_LERP
+      smooth.y += (target.y - smooth.y) * MASK_LERP
+      setMaskPoint({ x: smooth.x, y: smooth.y })
+      frame = requestAnimationFrame(tick)
+    }
+
+    frame = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frame)
+  }, [maskActive])
+
   const handlePointerEnter = (event: React.PointerEvent<HTMLDivElement>) => {
+    updateTarget(event.clientX, event.clientY)
+    smoothRef.current = { ...targetRef.current }
+    setMaskPoint({ ...targetRef.current })
     setMaskActive(true)
-    updateMaskPoint(event.clientX, event.clientY)
   }
 
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    updateMaskPoint(event.clientX, event.clientY)
+    updateTarget(event.clientX, event.clientY)
   }
 
   const handlePointerLeave = () => {
@@ -107,7 +131,7 @@ function InteractiveRock({ side }: { side: keyof typeof ROCK_ASSETS }) {
             maskImage,
             WebkitMaskRepeat: 'no-repeat',
             maskRepeat: 'no-repeat',
-            transition: 'opacity 500ms ease-in-out',
+            transition: 'opacity 900ms ease-in-out',
           }}
         />
       </div>
