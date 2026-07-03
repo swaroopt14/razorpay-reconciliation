@@ -153,6 +153,14 @@ func EnsureTables(ctx context.Context, d *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS evidence_packs_proof_status_idx
 			ON evidence_packs(proof_status)`,
 
+		// Partial unique index: only one ACTIVE pack per (tenant_id, intent_id).
+		// This is the DB-level idempotency safety net that makes duplicate active packs
+		// impossible even across pod restarts or if the advisory lock is bypassed.
+		// INSERT ON CONFLICT DO NOTHING in SavePackInTx depends on this index.
+		`CREATE UNIQUE INDEX IF NOT EXISTS evidence_packs_active_intent_unique_idx
+			ON evidence_packs(tenant_id, intent_id)
+			WHERE pack_status = 'ACTIVE' AND intent_id IS NOT NULL`,
+
 		// §14.2 — leaf composition table
 		`CREATE TABLE IF NOT EXISTS evidence_items (
 			evidence_pack_id TEXT NOT NULL,

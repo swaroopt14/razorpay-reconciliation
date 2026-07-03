@@ -88,32 +88,29 @@ func (c *Consumer) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.C
 	return nil
 }
 
-func StartConsumer(ctx context.Context, brokers []string, groupID, topic string, handler MessageHandler) error {
-	cfg := sarama.NewConfig()
-	cfg.Version = sarama.V2_6_0_0
-	cfg.Consumer.Offsets.Initial = sarama.OffsetOldest
-	cfg.Consumer.Group.Rebalance.Strategy = sarama.NewBalanceStrategyRoundRobin()
-
-	consumerGroup, err := sarama.NewConsumerGroup(brokers, groupID, cfg)
-	if err != nil {
-		return err
-	}
-	go func() {
-		defer consumerGroup.Close()
-		consumer := NewConsumer(handler)
-		for {
-			if err := consumerGroup.Consume(ctx, []string{topic}, consumer); err != nil {
-				log.Printf("evidence.kafka.consume_loop_error err=%v", err)
-			}
-			if ctx.Err() != nil {
-				return
-			}
-		}
-	}()
-	return nil
+// ConsumerHandle tracks a background Kafka consumer goroutine started by StartConsumer*.
+// Call Wait after cancelling the consumer context to block until the group has closed.
+type ConsumerHandle struct {
+	done chan struct{}
 }
 
-func StartConsumerForTopics(ctx context.Context, brokers []string, groupID string, topics []string, handler MessageHandler) error {
+func (h *ConsumerHandle) Wait() {
+	if h == nil {
+		return
+	}
+	<-h.done
+}
+
+func StartConsumer(ctx context.Context, brokers []string, groupID, topic string, handler MessageHandler) (*ConsumerHandle, error) {
+	return startConsumerGroup(ctx, brokers, groupID, []string{topic}, handler)
+}
+
+func StartConsumerForTopics(ctx context.Context, brokers []string, groupID string, topics []string, handler MessageHandler) (*ConsumerHandle, error) {
+	log.Printf("evidence.kafka.consumer_started group=%s topics=%v brokers=%v", groupID, topics, brokers)
+	return startConsumerGroup(ctx, brokers, groupID, topics, handler)
+}
+
+func startConsumerGroup(ctx context.Context, brokers []string, groupID string, topics []string, handler MessageHandler) (*ConsumerHandle, error) {
 	cfg := sarama.NewConfig()
 	cfg.Version = sarama.V2_6_0_0
 	cfg.Consumer.Offsets.Initial = sarama.OffsetOldest
@@ -121,13 +118,14 @@ func StartConsumerForTopics(ctx context.Context, brokers []string, groupID strin
 
 	consumerGroup, err := sarama.NewConsumerGroup(brokers, groupID, cfg)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
+	handle := &ConsumerHandle{done: make(chan struct{})}
 	go func() {
-		log.Printf("evidence.kafka.consumer_started group=%s topics=%v brokers=%v", groupID, topics, brokers)
-
+		defer close(handle.done)
 		defer consumerGroup.Close()
+
 		consumer := NewConsumer(handler)
 		for {
 			if err := consumerGroup.Consume(ctx, topics, consumer); err != nil {
@@ -139,5 +137,5 @@ func StartConsumerForTopics(ctx context.Context, brokers []string, groupID strin
 		}
 	}()
 
-	return nil
+	return handle, nil
 }

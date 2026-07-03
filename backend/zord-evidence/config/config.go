@@ -34,6 +34,7 @@ type Config struct {
 	SigningPrivateKey    string
 	ReadTimeout         time.Duration
 	WriteTimeout        time.Duration
+	ShutdownTimeout     time.Duration
 }
 
 func Load() (*Config, error) {
@@ -73,6 +74,11 @@ func Load() (*Config, error) {
 		strict = true
 	}
 
+	shutdownSec, err := strconv.Atoi(getenv("SHUTDOWN_TIMEOUT_SECONDS", "30"))
+	if err != nil || shutdownSec <= 0 {
+		shutdownSec = 30
+	}
+
 	return &Config{
 		ServiceName:         "zord-evidence",
 		HTTPPort:            port,
@@ -95,6 +101,7 @@ func Load() (*Config, error) {
 		SigningPrivateKey:   os.Getenv("EVIDENCE_SIGNING_PRIVATE_KEY_BASE64"),
 		ReadTimeout:         10 * time.Second,
 		WriteTimeout:        20 * time.Second,
+		ShutdownTimeout:     time.Duration(shutdownSec) * time.Second,
 	}, nil
 }
 

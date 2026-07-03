@@ -14,7 +14,7 @@ func StartEdgeConsumer(
 	groupID string,
 	topic string,
 	pg PackGenerator,
-) error {
+) (*ConsumerHandle, error) {
 	log.Printf("edge.consumer.start group=%s topic=%s brokers=%v", groupID, topic, brokers)
 	return StartConsumer(ctx, brokers, groupID, topic, buildEdgeHandler(pg))
 }

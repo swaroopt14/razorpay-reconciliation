@@ -16,6 +16,8 @@ import (
 type S3Store interface {
 	PutObject(ctx context.Context, key string, body []byte) (string, error)
 	GetObject(ctx context.Context, key string) ([]byte, error)
+	// ObjectRef returns the canonical s3:// URI for a key without uploading.
+	ObjectRef(key string) string
 }
 
 type InMemoryS3Store struct {
@@ -34,7 +36,11 @@ func (s *InMemoryS3Store) PutObject(_ context.Context, key string, body []byte) 
 	cp := make([]byte, len(body))
 	copy(cp, body)
 	s.items[key] = cp
-	return fmt.Sprintf("s3://%s/%s", s.bucket, key), nil
+	return s.ObjectRef(key), nil
+}
+
+func (s *InMemoryS3Store) ObjectRef(key string) string {
+	return fmt.Sprintf("s3://%s/%s", s.bucket, key)
 }
 
 func (s *InMemoryS3Store) GetObject(_ context.Context, key string) ([]byte, error) {
@@ -81,7 +87,11 @@ func (s *AWSStore) PutObject(ctx context.Context, key string, body []byte) (stri
 	if err != nil {
 		return "", fmt.Errorf("put object: %w", err)
 	}
-	return fmt.Sprintf("s3://%s/%s", s.bucket, key), nil
+	return s.ObjectRef(key), nil
+}
+
+func (s *AWSStore) ObjectRef(key string) string {
+	return fmt.Sprintf("s3://%s/%s", s.bucket, key)
 }
 
 func (s *AWSStore) GetObject(ctx context.Context, key string) ([]byte, error) {
