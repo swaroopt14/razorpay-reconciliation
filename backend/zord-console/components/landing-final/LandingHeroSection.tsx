@@ -58,9 +58,9 @@ export function LandingHeroSection() {
         animate="visible"
         className="mx-auto max-w-[1400px] px-4 pt-32 pb-16 sm:px-8 relative z-10"
       >
-        <div className="relative pt-10 pb-20 sm:pt-16 lg:px-20 text-center">
+        <div className="relative pt-10 pb-20 sm:pt-16 lg:px-20 text-center min-h-[600px] flex items-center justify-center">
           
-          <div className="relative z-10 mx-auto max-w-4xl flex flex-col items-center">
+          <div className="relative z-20 mx-auto max-w-4xl flex flex-col items-center">
             <motion.h1
               initial={initial} animate={animate} variants={variants}
               id="landing-hero-heading"
@@ -130,7 +130,7 @@ export function LandingHeroSection() {
             initial={{ opacity: 0, x: -40, y: -20, rotate: -6 }} 
             animate={{ opacity: 1, x: 0, y: 0, rotate: -6 }} 
             transition={{ delay: 0.6, duration: 1 }}
-            className="absolute left-[-2%] top-[5%] lg:left-[5%] xl:left-[2%] w-[240px] rounded-[1.25rem] bg-[#111] p-4 shadow-xl text-white hidden lg:block border border-white/10"
+            className="absolute left-[2%] md:left-[calc(50%-450px)] lg:left-[calc(50%-550px)] top-[2%] lg:top-[5%] w-[200px] md:w-[240px] rounded-[1.25rem] bg-[#111] p-4 shadow-xl text-white hidden sm:block border border-white/10 z-10 pointer-events-none"
           >
             <div className="text-[11px] font-bold mb-4 text-left">Settlement Volume</div>
             <div className="flex items-end gap-1.5 h-16">
@@ -144,7 +144,7 @@ export function LandingHeroSection() {
             initial={{ opacity: 0, x: 40, y: -20, rotate: 4 }} 
             animate={{ opacity: 1, x: 0, y: 0, rotate: 4 }} 
             transition={{ delay: 0.8, duration: 1 }}
-            className="absolute right-[-2%] top-[10%] lg:right-[5%] xl:right-[2%] w-[220px] rounded-[1.25rem] bg-white p-4 shadow-[0_20px_40px_rgba(0,0,0,0.08)] border border-black/5 hidden lg:block text-left"
+            className="absolute right-[2%] md:right-[calc(50%-450px)] lg:right-[calc(50%-550px)] top-[12%] lg:top-[10%] w-[200px] md:w-[220px] rounded-[1.25rem] bg-white p-4 shadow-2xl border border-black/5 hidden sm:block text-left z-10 pointer-events-none"
           >
             <div className="font-bold text-sm mb-1 text-[#111]">Settlement Batch</div>
             <div className="text-[10px] text-black/50 mb-3 font-mono">ID: BATCH-9082</div>
@@ -167,7 +167,7 @@ export function LandingHeroSection() {
             initial={{ opacity: 0, y: 40, rotate: -2 } as any} 
             animate={{ opacity: 1, y: 0, rotate: -2 } as any} 
             transition={{ delay: 1, duration: 1 } as any}
-            className="absolute left-[-2%] bottom-[10%] lg:left-[5%] xl:left-[8%] w-[200px] rounded-[1.25rem] bg-white p-5 shadow-[0_20px_40px_rgba(0,0,0,0.08)] border border-black/5 hidden lg:block text-left border-l-4 border-l-[#DBF33C]"
+            className="absolute left-[2%] md:left-[calc(50%-400px)] lg:left-[calc(50%-500px)] bottom-[5%] lg:bottom-[10%] w-[180px] md:w-[200px] rounded-[1.25rem] bg-white p-5 shadow-2xl border border-black/5 hidden sm:block text-left border-l-4 border-l-[#DBF33C] z-10 pointer-events-none"
           >
             <div className="text-xs font-bold text-black mb-4">Connector Health</div>
             <div className="space-y-3">
@@ -190,7 +190,7 @@ export function LandingHeroSection() {
             initial={{ opacity: 0, y: 40, rotate: 6 } as any} 
             animate={{ opacity: 1, y: 0, rotate: 6 } as any} 
             transition={{ delay: 1.2, duration: 1 } as any}
-            className="absolute right-[-2%] bottom-[5%] lg:right-[5%] xl:right-[10%] w-[260px] rounded-[1.25rem] bg-white p-4 shadow-[0_20px_40px_rgba(0,0,0,0.08)] border border-black/5 hidden lg:block"
+            className="absolute right-[2%] md:right-[calc(50%-420px)] lg:right-[calc(50%-520px)] bottom-[2%] lg:bottom-[5%] w-[220px] md:w-[260px] rounded-[1.25rem] bg-white p-4 shadow-2xl border border-black/5 hidden sm:block z-10 pointer-events-none"
           >
             <div className="grid grid-cols-4 gap-2">
               {/* Mocking connector logos with colored boxes */}
