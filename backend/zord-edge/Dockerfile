@@ -25,6 +25,7 @@ WORKDIR /app
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /out/zord-edge /app/zord-edge
 COPY --from=builder /src/schemas /app/schemas
+COPY --from=builder /src/db/migrations /app/db/migrations
 
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 USER 65532:65532
