@@ -135,6 +135,14 @@ func (h *Handler) WebhookHandler(c *gin.Context) {
 			})
 			return
 		}
+		if errors.Is(err, services.ErrIdempotencyInFlight) {
+			c.JSON(http.StatusConflict, gin.H{
+				"ErrorCode":  "IDEMPOTENCY_IN_FLIGHT",
+				"ErrorMsg":   "request with this idempotency key is already being processed",
+				"HttpStatus": http.StatusConflict,
+			})
+			return
+		}
 
 		log.Printf("Webhook idempotency persist failed provider=%s connector_id=%s trace_id=%s: %v",
 			provider, connectorID, traceID, err)
@@ -159,6 +167,14 @@ func (h *Handler) WebhookHandler(c *gin.Context) {
 		})
 		return
 	}
+
+	claimActive := msg.IdempotencyKey != ""
+	ingestOK := false
+	defer func() {
+		if claimActive && !ingestOK {
+			services.ReleaseIdempotencyClaim(reqCtx, db.DB, msg.TenantID, msg.IdempotencyKey, fingerprint)
+		}
+	}()
 
 	// ── S3 ──
 	data, err := services.ProcessRawIntent(reqCtx, msg, h.S3store, envelopeID, receivedAt)
@@ -204,6 +220,7 @@ func (h *Handler) WebhookHandler(c *gin.Context) {
 		return
 	}
 
+	ingestOK = true
 	c.JSON(http.StatusOK, gin.H{
 		"status":   "received",
 		"trace_id": traceID,
