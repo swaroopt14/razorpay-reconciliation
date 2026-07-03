@@ -35,7 +35,24 @@ type IntentJob struct {
 	TraceID    string
 }
 
+// IntentCheckJob is enqueued after leaves are persisted. Workers run readiness
+// checks and pack generation — keeping the Kafka consumer on the fast path.
+type IntentCheckJob struct {
+	TenantID   string
+	EnvelopeID string
+	IntentID   string
+	ContractID string
+	TraceID    string
+}
+
 type BatchJob struct {
+	TenantID string
+	BatchID  string
+	IsFinal  bool
+}
+
+// BatchCheckJob is enqueued after batch leaves are persisted.
+type BatchCheckJob struct {
 	TenantID string
 	BatchID  string
 	IsFinal  bool
@@ -52,9 +69,9 @@ type EvidenceService struct {
 	replayCompareStrict bool
 	publisher           kafka.EventPublisher
 
-	intentQueue    chan IntentJob
-	batchQueue     chan BatchJob
-	workerWG       sync.WaitGroup
+	intentCheckQueue chan IntentCheckJob
+	batchCheckQueue  chan BatchCheckJob
+	workerWG         sync.WaitGroup
 	shutdownQueues sync.Once
 	shuttingDown   atomic.Bool
 }
@@ -80,20 +97,13 @@ func NewEvidenceService(
 		archivePrefix:       archivePrefix,
 		replayCompareStrict: strict,
 		publisher:           publisher,
-		intentQueue:         make(chan IntentJob, 10000),
-		batchQueue:          make(chan BatchJob, 10000),
+		intentCheckQueue:    make(chan IntentCheckJob, 10000),
+		batchCheckQueue:     make(chan BatchCheckJob, 10000),
 	}
 }
 
-// HandleLeafUpdate orchestrates the buffered leaf ingestion and pack generation.
-//
-// Concurrency safety: a Postgres advisory lock (pg_try_advisory_xact_lock) is
-// acquired per (tenant_id, intent_id) before the readiness check and held through
-// the entire GeneratePack call. Only one goroutine can proceed at a time for a given
-// intent; any concurrent goroutine that cannot acquire the lock logs and returns nil
-// (the winning goroutine will have generated the pack). A DB-level partial unique index
-// (evidence_packs_active_intent_unique_idx) + INSERT ON CONFLICT DO NOTHING acts as
-// a final safety net so duplicate packs are impossible even under abnormal conditions.
+// HandleLeafUpdate persists incoming leaves on the Kafka fast path and delegates
+// readiness checks plus pack generation to the worker pool.
 func (s *EvidenceService) HandleLeafUpdate(ctx context.Context, tenantID, envelopeID, intentID, contractID, traceID string, newLeaves []models.PendingLeafCandidate) error {
 	// 0. If intentID is missing but envelopeID is present, try to resolve it from existing leaves
 	if intentID == "" && envelopeID != "" {
@@ -127,71 +137,43 @@ func (s *EvidenceService) HandleLeafUpdate(ctx context.Context, tenantID, envelo
 		}
 	}
 
-	// 2b. If we received leaves carrying a batchID, also trigger batch-level readiness check
+	// 2b. Schedule batch readiness check when leaves carry a batch ID.
 	if lastBatchID != "" {
-		_ = s.HandleBatchLeafUpdate(ctx, tenantID, lastBatchID, nil, false)
+		s.enqueueBatchCheck(BatchCheckJob{TenantID: tenantID, BatchID: lastBatchID})
 	}
 
-	// 3. Check readiness if we have an intentID
-	if intentID == "" {
-		return nil
-	}
-
-	leaves, err := s.pendingLeafRepo.GetLeavesForIntent(ctx, tenantID, intentID)
-	if err != nil {
-		return err
-	}
-
-	// 4. Map leaf types to items
-	leafMap := make(map[string]models.PendingLeafCandidate)
-	for _, l := range leaves {
-		leafMap[l.LeafType] = l
-	}
-
-	// 5. Check if all 8 required external leaves are present
-	allPresent := true
-	var items []models.EvidenceItem
-	var missing []string
-	for _, requiredType := range models.RequiredLeafTypes {
-		if l, ok := leafMap[requiredType]; ok {
-			items = append(items, models.EvidenceItem{
-				Type:          l.LeafType,
-				Ref:           l.ItemRef,
-				Hash:          l.Hash,
-				SchemaVersion: l.SchemaVersion,
-			})
-		} else {
-			allPresent = false
-			missing = append(missing, requiredType)
-		}
-	}
-
-	if !allPresent {
-		log.Printf("evidence.service.readiness_check intent=%s missing_leaves=%v present_count=%d", intentID, missing, len(items))
-		return nil // Not ready yet
-	}
-
-	// ── ASYNC DELEGATION ─────────────────────────────────────────────────────
-	// The intent is ready. Pass it to the worker pool for async generation.
-	// This blocking send ensures we exert backpressure on the Kafka consumer
-	// if the workers (and the large buffer) fall behind, preventing OOMs.
-	if s.shuttingDown.Load() {
-		log.Printf("evidence.service.readiness_check intent=%s ready during shutdown — leaves buffered, pack deferred", intentID)
-		return nil
-	}
-	resolvedContractID := resolveContractIDFromLeaves(leaves, contractID)
-	s.intentQueue <- IntentJob{
-		TenantID:   tenantID,
-		EnvelopeID: envelopeID,
-		IntentID:   intentID,
-		ContractID: resolvedContractID,
-		TraceID:    traceID,
+	// 3. Schedule intent readiness check (worker pool handles readiness + generation).
+	if intentID != "" {
+		s.enqueueIntentCheck(IntentCheckJob{
+			TenantID:   tenantID,
+			EnvelopeID: envelopeID,
+			IntentID:   intentID,
+			ContractID: contractID,
+			TraceID:    traceID,
+		})
 	}
 
 	return nil
 }
 
-// HandleBatchLeafUpdate orchestrates buffered leaf ingestion and pack generation for batches.
+func (s *EvidenceService) enqueueIntentCheck(job IntentCheckJob) {
+	if s.shuttingDown.Load() {
+		log.Printf("evidence.service.enqueue_intent_check intent=%s skipped during shutdown", job.IntentID)
+		return
+	}
+	s.intentCheckQueue <- job
+}
+
+func (s *EvidenceService) enqueueBatchCheck(job BatchCheckJob) {
+	if s.shuttingDown.Load() {
+		log.Printf("evidence.service.enqueue_batch_check batch=%s skipped during shutdown", job.BatchID)
+		return
+	}
+	s.batchCheckQueue <- job
+}
+
+// HandleBatchLeafUpdate persists batch leaves on the Kafka fast path and delegates
+// readiness checks plus pack generation to the worker pool.
 func (s *EvidenceService) HandleBatchLeafUpdate(ctx context.Context, tenantID, batchID string, newLeaves []models.PendingLeafCandidate, isFinal bool) error {
 	// 1. Upsert new leaves
 	for i := range newLeaves {
@@ -200,56 +182,15 @@ func (s *EvidenceService) HandleBatchLeafUpdate(ctx context.Context, tenantID, b
 		}
 	}
 
-	if !isFinal {
+	if !isFinal && len(newLeaves) > 0 {
 		log.Printf("evidence.service.handle_batch_update batch=%s buffering leaves", batchID)
 	}
 
-	// 2. Check readiness
-	leaves, err := s.pendingLeafRepo.GetLeavesForBatch(ctx, tenantID, batchID)
-	if err != nil {
-		return err
-	}
-
-	leafMap := make(map[string]models.PendingLeafCandidate)
-	for _, l := range leaves {
-		leafMap[l.LeafType] = l
-	}
-
-	allPresent := true
-	var items []models.EvidenceItem
-	var missing []string
-	for _, requiredType := range models.RequiredBatchLeafTypes {
-		if l, ok := leafMap[requiredType]; ok {
-			items = append(items, models.EvidenceItem{
-				Type:          l.LeafType,
-				Ref:           l.ItemRef,
-				Hash:          l.Hash,
-				SchemaVersion: l.SchemaVersion,
-			})
-		} else {
-			allPresent = false
-			missing = append(missing, requiredType)
-		}
-	}
-
-	if !allPresent {
-		log.Printf("evidence.service.batch_readiness_check batch=%s missing_leaves=%v present_count=%d", batchID, missing, len(items))
-		return nil // Not ready yet
-	}
-
-	// ── ASYNC DELEGATION ─────────────────────────────────────────────────────
-	// The batch is ready. Pass it to the worker pool for async generation.
-	// This blocking send ensures we exert backpressure on the Kafka consumer
-	// if the workers (and the large buffer) fall behind, preventing OOMs.
-	if s.shuttingDown.Load() {
-		log.Printf("evidence.service.batch_readiness_check batch=%s ready during shutdown — leaves buffered, pack deferred", batchID)
-		return nil
-	}
-	s.batchQueue <- BatchJob{
+	s.enqueueBatchCheck(BatchCheckJob{
 		TenantID: tenantID,
 		BatchID:  batchID,
 		IsFinal:  isFinal,
-	}
+	})
 
 	return nil
 }
@@ -267,8 +208,8 @@ func (s *EvidenceService) StartWorkers(workers int) {
 }
 
 func (s *EvidenceService) runWorker(workerID int) {
-	intentQ := s.intentQueue
-	batchQ := s.batchQueue
+	intentQ := s.intentCheckQueue
+	batchQ := s.batchCheckQueue
 
 	for intentQ != nil || batchQ != nil {
 		select {
@@ -278,10 +219,10 @@ func (s *EvidenceService) runWorker(workerID int) {
 				continue
 			}
 			jobCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			err := s.processIntentJob(jobCtx, job)
+			err := s.processIntentCheckJob(jobCtx, job)
 			cancel()
 			if err != nil {
-				log.Printf("evidence.service.worker id=%d intent=%s err=%v", workerID, job.IntentID, err)
+				log.Printf("evidence.service.worker id=%d intent_check=%s err=%v", workerID, job.IntentID, err)
 			}
 		case job, ok := <-batchQ:
 			if !ok {
@@ -289,29 +230,29 @@ func (s *EvidenceService) runWorker(workerID int) {
 				continue
 			}
 			jobCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			err := s.processBatchJob(jobCtx, job)
+			err := s.processBatchCheckJob(jobCtx, job)
 			cancel()
 			if err != nil {
-				log.Printf("evidence.service.worker id=%d batch=%s err=%v", workerID, job.BatchID, err)
+				log.Printf("evidence.service.worker id=%d batch_check=%s err=%v", workerID, job.BatchID, err)
 			}
 		}
 	}
 }
 
 // PrepareShutdown signals that the process is stopping. Kafka handlers may still
-// persist leaves, but no new pack-generation jobs are enqueued. Pending leaves
+// persist leaves, but no new readiness checks are enqueued. Pending leaves
 // remain in the DB and will be picked up on the next process start.
 func (s *EvidenceService) PrepareShutdown() {
 	s.shuttingDown.Store(true)
 }
 
-// ShutdownWorkers closes the job queues and waits for all in-flight pack generation
-// to complete, or until ctx is cancelled.
+// ShutdownWorkers closes the job queues and waits for all in-flight readiness
+// checks and pack generation to complete, or until ctx is cancelled.
 func (s *EvidenceService) ShutdownWorkers(ctx context.Context) error {
 	s.shutdownQueues.Do(func() {
 		log.Printf("evidence.service.shutdown closing worker queues")
-		close(s.intentQueue)
-		close(s.batchQueue)
+		close(s.intentCheckQueue)
+		close(s.batchCheckQueue)
 	})
 
 	done := make(chan struct{})
@@ -327,6 +268,79 @@ func (s *EvidenceService) ShutdownWorkers(ctx context.Context) error {
 	case <-ctx.Done():
 		return fmt.Errorf("worker drain: %w", ctx.Err())
 	}
+}
+
+// processIntentCheckJob loads buffered leaves, checks readiness, and generates
+// a pack when all required leaves are present.
+func (s *EvidenceService) processIntentCheckJob(ctx context.Context, job IntentCheckJob) error {
+	leaves, err := s.pendingLeafRepo.GetLeavesForIntent(ctx, job.TenantID, job.IntentID)
+	if err != nil {
+		return err
+	}
+
+	leafMap := make(map[string]models.PendingLeafCandidate, len(leaves))
+	for _, l := range leaves {
+		leafMap[l.LeafType] = l
+	}
+
+	var missing []string
+	allPresent := true
+	for _, requiredType := range models.RequiredLeafTypes {
+		if _, ok := leafMap[requiredType]; !ok {
+			allPresent = false
+			missing = append(missing, requiredType)
+		}
+	}
+
+	if !allPresent {
+		log.Printf("evidence.service.readiness_check intent=%s missing_leaves=%v present_count=%d",
+			job.IntentID, missing, len(leaves))
+		return nil
+	}
+
+	resolvedContractID := resolveContractIDFromLeaves(leaves, job.ContractID)
+	return s.processIntentJob(ctx, IntentJob{
+		TenantID:   job.TenantID,
+		EnvelopeID: job.EnvelopeID,
+		IntentID:   job.IntentID,
+		ContractID: resolvedContractID,
+		TraceID:    job.TraceID,
+	})
+}
+
+// processBatchCheckJob loads buffered batch leaves, checks readiness, and generates
+// a pack when all required batch leaves are present.
+func (s *EvidenceService) processBatchCheckJob(ctx context.Context, job BatchCheckJob) error {
+	leaves, err := s.pendingLeafRepo.GetLeavesForBatch(ctx, job.TenantID, job.BatchID)
+	if err != nil {
+		return err
+	}
+
+	leafMap := make(map[string]models.PendingLeafCandidate, len(leaves))
+	for _, l := range leaves {
+		leafMap[l.LeafType] = l
+	}
+
+	var missing []string
+	allPresent := true
+	for _, requiredType := range models.RequiredBatchLeafTypes {
+		if _, ok := leafMap[requiredType]; !ok {
+			allPresent = false
+			missing = append(missing, requiredType)
+		}
+	}
+
+	if !allPresent {
+		log.Printf("evidence.service.batch_readiness_check batch=%s missing_leaves=%v present_count=%d",
+			job.BatchID, missing, len(leaves))
+		return nil
+	}
+
+	return s.processBatchJob(ctx, BatchJob{
+		TenantID: job.TenantID,
+		BatchID:  job.BatchID,
+		IsFinal:  job.IsFinal,
+	})
 }
 
 // processIntentJob executes the pack generation for a ready intent.
@@ -454,7 +468,7 @@ func (s *EvidenceService) processIntentJob(ctx context.Context, job IntentJob) e
 		Currency:                   currency,
 	}
 
-	_, err = s.GeneratePackInTx(ctx, lockTx, req)
+	pack, err := s.GeneratePackInTx(ctx, lockTx, req)
 	if err != nil {
 		if errors.Is(err, repositories.ErrPackAlreadyExists) {
 			log.Printf("evidence.service.process_intent intent=%s duplicate_pack_detected_at_insert — treating as success", job.IntentID)
@@ -467,6 +481,10 @@ func (s *EvidenceService) processIntentJob(ctx context.Context, job IntentJob) e
 	if err := lockTx.Commit(); err != nil {
 		return fmt.Errorf("commit advisory lock tx: %w", err)
 	}
+
+	// Enrichment UPDATE uses a separate pool connection; it must run after commit
+	// so the pack row is visible (same issue as advisory-lock tx holding the INSERT).
+	s.writeProofEnrichment(ctx, pack)
 
 	return s.pendingLeafRepo.DeleteForIntent(ctx, job.TenantID, job.IntentID)
 }
@@ -597,7 +615,7 @@ func (s *EvidenceService) processBatchJob(ctx context.Context, job BatchJob) err
 		Currency:                   currency,
 	}
 
-	_, err = s.GenerateBatchPackInTx(ctx, lockTx, req)
+	pack, err := s.GenerateBatchPackInTx(ctx, lockTx, req)
 	if err != nil {
 		if errors.Is(err, repositories.ErrPackAlreadyExists) {
 			log.Printf("evidence.service.process_batch batch=%s duplicate_pack_detected_at_insert — treating as success", job.BatchID)
@@ -610,6 +628,8 @@ func (s *EvidenceService) processBatchJob(ctx context.Context, job BatchJob) err
 	if err := lockTx.Commit(); err != nil {
 		return fmt.Errorf("commit batch advisory lock tx: %w", err)
 	}
+
+	s.writeProofEnrichment(ctx, pack)
 
 	return s.pendingLeafRepo.DeleteForBatch(ctx, job.TenantID, job.BatchID)
 }
@@ -839,7 +859,11 @@ func (s *EvidenceService) GeneratePackInTx(ctx context.Context, packTx *sql.Tx, 
 	}
 	log.Printf("evidence.service.generate_pack save_ok pack=%s", packID)
 
-	s.writeProofEnrichment(ctx, pack)
+	// When packTx is non-nil the caller holds an uncommitted advisory-lock tx;
+	// proof enrichment runs after Commit in processIntentJob.
+	if packTx == nil {
+		s.writeProofEnrichment(ctx, pack)
+	}
 
 	return pack, nil
 }
@@ -1035,7 +1059,9 @@ func (s *EvidenceService) GenerateBatchPackInTx(ctx context.Context, packTx *sql
 	}
 	log.Printf("evidence.service.generate_batch_pack save_ok pack=%s", packID)
 
-	s.writeProofEnrichment(ctx, pack)
+	if packTx == nil {
+		s.writeProofEnrichment(ctx, pack)
+	}
 
 	return pack, nil
 }
@@ -1261,7 +1287,7 @@ func (s *EvidenceService) writeProofEnrichment(ctx context.Context, pack *models
 		return
 	}
 	comp := deriveComponentsFromPack(pack)
-	sealExists := pack.PackStatus != ""
+	sealExists := pack.PackStatus == models.PackStatusActive
 	score := ComputeProofScore(comp, sealExists)
 	status := DeriveProofStatus(comp, sealExists, pack.PackStatus == "SUPERSEDED", false)
 	sigs := enrichPackSigsFromPack(pack)

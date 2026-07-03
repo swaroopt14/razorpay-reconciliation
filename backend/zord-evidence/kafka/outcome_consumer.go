@@ -10,9 +10,8 @@ package kafka
 //   outcome.leaf_bundle.created — carries all 4 Merkle leaf candidates for one
 //                                 attached intent/observation pair.
 //
-// On receipt the consumer validates the bundle and immediately calls
-// EvidenceService.GeneratePack() — no buffering required because the emitter
-// guarantees all 4 leaves arrive in a single event.
+// On receipt the consumer validates the bundle, persists leaves, and schedules
+// readiness checks on the worker pool.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import (
