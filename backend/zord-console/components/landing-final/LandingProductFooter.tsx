@@ -16,21 +16,26 @@ const footerColumns = [
 
 export function LandingProductFooter() {
   return (
-    <footer id="developers" className="scroll-mt-32 pb-12 pt-16 lg:pb-16">
+    <footer id="developers" className="scroll-mt-32 pb-12 pt-16 lg:pb-16 bg-[#111111] text-white">
       <div className={LANDING_SECTION_SHELL}>
-        <div className="grid gap-10 border-t border-[#E5E7EB] pt-10 md:grid-cols-2 lg:grid-cols-[1.4fr_repeat(5,1fr)]">
+        <div className="grid gap-10 pt-10 md:grid-cols-2 lg:grid-cols-[1.4fr_repeat(5,1fr)]">
           <div>
-            <ZordLogo size="md" variant="light" className="!w-auto max-w-[9rem]" />
-            <p className="mt-5 max-w-xs text-sm leading-relaxed text-[#666666]">{landingHomeCopy.footer.body}</p>
-            <p className="mt-3 text-sm text-[#666666]">Support@zordnet.com</p>
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-xl text-white">Zord</span>
+              <span className="w-5 h-5 bg-[#DBF33C] rounded-sm flex items-center justify-center">
+                <span className="w-2 h-2 bg-[#111111] rounded-full" />
+              </span>
+            </div>
+            <p className="mt-5 max-w-xs text-sm leading-relaxed text-white/60">{landingHomeCopy.footer.body}</p>
+            <p className="mt-3 text-sm text-white/60">Support@zordnet.com</p>
           </div>
 
           {footerColumns.map((column) => (
             <div key={column.title}>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#9CA3AF]">{column.title}</p>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#DBF33C]">{column.title}</p>
               <div className="mt-4 space-y-2">
                 {column.links.map((link) => (
-                  <div key={link} className="cursor-pointer text-[13px] text-[#4B5563] transition-colors duration-150 hover:text-[#1A1A1A]">
+                  <div key={link} className="cursor-pointer text-[13px] text-white/70 transition-colors duration-150 hover:text-white">
                     {link}
                   </div>
                 ))}
@@ -39,13 +44,13 @@ export function LandingProductFooter() {
           ))}
         </div>
 
-        <div className="mt-12 flex flex-col items-center justify-between gap-4 border-t border-[#E5E7EB] pt-8 md:flex-row">
-          <p className="text-xs text-[#9CA3AF]">© 2026 Arealis</p>
-          <div className="flex gap-6 text-xs text-[#9CA3AF]">
-            <Link href="#" className="transition-colors duration-150 hover:text-[#1A1A1A]">
+        <div className="mt-12 flex flex-col items-center justify-between gap-4 border-t border-white/10 pt-8 md:flex-row">
+          <p className="text-xs text-white/50">© 2026 Arealis</p>
+          <div className="flex gap-6 text-xs text-white/50">
+            <Link href="#" className="transition-colors duration-150 hover:text-white">
               Privacy
             </Link>
-            <Link href="#" className="transition-colors duration-150 hover:text-[#1A1A1A]">
+            <Link href="#" className="transition-colors duration-150 hover:text-white">
               Terms
             </Link>
           </div>
