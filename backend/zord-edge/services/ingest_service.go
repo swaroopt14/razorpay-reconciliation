@@ -134,6 +134,7 @@ func SaveRawIntent(
 		return err
 	}
 
-	return tx.Commit()
+	err = tx.Commit()
+	return err
 
 }
