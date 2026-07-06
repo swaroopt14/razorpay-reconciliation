@@ -47,7 +47,11 @@ CREATE INDEX IF NOT EXISTS idx_raw_env_tenant_time
 CREATE INDEX IF NOT EXISTS idx_raw_env_status
     ON ingress_envelopes (status, received_at);
 
+CREATE INDEX IF NOT EXISTS idx_ingress_envelopes_batchid
+    ON ingress_envelopes (batchid) WHERE batchid IS NOT NULL;
+
 -- +goose Down
+DROP INDEX IF EXISTS idx_ingress_envelopes_batchid;
 DROP INDEX IF EXISTS idx_raw_env_status;
 DROP INDEX IF EXISTS idx_raw_env_tenant_time;
 DROP TABLE IF EXISTS "ingress_envelopes";
