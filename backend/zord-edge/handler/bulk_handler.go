@@ -348,6 +348,12 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 								Status: "CONFLICT",
 								Error:  "idempotency key reuse with different payload",
 							}
+						} else if errors.Is(err, services.ErrIdempotencyInFlight) {
+							resultsMap[job.Row] = BulkResult{
+								Row:    job.Row,
+								Status: "CONFLICT",
+								Error:  "idempotency key in flight — retry later",
+							}
 						} else {
 							resultsMap[job.Row] = BulkResult{
 								Row:     job.Row,
@@ -602,6 +608,12 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 								Row:    job.Row,
 								Status: "CONFLICT",
 								Error:  "idempotency key reuse with different payload",
+							}
+						} else if errors.Is(err, services.ErrIdempotencyInFlight) {
+							resultsMap[job.Row] = BulkResult{
+								Row:    job.Row,
+								Status: "CONFLICT",
+								Error:  "idempotency key in flight — retry later",
 							}
 						} else {
 							resultsMap[job.Row] = BulkResult{
@@ -958,6 +970,14 @@ func (h *Handler) processBulkIntentRow(
 		return nil, id, nil
 	}
 
+	claimActive := rawIntent.IdempotencyKey != ""
+	ingestOK := false
+	defer func() {
+		if claimActive && !ingestOK {
+			services.ReleaseIdempotencyClaim(ctx, db.DB, rawIntent.TenantID, rawIntent.IdempotencyKey, fingerprint)
+		}
+	}()
+
 	storageAck, err := services.ProcessRawIntent(ctx, rawIntent, h.S3store, envelopeID, receivedAt)
 	if err != nil {
 		log.Printf("Error processing raw intent for bulk row, trace_id=%s: %v", traceID, err)
@@ -976,5 +996,6 @@ func (h *Handler) processBulkIntentRow(
 		return nil, uuid.Nil, err
 	}
 
+	ingestOK = true
 	return storageAck, uuid.Nil, nil
 }
