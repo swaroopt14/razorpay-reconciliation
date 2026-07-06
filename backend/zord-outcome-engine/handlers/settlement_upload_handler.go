@@ -26,6 +26,17 @@ import (
 // resides directly here for maximum visibility.
 func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 	// ── PRE-FLIGHT ───────────────────────────────────────────────────────────
+		const maxPayloadSize = 1000 * 1024 // 1000 KB
+	if c.Request.ContentLength > maxPayloadSize {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+			"error": fmt.Sprintf("Payload size exceeds maximum allowed limit %d kilobytes", maxPayloadSize/1024),
+			"code":  "PAYLOAD_TOO_LARGE",
+		})
+		c.Abort()
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxPayloadSize)
+	
 	// Validate early to avoid processing invalid requests.
 	tenantIDRaw := c.Query("tenant_id")
 	tenantID, err := uuid.Parse(tenantIDRaw)
