@@ -282,7 +282,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 			})
 			return
 		}
-		if totalDataRows >= 20000 {
+		if totalDataRows >= 10000 {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error": "CSV limit exceeded (max 10000 rows)",
 			})
@@ -543,7 +543,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 			})
 			return
 		}
-		if totalRows > 20000 {
+		if totalRows > 10000 {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error": "CSV limit exceeded (max 10000 rows)",
 			})
