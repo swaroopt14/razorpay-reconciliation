@@ -3,21 +3,19 @@ package handlers
 // ─────────────────────────────────────────────────────────────────────────────
 // SERVICE 5C — ATTACHMENT HANDLER
 //
-// FIX #18: SeedDefaultAttachmentRuleProfile is now called via a sync.Map cache
-//          (seededTenants) so the DB upsert fires at most once per tenant per
-//          process lifetime instead of on every upload request.
+// HTTP boundary for the attachment & variance engine.
 //
-// FIX #14: attachment_jobs rows now include a stale_after timestamp.
-//          A background goroutine (StartStaleJobReaper) periodically marks
-//          RUNNING jobs that exceeded their deadline as FAILED so callers
-//          never poll forever after an EC2 replacement.
+// Routes (registered in routes/outcome_route.go):
+//   POST /v1/attachment/run           — trigger an attachment job
+//   GET  /v1/attachment/decision/intent/:intent_id  — fetch decision for one intent
+//   GET  /v1/attachment/batch/:ref    — fetch batch attachment summary
+//   POST /v1/intent                   — register a canonical intent (test/dev)
 // ─────────────────────────────────────────────────────────────────────────────
 
 import (
 	"context"
 	"log"
 	"net/http"
-	"sync"
 	"time"
 
 	"zord-outcome-engine/db"
@@ -28,74 +26,28 @@ import (
 	"github.com/google/uuid"
 )
 
-// seededTenants caches which tenants have already had their default rule
-// profile seeded this process lifetime.
-// FIX #18: replaces the per-request SeedDefaultAttachmentRuleProfile call.
-var seededTenants sync.Map
-
-// jobStaleAfterDuration is the maximum time an attachment job may stay RUNNING
-// before the reaper marks it FAILED.
-// FIX #14: adjust to match your expected p99 engine runtime.
-const jobStaleAfterDuration = 30 * time.Minute
-
-// ensureRuleProfileSeeded seeds the default rule profile for a tenant at most
-// once per process lifetime.  Thread-safe via sync.Map.
-func ensureRuleProfileSeeded(ctx context.Context, tenantID uuid.UUID) {
-	key := tenantID.String()
-	if _, already := seededTenants.Load(key); already {
-		return
-	}
-	if err := db.SeedDefaultAttachmentRuleProfile(ctx, tenantID); err != nil {
-		log.Printf("attachment.handler.seed_rule_profile_warn tenant=%s err=%v", tenantID, err)
-		// Do not store in cache — let the next request retry.
-		return
-	}
-	seededTenants.Store(key, struct{}{})
-}
-
-// StartStaleJobReaper runs a background goroutine that periodically marks
-// RUNNING attachment jobs as FAILED when they exceed stale_after.
-// FIX #14: call this once from main() after DB init.
-func StartStaleJobReaper(ctx context.Context) {
-	go func() {
-		ticker := time.NewTicker(60 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				swept, err := sweepStaleJobs(ctx)
-				if err != nil {
-					log.Printf("attachment.reaper.sweep_err err=%v", err)
-				} else if swept > 0 {
-					log.Printf("attachment.reaper.swept count=%d", swept)
-				}
-			}
-		}
-	}()
-}
-
-// sweepStaleJobs marks RUNNING jobs whose stale_after has passed as FAILED.
-func sweepStaleJobs(ctx context.Context) (int, error) {
-	res, err := db.DB.ExecContext(ctx, `
-		UPDATE attachment_jobs
-		SET    status       = 'FAILED',
-		       completed_at = NOW()
-		WHERE  status       = 'RUNNING'
-		  AND  stale_after  IS NOT NULL
-		  AND  stale_after  < NOW()`)
-	if err != nil {
-		return 0, err
-	}
-	n, _ := res.RowsAffected()
-	return int(n), nil
-}
-
-// RunAttachmentHandler triggers a Service 5C attachment job asynchronously.
+// RunAttachmentHandler triggers a Service 5C attachment job.
 //
-// Returns 202 Accepted with job_id immediately.
-// Poll GET /v1/attachment/batch/:ref?tenant_id=uuid for results.
+// The job is started asynchronously. The handler returns 202 Accepted with the
+// job_id immediately. Callers poll:
+//
+//	GET /v1/attachment/batch/:batch_ref?tenant_id=uuid
+//
+// to retrieve results once the job_status transitions to COMPLETED.
+//
+// This avoids HTTP timeouts on large batches. The previous synchronous design
+// blocked the handler goroutine for the entire engine run and would be killed
+// by the server's 20s WriteTimeout for any non-trivial batch.
+//
+// Body (JSON):
+//
+//	{
+//	  "tenant_id":                 "uuid",
+//	  "job_scope_type":            "SETTLEMENT_BATCH" | "SINGLE_INTENT" | "INGEST_RUN",
+//	  "settlement_batch_ref":      "batch-ref-string",   // for SETTLEMENT_BATCH
+//	  "intent_id":                 "uuid",               // for SINGLE_INTENT
+//	  "ingest_run_id":             "uuid-string"         // for INGEST_RUN
+//	}
 func (h *Handler) RunAttachmentHandler(c *gin.Context) {
 	var req models.AttachmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -109,12 +61,14 @@ func (h *Handler) RunAttachmentHandler(c *gin.Context) {
 		return
 	}
 
-	// FIX #18: lazy seed at most once per tenant per process.
-	ensureRuleProfileSeeded(c.Request.Context(), tenantID)
-
 	engine := &services.AttachmentEngine{}
+
+	// Pre-generate the job UUID before the switch so all fn closures can capture it.
+	// The row is inserted after the switch (once scopeRef is known).
 	jobID := uuid.New()
 
+	// Validate scope-specific fields and determine which engine method to call
+	// before spawning the goroutine — validation errors must return 400, not 202.
 	type runFunc func(ctx context.Context) (*models.AttachmentJob, error)
 	var fn runFunc
 	var scopeRef string
@@ -162,37 +116,39 @@ func (h *Handler) RunAttachmentHandler(c *gin.Context) {
 		return
 	}
 
-	// Pre-register the job row as RUNNING so the caller can poll immediately.
-	// FIX #14: include stale_after so the reaper can recover this job if the
-	// process is killed before the goroutine completes.
+	// Pre-register the job row as RUNNING so the caller can see it immediately
+	// via GET /v1/attachment/batch/:ref, even before the goroutine starts.
 	now := time.Now().UTC()
-	staleAfter := now.Add(jobStaleAfterDuration)
 	if _, dbErr := db.DB.ExecContext(c.Request.Context(), `
 		INSERT INTO attachment_jobs (
 			attachment_job_id, tenant_id, job_scope_type, scope_ref,
 			matching_ruleset_version, status,
 			candidate_count_total, exact_match_count, high_confidence_count,
 			ambiguous_count, unresolved_count, conflicted_count,
-			started_at, stale_after, created_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+			started_at, created_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
 		jobID, tenantID, req.JobScopeType, scopeRef,
 		services.RulesetVersion, "RUNNING",
 		0, 0, 0, 0, 0, 0,
-		now, staleAfter, now,
+		now, now,
 	); dbErr != nil {
 		log.Printf("attachment.handler.pre_register_failed tenant=%s err=%v", tenantID, dbErr)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to register job: " + dbErr.Error()})
 		return
 	}
 
+	// Launch the engine asynchronously. Any error is written back to the
+	// attachment_jobs row so the polling endpoint can surface it.
 	go func() {
 		ctx, cancel := backgroundJobContext()
 		defer cancel()
-
+		// ── CONCURRENCY GATE ─────────────────────────────────────────────────────
+		// Block until a background-job slot is free. The 202 and the
+		// RUNNING job row have already been committed above, so this does
+		// not affect HTTP response timing or the pollable job status.
 		waitStart := acquireJobSlot()
 		defer releaseJobSlot()
-		log.Printf("attachment.handler.slot_acquired tenant=%s job=%s wait_ms=%d",
-			tenantID, jobID, time.Since(waitStart).Milliseconds())
+		log.Printf("attachment.handler.slot_acquired tenant=%s job=%s wait_ms=%d", tenantID, jobID, time.Since(waitStart).Milliseconds())
 
 		job, runErr := fn(ctx)
 		if runErr != nil {
@@ -206,6 +162,8 @@ func (h *Handler) RunAttachmentHandler(c *gin.Context) {
 			}
 			return
 		}
+		// The engine writes its own COMPLETED status via persistAttachmentOutputs.
+		// Log success for observability.
 		log.Printf("attachment.handler.async_run_done tenant=%s job=%s exact=%d ambiguous=%d unresolved=%d conflicted=%d",
 			tenantID, job.AttachmentJobID,
 			job.ExactMatchCount, job.AmbiguousCount, job.UnresolvedCount, job.ConflictedCount)
@@ -219,6 +177,8 @@ func (h *Handler) RunAttachmentHandler(c *gin.Context) {
 }
 
 // GetAttachmentDecisionByIntentHandler fetches the attachment decision for one canonical intent.
+//
+// Path: /v1/attachment/decision/intent/:intent_id?tenant_id=uuid
 func (h *Handler) GetAttachmentDecisionByIntentHandler(c *gin.Context) {
 	tenantID, err := uuid.Parse(c.Query("tenant_id"))
 	if err != nil {
@@ -266,6 +226,7 @@ func (h *Handler) GetAttachmentDecisionByIntentHandler(c *gin.Context) {
 
 	resp := models.AttachmentDecisionResponse{Decision: &d}
 
+	// Attach variance record if present.
 	vRow := db.DB.QueryRowContext(c.Request.Context(), `
 		SELECT
 			variance_record_id, tenant_id, attachment_decision_id,
@@ -297,6 +258,8 @@ func (h *Handler) GetAttachmentDecisionByIntentHandler(c *gin.Context) {
 }
 
 // GetBatchAttachmentSummaryHandler returns the attachment summary for a settlement batch.
+//
+// Path: /v1/attachment/batch/:batch_ref?tenant_id=uuid
 func (h *Handler) GetBatchAttachmentSummaryHandler(c *gin.Context) {
 	tenantID, err := uuid.Parse(c.Query("tenant_id"))
 	if err != nil {
@@ -325,9 +288,7 @@ func (h *Handler) GetBatchAttachmentSummaryHandler(c *gin.Context) {
 			total_fee_amount, total_deduction_amount, net_unexplained_variance,
 			intent_count_coverage, intent_value_coverage,
 			observed_count_allocation_coverage, observed_value_allocation_coverage,
-			batch_attachment_status, avg_matched_attachment_quality,
-			avg_matched_attachment_confidence, avg_matched_attachment_ambiguity,
-			created_at, updated_at
+			batch_attachment_status, avg_matched_attachment_quality, avg_matched_attachment_confidence, avg_matched_attachment_ambiguity, created_at, updated_at
 		FROM batch_attachment_summaries
 		WHERE tenant_id = $1 AND (batch_id = $2 OR source_reference = $2)
 		ORDER BY created_at DESC
@@ -351,8 +312,7 @@ func (h *Handler) GetBatchAttachmentSummaryHandler(c *gin.Context) {
 		&s.TotalFeeAmount, &s.TotalDeductionAmount, &s.NetUnexplainedVariance,
 		&s.IntentCountCoverage, &s.IntentValueCoverage,
 		&s.ObservedCountAllocationCoverage, &s.ObservedValueAllocationCoverage,
-		&s.BatchAttachmentStatus, &s.AggregateScore,
-		&s.AggregateMatchConfidence, &s.AmbiguityScore, &s.CreatedAt, &s.UpdatedAt,
+		&s.BatchAttachmentStatus, &s.AggregateScore, &s.AggregateMatchConfidence, &s.AmbiguityScore, &s.CreatedAt, &s.UpdatedAt,
 	); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "no batch summary found"})
 		return
@@ -361,7 +321,11 @@ func (h *Handler) GetBatchAttachmentSummaryHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, s)
 }
 
-// RegisterIntentHandler registers a canonical intent for matching.
+// RegisterIntentHandler allows registering a canonical intent for matching.
+// This endpoint exists so the attachment engine has intents to match against.
+// In production this data would be replicated from Service 2.
+//
+// Body (JSON): models.CanonicalIntent
 func (h *Handler) RegisterIntentHandler(c *gin.Context) {
 	var intent models.CanonicalIntent
 	if err := c.ShouldBindJSON(&intent); err != nil {
@@ -388,7 +352,8 @@ func (h *Handler) RegisterIntentHandler(c *gin.Context) {
 			proof_readiness_score, matchability_score,
 			canonical_hash, governance_state,
 			beneficiary_fingerprint, zord_signature_carrier,
-			source_row_num, created_at
+			source_row_num,
+			created_at
 		) VALUES (
 			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
 		) ON CONFLICT (intent_id) DO UPDATE SET
@@ -407,7 +372,8 @@ func (h *Handler) RegisterIntentHandler(c *gin.Context) {
 		intent.ProofReadinessScore, intent.MatchabilityScore,
 		intent.CanonicalHash, intent.GovernanceState,
 		intent.BeneficiaryFingerprint, intent.ZordSignatureCarrier,
-		intent.SourceRowNum, intent.CreatedAt,
+		intent.SourceRowNum,
+		intent.CreatedAt,
 	)
 	if err != nil {
 		log.Printf("attachment.handler.register_intent_failed: %v", err)

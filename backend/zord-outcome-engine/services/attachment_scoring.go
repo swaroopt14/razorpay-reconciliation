@@ -3,18 +3,11 @@ package services
 // ─────────────────────────────────────────────────────────────────────────────
 // SERVICE 5C — ATTACHMENT SCORING ENGINE
 //
-// FIXES APPLIED IN THIS FILE:
+// Deterministic, versioned scoring for intent-to-settlement candidate ranking.
+// Every score component is explicit and logged in score_breakdown_json so that
+// Service 6 can prove it and Service 7 can explain it.
 //
-//   FIX #16 — classifyVarianceType now correctly distinguishes
-//              TAX_TDS_DEDUCTION (obs.DeductionAmount) from
-//              FEE_DEDUCTION (obs.FeeAmount).  Previously both mapped to
-//              FEE_DEDUCTION, making Service 7 whitelist logic unable to
-//              separate PSP fees from TDS/tax deductions.
-//
-//   FIX #17 — ComputeMatchConfidence used a hardcoded maxTheoreticalScore of
-//              310 which was wrong (actual max with all carriers = ~485).
-//              The constant is now derived from the actual carrier weight
-//              constants so it stays correct as weights change.
+// Ruleset version: "v1"
 // ─────────────────────────────────────────────────────────────────────────────
 
 import (
@@ -33,19 +26,6 @@ import (
 
 const (
 	RulesetVersion = "v1"
-
-	// FIX #17: maximum theoretical score, derived explicitly from carrier weights
-	// so it stays correct when weights change.
-	//
-	// ZordSignature(120) + ClientRef(100) + BusinessIdempotencyKey(95) +
-	// BankRef(85) + BeneficiaryFingerprint(35) +
-	// Amount(30) + Currency(10) +
-	// SourceRowNum(50) + BatchFamily(15) +
-	// Time(20) + SourceSystem(10) + Corridor(10) = 580
-	//
-	// The result is capped at 1.0 in ComputeMatchConfidence so going over is
-	// safe, but the constant must not be lower than any realistic total.
-	maxTheoreticalMatchScore = 580.0
 )
 
 type CarrierPriorityPolicy struct {
@@ -138,38 +118,34 @@ func parseRuleProfile(profile *models.AttachmentRuleProfile) AttachmentPolicyCon
 
 	if len(profile.CarrierPriorityJSON) > 0 {
 		if err := json.Unmarshal(profile.CarrierPriorityJSON, &cfg.CarrierPriority); err != nil {
-			log.Printf("attachment.scoring.parse_ruleset_warn profile=%s field=carrier_priority err=%v — using defaults",
-				profile.ProfileID, err)
+			log.Printf("attachment.scoring.parse_ruleset_warn profile=%s field=carrier_priority err=%v — using defaults", profile.ProfileID, err)
 		}
 	}
 	if len(profile.TimeWindowPolicyJSON) > 0 {
 		if err := json.Unmarshal(profile.TimeWindowPolicyJSON, &cfg.TimeWindow); err != nil {
-			log.Printf("attachment.scoring.parse_ruleset_warn profile=%s field=time_window err=%v — using defaults",
-				profile.ProfileID, err)
+			log.Printf("attachment.scoring.parse_ruleset_warn profile=%s field=time_window err=%v — using defaults", profile.ProfileID, err)
 		}
 	}
 	if len(profile.AmountTolerancePolicyJSON) > 0 {
 		if err := json.Unmarshal(profile.AmountTolerancePolicyJSON, &cfg.AmountTolerance); err != nil {
-			log.Printf("attachment.scoring.parse_ruleset_warn profile=%s field=amount_tolerance err=%v — using defaults",
-				profile.ProfileID, err)
+			log.Printf("attachment.scoring.parse_ruleset_warn profile=%s field=amount_tolerance err=%v — using defaults", profile.ProfileID, err)
 		}
 	}
 	if len(profile.BatchBoundaryPolicyJSON) > 0 {
 		if err := json.Unmarshal(profile.BatchBoundaryPolicyJSON, &cfg.BatchBoundary); err != nil {
-			log.Printf("attachment.scoring.parse_ruleset_warn profile=%s field=batch_boundary err=%v — using defaults",
-				profile.ProfileID, err)
+			log.Printf("attachment.scoring.parse_ruleset_warn profile=%s field=batch_boundary err=%v — using defaults", profile.ProfileID, err)
 		}
 	}
 	if len(profile.ManualReviewThresholdsJSON) > 0 {
 		if err := json.Unmarshal(profile.ManualReviewThresholdsJSON, &cfg.ManualReviewThresholds); err != nil {
-			log.Printf("attachment.scoring.parse_ruleset_warn profile=%s field=manual_review_thresholds err=%v — using defaults",
-				profile.ProfileID, err)
+			log.Printf("attachment.scoring.parse_ruleset_warn profile=%s field=manual_review_thresholds err=%v — using defaults", profile.ProfileID, err)
 		}
 	}
 
 	return cfg
 }
 
+// ScoreBreakdown is persisted as score_breakdown_json for full auditability.
 type ScoreBreakdown struct {
 	RulesetVersion string `json:"ruleset_version"`
 
@@ -184,6 +160,7 @@ type ScoreBreakdown struct {
 	ConflictPenalties          float64 `json:"conflict_penalties"`
 }
 
+// CandidateScore is the intermediate result returned by ScoreCandidate.
 type CandidateScore struct {
 	SettlementObservationID uuid.UUID
 	IntentID                uuid.UUID
@@ -192,6 +169,7 @@ type CandidateScore struct {
 	Total                   float64
 	ConfidenceBucket        string
 
+	// Match flags (written directly into AttachmentCandidate)
 	ExactRefMatch      bool
 	ClientRefMatch     bool
 	ProviderRefMatch   bool
@@ -204,6 +182,7 @@ type CandidateScore struct {
 	ZordSignatureMatch bool
 	CompositeMatch     bool
 
+	// Classification context
 	ParseConfPenalised bool
 	QualityAcceptable  bool
 	HasHardConflict    bool
@@ -219,62 +198,84 @@ func ScoreCandidate(
 	cs := CandidateScore{}
 	policy := parseRuleProfile(profile)
 
-	// ── LAYER 1: Exact carrier matches ───────────────────────────────────────
+	// ── LAYER 1: Exact carrier matches ────────────────────────────────────
 
-	// Zord signature: +120
+	// Zord signature / prepared carrier exact match: +120
 	if intent.ZordSignatureCarrier != nil && obs.ZordSignatureCarrier != nil &&
-		strings.EqualFold(*intent.ZordSignatureCarrier, *obs.ZordSignatureCarrier) &&
-		*intent.ZordSignatureCarrier != "" {
+		strings.EqualFold(*intent.ZordSignatureCarrier, *obs.ZordSignatureCarrier) && *intent.ZordSignatureCarrier != "" {
 		bd.ExactCarrierScore += 120
 		cs.ZordSignatureMatch = true
 		cs.ExactRefMatch = true
 	}
 
-	// Client payout reference: +100
+	// Client payout reference exact match: +100
 	if intent.ClientPayoutRef != nil && obs.ClientReferenceCandidate != nil &&
-		strings.EqualFold(*intent.ClientPayoutRef, *obs.ClientReferenceCandidate) &&
-		*intent.ClientPayoutRef != "" {
+		strings.EqualFold(*intent.ClientPayoutRef, *obs.ClientReferenceCandidate) && *intent.ClientPayoutRef != "" {
 		bd.BusinessReferenceScore += 100
 		cs.ClientRefMatch = true
 		cs.ExactRefMatch = true
 	}
 
-	// Business idempotency key: +95
+	// business_idempotency_key match: +95
 	if intent.BusinessIdempotencyKey != nil && obs.ClientReferenceCandidate != nil &&
-		strings.EqualFold(*intent.BusinessIdempotencyKey, *obs.ClientReferenceCandidate) &&
-		*intent.BusinessIdempotencyKey != "" {
+		strings.EqualFold(*intent.BusinessIdempotencyKey, *obs.ClientReferenceCandidate) && *intent.BusinessIdempotencyKey != "" {
 		bd.BusinessReferenceScore += 95
 		cs.ExactRefMatch = true
 	}
 
-	// source_row_ref match: +50 (batch-context signal; never grants ExactRefMatch)
+	// source_row_ref match: +50 (batch-context signal only — never grants ExactRefMatch).
+	// SourceRowNum is a positional identifier within a file/batch, not a cryptographic or
+	// business identity carrier. Without a matching ClientPayoutRef or ZordSignature, a
+	// SourceRowNum-only match must resolve as MATCH_AMBIGUOUS or lower.
 	if intent.SourceRowNum != nil && obs.SourceRowRef != "" {
 		if sourceRowRef, err := strconv.Atoi(obs.SourceRowRef); err == nil &&
 			*intent.SourceRowNum == sourceRowRef {
+
 			bd.BatchContextScore += 50
 			cs.BatchMatch = true
 			// Intentionally NOT setting cs.ExactRefMatch.
 		}
 	}
 
-	// Bank reference: +85 (presence only; cannot grant ExactRefMatch alone)
+	// ── NOTE: Provider Reference matching remains disabled.
+	// CanonicalIntent does not store ProviderReference (assigned post-dispatch).
+	// The previous logic erroneously compared intent.ProviderHint (source system name)
+	// against obs.ProviderReference (e.g. "UTR-12345"), causing false conflict penalties.
+
+	// provider reference match: +85 (disabled — no matchable field on intent)
+	// if intent.ProviderHint != nil && obs.ProviderReference != nil && *intent.ProviderHint != "" {
+	// 	if strings.EqualFold(*intent.ProviderHint, *obs.ProviderReference) {
+	// 		bd.ProviderBankReferenceScore += 85
+	// 		cs.ProviderRefMatch = true
+	// 	} else if *obs.ProviderReference != "" {
+	// 		bd.ConflictPenalties -= 70
+	// 		cs.HasHardConflict = true
+	// 		cs.HasAnyConflict = true
+	// 	}
+	// }
+
+	// bank reference: +85 if observation carries a bank reference.
+	// The intent cannot hold a bank reference (assigned by the bank post-dispatch), so presence
+	// alone scores. BankRefMatch does NOT set ExactRefMatch — it can lift a candidate to
+	// MATCH_HIGH_CONFIDENCE but never to MATCH_EXACT without a business reference anchor.
 	if obs.BankReference != nil && *obs.BankReference != "" {
 		bd.ProviderBankReferenceScore += 85
 		cs.BankRefMatch = true
 	}
 
-	// Beneficiary fingerprint: +35
+	// beneficiary_fingerprint match: +35
 	if intent.BeneficiaryFingerprint != nil && obs.BeneficiaryFingerprint != nil &&
-		strings.EqualFold(*intent.BeneficiaryFingerprint, *obs.BeneficiaryFingerprint) &&
-		*intent.BeneficiaryFingerprint != "" {
+		strings.EqualFold(*intent.BeneficiaryFingerprint, *obs.BeneficiaryFingerprint) && *intent.BeneficiaryFingerprint != "" {
 		bd.QualityModifiers += 35
 	}
 
-	// ── LAYER 2: Composite / soft matching ───────────────────────────────────
+	// ── LAYER 2: Composite / soft matching ───────────────────────────────
 
 	// Amount match within tolerance: +30
+	obsAmount := obs.Amount
 	amountTolerance := decimal.NewFromInt(policy.AmountTolerance.ToleranceMinor)
-	if obs.Amount.Sub(intent.Amount).Abs().LessThanOrEqual(amountTolerance) {
+	primaryDiff := obsAmount.Sub(intent.Amount).Abs()
+	if primaryDiff.LessThanOrEqual(amountTolerance) {
 		bd.PartyAmountScore += 30
 		cs.AmountMatch = true
 	} else {
@@ -294,31 +295,30 @@ func ScoreCandidate(
 
 	// Time window match: +20
 	if intent.IntendedExecutionAt != nil {
+		windowHours := policy.TimeWindow.MaxHoursDifference
 		diff := obs.ObservationTimestamp.Sub(*intent.IntendedExecutionAt)
-		if math.Abs(diff.Hours()) <= policy.TimeWindow.MaxHoursDifference {
+		if math.Abs(diff.Hours()) <= windowHours {
 			bd.TimingScore += 20
 			cs.TimeWindowMatch = true
 		}
 	}
 
-	// Batch family match: +15
-	if intent.ClientBatchRef != nil && obs.ClientBatchID != "" &&
-		strings.EqualFold(*intent.ClientBatchRef, obs.ClientBatchID) {
+	// batch family match: +15
+	if intent.ClientBatchRef != nil && obs.ClientBatchID != "" && strings.EqualFold(*intent.ClientBatchRef, obs.ClientBatchID) {
 		bd.BatchContextScore += 15
 		cs.BatchMatch = true
 	}
 
-	// Source system / corridor match: +10 each
+	// source system/corridor match: +10
 	if intent.ProviderHint != nil && strings.EqualFold(*intent.ProviderHint, obs.SourceSystem) {
 		bd.SourceSystemScore += 10
 		cs.SourceSystemMatch = true
 	}
-	if intent.Corridor != nil && obs.CorridorID != "" &&
-		strings.EqualFold(*intent.Corridor, obs.CorridorID) {
+	if intent.Corridor != nil && obs.CorridorID != "" && strings.EqualFold(*intent.Corridor, obs.CorridorID) {
 		bd.SourceSystemScore += 10
 	}
 
-	// ── QUALITY MODIFIERS ─────────────────────────────────────────────────────
+	// ── QUALITY MODIFIERS ─────────────────────────────────────────────────
 
 	cs.QualityAcceptable = true
 
@@ -343,7 +343,7 @@ func ScoreCandidate(
 		bd.QualityModifiers -= 20
 	}
 
-	// ── FINAL SUMMATION ───────────────────────────────────────────────────────
+	// ── FINAL SUMMATION ───────────────────────────────────────────────────
 
 	total := bd.ExactCarrierScore +
 		bd.BusinessReferenceScore +
@@ -371,10 +371,14 @@ func ClassifyConfidenceContext(top CandidateScore, ranked []CandidateScore, thre
 		margin = top.Total - ranked[1].Total
 	}
 
+	// INVALID: hard conflict or impossible match
 	if top.HasHardConflict || top.Total <= 0 {
 		return models.ConfidenceInvalid
 	}
 
+	// CAP AT MEDIUM: If a candidate lacks a business identity match (e.g. ClientPayoutRef),
+	// it can NEVER be auto-attached (High/Exact). However, if it still scored highly
+	// (e.g., BankRef + Amount + Date matched), we route it to MATCH_AMBIGUOUS so a human can review it.
 	if !top.ExactRefMatch {
 		if top.Total >= thresholds.MinScoreForAutoAttach {
 			return models.ConfidenceMedium
@@ -382,6 +386,9 @@ func ClassifyConfidenceContext(top CandidateScore, ranked []CandidateScore, thre
 		return models.ConfidenceLow
 	}
 
+	// EXACT: has a business-identity exact carrier (ClientPayoutRef or ZordSignature)
+	// + amount + currency + no conflict + dominant margin.
+	// SourceRowNum and BankReference alone are NOT sufficient for MATCH_EXACT.
 	if top.ExactRefMatch && (top.ClientRefMatch || top.ZordSignatureMatch) &&
 		top.AmountMatch && top.CurrencyMatch && !top.HasAnyConflict {
 		if len(ranked) == 1 || margin >= thresholds.ExactMarginThreshold {
@@ -389,6 +396,7 @@ func ClassifyConfidenceContext(top CandidateScore, ranked []CandidateScore, thre
 		}
 	}
 
+	// HIGH: score >= threshold + margin >= threshold + quality acceptable + no hard conflict
 	if top.Total >= thresholds.HighConfidenceScore {
 		if margin >= thresholds.AmbiguityMarginThreshold {
 			if top.QualityAcceptable {
@@ -397,13 +405,18 @@ func ClassifyConfidenceContext(top CandidateScore, ranked []CandidateScore, thre
 		}
 	}
 
+	// MEDIUM: score >= medium_threshold but margin/quality not enough for HIGH
 	if top.Total >= thresholds.MinScoreForAutoAttach {
 		return models.ConfidenceMedium
 	}
 
+	// LOW: below medium threshold
 	return models.ConfidenceLow
 }
 
+// SelectDecisionType converts a ranked candidate list into a formal decision type.
+// This is the most important function in Service 5C — it must never auto-finalise
+// an ambiguous match.
 func SelectDecisionType(
 	ranked []CandidateScore,
 	profile *models.AttachmentRuleProfile,
@@ -415,8 +428,9 @@ func SelectDecisionType(
 
 	policy := parseRuleProfile(profile)
 	top := ranked[0]
+	// Re-evaluate confidence bucket based on context (ranked list)
 	top.ConfidenceBucket = ClassifyConfidenceContext(top, ranked, policy.ManualReviewThresholds)
-	ranked[0] = top
+	ranked[0] = top // update back into slice
 
 	switch {
 	case len(ranked) == 1:
@@ -433,9 +447,13 @@ func SelectDecisionType(
 
 	default:
 		runnerUp := ranked[1]
+
+		// Conflicting strong carriers (two candidates with exact refs) = CONFLICTED.
 		if top.ExactRefMatch && runnerUp.ExactRefMatch {
 			return models.DecisionMatchConflicted, "CONFLICTING_EXACT_CARRIERS"
 		}
+
+		// Dominant candidate exists based on re-evaluated confidence.
 		switch top.ConfidenceBucket {
 		case models.ConfidenceExact:
 			return models.DecisionMatchExact, "DOMINANT_EXACT_CARRIER"
@@ -453,6 +471,9 @@ func SelectDecisionType(
 	}
 }
 
+// sourceStrengthScore converts obs.SourceStrengthClass to a 0-1 normalised value
+// for use inside confidence and ambiguity formulas.
+// Matches the source strength table from the PDF review.
 func sourceStrengthScore(sourceStrengthClass string) float64 {
 	switch sourceStrengthClass {
 	case "BANK_LEDGER":
@@ -463,17 +484,36 @@ func sourceStrengthScore(sourceStrengthClass string) float64 {
 		return 0.65
 	case "MANUAL_UPLOAD":
 		return 0.45
-	default:
+	default: // UNKNOWN
 		return 0.30
 	}
 }
 
+// ComputeAmbiguityScore returns a normalised 0-1 ambiguity score.
+// Higher = more uncertain. Feeds Service 7 ambiguity intelligence.
+//
+// Formula (per PDF review):
+//
+//	ambiguity_score =
+//	  0.30 * candidate_set_risk
+//	  + 0.25 * margin_risk
+//	  + 0.20 * carrier_weakness
+//	  + 0.10 * parse_mapping_weakness
+//	  + 0.10 * source_weakness
+//	  + 0.05 * conflict_risk
+//
+// Hard overrides applied after formula:
+//
+//	MATCH_UNRESOLVED  → 1.0
+//	MATCH_CONFLICTED  → 0.95
+//	MATCH_EXACT       → cap at 0.05
 func ComputeAmbiguityScore(
 	ranked []CandidateScore,
 	decisionType string,
 	obs models.CanonicalSettlementObservation,
 	policy AttachmentPolicyConfig,
 ) float64 {
+	// Hard overrides — these never run the formula.
 	switch decisionType {
 	case models.DecisionMatchUnresolved:
 		return 1.0
@@ -483,6 +523,7 @@ func ComputeAmbiguityScore(
 
 	candidateSetSize := len(ranked)
 
+	// candidate_set_risk
 	var candidateSetRisk float64
 	switch {
 	case candidateSetSize <= 1:
@@ -495,20 +536,31 @@ func ComputeAmbiguityScore(
 		candidateSetRisk = 1.0
 	}
 
+	// margin_risk
+	var marginRisk float64
 	ambiguityThreshold := policy.ManualReviewThresholds.AmbiguityMarginThreshold
 	if ambiguityThreshold <= 0 {
 		ambiguityThreshold = 15.0
 	}
-	var marginRisk float64
 	if candidateSetSize >= 2 {
 		scoreMargin := ranked[0].Total - ranked[1].Total
 		marginRisk = 1.0 - math.Min(scoreMargin/ambiguityThreshold, 1.0)
+	} else {
+		// Only one candidate — no margin risk from competition.
+		marginRisk = 0.0
 	}
 
+	// carrier_weakness: 1 - carrier_richness_score (already 0-1 on the observation)
 	carrierWeakness := 1.0 - obs.CarrierRichnessScore
-	parseMappingWeakness := 1.0 - (obs.ParseConfidence+obs.MappingConfidence)/2.0
+
+	// parse_mapping_weakness
+	parseMappingAvg := (obs.ParseConfidence + obs.MappingConfidence) / 2.0
+	parseMappingWeakness := 1.0 - parseMappingAvg
+
+	// source_weakness
 	sourceWeakness := 1.0 - sourceStrengthScore(obs.SourceStrengthClass)
 
+	// conflict_risk
 	var conflictRisk float64
 	if candidateSetSize > 0 && (ranked[0].HasHardConflict || ranked[0].HasAnyConflict) {
 		conflictRisk = 1.0
@@ -521,13 +573,34 @@ func ComputeAmbiguityScore(
 		0.10*sourceWeakness +
 		0.05*conflictRisk
 
-	if decisionType == models.DecisionMatchExact && score > 0.05 {
-		score = 0.05
+	// Hard cap for MATCH_EXACT.
+	if decisionType == models.DecisionMatchExact {
+		if score > 0.05 {
+			score = 0.05
+		}
 	}
 
 	return math.Min(score, 1.0)
 }
 
+// ComputeConfidenceScore returns a 0-1 confidence for the winning candidate.
+//
+// Formula (per PDF review):
+//
+//	confidence_score =
+//	  0.35 * normalized_winning_score
+//	  + 0.25 * margin_strength
+//	  + 0.15 * carrier_tier_strength
+//	  + 0.10 * parse_mapping_quality
+//	  + 0.10 * source_strength_score
+//	  + 0.05 * candidate_set_simplicity
+//
+// Hard caps applied after formula:
+//
+//	MATCH_AMBIGUOUS   → cap at 0.60
+//	MATCH_CONFLICTED  → cap at 0.35
+//	MATCH_UNRESOLVED  → cap at 0.20
+//	hard conflict     → cap at 0.30
 func ComputeConfidenceScore(
 	top CandidateScore,
 	decisionType string,
@@ -540,15 +613,21 @@ func ComputeConfidenceScore(
 		ambiguityThreshold = 15.0
 	}
 
+	// normalized_winning_score
 	normalizedWinningScore := math.Min(top.Total/150.0, 1.0)
 
+	// margin_strength
 	var marginStrength float64
 	if len(ranked) >= 2 {
-		marginStrength = math.Min((ranked[0].Total-ranked[1].Total)/ambiguityThreshold, 1.0)
+		scoreMargin := ranked[0].Total - ranked[1].Total
+		marginStrength = math.Min(scoreMargin/ambiguityThreshold, 1.0)
 	} else {
+		// Single candidate — treat as full margin strength.
 		marginStrength = 1.0
 	}
 
+	// carrier_tier_strength: derived from the top candidate's match flags.
+	// Exact ref match = 1.0, composite match only = 0.5, neither = 0.2.
 	var carrierTierStrength float64
 	switch {
 	case top.ExactRefMatch:
@@ -559,16 +638,21 @@ func ComputeConfidenceScore(
 		carrierTierStrength = 0.2
 	}
 
+	// parse_mapping_quality
 	parseMappingQuality := (obs.ParseConfidence + obs.MappingConfidence) / 2.0
+
+	// source_strength_score
 	srcStrength := sourceStrengthScore(obs.SourceStrengthClass)
 
+	// candidate_set_simplicity
 	var candidateSetSimplicity float64
+	candidateSetSize := len(ranked)
 	switch {
-	case len(ranked) <= 1:
+	case candidateSetSize <= 1:
 		candidateSetSimplicity = 1.0
-	case len(ranked) == 2:
+	case candidateSetSize == 2:
 		candidateSetSimplicity = 0.7
-	case len(ranked) <= 5:
+	case candidateSetSize <= 5:
 		candidateSetSimplicity = 0.4
 	default:
 		candidateSetSimplicity = 0.1
@@ -581,6 +665,7 @@ func ComputeConfidenceScore(
 		0.10*srcStrength +
 		0.05*candidateSetSimplicity
 
+	// Hard caps per decision type.
 	switch decisionType {
 	case models.DecisionMatchAmbiguous:
 		if score > 0.60 {
@@ -596,6 +681,7 @@ func ComputeConfidenceScore(
 		}
 	}
 
+	// Hard conflict cap overrides the above.
 	if top.HasHardConflict && score > 0.30 {
 		score = 0.30
 	}
@@ -603,18 +689,23 @@ func ComputeConfidenceScore(
 	return math.Min(score, 1.0)
 }
 
-// ComputeMatchConfidence returns the normalised native similarity between
-// observation and intent, without environmental modifiers.
-//
-// FIX #17: uses maxTheoreticalMatchScore constant (580) derived from actual
-// carrier weights instead of the old hardcoded 310 which was incorrect.
+// ComputeMatchConfidence calculates the native similarity between the observation and intent
+// without environmental modifiers (like parse confidence or source strength).
 func ComputeMatchConfidence(cs CandidateScore) float64 {
+	// Sum only the specific components requested.
+	// Note: CurrencyMatch (+10) is already included inside PartyAmountScore.
 	nativeScore := cs.Breakdown.BusinessReferenceScore +
 		cs.Breakdown.PartyAmountScore +
 		cs.Breakdown.BatchContextScore +
 		cs.Breakdown.TimingScore
 
-	matchConfidence := nativeScore / maxTheoreticalMatchScore
+	// Theoretical max based on current scoring weights for a perfect match:
+	// ClientRef(100) + Amount(30) + Currency(10) + BankRef(85) + SourceRowNum(50) + BatchFamily(15) + Time(20) = 310
+	// BatchContextScore can carry both source_row_num (+50) and batch_family (+15).
+	// The result is capped at 1.0 so going over is safe.
+	const maxTheoreticalScore = 310.0
+
+	matchConfidence := nativeScore / maxTheoreticalScore
 	if matchConfidence > 1.0 {
 		return 1.0
 	}
@@ -624,31 +715,40 @@ func ComputeMatchConfidence(cs CandidateScore) float64 {
 	return matchConfidence
 }
 
+// abs64 is a simple absolute value for int64.
+func abs64(x int64) int64 {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // VARIANCE COMPUTATION
 // ─────────────────────────────────────────────────────────────────────────────
 
+// VarianceInputs bundles the fields needed for variance computation to keep the
+// function signature stable as the model evolves.
 type VarianceInputs struct {
 	Intent      models.CanonicalIntent
 	Observation models.CanonicalSettlementObservation
 }
 
-func ComputeVariance(in VarianceInputs) (
-	amountVariance decimal.Decimal,
-	feeVariance *decimal.Decimal,
-	deductionVariance *decimal.Decimal,
-	severity string,
-	flags map[string]bool,
-	reasons []string,
-) {
+// ComputeVariance calculates the formal difference between intent and observation.
+// Returned severity and reason codes feed Service 7 intelligence.
+func ComputeVariance(in VarianceInputs) (amountVariance decimal.Decimal, feeVariance *decimal.Decimal, deductionVariance *decimal.Decimal, severity string, flags map[string]bool, reasons []string) {
 	flags = make(map[string]bool)
+	reasons = []string{}
 
 	feeVariance = in.Observation.FeeAmount
 	deductionVariance = in.Observation.DeductionAmount
 
+	// ── Amount variance ───────────────────────────────────────────────────
 	if in.Observation.SettledAmount != nil {
+		// Use SettledAmount if present to correctly compute reconciliation variance (like expected PSP fees).
 		amountVariance = in.Intent.Amount.Sub(*in.Observation.SettledAmount)
 	} else {
+		// Fallback to Gross Amount.
 		amountVariance = in.Intent.Amount.Sub(in.Observation.Amount)
 	}
 
@@ -656,11 +756,14 @@ func ComputeVariance(in VarianceInputs) (
 		reasons = append(reasons, "AMOUNT_MISMATCH")
 	}
 
+	// ── Currency ─────────────────────────────────────────────────────────
 	flags["currency_match"] = in.Intent.CurrencyCode == in.Observation.CurrencyCode
 	if !flags["currency_match"] {
 		reasons = append(reasons, "CURRENCY_MISMATCH")
 	}
 
+	// ── Value-date mismatch ───────────────────────────────────────────────
+	// Core finance pain point flagged explicitly in the spec.
 	if in.Intent.IntendedExecutionAt != nil && in.Observation.ValueDate != nil {
 		intentDay := in.Intent.IntendedExecutionAt.Truncate(24 * time.Hour)
 		settleDay := in.Observation.ValueDate.Truncate(24 * time.Hour)
@@ -677,6 +780,7 @@ func ComputeVariance(in VarianceInputs) (
 		}
 	}
 
+	// ── Missing reference flags ───────────────────────────────────────────
 	flags["provider_ref_missing"] = in.Observation.ProviderReference == nil
 	flags["bank_ref_missing"] = in.Observation.BankReference == nil
 
@@ -687,11 +791,14 @@ func ComputeVariance(in VarianceInputs) (
 		reasons = append(reasons, "BANK_REF_MISSING")
 	}
 
+	// Evidence gap: no strong reference at all.
 	flags["evidence_gap"] = flags["provider_ref_missing"] && flags["bank_ref_missing"]
 	if flags["evidence_gap"] {
 		reasons = append(reasons, "EVIDENCE_GAP")
 	}
 
+	// ── Status variance ───────────────────────────────────────────────────
+	// Settled status not matching expected (e.g. intent says PENDING but obs says FAILED)
 	flags["status_variance"] = in.Observation.SettlementStatus == "FAILED" ||
 		in.Observation.SettlementStatus == "REVERSED" ||
 		in.Observation.SettlementStatus == "RETURNED"
@@ -699,11 +806,13 @@ func ComputeVariance(in VarianceInputs) (
 		reasons = append(reasons, "UNEXPECTED_SETTLEMENT_STATUS")
 	}
 
+	// ── Severity classification ───────────────────────────────────────────
 	severity = classifyVarianceSeverity(amountVariance, in.Intent.Amount, flags)
 	return
 }
 
 func classifyVarianceSeverity(variance decimal.Decimal, intendedAmount decimal.Decimal, flags map[string]bool) string {
+	// Any failed, reversed, or returned settlement is always CRITICAL regardless of the amount variance
 	if flags["status_variance"] {
 		return models.VarianceSeverityCritical
 	}
@@ -734,11 +843,8 @@ func classifyVarianceSeverity(variance decimal.Decimal, intendedAmount decimal.D
 	return models.VarianceSeverityInfo
 }
 
-// classifyVarianceType derives the variance_type enum value.
-//
-// FIX #16: DeductionAmount now correctly maps to TAX_TDS_DEDUCTION, and
-// FeeAmount maps to FEE_DEDUCTION. Previously both collapsed to FEE_DEDUCTION,
-// preventing Service 7 from distinguishing PSP fees from TDS deductions.
+// classifyVarianceType derives the variance_type enum value from the computed
+// flags and amounts.  Added per PDF review (section 9 — corrected variance schema).
 func classifyVarianceType(
 	amountVariance decimal.Decimal,
 	flags map[string]bool,
@@ -756,11 +862,11 @@ func classifyVarianceType(
 	if amountVariance.IsZero() {
 		return models.VarianceTypeNoVariance
 	}
-	// FIX #16: check DeductionAmount first (TDS/tax) then FeeAmount (PSP fee).
-	if obs.DeductionAmount != nil && !obs.DeductionAmount.IsZero() {
-		return models.VarianceTypeTaxTDSDeduction
-	}
+	// Fee/deduction variance when the observation recorded a fee or deduction amount.
 	if obs.FeeAmount != nil && !obs.FeeAmount.IsZero() {
+		return models.VarianceTypeFeeDeduction
+	}
+	if obs.DeductionAmount != nil && !obs.DeductionAmount.IsZero() {
 		return models.VarianceTypeFeeDeduction
 	}
 	if amountVariance.IsPositive() {
@@ -769,6 +875,7 @@ func classifyVarianceType(
 	return models.VarianceTypeOverSettlement
 }
 
+// isCrossPeriod returns true when intent and settlement fall in different calendar months.
 func isCrossPeriod(intentDay, settleDay time.Time) bool {
 	return intentDay.Month() != settleDay.Month() || intentDay.Year() != settleDay.Year()
 }

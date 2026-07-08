@@ -3,25 +3,16 @@ package services
 // ─────────────────────────────────────────────────────────────────────────────
 // SERVICE 5C — ATTACHMENT OUTBOX SERVICE
 //
-// FIXES APPLIED IN THIS FILE:
+// Durable event emission for all attachment domain outputs.
+// Events feed Service 6 (evidence) and Service 7 (intelligence).
 //
-//   FIX #1  — EmitForJob and EmitLeafBundlesForJob no longer write to the DB.
-//              They are now pure builders that return []models.OutboxRow.
-//              The engine passes these rows to persistAttachmentOutputs, which
-//              inserts them inside the same transaction as decisions/variances.
-//              This eliminates the crash window between tx.Commit() and the
-//              old post-commit outbox writes.
-//
-//   FIX #4  — Missing observation in obsMap for a resolved decision now returns
-//              an error row rather than silently skipping the event via continue.
-//              The error is recorded and returned as lastErr.
-//
-//   FIX #10 — intentMap is now passed in from the engine instead of being
-//              re-fetched via a redundant canonical_intents query.
-//
-//   FIX #16 — classifyVarianceType now distinguishes FEE_DEDUCTION from
-//              TAX_TDS_DEDUCTION: obs.DeductionAmount → TAX_TDS_DEDUCTION,
-//              obs.FeeAmount → FEE_DEDUCTION.
+// Event types emitted:
+//   attachment.decision.created      — every final decision
+//   variance.record.created          — every variance record
+//   attachment.batch.updated         — batch-level summary
+//   attachment.ambiguous.flagged     — every AMBIGUOUS decision (for review/ops)
+//   attachment.unresolved.flagged    — every UNRESOLVED decision
+//   attachment.review.required       — CONFLICTED decisions (highest urgency)
 // ─────────────────────────────────────────────────────────────────────────────
 
 import (
@@ -33,157 +24,209 @@ import (
 	"log"
 	"strings"
 	"time"
-
 	"zord-outcome-engine/db"
 	"zord-outcome-engine/models"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/google/uuid"
 	"github.com/lib/pq"
-	"github.com/shopspring/decimal"
 )
 
-// AttachmentOutboxService builds outbox rows for Service 5C outputs.
+// AttachmentOutboxService manages durable event emission for Service 5C.
 type AttachmentOutboxService struct{}
 
-// BuildOutboxRows builds all outcome_outbox rows for a completed attachment job
-// and returns them as two slices: decision/variance events and leaf bundle events.
-//
-// FIX #1: returns []models.OutboxRow instead of writing to DB. The caller
-// (persistAttachmentOutputs) inserts them inside the active transaction.
-//
-// FIX #10: intentMap is passed in — no DB query needed here.
-func (s *AttachmentOutboxService) BuildOutboxRows(
+// EmitForJob emits all downstream events for a completed attachment job.
+func (s *AttachmentOutboxService) EmitForJob(
 	ctx context.Context,
 	job *models.AttachmentJob,
 	decisions []models.AttachmentDecision,
 	variances []models.VarianceRecord,
 	obsMap map[uuid.UUID]*models.CanonicalSettlementObservation,
 	parsedByRowRef map[string]*models.SettlementParsedRow,
-	intentMap map[uuid.UUID]models.CanonicalIntent, // FIX #10: passed in, not re-fetched
-) (decisionRows []models.OutboxRow, leafRows []models.OutboxRow, lastErr error) {
-
-	log.Printf("attachment.outbox.build_start job=%s decisions=%d variances=%d",
+) error {
+	log.Printf("attachment.outbox.start job=%s decisions=%d variances=%d",
 		job.AttachmentJobID, len(decisions), len(variances))
 
-	varianceByDecision := make(map[uuid.UUID]models.VarianceRecord, len(variances))
+	var lastErr error
+
+	// Build a quick lookup of variance by decision ID for pairing.
+	varianceByDecision := make(map[uuid.UUID]models.VarianceRecord)
 	for _, v := range variances {
 		varianceByDecision[v.AttachmentDecisionID] = v
 	}
 
-	// FIX #10: fetch batch summary and corridor/batchID info using obsMap
-	// (already in memory) and a single batch summary query — NOT re-fetching intents.
+	decisionCount := 0
+	ambiguousCount := 0
+	unresolvedCount := 0
+	conflictedCount := 0
+
+	// 1. Fetch intent details for enrichment
+	type intentInfo struct {
+		IntentID            uuid.UUID
+		ContractID          uuid.UUID
+		CorridorID          string
+		Currency            string
+		Amount              decimal.Decimal
+		IntendedExecutionAt *time.Time
+		ClientBatchRef      *string
+	}
+	intentLookup := make(map[uuid.UUID]intentInfo)
+	var intentIDs []uuid.UUID
+	for _, d := range decisions {
+		if d.IntentID != uuid.Nil {
+			intentIDs = append(intentIDs, d.IntentID)
+		}
+	}
+	if len(intentIDs) > 0 {
+		rows, err := db.DB.QueryContext(ctx, `
+			SELECT
+				intent_id,
+				contract_id,
+				COALESCE(corridor, ''),
+				currency_code,
+				amount,
+				intended_execution_at,
+				client_batch_ref
+			FROM canonical_intents
+			WHERE intent_id = ANY($1)`, pq.Array(intentIDs))
+		if err != nil {
+			return fmt.Errorf("failed to lookup intents for outbox: %w", err)
+		}
+
+		for rows.Next() {
+			var idStr, corrID, curr string
+			var cID uuid.UUID
+			var amt decimal.Decimal
+			var intendedAt *time.Time
+			var clientBatchRef *string
+			if err := rows.Scan(&idStr, &cID, &corrID, &curr, &amt, &intendedAt, &clientBatchRef); err != nil {
+				continue
+			}
+			id, _ := uuid.Parse(idStr)
+			intentLookup[id] = intentInfo{
+				IntentID:            id,
+				ContractID:          cID,
+				CorridorID:          corrID,
+				Currency:            curr,
+				Amount:              amt,
+				IntendedExecutionAt: intendedAt,
+				ClientBatchRef:      clientBatchRef,
+			}
+		}
+		rows.Close()
+	}
+
+	// 2. Fetch batch summary data for aggregate amounts and batch_id fallback
 	var summaryBatchID *string
 	var totalIntendedAmount, totalConfirmedAmount, totalVariance, originalSettledAmount decimal.Decimal
 	row := db.DB.QueryRowContext(ctx, `
 		SELECT batch_id, total_intended_amount, original_settled_amount, total_observed_amount, total_variance
-		FROM batch_attachment_summaries
-		WHERE attachment_job_id = $1
+		FROM batch_attachment_summaries 
+		WHERE attachment_job_id = $1 
 		LIMIT 1`,
 		job.AttachmentJobID,
 	)
-	_ = row.Scan(&summaryBatchID, &totalIntendedAmount, &originalSettledAmount,
-		&totalConfirmedAmount, &totalVariance)
+	_ = row.Scan(&summaryBatchID, &totalIntendedAmount, &originalSettledAmount, &totalConfirmedAmount, &totalVariance)
 
-	// ── Decision + variance + flag events ────────────────────────────────────
 	for _, d := range decisions {
+		// ── 1. attachment.decision.created ────────────────────────────────
 		cID := uuid.Nil
 		corrID := ""
 		curr := ""
 		intendedAmount := decimal.Zero
 		settledAmount := decimal.Zero
 
-		// FIX #10: look up intent data from the passed-in map, not a DB query.
 		if d.IntentID != uuid.Nil {
-			if info, ok := intentMap[d.IntentID]; ok {
-				if info.Corridor != nil {
-					corrID = *info.Corridor
-				}
-				curr = info.CurrencyCode
+			if info, ok := intentLookup[d.IntentID]; ok {
+				cID = info.ContractID
+				corrID = info.CorridorID
+				curr = info.Currency
 				intendedAmount = info.Amount
-				// contract_id is not on CanonicalIntent in this projection;
-				// keep uuid.Nil unless available via dispatch_index fallback below.
 			}
 		}
 
 		bID := ""
 		tID := uuid.Nil
 		var sourceSystem string
+
 		var bankRef, clientRefCandidate string
 		var obsCreatedAt time.Time
 		var parsedCreatedAt time.Time
 		var obsClientBatchID string
-		var envelopeIDStr string
-
 		if d.SettlementObservationID != nil {
-			obs, ok := obsMap[*d.SettlementObservationID]
-			if !ok {
-				// FIX #4: record the error but do not silently skip — set lastErr
-				// so the caller is aware. Continue to process remaining decisions.
-				lastErr = fmt.Errorf("outbox build: observation missing from obsMap decision=%s obs=%s",
-					d.AttachmentDecisionID, *d.SettlementObservationID)
-				log.Printf("attachment.outbox.missing_obs decision=%s obs=%s",
-					d.AttachmentDecisionID, *d.SettlementObservationID)
-				continue
-			}
-			obsClientBatchID = strings.TrimSpace(obs.ClientBatchID)
-			settledAmount = obs.Amount
-			sourceSystem = obs.SourceSystem
-			if corrID == "" {
-				corrID = obs.CorridorID
-			}
-			if curr == "" {
-				curr = obs.CurrencyCode
-			}
-			if obs.TraceID != nil {
-				tID = *obs.TraceID
-			}
-			if obs.BankReference != nil {
-				bankRef = *obs.BankReference
-			}
-			if obs.ClientReferenceCandidate != nil {
-				clientRefCandidate = *obs.ClientReferenceCandidate
-			}
-			obsCreatedAt = obs.CreatedAt
-			envelopeIDStr = obs.SettlementEnvelopeID.String()
+			if obs, ok := obsMap[*d.SettlementObservationID]; ok {
+				obsClientBatchID = strings.TrimSpace(obs.ClientBatchID)
+				settledAmount = obs.Amount
+				sourceSystem = obs.SourceSystem
+				if corrID == "" {
+					corrID = obs.CorridorID
+				}
+				if curr == "" {
+					curr = obs.CurrencyCode
+				}
+				if obs.TraceID != nil {
+					tID = *obs.TraceID
+				}
+				if obs.BankReference != nil {
+					bankRef = *obs.BankReference
+				}
+				if obs.ClientReferenceCandidate != nil {
+					clientRefCandidate = *obs.ClientReferenceCandidate
+				}
+				obsCreatedAt = obs.CreatedAt
 
-			if pr, ok2 := parsedByRowRef[obs.SourceRowRef]; ok2 {
-				parsedCreatedAt = pr.CreatedAt
+				if pr, ok2 := parsedByRowRef[obs.SourceRowRef]; ok2 {
+					parsedCreatedAt = pr.CreatedAt
+				}
 			}
 		}
 
 		var intentBatchRef string
 		if d.IntentID != uuid.Nil {
-			if info, ok := intentMap[d.IntentID]; ok && info.ClientBatchRef != nil {
+			if info, ok := intentLookup[d.IntentID]; ok && info.ClientBatchRef != nil {
 				intentBatchRef = strings.TrimSpace(*info.ClientBatchRef)
 			}
 		}
 		bID = resolveDecisionBatchID(obsClientBatchID, intentBatchRef, summaryBatchID, job)
 
-		// Defensive enrichment for contract_id via dispatch_index
+		// intentID is always populated now
+		intentID := d.IntentID
+
+		// Defensive enrichment for contract_id if still missing
 		if cID == uuid.Nil && corrID != "" {
 			var fallbackCID uuid.UUID
-			_ = db.DB.QueryRowContext(ctx,
-				`SELECT contract_id FROM dispatch_index WHERE corridor_id = $1 LIMIT 1`,
-				corrID).Scan(&fallbackCID)
+			_ = db.DB.QueryRowContext(ctx, `SELECT contract_id FROM dispatch_index WHERE corridor_id = $1 LIMIT 1`, corrID).Scan(&fallbackCID)
 			if fallbackCID != uuid.Nil {
 				cID = fallbackCID
 			}
 		}
 
 		intentIDStr := ""
-		if d.IntentID != uuid.Nil {
-			intentIDStr = d.IntentID.String()
+		if intentID != uuid.Nil {
+			intentIDStr = intentID.String()
 		}
+
 		contractIDStr := ""
 		if cID != uuid.Nil {
 			contractIDStr = cID.String()
 		}
-
 		var valueDateCheck bool
 		var amountMatch bool
 		if v, ok := varianceByDecision[d.AttachmentDecisionID]; ok {
 			valueDateCheck = v.ValueDateMismatchFlag
 			amountMatch = v.AmountVariance.IsZero()
+		}
+
+		// Fetch observation for metadata enrichment
+		var envelopeID string
+		if d.SettlementObservationID != nil {
+			obs, ok := obsMap[*d.SettlementObservationID]
+			if !ok {
+				log.Printf("attachment.outbox.missing_obs decision=%s obs=%s", d.AttachmentDecisionID, d.SettlementObservationID)
+				continue
+			}
+			envelopeID = obs.SettlementEnvelopeID.String()
 		}
 
 		var obsIDStr string
@@ -227,6 +270,7 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 			"value_date_check":             valueDateCheck,
 			"amount_match":                 amountMatch,
 		}
+		// Attach variance summary inline when available (Service 6 convenience).
 		if v, ok := varianceByDecision[d.AttachmentDecisionID]; ok {
 			payload["variance_summary"] = map[string]interface{}{
 				"amount_variance":     v.AmountVariance,
@@ -237,17 +281,15 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 			}
 		}
 
-		row, err := s.buildRow(ctx, d.TenantID, job.AttachmentJobID,
-			envelopeIDStr, contractIDStr, bID,
+		if err := s.insertEvent(ctx, d.TenantID, job.AttachmentJobID,
+			envelopeID, contractIDStr, bID,
 			"attachment_decision", d.AttachmentDecisionID,
-			"attachment.decision.created", payload)
-		if err != nil {
+			"attachment.decision.created", payload); err != nil {
 			lastErr = err
-		} else {
-			decisionRows = append(decisionRows, row)
 		}
+		decisionCount++
 
-		// Urgency-scoped flag events
+		// ── 2. Urgency-scoped flag events ─────────────────────────────────
 		switch d.DecisionType {
 		case models.DecisionMatchAmbiguous:
 			flagPayload := map[string]interface{}{
@@ -258,14 +300,13 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 				"candidate_set_hash":        d.CandidateSetHash,
 				"reason_code":               d.DecisionReasonCode,
 			}
-			if r, err := s.buildRow(ctx, d.TenantID, d.AttachmentJobID,
-				envelopeIDStr, "", "",
+			if err := s.insertEvent(ctx, d.TenantID, d.AttachmentJobID,
+				envelopeID, "", "",
 				"attachment_decision", d.AttachmentDecisionID,
 				"attachment.ambiguous.flagged", flagPayload); err != nil {
 				lastErr = err
-			} else {
-				decisionRows = append(decisionRows, r)
 			}
+			ambiguousCount++
 
 		case models.DecisionMatchUnresolved:
 			flagPayload := map[string]interface{}{
@@ -275,16 +316,16 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 				"reason_code":               d.DecisionReasonCode,
 				"ambiguity_score":           d.AmbiguityScore,
 			}
-			if r, err := s.buildRow(ctx, d.TenantID, d.AttachmentJobID,
-				envelopeIDStr, "", "",
+			if err := s.insertEvent(ctx, d.TenantID, d.AttachmentJobID,
+				envelopeID, "", "",
 				"attachment_decision", d.AttachmentDecisionID,
 				"attachment.unresolved.flagged", flagPayload); err != nil {
 				lastErr = err
-			} else {
-				decisionRows = append(decisionRows, r)
 			}
+			unresolvedCount++
 
 		case models.DecisionMatchConflicted:
+			// Highest urgency — conflicting strong carriers require human or ops review.
 			reviewPayload := map[string]interface{}{
 				"attachment_decision_id":    d.AttachmentDecisionID,
 				"tenant_id":                 d.TenantID,
@@ -295,18 +336,17 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 				"candidate_set_hash":        d.CandidateSetHash,
 				"review_urgency":            "HIGH",
 			}
-			if r, err := s.buildRow(ctx, d.TenantID, d.AttachmentJobID,
-				envelopeIDStr, "", "",
+			if err := s.insertEvent(ctx, d.TenantID, d.AttachmentJobID,
+				envelopeID, "", "",
 				"attachment_decision", d.AttachmentDecisionID,
 				"attachment.review.required", reviewPayload); err != nil {
 				lastErr = err
-			} else {
-				decisionRows = append(decisionRows, r)
 			}
+			conflictedCount++
 		}
 	}
 
-	// ── Variance events ───────────────────────────────────────────────────────
+	// ── 3. variance.record.created — one per variance record ─────────────
 	for _, v := range variances {
 		var (
 			corridorID        string
@@ -316,7 +356,7 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 			expectedValueDate *time.Time
 			intendedAmount    decimal.Decimal
 			settledAmount     decimal.Decimal
-			envelopeIDStr     string
+			envelopeID        string
 		)
 
 		if obs, ok := obsMap[v.SettlementObservationID]; ok {
@@ -328,11 +368,10 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 			currency = obs.CurrencyCode
 			actualValueDate = obs.ValueDate
 			settledAmount = obs.Amount
-			envelopeIDStr = obs.SettlementEnvelopeID.String()
+			envelopeID = obs.SettlementEnvelopeID.String()
 		}
 
-		// FIX #10: look up intent from map, not DB.
-		if info, ok := intentMap[v.IntentID]; ok {
+		if info, ok := intentLookup[v.IntentID]; ok {
 			expectedValueDate = info.IntendedExecutionAt
 			intendedAmount = info.Amount
 		}
@@ -370,12 +409,13 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 		}
 
 		vTraceID := uuid.Nil
+		if obs, ok := obsMap[v.SettlementObservationID]; ok && obs.TraceID != nil {
+			vTraceID = *obs.TraceID
+		}
+		// Look up obs for source_system — same obsMap used above for corridorID/batchID.
 		var vSourceSystem string
-		if obs, ok := obsMap[v.SettlementObservationID]; ok {
-			if obs.TraceID != nil {
-				vTraceID = *obs.TraceID
-			}
-			vSourceSystem = obs.SourceSystem
+		if vobs, ok := obsMap[v.SettlementObservationID]; ok {
+			vSourceSystem = vobs.SourceSystem
 		}
 
 		vPayload := map[string]interface{}{
@@ -396,53 +436,21 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 			"currency":              currency,
 			"expected_value_date":   expectedDateStr,
 			"actual_value_date":     actualDateStr,
-			"source_system":         vSourceSystem,
+			"source_system":         vSourceSystem, // ProviderID in zord-intelligence
 			"cross_period_flag":     v.CrossPeriodFlag,
 			"deduction_reason":      "TAX",
 			"is_whitelisted":        false,
 			"evidence_gap_flags":    evidenceGapFlags,
 		}
-		if r, err := s.buildRow(ctx, v.TenantID, job.AttachmentJobID,
-			envelopeIDStr, "", "",
+		if err := s.insertEvent(ctx, v.TenantID, job.AttachmentJobID,
+			envelopeID, "", "",
 			"variance_record", v.VarianceRecordID,
 			"variance.record.created", vPayload); err != nil {
 			lastErr = err
-		} else {
-			decisionRows = append(decisionRows, r)
 		}
 	}
 
-	// ── Batch updated event ───────────────────────────────────────────────────
-	batchRow, err := s.buildBatchUpdatedRow(ctx, job, decisions, obsMap, intentMap, summaryBatchID)
-	if err != nil {
-		lastErr = err
-	} else {
-		decisionRows = append(decisionRows, batchRow)
-	}
-
-	// ── Leaf bundle events ────────────────────────────────────────────────────
-	leafRows, err = s.buildLeafBundleRows(ctx, job, decisions, variances, obsMap, parsedByRowRef)
-	if err != nil {
-		lastErr = err
-	}
-
-	log.Printf("attachment.outbox.build_done job=%s decision_rows=%d leaf_rows=%d",
-		job.AttachmentJobID, len(decisionRows), len(leafRows))
-
-	return decisionRows, leafRows, lastErr
-}
-
-// buildBatchUpdatedRow constructs the attachment.batch.updated outbox row.
-// FIX #10: intentMap is used instead of a redundant DB fetch.
-func (s *AttachmentOutboxService) buildBatchUpdatedRow(
-	ctx context.Context,
-	job *models.AttachmentJob,
-	decisions []models.AttachmentDecision,
-	obsMap map[uuid.UUID]*models.CanonicalSettlementObservation,
-	intentMap map[uuid.UUID]models.CanonicalIntent,
-	summaryBatchID *string,
-) (models.OutboxRow, error) {
-
+	// ── 4. attachment.batch.updated — one per job ─────────────────────────
 	var (
 		batchID            string
 		corridorID         string
@@ -453,51 +461,46 @@ func (s *AttachmentOutboxService) buildBatchUpdatedRow(
 		reversedCount      int
 		aggregateAmbiguity float64
 		finalityStatus     string
-		fileSHA            string
-		summarySourceRef   string
 	)
 
-	var totalIntendedAmount, totalConfirmedAmount, totalVariance, originalSettledAmount decimal.Decimal
-	var summaryAmbiguity, summaryMatchConfidence, summaryQualityScore float64
-	var matchedIntentCount, totalIntentCount int
-	var matchedPairVariance, netBatchDelta, orphanObservedAmount decimal.Decimal
-	var unresolvedIntendedAmount, ambiguousAmount, conflictedAmount decimal.Decimal
-	var orphanObservationCount, unresolvedIntentCount int
-	var summaryExactMatchCount, summaryHighConfidenceCount, summaryAmbiguousCount, summaryConflictedCount int
-	var intentCountCoverage, intentValueCoverage, observedCountCoverage, observedValueCoverage float64
-	var originalIntendedAmount, matchedIntendedAmount, matchedObservedAmount decimal.Decimal
-
-	row := db.DB.QueryRowContext(ctx, `
-		SELECT
-			batch_id, source_reference, total_intended_amount,
+	// 1. Fetch batch summary data
+	row = db.DB.QueryRowContext(ctx, `
+		SELECT 
+			batch_id, source_reference, total_intended_amount, 
 			total_observed_amount, total_variance, batch_attachment_status,
 			avg_matched_attachment_ambiguity, avg_matched_attachment_confidence,
 			avg_matched_attachment_quality,
 			matched_intent_count, total_intent_count,
 			matched_pair_variance, net_batch_delta, orphan_observed_amount,
-			unresolved_intended_amount, ambiguous_amount, conflicted_amount,
-			orphan_observation_count,
-			exact_match_count, high_confidence_count, ambiguous_count,
-			unresolved_count, conflicted_count,
+			unresolved_intended_amount, ambiguous_amount, conflicted_amount, orphan_observation_count,
+			exact_match_count, high_confidence_count, ambiguous_count, unresolved_count, conflicted_count,
 			intent_count_coverage, intent_value_coverage,
 			observed_count_allocation_coverage, observed_value_allocation_coverage,
 			original_intended_amount, original_settled_amount,
 			matched_intended_amount, matched_observed_amount
-		FROM batch_attachment_summaries
-		WHERE attachment_job_id = $1
+		FROM batch_attachment_summaries 
+		WHERE attachment_job_id = $1 
 		LIMIT 1`,
 		job.AttachmentJobID,
 	)
+	var summarySourceRef string
+	var summaryAmbiguity float64
+	var summaryMatchConfidence float64
+	var summaryQualityScore float64
+	var matchedIntentCount, totalIntentCount int
+	var matchedPairVariance, netBatchDelta, orphanObservedAmount, unresolvedIntendedAmount, ambiguousAmount, conflictedAmount decimal.Decimal
+	var orphanObservationCount, unresolvedIntentCount int
+	var summaryExactMatchCount, summaryHighConfidenceCount, summaryAmbiguousCount, summaryConflictedCount int
+	var intentCountCoverage, intentValueCoverage, observedCountCoverage, observedValueCoverage float64
+	var originalIntendedAmount, matchedIntendedAmount, matchedObservedAmount decimal.Decimal
 	if err := row.Scan(
 		&summaryBatchID, &summarySourceRef, &totalIntendedAmount,
 		&totalConfirmedAmount, &totalVariance, &finalityStatus,
 		&summaryAmbiguity, &summaryMatchConfidence, &summaryQualityScore,
 		&matchedIntentCount, &totalIntentCount,
 		&matchedPairVariance, &netBatchDelta, &orphanObservedAmount,
-		&unresolvedIntendedAmount, &ambiguousAmount, &conflictedAmount,
-		&orphanObservationCount,
-		&summaryExactMatchCount, &summaryHighConfidenceCount, &summaryAmbiguousCount,
-		&unresolvedIntentCount, &summaryConflictedCount,
+		&unresolvedIntendedAmount, &ambiguousAmount, &conflictedAmount, &orphanObservationCount,
+		&summaryExactMatchCount, &summaryHighConfidenceCount, &summaryAmbiguousCount, &unresolvedIntentCount, &summaryConflictedCount,
 		&intentCountCoverage, &intentValueCoverage,
 		&observedCountCoverage, &observedValueCoverage,
 		&originalIntendedAmount, &originalSettledAmount,
@@ -508,7 +511,10 @@ func (s *AttachmentOutboxService) buildBatchUpdatedRow(
 		}
 		aggregateAmbiguity = summaryAmbiguity
 	}
-
+	// Resolution order (mirrors resolveDecisionBatchID):
+	//   1. summaryBatchID from DB (intent client_batch_ref) — already applied above
+	//   2. obs.ClientBatchID — for INGEST_RUN where intents carry no batch ref
+	//   3. job.ScopeRef — last resort so the event is never dropped with batch_id=""
 	if batchID == "" {
 		for _, obs := range obsMap {
 			if c := strings.TrimSpace(obs.ClientBatchID); c != "" {
@@ -521,7 +527,7 @@ func (s *AttachmentOutboxService) buildBatchUpdatedRow(
 		batchID = job.ScopeRef
 	}
 
-	// Corridor from first resolved decision's observation.
+	// 2. Fetch corridor_id from the first observation in this job
 	if len(decisions) > 0 {
 		firstObsID := decisions[0].SettlementObservationID
 		if firstObsID != nil {
@@ -531,7 +537,8 @@ func (s *AttachmentOutboxService) buildBatchUpdatedRow(
 		}
 	}
 
-	// File metadata from ingest run.
+	// 3. Fetch batch estimate counts and file_sha256 from canonical_settlement_batches and settlement_ingest_runs
+	var fileSHA string
 	ingestRunID := ""
 	if job.JobScopeType == models.JobScopeIngestRun {
 		ingestRunID = job.ScopeRef
@@ -544,9 +551,9 @@ func (s *AttachmentOutboxService) buildBatchUpdatedRow(
 		}
 	}
 	if ingestRunID != "" {
-		r2 := db.DB.QueryRowContext(ctx, `
-			SELECT
-				b.row_count, b.success_count_estimate, b.failed_count_estimate,
+		row = db.DB.QueryRowContext(ctx, `
+			SELECT 
+				b.row_count, b.success_count_estimate, b.failed_count_estimate, 
 				b.pending_count_estimate, b.reversal_count_estimate,
 				r.file_sha256
 			FROM canonical_settlement_batches b
@@ -556,11 +563,12 @@ func (s *AttachmentOutboxService) buildBatchUpdatedRow(
 			LIMIT 1`,
 			ingestRunID, job.TenantID,
 		)
-		if err := r2.Scan(&totalCount, &successCount, &failedCount,
-			&pendingCount, &reversedCount, &fileSHA); err != nil {
-			log.Printf("attachment.outbox.batch_metadata_lookup_failed ingest_run=%s err=%v",
-				ingestRunID, err)
+		if err := row.Scan(&totalCount, &successCount, &failedCount, &pendingCount, &reversedCount, &fileSHA); err != nil {
+			log.Printf("attachment.outbox.batch_metadata_lookup_by_ingest_run_failed ingest_run_id=%s scope_ref=%s err=%v", ingestRunID, job.ScopeRef, err)
 		}
+		log.Printf("attachment.outbox.batch_metadata ingest_run_id=%s scope_ref=%s total=%d success=%d failed=%d pending=%d reversed=%d file_sha256=%q",
+			ingestRunID, job.ScopeRef, totalCount, successCount, failedCount, pendingCount, reversedCount, fileSHA)
+
 	}
 
 	batchPayload := map[string]interface{}{
@@ -610,14 +618,21 @@ func (s *AttachmentOutboxService) buildBatchUpdatedRow(
 		"batch_finality_status":              finalityStatus,
 		"job_status":                         job.Status,
 	}
-
-	return s.buildRow(ctx, job.TenantID, job.AttachmentJobID,
+	if err := s.insertEvent(ctx, job.TenantID, job.AttachmentJobID,
 		"", "", batchID,
 		"attachment_job", job.AttachmentJobID,
-		"attachment.batch.updated", batchPayload)
+		"attachment.batch.updated", batchPayload); err != nil {
+		lastErr = err
+	}
+
+	log.Printf("attachment.outbox.done job=%s decision_events=%d ambiguous=%d unresolved=%d conflicted=%d variance_events=%d",
+		job.AttachmentJobID, decisionCount, ambiguousCount, unresolvedCount, conflictedCount, len(variances))
+
+	return lastErr
 }
 
 // resolveDecisionBatchID picks batch_id for attachment.decision.created payloads.
+// Order: observation ClientBatchID → intent client_batch_ref → batch summary batch_id → job scope_ref (SETTLEMENT_BATCH only).
 func resolveDecisionBatchID(
 	obsClientBatchID string,
 	intentBatchRef string,
@@ -643,9 +658,7 @@ func resolveDecisionBatchID(
 	return ""
 }
 
-// buildRow constructs a single OutboxRow from a payload map.
-// FIX #1: returns a struct instead of writing to the DB.
-func (s *AttachmentOutboxService) buildRow(
+func (s *AttachmentOutboxService) insertEvent(
 	ctx context.Context,
 	tenantID uuid.UUID,
 	jobID uuid.UUID,
@@ -656,87 +669,119 @@ func (s *AttachmentOutboxService) buildRow(
 	aggregateID uuid.UUID,
 	eventType string,
 	payload any,
-) (models.OutboxRow, error) {
-
+) error {
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
-		return models.OutboxRow{}, fmt.Errorf("outbox buildRow marshal: %w", err)
+		log.Printf("attachment.outbox.marshal_failed type=%s err=%v", eventType, err)
+		return err
 	}
 
+	// Fix — don't use uuid.Nil for trace_id.
+	// If it's missing in context, generate one or leave NULL.
 	traceID := uuid.Nil
 	if tid, ok := ctx.Value("trace_id").(string); ok {
-		if u, err2 := uuid.Parse(tid); err2 == nil {
+		if u, err := uuid.Parse(tid); err == nil {
 			traceID = u
 		}
 	}
 
 	var envID *uuid.UUID
 	if envelopeID != "" {
-		if u, err2 := uuid.Parse(envelopeID); err2 == nil {
+		if u, err := uuid.Parse(envelopeID); err == nil {
 			envID = &u
 		}
 	}
 
-	r := models.OutboxRow{
-		EventID:       uuid.New(),
-		TenantID:      tenantID,
-		TraceID:       traceID,
-		EnvelopeID:    envID,
-		ContractID:    contractID,
-		BatchID:       batchID,
-		AggregateType: aggregateType,
-		AggregateID:   aggregateID,
-		EventType:     eventType,
-		Payload:       payloadJSON,
-		CreatedAt:     time.Now().UTC(),
-	}
+	var srr, csc *time.Time
+	var br, cr, ad *string
+	var mc *float64
+	var vdc, am *bool
 
-	// Populate metadata columns from payload for fast querying.
 	var pMap map[string]interface{}
-	if err2 := json.Unmarshal(payloadJSON, &pMap); err2 == nil {
+	if err := json.Unmarshal(payloadJSON, &pMap); err == nil {
 		if v, ok := pMap["settlement_record_received"].(string); ok && v != "" {
-			if t, err3 := time.Parse(time.RFC3339, v); err3 == nil {
-				r.SettlementRecordReceived = &t
+			if t, err := time.Parse(time.RFC3339, v); err == nil {
+				srr = &t
 			}
 		}
 		if v, ok := pMap["canonical_settlement_created"].(string); ok && v != "" {
-			if t, err3 := time.Parse(time.RFC3339, v); err3 == nil {
-				r.CanonicalSettlementCreated = &t
+			if t, err := time.Parse(time.RFC3339, v); err == nil {
+				csc = &t
 			}
 		}
 		if v, ok := pMap["bank_reference"].(string); ok {
-			s2 := v
-			r.BankReference = &s2
+			s := v
+			br = &s
 		}
 		if v, ok := pMap["client_reference"].(string); ok {
-			s2 := v
-			r.ClientReference = &s2
+			s := v
+			cr = &s
 		}
 		if v, ok := pMap["attachment_decision"].(string); ok {
-			s2 := v
-			r.AttachmentDecision = &s2
+			s := v
+			ad = &s
 		}
 		if v, ok := pMap["match_confidence"].(float64); ok {
 			f := v
-			r.MatchConfidence = &f
+			mc = &f
 		}
 		if v, ok := pMap["value_date_check"].(bool); ok {
 			b := v
-			r.ValueDateCheck = &b
+			vdc = &b
 		}
 		if v, ok := pMap["amount_match"].(bool); ok {
 			b := v
-			r.AmountMatch = &b
+			am = &b
 		}
 	}
 
-	return r, nil
+	_, err = db.DB.ExecContext(ctx, `
+		INSERT INTO outcome_outbox (
+			event_id, tenant_id, trace_id, envelope_id,
+			contract_id, batchid,
+			aggregate_type, aggregate_id,
+			event_type, payload,
+			status, retry_count, created_at,
+			settlement_record_received, canonical_settlement_created,
+			bank_reference, client_reference,
+			attachment_decision, match_confidence,
+			value_date_check, amount_match
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
+		uuid.New(), tenantID, traceID, envID,
+		contractID, batchID,
+		aggregateType, aggregateID,
+		eventType, payloadJSON,
+		"PENDING", 0, time.Now().UTC(),
+		srr, csc, br, cr, ad, mc, vdc, am,
+	)
+	if err != nil {
+		log.Printf("attachment.outbox.insert_failed type=%s err=%v", eventType, err)
+		return fmt.Errorf("attachment outbox insert failed: %w", err)
+	}
+	return nil
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MERKLE LEAF BUNDLE ROWS
+// MERKLE LEAF BUNDLE EMISSION
+//
+// EmitLeafBundlesForJob emits one "outcome.leaf_bundle.created" event per
+// attached (winner-resolved) decision into outcome_outbox.  zord-relay picks
+// these up and publishes them to payments.outcome.events.v1.  zord-evidence
+// consumes that topic and calls GeneratePack() immediately — no buffering
+// required because all 4 leaf candidates arrive in a single event.
+//
+// Leaf types per event:
+//   1. RAW_SETTLEMENT_LINE              — from settlement_parsed_rows
+//   2. CANONICAL_SETTLEMENT_OBSERVATION — from canonical_settlement_observations
+//   3. ATTACHMENT_DECISION              — candidate_set_hash
+//   4. VARIANCE_DECISION                — deterministic hash of delta fields
+//
+// Only decisions with a resolved intent_id (EXACT / HIGH_CONFIDENCE) produce
+// a leaf bundle.  AMBIGUOUS / UNRESOLVED / CONFLICTED have no winner, so no
+// variance record and no intent_id to key the pack on.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// leafCandidate is the wire format for one Merkle leaf inside a bundle event.
 type leafCandidate struct {
 	Type          string `json:"type"`
 	Ref           string `json:"ref"`
@@ -744,6 +789,7 @@ type leafCandidate struct {
 	SchemaVersion string `json:"schema_version"`
 }
 
+// leafBundlePayload is the full payload of an outcome.leaf_bundle.created event.
 type leafBundlePayload struct {
 	EventType               string          `json:"event_type"`
 	TenantID                string          `json:"tenant_id"`
@@ -764,24 +810,29 @@ type leafBundlePayload struct {
 	AmountMatch                *bool      `json:"amount_match,omitempty"`
 }
 
-// buildLeafBundleRows builds one outcome.leaf_bundle.created outbox row per
-// winner-resolved decision.
-// FIX #1: returns []models.OutboxRow instead of writing to the DB.
-func (s *AttachmentOutboxService) buildLeafBundleRows(
+// EmitLeafBundlesForJob emits outcome_outbox events for all winner-resolved
+// decisions produced by a completed attachment job.
+//
+// obsMap          — map[settlement_observation_id]*CanonicalSettlementObservation
+// parsedByRowRef  — map[source_row_ref]*SettlementParsedRow
+func (s *AttachmentOutboxService) EmitLeafBundlesForJob(
 	ctx context.Context,
 	job *models.AttachmentJob,
 	decisions []models.AttachmentDecision,
 	variances []models.VarianceRecord,
 	obsMap map[uuid.UUID]*models.CanonicalSettlementObservation,
 	parsedByRowRef map[string]*models.SettlementParsedRow,
-) ([]models.OutboxRow, error) {
-
+) error {
+	// Build fast lookup: decision_id → variance_record
 	vrByDecision := make(map[uuid.UUID]*models.VarianceRecord, len(variances))
 	for i := range variances {
 		vrByDecision[variances[i].AttachmentDecisionID] = &variances[i]
 	}
 
-	// Fetch file SHA256 per ingest run.
+	var lastErr error
+	emitted := 0
+
+	// Build a lookup for ingest_run_id -> file_sha256 to support Leaf 5: RAW_SETTLEMENT_FILE.
 	runIDs := make(map[string]bool)
 	for _, obs := range obsMap {
 		if obs.IngestRunID != "" {
@@ -794,13 +845,11 @@ func (s *AttachmentOutboxService) buildLeafBundleRows(
 		for id := range runIDs {
 			ids = append(ids, id)
 		}
-		rows, err := db.DB.QueryContext(ctx,
-			`SELECT ingest_run_id, file_sha256 FROM settlement_ingest_runs WHERE ingest_run_id = ANY($1)`,
-			pq.Array(ids))
+		rows, err := db.DB.QueryContext(ctx, `SELECT ingest_run_id, file_sha256 FROM settlement_ingest_runs WHERE ingest_run_id = ANY($1)`, pq.Array(ids))
 		if err == nil {
 			for rows.Next() {
 				var rid, sha string
-				if scanErr := rows.Scan(&rid, &sha); scanErr == nil {
+				if err := rows.Scan(&rid, &sha); err == nil {
 					shaMap[rid] = sha
 				}
 			}
@@ -810,21 +859,19 @@ func (s *AttachmentOutboxService) buildLeafBundleRows(
 		}
 	}
 
-	var result []models.OutboxRow
-	var lastErr error
-
 	for _, d := range decisions {
+		// Only emit for decisions that resolved to a specific observation.
 		if d.SettlementObservationID == nil {
 			continue
 		}
 
 		obs, ok := obsMap[*d.SettlementObservationID]
 		if !ok {
-			log.Printf("leaf_bundle.obs_missing decision=%s obs=%s",
-				d.AttachmentDecisionID, d.SettlementObservationID)
+			log.Printf("leaf_bundle.obs_missing decision=%s obs=%s", d.AttachmentDecisionID, d.SettlementObservationID)
 			continue
 		}
 
+		// ── Leaf 2: CANONICAL_SETTLEMENT_OBSERVATION ──────────────────────
 		leaves := []leafCandidate{
 			{
 				Type:          "CANONICAL_SETTLEMENT_OBSERVATION",
@@ -832,6 +879,7 @@ func (s *AttachmentOutboxService) buildLeafBundleRows(
 				Hash:          obs.CanonicalHash,
 				SchemaVersion: "v1",
 			},
+			// ── Leaf 3: ATTACHMENT_DECISION ───────────────────────────────
 			{
 				Type:          "ATTACHMENT_DECISION",
 				Ref:           d.AttachmentDecisionID.String(),
@@ -840,8 +888,9 @@ func (s *AttachmentOutboxService) buildLeafBundleRows(
 			},
 		}
 
-		if pr, ok2 := parsedByRowRef[obs.SourceRowRef]; ok2 &&
-			pr.RawLineHash != nil && *pr.RawLineHash != "" {
+		// ── Leaf 1: RAW_SETTLEMENT_LINE ───────────────────────────────────
+		// Linked via source_row_ref shared between parsed_rows and observations.
+		if pr, ok := parsedByRowRef[obs.SourceRowRef]; ok && pr.RawLineHash != nil && *pr.RawLineHash != "" {
 			leaves = append(leaves, leafCandidate{
 				Type:          "RAW_SETTLEMENT_LINE",
 				Ref:           pr.ParsedRowID.String(),
@@ -850,7 +899,8 @@ func (s *AttachmentOutboxService) buildLeafBundleRows(
 			})
 		}
 
-		if vr, ok2 := vrByDecision[d.AttachmentDecisionID]; ok2 {
+		// ── Leaf 4: VARIANCE_DECISION ─────────────────────────────────────
+		if vr, ok := vrByDecision[d.AttachmentDecisionID]; ok {
 			leaves = append(leaves, leafCandidate{
 				Type:          "VARIANCE_DECISION",
 				Ref:           vr.VarianceRecordID.String(),
@@ -859,7 +909,8 @@ func (s *AttachmentOutboxService) buildLeafBundleRows(
 			})
 		}
 
-		if sha, ok2 := shaMap[obs.IngestRunID]; ok2 && sha != "" {
+		// ── Leaf 5: RAW_SETTLEMENT_FILE ──────────────────────────────────
+		if sha, ok := shaMap[obs.IngestRunID]; ok && sha != "" {
 			leaves = append(leaves, leafCandidate{
 				Type:          "RAW_SETTLEMENT_FILE",
 				Ref:           obs.IngestRunID,
@@ -869,7 +920,7 @@ func (s *AttachmentOutboxService) buildLeafBundleRows(
 		}
 
 		var parsedCreatedAt time.Time
-		if pr, ok2 := parsedByRowRef[obs.SourceRowRef]; ok2 {
+		if pr, ok := parsedByRowRef[obs.SourceRowRef]; ok {
 			parsedCreatedAt = pr.CreatedAt
 		}
 
@@ -882,7 +933,7 @@ func (s *AttachmentOutboxService) buildLeafBundleRows(
 		}
 
 		var valueDateCheck, amountMatch *bool
-		if vr, ok2 := vrByDecision[d.AttachmentDecisionID]; ok2 {
+		if vr, ok := vrByDecision[d.AttachmentDecisionID]; ok {
 			vdc := vr.ValueDateMismatchFlag
 			am := vr.AmountVariance.IsZero()
 			valueDateCheck = &vdc
@@ -919,21 +970,24 @@ func (s *AttachmentOutboxService) buildLeafBundleRows(
 			AmountMatch:                amountMatch,
 		}
 
-		row, err := s.buildRow(ctx, d.TenantID, d.AttachmentJobID,
+		if err := s.insertEvent(ctx, d.TenantID, d.AttachmentJobID,
 			obs.SettlementEnvelopeID.String(), "", batchID,
 			"attachment_leaf_bundle", d.AttachmentDecisionID,
-			"outcome.leaf_bundle.created", bundle)
-		if err != nil {
+			"outcome.leaf_bundle.created", bundle); err != nil {
 			lastErr = err
 			continue
 		}
-		result = append(result, row)
+		emitted++
 	}
 
-	log.Printf("leaf_bundle.built job=%s count=%d", job.AttachmentJobID, len(result))
-	return result, lastErr
+	log.Printf("leaf_bundle.emitted job=%s count=%d", job.AttachmentJobID, emitted)
+	return lastErr
 }
 
+// computeAttachmentDecisionLeafHash returns a deterministic SHA-256 hex hash of the
+// attachment decision fields that matter for evidence integrity:
+//
+//	SHA256( intent_id | settlement_observation_id | candidate_set | match_score | ruleset_version )
 func computeAttachmentDecisionLeafHash(d models.AttachmentDecision) string {
 	intent := ""
 	if d.IntentID != uuid.Nil {
@@ -944,11 +998,20 @@ func computeAttachmentDecisionLeafHash(d models.AttachmentDecision) string {
 		observation = d.SettlementObservationID.String()
 	}
 	raw := fmt.Sprintf("%s|%s|%s|%f|%s",
-		intent, observation, d.CandidateSetHash, d.WinningScore, d.MatchingRulesetVersion)
+		intent,
+		observation,
+		d.CandidateSetHash,
+		d.WinningScore,
+		d.MatchingRulesetVersion,
+	)
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
 }
 
+// computeVarianceLeafHash returns a deterministic SHA-256 hex hash of the
+// variance record fields that matter for evidence integrity:
+//
+//	SHA256( amount_variance | date_variance | status_variance | severity | reason_codes )
 func computeVarianceLeafHash(vr *models.VarianceRecord) string {
 	raw := fmt.Sprintf("%s|%t|%t|%s|%s",
 		vr.AmountVariance.String(),
