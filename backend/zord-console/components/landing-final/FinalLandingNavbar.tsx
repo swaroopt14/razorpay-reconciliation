@@ -343,7 +343,7 @@ export function FinalLandingNavbar({
         <Link href="/" className="relative z-10 shrink-0" aria-label="Zord home">
           <ZordLogo
             size="md"
-            variant={isLight ? 'default' : 'dark'}
+            variant={isLight ? 'light' : 'dark'}
             fitToHeight
             embedded
             className="!w-auto max-w-[9.5rem] sm:max-w-[11rem]"
