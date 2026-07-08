@@ -13,6 +13,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -30,6 +31,26 @@ import (
 	"github.com/google/uuid"
 	"github.com/xuri/excelize/v2"
 )
+
+// bulkIngestJobTimeout is the maximum wall-clock duration allowed for a single
+// bulk upload request (shared across all its worker goroutines). It is
+// configured via BULK_INGEST_JOB_TIMEOUT_MINUTES; defaults to 8 minutes.
+var bulkIngestJobTimeout time.Duration
+
+func init() {
+	const defaultBulkIngestJobTimeoutMinutes = 8
+	minutes := defaultBulkIngestJobTimeoutMinutes
+	if v := os.Getenv("BULK_INGEST_JOB_TIMEOUT_MINUTES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			minutes = n
+		} else {
+			log.Printf("[BulkHandler] WARNING: BULK_INGEST_JOB_TIMEOUT_MINUTES=%q is not a valid positive integer; using default %d minutes",
+				v, defaultBulkIngestJobTimeoutMinutes)
+		}
+	}
+	bulkIngestJobTimeout = time.Duration(minutes) * time.Minute
+	log.Printf("[BulkHandler] bulk ingest job timeout set to %v", bulkIngestJobTimeout)
+}
 
 type BulkResult struct {
 	Row        int    `json:"row"`
@@ -298,7 +319,11 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		workerCount := runtime.NumCPU() * 2
 		var wg sync.WaitGroup
 
-		ctx := context.WithoutCancel(c.Request.Context())
+		ctx, cancel := context.WithTimeout(
+			context.WithoutCancel(c.Request.Context()),
+			bulkIngestJobTimeout,
+		)
+		defer cancel()
 
 		for w := 0; w < workerCount; w++ {
 			wg.Add(1)
@@ -559,7 +584,11 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		workerCount := runtime.NumCPU() * 2
 		var wg sync.WaitGroup
 
-		ctx := context.WithoutCancel(c.Request.Context())
+		ctx, cancel := context.WithTimeout(
+			context.WithoutCancel(c.Request.Context()),
+			bulkIngestJobTimeout,
+		)
+		defer cancel()
 
 		for w := 0; w < workerCount; w++ {
 			wg.Add(1)
