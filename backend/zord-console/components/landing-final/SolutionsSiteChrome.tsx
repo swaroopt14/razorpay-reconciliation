@@ -7,13 +7,15 @@ import type { FinalLandingNavLabel } from '@/components/landing-final/FinalLandi
 export function SolutionsSiteNav({
   active: _active = 'Solutions',
   theme: _theme = 'light',
-  overlay = false,
+  scrollMorphTone = 'dark',
 }: {
   active?: FinalLandingNavLabel
   theme?: 'light' | 'dark'
+  /** @deprecated Use scrollMorph via SolutionsSiteNav — overlay is no longer used */
   overlay?: boolean
+  scrollMorphTone?: 'dark' | 'light'
 }) {
-  return <LandingHeroTopBar overlay={overlay} />
+  return <LandingHeroTopBar scrollMorph scrollMorphTone={scrollMorphTone} />
 }
 
 export function SolutionsSiteFooter({ theme = 'light' }: { theme?: 'light' | 'dark' }) {

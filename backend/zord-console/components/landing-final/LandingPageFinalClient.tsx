@@ -598,7 +598,7 @@ export default function LandingPageFinalClient() {
       </div>
 
       <div className="relative z-10">
-        <LandingHeroTopBar />
+        <LandingHeroTopBar scrollMorph scrollMorphTone="dark" />
         <FinalLandingAssistantButton />
         <LandingHeroSection />
         <div className={LIGHT_PRODUCT_SECTION}>

@@ -74,7 +74,7 @@ export function SolutionDetailClient({ solution }: { solution: SolutionItem }) {
       </div>
 
       <div className="relative z-10">
-        <SolutionsSiteNav active="Solutions" theme={theme} />
+        <SolutionsSiteNav active="Solutions" theme={theme} scrollMorphTone="light" />
         <FinalLandingAssistantButton />
 
         {/* Floating Nature Effects */}

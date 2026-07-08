@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { useEffect, useRef } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { ArrowRight, Play, Sparkles } from 'lucide-react'
 
@@ -9,6 +10,7 @@ import { LandingHeroRocks } from '@/components/landing-final/LandingHeroRocks'
 import { landingHomeCopy } from '@/components/landing-final/copy/landingHomeCopy'
 
 const heroCopy = landingHomeCopy.hero.slides[0]
+const HERO_WATERFALL_SRC = '/final-landing/hero/hero-waterfall-bg-hq.mp4'
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -46,6 +48,17 @@ const instantVisible = { opacity: 1, y: 0, scale: 1 }
 
 export function LandingHeroSection() {
   const shouldReduceMotion = useReducedMotion()
+  const waterfallVideoRef = useRef<HTMLVideoElement>(null)
+
+  useEffect(() => {
+    const video = waterfallVideoRef.current
+    if (!video) return
+    if (shouldReduceMotion) {
+      video.pause()
+      return
+    }
+    void video.play().catch(() => undefined)
+  }, [shouldReduceMotion])
 
   const motionInitial = shouldReduceMotion ? false : 'hidden'
   const textItemMotion = shouldReduceMotion
@@ -57,12 +70,34 @@ export function LandingHeroSection() {
 
   return (
     <section
-      className="relative z-10 w-full overflow-hidden bg-[#fcfcfc] text-[#0A0A0A]"
+      className="relative z-10 w-full overflow-hidden bg-[#0B1210] text-[#0A0A0A]"
       aria-labelledby="landing-hero-heading"
     >
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_18%,rgba(255,255,255,0.95)_0%,rgba(247,248,250,0.6)_42%,rgba(232,234,238,0)_72%)]" />
+      {/* Full-hero back layer: waterfall video behind headline + rocks + dashboard */}
+      <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden" aria-hidden="true">
+        {!shouldReduceMotion ? (
+          <video
+            ref={waterfallVideoRef}
+            autoPlay
+            muted
+            loop
+            playsInline
+            preload="auto"
+            className="absolute inset-0 h-full w-full object-cover object-center brightness-[1.12] contrast-[1.06] saturate-[1.1] [transform:translateZ(0)]"
+          >
+            <source src={HERO_WATERFALL_SRC} type="video/mp4" />
+          </video>
+        ) : (
+          <div className="absolute inset-0 bg-[linear-gradient(165deg,#0B1210_0%,#111827_48%,#0F172A_100%)]" />
+        )}
+        <div className="absolute inset-0 bg-black/14" />
+        <div className="absolute inset-0 bg-gradient-to-b from-black/28 via-black/14 to-black/40" />
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_90%_50%_at_50%_8%,rgba(0,0,0,0.08)_0%,transparent_55%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_50%_72%,rgba(0,0,0,0.04)_0%,rgba(0,0,0,0.38)_100%)]" />
+      </div>
 
       <motion.div
+        className="relative z-10"
         variants={shouldReduceMotion ? undefined : containerVariants}
         initial={motionInitial}
         animate="visible"
@@ -70,7 +105,7 @@ export function LandingHeroSection() {
         <div className="relative mx-auto max-w-[1280px] px-4 pb-6 pt-28 text-center sm:px-6 sm:pt-32 md:pt-36">
           <motion.p
             {...textItemMotion}
-            className="text-[11px] font-medium uppercase tracking-[0.2em] text-[#A8ADB5]"
+            className="text-[11px] font-medium uppercase tracking-[0.2em] text-white/55"
           >
             {heroCopy.eyebrow}
           </motion.p>
@@ -80,13 +115,13 @@ export function LandingHeroSection() {
             id="landing-hero-heading"
             className="mx-auto mt-6 max-w-[820px] text-[2.25rem] font-semibold leading-[1.08] tracking-[-0.04em] sm:text-5xl md:text-6xl lg:text-[4.25rem]"
           >
-            <span className="block text-[#0A0A0A]">{heroCopy.headlineLead}</span>
-            <span className="mt-1 block text-[#047857]">{heroCopy.headlineTail}</span>
+            <span className="block text-white">{heroCopy.headlineLead}</span>
+            <span className="mt-1 block text-white">{heroCopy.headlineTail}</span>
           </motion.h1>
 
           <motion.p
             {...textItemMotion}
-            className="mx-auto mt-6 max-w-[560px] text-base leading-relaxed text-[#A8ADB5] sm:text-lg md:text-[1.125rem]"
+            className="mx-auto mt-6 max-w-[560px] text-base leading-relaxed text-[#0A0A0A] sm:text-lg md:text-[1.125rem]"
           >
             {heroCopy.copy}
           </motion.p>
@@ -114,7 +149,7 @@ export function LandingHeroSection() {
 
         <motion.div
           {...dashboardMotion}
-          className="hero-wrapper relative flex min-h-[52vh] w-full flex-col items-center justify-center overflow-hidden bg-[#fcfcfc] px-3 pb-8 sm:min-h-[56vh] sm:px-4 md:min-h-[62vh] lg:min-h-[68vh]"
+          className="hero-wrapper relative flex min-h-[52vh] w-full flex-col items-center justify-center overflow-hidden px-3 pb-8 sm:min-h-[56vh] sm:px-4 md:min-h-[62vh] lg:min-h-[68vh]"
         >
           <LandingHeroRocks />
 
@@ -127,7 +162,7 @@ export function LandingHeroSection() {
           {...textItemMotion}
           className="relative flex flex-col items-center gap-2 pb-10 pt-2"
         >
-          <div className="flex items-center gap-2 text-[12px] font-medium tracking-wide text-[#A8ADB5]">
+          <div className="flex items-center gap-2 text-[12px] font-medium tracking-wide text-white/50">
             <Sparkles className="h-3.5 w-3.5" aria-hidden />
             <span>Scroll to explore</span>
           </div>

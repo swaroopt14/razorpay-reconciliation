@@ -172,7 +172,7 @@ export function FinalLandingPageScaffold({
       </div>
 
       <div className="relative z-10">
-        <SolutionsSiteNav active={active} theme={theme} />
+        <SolutionsSiteNav active={active} theme={theme} scrollMorphTone="light" />
         <FinalLandingAssistantButton />
 
         <main className="px-2 pb-20 pt-[120px] md:px-3">
