@@ -1,71 +1,108 @@
 'use client'
 
-import { landingHomeCopy } from '@/components/landing-final/copy/landingHomeCopy'
-import { LandingReveal, LandingSection } from '@/components/landing-final/landingSectionLayout'
+import Image from 'next/image'
+import { Check } from 'lucide-react'
+import {
+  LandingReveal,
+  LandingSection,
+  LandingSectionHeader,
+} from '@/components/landing-final/landingSectionLayout'
 
-const capabilities = landingHomeCopy.capabilities
+const comparisonData = [
+  { feature: 'Multi-rail routing & processing', zord: true, other: false },
+  { feature: 'Real-time data & synchronization', zord: true, other: true },
+  { feature: 'AI-driven anomaly detection', zord: true, other: false },
+  { feature: 'Unified dashboard across all systems', zord: true, other: true },
+  { feature: 'Automated Evidence Pack generation', zord: true, other: false },
+]
 
 export function LandingCapabilitiesSection() {
   return (
     <LandingSection
       id="use-cases"
-      className="relative overflow-hidden py-16 pb-20 sm:py-24 sm:pb-32 bg-[#FAFAFA]"
+      className="relative overflow-hidden scroll-mt-32 py-16 pb-20 sm:py-24 sm:pb-32 lg:py-32 lg:pb-40"
       aria-label="Product capabilities"
     >
-      <div className="relative z-10 mx-auto max-w-6xl">
-        <LandingReveal className="mb-12">
-          <h2 className="text-[2rem] font-bold leading-tight tracking-tight text-[#111111] sm:text-4xl">
-            Advantages
+      {/* Background Image */}
+      <div className="absolute inset-0 z-0">
+        <Image 
+          src="/final-landing/hero/bg-removebg-preview.png" 
+          alt="Mossy rocks background" 
+          fill 
+          className="object-cover object-bottom"
+          sizes="100vw"
+        />
+        {/* Darker overlay to make white text pop */}
+        <div className="absolute inset-0 bg-[#111827]/40" />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#1A1A24] via-[#1A1A24]/60 to-transparent opacity-90" />
+      </div>
+
+      <div className="relative z-10 mx-auto max-w-5xl">
+        <LandingReveal className="flex flex-col items-center text-center">
+          <p className="mb-6 inline-flex w-fit rounded-full border border-white/20 bg-white/10 backdrop-blur-sm px-4 py-1.5 text-[10px] font-semibold uppercase tracking-[0.15em] text-white/80">
+            WHY ZORD
+          </p>
+          <h2 className="max-w-[20ch] text-[2.5rem] font-semibold leading-[1.05] tracking-[-0.04em] text-white sm:text-[3.25rem] lg:text-[4rem]">
+            Built for modern capital.<br />
+            Not legacy systems.
           </h2>
-          <p className="mt-4 max-w-md text-[15px] font-medium leading-relaxed text-[#111111]/60">
-            Get the most out of your investments with Zord. From fast matching to automated evidence generation.
+          <p className="mt-6 max-w-2xl text-[15px] sm:text-base font-medium leading-relaxed text-white/70">
+            Connect exchanges, custodians, on-chain wallets, and data providers — all synchronized in one unified system for real-time visibility and control.
           </p>
         </LandingReveal>
 
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-2 lg:gap-8">
-          {capabilities.map((item, i) => (
-            <LandingReveal key={item.title} className="flex gap-6 rounded-[2rem] bg-white p-8 shadow-sm border border-black/5">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#DBF33C]">
-                {/* Check icon or similar abstract shape */}
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#111111" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
+        <LandingReveal className="mt-20 sm:mt-24">
+          <div className="relative mx-auto max-w-[900px]">
+            {/* Table Header */}
+            <div className="grid grid-cols-[1fr_160px_160px] items-end gap-4 px-8 pb-4 text-[13px] font-medium text-white/50">
+              <div>Core capabilities</div>
+              <div className="text-center invisible">Zord</div> {/* Hidden header, covered by the card */}
+              <div className="text-center">Other platform</div>
+            </div>
+
+            {/* Glass Container */}
+            <div className="relative rounded-[2rem] border border-white/20 bg-white/10 p-8 shadow-2xl backdrop-blur-2xl">
+              <div className="flex flex-col gap-6 relative z-10">
+                {comparisonData.map((row, i) => (
+                  <div key={i} className="grid grid-cols-[1fr_160px_160px] items-center gap-4 border-b border-white/10 pb-6 last:border-0 last:pb-0">
+                    <div className="text-[15px] font-medium text-white">{row.feature}</div>
+                    <div className="text-center" /> {/* Spacer for Zord column */}
+                    <div className="text-center text-[13px] font-medium text-white/60">
+                      {row.other ? <Check className="mx-auto h-5 w-5" /> : 'Absent'}
+                    </div>
+                  </div>
+                ))}
               </div>
-              <div className="flex flex-col justify-start">
-                <h3 className="text-[1.15rem] font-bold tracking-tight text-[#111111]">
-                  {item.title}
-                </h3>
-                <p className="mt-3 text-[14px] leading-relaxed text-[#111111]/60">
-                  {item.description}
-                </p>
-                <div className="mt-5 inline-flex cursor-pointer items-center justify-center rounded-full border border-black/10 px-6 py-2.5 text-[13px] font-semibold text-[#111111] hover:bg-black/5 transition-colors self-start">
-                  Read More
+
+              {/* Footer row */}
+              <div className="mt-8 grid grid-cols-[1fr_160px_160px] items-center gap-4 pt-6 relative z-10 border-t border-white/10">
+                <div>
+                  <div className="text-[14px] font-semibold text-white">Total operational cost:</div>
+                  <div className="text-[12px] text-white/60">Based on typical multi-platform setups.</div>
+                </div>
+                <div className="text-center" /> {/* Spacer for Zord column */}
+                <div className="text-center text-[14px] font-semibold text-white">$1,700 / month</div>
+              </div>
+
+              {/* The Elevated Zord Column Card */}
+              <div className="absolute -inset-y-6 right-[192px] w-[180px] rounded-[1.5rem] bg-[#F4F6D4] shadow-[0_20px_40px_rgba(0,0,0,0.3)] flex flex-col z-20">
+                <div className="flex h-20 items-center justify-center border-b border-black/10 font-bold text-lg tracking-tight text-[#1A1A1A]">
+                  <span className="mr-2 h-4 w-4 bg-[#1A1A1A] mask-squircle" /> zord
+                </div>
+                <div className="flex flex-1 flex-col gap-6 px-4 py-8">
+                  {comparisonData.map((row, i) => (
+                    <div key={i} className="flex items-center justify-center h-[22px]">
+                      {row.zord && <Check className="h-6 w-6 text-[#1A1A1A]" strokeWidth={2.5} />}
+                    </div>
+                  ))}
+                </div>
+                <div className="flex h-24 items-center justify-center font-bold text-[15px] text-[#1A1A1A] border-t border-black/10">
+                  $499 / month
                 </div>
               </div>
-            </LandingReveal>
-          ))}
-          {/* Add one more static card to make it a 2x2 grid if capabilities length is 3 */}
-          {capabilities.length === 3 && (
-            <LandingReveal className="flex gap-6 rounded-[2rem] bg-white p-8 shadow-sm border border-black/5">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#DBF33C]">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#111111" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
-                </svg>
-              </div>
-              <div className="flex flex-col justify-start">
-                <h3 className="text-[1.15rem] font-bold tracking-tight text-[#111111]">
-                  Lower Costs
-                </h3>
-                <p className="mt-3 text-[14px] leading-relaxed text-[#111111]/60">
-                  We give you the lowest commissions for any kind of transactions. Optimize operational costs instantly.
-                </p>
-                <div className="mt-5 inline-flex cursor-pointer items-center justify-center rounded-full border border-black/10 px-6 py-2.5 text-[13px] font-semibold text-[#111111] hover:bg-black/5 transition-colors self-start">
-                  Read More
-                </div>
-              </div>
-            </LandingReveal>
-          )}
-        </div>
+            </div>
+          </div>
+        </LandingReveal>
       </div>
     </LandingSection>
   )

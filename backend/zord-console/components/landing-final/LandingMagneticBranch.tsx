@@ -15,7 +15,7 @@ export function LandingMagneticBranch({
 }: LandingMagneticBranchProps) {
   const heroClass =
     variant === 'hero'
-      ? 'mx-auto w-full max-w-[min(96vw,1240px)] min-h-[min(38vh,300px)] sm:min-h-[min(42vh,360px)] md:min-h-[min(46vh,420px)]'
+      ? 'mr-auto w-full max-w-[min(96vw,1240px)] min-h-[min(38vh,300px)] sm:min-h-[min(42vh,360px)] md:min-h-[min(46vh,420px)]'
       : ''
 
   return (

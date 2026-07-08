@@ -29,6 +29,7 @@ type NavItem = {
 type FinalLandingNavbarProps = {
   active?: FinalLandingNavLabel
   syncToHash?: boolean
+  theme?: 'light' | 'dark'
 }
 
 const navItems: NavItem[] = [
@@ -117,6 +118,13 @@ const frostedNavShellStyle = {
     '0 28px 60px rgba(0,0,0,0.24), 0 8px 20px rgba(9,12,16,0.18), inset 0 1px 0 rgba(255,255,255,0.16), inset 0 -1px 0 rgba(255,255,255,0.03)',
 } as const
 
+const lightNavShellStyle = {
+  background:
+    'linear-gradient(180deg, rgba(255,255,255,0.92) 0%, rgba(248,250,252,0.96) 100%)',
+  boxShadow:
+    '0 20px 48px rgba(0,0,0,0.08), 0 8px 16px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.8), inset 0 -1px 0 rgba(0,0,0,0.02)',
+} as const
+
 const frostedNavTrackStyle = {
   background:
     'linear-gradient(180deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.03) 100%)',
@@ -124,11 +132,25 @@ const frostedNavTrackStyle = {
     '0 14px 24px rgba(0,0,0,0.16), inset 0 1px 0 rgba(255,255,255,0.14)',
 } as const
 
+const lightNavTrackStyle = {
+  background:
+    'linear-gradient(180deg, rgba(0,0,0,0.03) 0%, rgba(0,0,0,0.01) 100%)',
+  boxShadow:
+    'inset 0 1px 1px rgba(0,0,0,0.04)',
+} as const
+
 const frostedNavActiveStyle = {
   background:
     'linear-gradient(180deg, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.05) 100%)',
   boxShadow:
     '0 12px 24px rgba(0,0,0,0.16), inset 0 1px 0 rgba(255,255,255,0.18)',
+} as const
+
+const lightNavActiveStyle = {
+  background:
+    'linear-gradient(180deg, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0.02) 100%)',
+  boxShadow:
+    '0 8px 16px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.5)',
 } as const
 
 function NavIcon({
@@ -238,11 +260,17 @@ function NavMenuLink({
 export function FinalLandingNavbar({
   active,
   syncToHash = false,
+  theme = 'dark',
 }: FinalLandingNavbarProps) {
   const [activeNav, setActiveNav] = useState<FinalLandingNavLabel>(active ?? 'Product')
   const [openMenu, setOpenMenu] = useState<FinalLandingNavLabel | null>(null)
   const [mobileOpen, setMobileOpen] = useState(false)
   const closeMenuTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const isLight = theme === 'light'
+  const shellStyle = isLight ? lightNavShellStyle : frostedNavShellStyle
+  const trackStyle = isLight ? lightNavTrackStyle : frostedNavTrackStyle
+  const activeStyle = isLight ? lightNavActiveStyle : frostedNavActiveStyle
 
   const cancelScheduledClose = () => {
     if (closeMenuTimerRef.current) {
@@ -307,22 +335,38 @@ export function FinalLandingNavbar({
   return (
     <nav className="relative z-50 px-4 pt-6 sm:px-6">
       <div
-        className="relative mx-auto flex w-full max-w-[1240px] items-center gap-3 rounded-[42px] border border-white/12 px-3 py-3 backdrop-blur-[30px] sm:gap-4 sm:px-4 sm:py-3.5 lg:gap-6 lg:px-5"
-        style={frostedNavShellStyle}
+        className={`relative mx-auto flex w-full max-w-[1240px] items-center gap-3 rounded-[42px] border px-3 py-3 backdrop-blur-[30px] sm:gap-4 sm:px-4 sm:py-3.5 lg:gap-6 lg:px-5 ${
+          isLight ? 'border-black/5' : 'border-white/12'
+        }`}
+        style={shellStyle}
       >
         <Link href="/" className="relative z-10 shrink-0" aria-label="Zord home">
           <ZordLogo
             size="md"
-            variant="dark"
+            variant={isLight ? 'default' : 'dark'}
             fitToHeight
             embedded
             className="!w-auto max-w-[9.5rem] sm:max-w-[11rem]"
           />
         </Link>
         <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-[42px]">
-          <div className="absolute inset-x-12 top-0 h-px bg-gradient-to-r from-transparent via-white/60 to-transparent" />
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.12),transparent_22%),radial-gradient(circle_at_bottom_right,rgba(198,239,207,0.08),transparent_24%),radial-gradient(circle_at_50%_-10%,rgba(59,166,247,0.12),transparent_30%)]" />
-          <div className="absolute inset-[1px] rounded-[40px] border border-white/[0.06]" />
+          <div
+            className={`absolute inset-x-12 top-0 h-px bg-gradient-to-r from-transparent via-${
+              isLight ? 'black/10' : 'white/60'
+            } to-transparent`}
+          />
+          <div
+            className={`absolute inset-0 ${
+              isLight
+                ? 'bg-[radial-gradient(circle_at_top_left,rgba(0,0,0,0.02),transparent_22%),radial-gradient(circle_at_bottom_right,rgba(52,211,153,0.04),transparent_24%)]'
+                : 'bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.12),transparent_22%),radial-gradient(circle_at_bottom_right,rgba(198,239,207,0.08),transparent_24%),radial-gradient(circle_at_50%_-10%,rgba(59,166,247,0.12),transparent_30%)]'
+            }`}
+          />
+          <div
+            className={`absolute inset-[1px] rounded-[40px] border ${
+              isLight ? 'border-black/[0.03]' : 'border-white/[0.06]'
+            }`}
+          />
         </div>
 
         <div className="relative z-10 hidden min-w-0 flex-1 items-center justify-center gap-1 lg:flex">
@@ -353,9 +397,15 @@ export function FinalLandingNavbar({
                       setOpenMenu((current) => (current === item.label ? null : item.label))
                     }}
                     className={`relative inline-flex items-center gap-2 rounded-[22px] px-4 py-3 text-[16px] font-medium tracking-[-0.03em] transition-all duration-200 ${
-                      isActive ? 'text-white' : 'text-slate-300/85 hover:text-white'
+                      isActive
+                        ? isLight
+                          ? 'text-[#111111]'
+                          : 'text-white'
+                        : isLight
+                        ? 'text-[#4B5563] hover:text-[#111111]'
+                        : 'text-slate-300/85 hover:text-white'
                     }`}
-                    style={isActive ? frostedNavActiveStyle : undefined}
+                    style={isActive ? activeStyle : undefined}
                     aria-expanded={openMenu === item.label}
                     aria-haspopup="menu"
                   >
@@ -375,9 +425,15 @@ export function FinalLandingNavbar({
                       setOpenMenu(null)
                     }}
                     className={`relative inline-flex items-center rounded-[22px] px-4 py-3 text-[16px] font-medium tracking-[-0.03em] transition-all duration-200 ${
-                      isActive ? 'text-white' : 'text-slate-300/85 hover:text-white'
+                      isActive
+                        ? isLight
+                          ? 'text-[#111111]'
+                          : 'text-white'
+                        : isLight
+                        ? 'text-[#4B5563] hover:text-[#111111]'
+                        : 'text-slate-300/85 hover:text-white'
                     }`}
-                    style={isActive ? frostedNavActiveStyle : undefined}
+                    style={isActive ? activeStyle : undefined}
                   >
                     {item.label}
                   </Link>
@@ -390,17 +446,25 @@ export function FinalLandingNavbar({
                       onMouseEnter={cancelScheduledClose}
                       onMouseLeave={() => scheduleClose(item.label)}
                     >
-                      <SolutionBrowsePanel compact />
+                      <SolutionBrowsePanel compact theme={theme} />
                     </div>
                   ) : (
                     <div
-                      className="absolute left-1/2 top-[calc(100%+14px)] z-30 w-[340px] -translate-x-1/2 overflow-hidden rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(18,22,20,0.98)_0%,rgba(10,12,11,0.99)_100%)] p-3 shadow-[0_28px_70px_rgba(0,0,0,0.38)] backdrop-blur-[22px]"
-                      style={frostedNavShellStyle}
+                      className={`absolute left-1/2 top-[calc(100%+14px)] z-30 w-[340px] -translate-x-1/2 overflow-hidden rounded-[28px] border p-3 shadow-[0_28px_70px_rgba(0,0,0,0.15)] backdrop-blur-[22px] ${
+                        isLight ? 'border-black/5' : 'border-white/10'
+                      }`}
+                      style={shellStyle}
                       onMouseEnter={cancelScheduledClose}
                       onMouseLeave={() => scheduleClose(item.label)}
                     >
-                      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.05),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(148,167,179,0.08),transparent_30%)]" />
-                      <div className="relative z-10 space-y-2">
+                      <div
+                        className={`pointer-events-none absolute inset-0 ${
+                          isLight
+                            ? 'bg-[radial-gradient(circle_at_top_left,rgba(0,0,0,0.01),transparent_28%)]'
+                            : 'bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.05),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(148,167,179,0.08),transparent_30%)]'
+                        }`}
+                      />
+                      <div className="relative z-10 space-y-1.5">
                         {item.menu?.map((entry) => (
                           <NavMenuLink
                             key={entry.label}
@@ -410,12 +474,24 @@ export function FinalLandingNavbar({
                               setActiveNav(item.label)
                               setOpenMenu(null)
                             }}
-                            className="block rounded-[20px] border border-transparent bg-white/[0.02] px-4 py-3 transition hover:border-white/8 hover:bg-white/[0.06]"
+                            className={`block rounded-[20px] border border-transparent px-4 py-3 transition ${
+                              isLight
+                                ? 'bg-black/[0.015] hover:border-black/5 hover:bg-black/[0.03]'
+                                : 'bg-white/[0.02] hover:border-white/8 hover:bg-white/[0.06]'
+                            }`}
                           >
-                            <div className="text-[15px] font-semibold tracking-[-0.03em] text-white">
+                            <div
+                              className={`text-[15px] font-semibold tracking-[-0.03em] ${
+                                isLight ? 'text-[#111111]' : 'text-white'
+                              }`}
+                            >
                               {entry.label}
                             </div>
-                            <div className="mt-1 text-[12px] leading-5 text-slate-400">
+                            <div
+                              className={`mt-1 text-[12px] leading-5 ${
+                                isLight ? 'text-[#6B7280]' : 'text-slate-400'
+                              }`}
+                            >
                               {entry.note}
                             </div>
                           </NavMenuLink>
@@ -432,15 +508,23 @@ export function FinalLandingNavbar({
         <div className="relative z-10 ml-auto flex shrink-0 items-center gap-2 sm:gap-3">
           <Link
             href="/signin"
-            className="hidden h-14 items-center rounded-[20px] border border-white/12 px-6 text-[16px] font-semibold text-slate-100/90 shadow-[0_14px_24px_rgba(0,0,0,0.14)] transition hover:border-white/18 hover:text-white lg:inline-flex"
-            style={frostedNavTrackStyle}
+            className={`hidden h-14 items-center rounded-[20px] border px-6 text-[16px] font-semibold transition lg:inline-flex ${
+              isLight
+                ? 'border-black/5 text-[#4B5563] hover:border-black/10 hover:text-[#111111]'
+                : 'border-white/12 text-slate-100/90 hover:border-white/18 hover:text-white'
+            }`}
+            style={trackStyle}
           >
             Sign in
           </Link>
 
           <Link
             href="/signup"
-            className="flex h-14 items-center gap-2 rounded-[20px] bg-[#c6efcf] px-6 text-[16px] font-semibold text-[#09110c] shadow-[0_16px_30px_rgba(198,239,207,0.16)] transition hover:bg-[#d6f5dc]"
+            className={`flex h-14 items-center gap-2 rounded-[20px] px-6 text-[16px] font-semibold transition ${
+              isLight
+                ? 'bg-[#111111] text-white hover:bg-black/90 shadow-[0_12px_24px_rgba(0,0,0,0.1)]'
+                : 'bg-[#c6efcf] text-[#09110c] hover:bg-[#d6f5dc] shadow-[0_16px_30px_rgba(198,239,207,0.16)]'
+            }`}
           >
             <NavIcon name="arrow-up-right" className="h-4 w-4" />
             <span>Book Demo</span>
@@ -449,12 +533,17 @@ export function FinalLandingNavbar({
           <button
             type="button"
             onClick={() => setMobileOpen((open) => !open)}
-            className="flex h-14 w-14 items-center justify-center rounded-[20px] border border-white/8 text-white shadow-[0_14px_24px_rgba(0,0,0,0.18)] transition hover:border-white/12 lg:hidden"
-            style={frostedNavTrackStyle}
+            className={`flex h-14 w-14 items-center justify-center rounded-[20px] border transition lg:hidden ${
+              isLight ? 'border-black/5 text-[#111111]' : 'border-white/8 text-white'
+            }`}
+            style={trackStyle}
             aria-expanded={mobileOpen}
             aria-label="Toggle navigation menu"
           >
-            <NavIcon name="menu-dots" className="h-5 w-5 text-[#b7b6ce]" />
+            <NavIcon
+              name="menu-dots"
+              className={`h-5 w-5 ${isLight ? 'text-[#4B5563]' : 'text-[#b7b6ce]'}`}
+            />
           </button>
         </div>
       </div>
@@ -462,14 +551,18 @@ export function FinalLandingNavbar({
       {mobileOpen ? (
         <div className="mx-auto mt-3 max-w-[1240px] px-1 lg:hidden">
           <div
-            className="overflow-hidden rounded-[30px] border border-white/10 p-4 backdrop-blur-[22px]"
-            style={frostedNavShellStyle}
+            className={`overflow-hidden rounded-[30px] border p-4 backdrop-blur-[22px] ${
+              isLight ? 'border-black/5' : 'border-white/10'
+            }`}
+            style={shellStyle}
           >
-            <div className="space-y-4">
+            <div className="space-y-3">
               {navItems.map((item) => (
                 <div
                   key={item.label}
-                  className="rounded-[22px] border border-white/6 bg-white/[0.03] p-3"
+                  className={`rounded-[22px] border p-3 ${
+                    isLight ? 'border-black/5 bg-black/[0.01]' : 'border-white/6 bg-white/[0.03]'
+                  }`}
                 >
                   {item.menu?.length ? (
                     <button
@@ -478,14 +571,16 @@ export function FinalLandingNavbar({
                         setActiveNav(item.label)
                         setOpenMenu((current) => (current === item.label ? null : item.label))
                       }}
-                      className="flex w-full items-center justify-between gap-4 text-left text-[15px] font-semibold tracking-[-0.02em] text-white"
+                      className={`flex w-full items-center justify-between gap-4 text-left text-[15px] font-semibold tracking-[-0.02em] ${
+                        isLight ? 'text-[#111111]' : 'text-white'
+                      }`}
                     >
                       <span>{item.label}</span>
                       <NavIcon
                         name="chevron-down"
-                        className={`h-4 w-4 text-slate-400 transition-transform ${
+                        className={`h-4 w-4 transition-transform ${
                           openMenu === item.label ? 'rotate-180' : ''
-                        }`}
+                        } ${isLight ? 'text-[#6B7280]' : 'text-slate-400'}`}
                       />
                     </button>
                   ) : (
@@ -496,18 +591,23 @@ export function FinalLandingNavbar({
                         setMobileOpen(false)
                         setOpenMenu(null)
                       }}
-                      className="flex items-center justify-between gap-4 text-[15px] font-semibold tracking-[-0.02em] text-white"
+                      className={`flex items-center justify-between gap-4 text-[15px] font-semibold tracking-[-0.02em] ${
+                        isLight ? 'text-[#111111]' : 'text-white'
+                      }`}
                     >
                       <span>{item.label}</span>
-                      <NavIcon name="arrow-right" className="h-4 w-4 text-slate-400" />
+                      <NavIcon
+                        name="arrow-right"
+                        className={`h-4 w-4 ${isLight ? 'text-[#6B7280]' : 'text-slate-400'}`}
+                      />
                     </Link>
                   )}
 
                   {item.menu?.length ? (
                     <div
-                      className={`mt-3 space-y-2 border-t border-white/8 pt-3 ${
-                        openMenu !== item.label ? 'hidden' : ''
-                      }`}
+                      className={`mt-3 space-y-1 border-t pt-3 ${
+                        isLight ? 'border-black/5' : 'border-white/8'
+                      } ${openMenu !== item.label ? 'hidden' : ''}`}
                     >
                       {item.menu.map((entry) => (
                         <NavMenuLink
@@ -518,12 +618,22 @@ export function FinalLandingNavbar({
                             setMobileOpen(false)
                             setOpenMenu(null)
                           }}
-                          className="block rounded-[18px] px-3 py-2 transition hover:bg-white/[0.05]"
+                          className={`block rounded-[18px] px-3 py-2 transition ${
+                            isLight ? 'hover:bg-black/[0.03]' : 'hover:bg-white/[0.05]'
+                          }`}
                         >
-                          <div className="text-[13px] font-semibold text-slate-200">
+                          <div
+                            className={`text-[13px] font-semibold ${
+                              isLight ? 'text-[#111111]' : 'text-slate-200'
+                            }`}
+                          >
                             {entry.label}
                           </div>
-                          <div className="mt-1 text-[12px] leading-5 text-slate-400">
+                          <div
+                            className={`mt-0.5 text-[12px] leading-5 ${
+                              isLight ? 'text-[#6B7280]' : 'text-slate-400'
+                            }`}
+                          >
                             {entry.note}
                           </div>
                         </NavMenuLink>
@@ -537,14 +647,20 @@ export function FinalLandingNavbar({
                 <Link
                   href="/signin"
                   onClick={() => setMobileOpen(false)}
-                  className="flex-1 rounded-[20px] border border-white/10 bg-white/[0.03] px-4 py-3 text-center text-[15px] font-semibold text-slate-200"
+                  className={`flex-1 rounded-[20px] border px-4 py-3 text-center text-[15px] font-semibold ${
+                    isLight
+                      ? 'border-black/5 bg-black/[0.015] text-[#4B5563]'
+                      : 'border-white/10 bg-white/[0.03] text-slate-200'
+                  }`}
                 >
                   Sign in
                 </Link>
                 <Link
                   href="/signup"
                   onClick={() => setMobileOpen(false)}
-                  className="flex-1 rounded-[20px] bg-[#c6efcf] px-4 py-3 text-center text-[15px] font-semibold text-[#09110c]"
+                  className={`flex-1 rounded-[20px] px-4 py-3 text-center text-[15px] font-semibold ${
+                    isLight ? 'bg-[#111111] text-white' : 'bg-[#c6efcf] text-[#09110c]'
+                  }`}
                 >
                   Book Demo
                 </Link>

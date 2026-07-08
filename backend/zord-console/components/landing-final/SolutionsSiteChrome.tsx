@@ -2,17 +2,18 @@
 
 import Link from 'next/link'
 
-import { FinalLandingNavbar, type FinalLandingNavLabel } from '@/components/landing-final/FinalLandingNavbar'
+import { LandingHeroTopBar } from '@/components/landing-final/LandingHeroTopBar'
+import type { FinalLandingNavLabel } from '@/components/landing-final/FinalLandingNavbar'
 import { ZordLogo } from '@/components/ZordLogo'
 
 const footerColumns = [
   {
     title: 'Solutions',
     links: [
-      { label: 'Open finance', href: '/final-landing/solutions/open-finance' },
-      { label: 'Fraud & risk prevention', href: '/final-landing/solutions/fraud-risk-prevention' },
-      { label: 'Inbound bank payments', href: '/final-landing/solutions/inbound-bank-payments' },
-      { label: 'Outbound bank payments', href: '/final-landing/solutions/outbound-bank-payments' },
+      { label: 'Solutions hub', href: '/final-landing/solutions' },
+      { label: 'Open finance', href: '/final-landing/solutions#solutions-catalog' },
+      { label: 'Fraud & risk prevention', href: '/final-landing/solutions#solutions-catalog' },
+      { label: 'Outbound bank payments', href: '/final-landing/solutions#solutions-catalog' },
     ],
   },
   {
@@ -35,27 +36,61 @@ const footerColumns = [
   },
 ] as const
 
-export function SolutionsSiteNav({ active = 'Solutions' }: { active?: FinalLandingNavLabel }) {
-  return <FinalLandingNavbar active={active} />
+export function SolutionsSiteNav({
+  active: _active = 'Solutions',
+  theme: _theme = 'light',
+  overlay = false,
+}: {
+  active?: FinalLandingNavLabel
+  theme?: 'light' | 'dark'
+  overlay?: boolean
+}) {
+  return <LandingHeroTopBar overlay={overlay} />
 }
 
-export function SolutionsSiteFooter() {
+export function SolutionsSiteFooter({ theme = 'light' }: { theme?: 'light' | 'dark' }) {
+  const isLight = theme === 'light'
+
   return (
-    <footer className="border-t border-white/10 px-5 py-16 sm:px-6 lg:px-8">
+    <footer
+      className={`border-t px-5 py-16 sm:px-6 lg:px-8 ${
+        isLight ? 'border-black/5 bg-[#FAFAFA]' : 'border-white/10 bg-[#05070a]'
+      }`}
+    >
       <div className="mx-auto grid max-w-6xl gap-12 md:grid-cols-[1.2fr_repeat(3,1fr)]">
         <div>
-          <ZordLogo size="md" variant="dark" className="!w-auto max-w-[9rem]" />
-          <p className="mt-6 max-w-[320px] text-[13px] leading-7 text-white/50">
+          <ZordLogo
+            size="md"
+            variant={isLight ? 'default' : 'dark'}
+            className="!w-auto max-w-[9rem]"
+          />
+          <p
+            className={`mt-6 max-w-[320px] text-[13px] leading-7 ${
+              isLight ? 'text-[#4B5563]' : 'text-white/50'
+            }`}
+          >
             Solution narratives for teams evaluating ZORD across money movement, identity, compliance, finance, and connected data workflows.
           </p>
         </div>
 
         {footerColumns.map((column) => (
           <div key={column.title}>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/40">{column.title}</div>
+            <div
+              className={`text-[11px] font-semibold uppercase tracking-[0.22em] ${
+                isLight ? 'text-[#9CA3AF]' : 'text-white/40'
+              }`}
+            >
+              {column.title}
+            </div>
             <div className="mt-4 space-y-2.5">
               {column.links.map((link) => (
-                <Link key={link.label} href={link.href} className="block text-[13px] text-white/50 transition hover:text-white">
+                <Link
+                  key={link.label}
+                  href={link.href}
+                  className={`block text-[13px] transition ${
+                    isLight ? 'text-[#4B5563] hover:text-[#111111]' : 'text-white/50 hover:text-white'
+                  }`}
+                >
                   {link.label}
                 </Link>
               ))}

@@ -98,9 +98,14 @@ const config: Config = {
           '0%, 100%': { transform: 'translateX(-130%)' },
           '50%': { transform: 'translateX(130%)' },
         },
+        'solutions-marquee-ltr': {
+          from: { transform: 'translateX(-50%)' },
+          to: { transform: 'translateX(0)' },
+        },
       },
       animation: {
         'cinematic-shimmer': 'cinematic-shimmer 4.8s ease-in-out infinite',
+        'solutions-marquee-ltr': 'solutions-marquee-ltr 45s linear infinite',
       },
     },
   },

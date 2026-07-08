@@ -5,7 +5,7 @@ import { motion, useScroll, useTransform } from 'framer-motion'
 import { useEffect, useRef } from 'react'
 
 import { FinalLandingAssistantButton } from '@/components/landing-final/FinalLandingAssistantButton'
-import { FinalLandingNavbar } from '@/components/landing-final/FinalLandingNavbar'
+import { LandingHeroTopBar } from '@/components/landing-final/LandingHeroTopBar'
 
 const dockItems = ['Intent intake', 'Connector watch', 'Live tracking', 'Evidence Pack']
 
@@ -521,7 +521,7 @@ export default function HowItWorksClient() {
       className="relative h-screen overflow-y-auto overflow-x-hidden snap-y snap-mandatory scroll-smooth [scrollbar-gutter:stable] bg-[#030712] font-sans text-slate-200 antialiased selection:bg-indigo-500 selection:text-white"
       style={{ fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif' }}
     >
-      <FinalLandingNavbar active="Product" />
+      <LandingHeroTopBar />
       <FinalLandingAssistantButton />
       <canvas ref={canvasRef} className="pointer-events-none fixed inset-0 z-0 h-full w-full opacity-60" />
       <div className="pointer-events-none fixed inset-0 z-0 bg-[radial-gradient(circle_at_center,transparent_0%,#030712_100%)]" />

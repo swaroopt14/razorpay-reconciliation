@@ -4,7 +4,7 @@ import { motion, useInView, useReducedMotion } from 'framer-motion'
 import { useEffect, useRef, useState } from 'react'
 
 import { LandingMagneticBranch } from '@/components/landing-final/LandingMagneticBranch'
-import { LandingSectionHeader } from '@/components/landing-final/landingSectionLayout'
+import { LANDING_SECTION_SHELL, LandingSectionHeader } from '@/components/landing-final/landingSectionLayout'
 import { RiskIntelligenceCard, SignalFloatingOverlays } from '@/components/landing-final/landingSignalStageUi'
 import TiltedCard from '@/components/landing-final/TiltedCard'
 
@@ -34,7 +34,7 @@ function RiskIntelligenceStageCard({ animate }: { animate: boolean }) {
   )
 }
 
-/** Branch with green signal card resting on top — magnetic moss on the branch. */
+/** Branch with the live Risk Intelligence card resting on top — magnetic moss on the branch. */
 export function LandingBranchCardStage() {
   const stageRef = useRef<HTMLDivElement>(null)
   const inView = useInView(stageRef, { once: true, amount: 0.1 })
@@ -65,17 +65,20 @@ export function LandingBranchCardStage() {
 
   return (
     <div ref={stageRef} className="relative w-full">
-      <LandingSectionHeader
-        badge="Live signals"
-        title="Signals surface before money leaks"
-        description="Live payment health, routing quality, and settlement behavior — scored continuously and acted on before finance feels the impact."
-        animated
-        inView={inView}
-      />
+      {/* Header keeps the shared padded shell; the branch stage below is full-bleed. */}
+      <div className={LANDING_SECTION_SHELL}>
+        <LandingSectionHeader
+          badge="Live signals"
+          title="Signals surface before money leaks"
+          description="Live payment health, routing quality, and settlement behavior — scored continuously and acted on before finance feels the impact."
+          animated
+          inView={inView}
+        />
+      </div>
 
       <div className="relative mx-auto mt-16 w-full min-h-[min(72vh,680px)] sm:min-h-[min(76vh,720px)]">
         <motion.div
-          className="absolute inset-x-0 bottom-0 z-10 px-3 sm:px-6"
+          className="absolute inset-x-0 bottom-0 z-10"
           initial={shouldReduceMotion ? false : { opacity: 0, y: 56 }}
           animate={assetsVisible ? { opacity: 1, y: 0 } : { opacity: 0, y: 56 }}
           transition={{ duration: 1.45, ease: STAGE_EASE }}
@@ -83,7 +86,7 @@ export function LandingBranchCardStage() {
           <LandingMagneticBranch
             variant="hero"
             interactionEnabled
-            className="mx-auto drop-shadow-[0_24px_56px_rgba(0,0,0,0.09)]"
+            className="drop-shadow-[0_24px_56px_rgba(0,0,0,0.09)]"
           />
         </motion.div>
 
