@@ -29,6 +29,8 @@ import (
 
 	"zord-intent-engine/storage"
 	"zord-intent-engine/tracing"
+
+	"github.com/pressly/goose/v3"
 )
 
 func main() {
@@ -37,8 +39,12 @@ func main() {
 	defer cleanup()
 
 	config.InitDB()
-	if err := db.CreateTables(); err != nil {
-		log.Fatal("failed to create tables:", err)
+	goose.SetBaseFS(nil)
+	if err := goose.SetDialect("postgres"); err != nil {
+		log.Fatal("goose dialect error:", err)
+	}
+	if err := goose.Up(db.DB, "db/migrations"); err != nil {
+		log.Fatal("migrations failed:", err)
 	}
 
 	cfg := config.LoadConfig()
