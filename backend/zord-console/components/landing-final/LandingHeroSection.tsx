@@ -80,8 +80,8 @@ export function LandingHeroSection() {
             id="landing-hero-heading"
             className="mx-auto mt-6 max-w-[820px] text-[2.25rem] font-semibold leading-[1.08] tracking-[-0.04em] sm:text-5xl md:text-6xl lg:text-[4.25rem]"
           >
-            <span className="block text-[#B8BDC6]">{heroCopy.headlineLead}</span>
-            <span className="mt-1 block text-[#0A0A0A]">{heroCopy.headlineTail}</span>
+            <span className="block text-[#0A0A0A]">{heroCopy.headlineLead}</span>
+            <span className="mt-1 block text-[#047857]">{heroCopy.headlineTail}</span>
           </motion.h1>
 
           <motion.p

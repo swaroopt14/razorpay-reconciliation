@@ -27,7 +27,11 @@ export function LandingHowItWorksSection() {
       aria-label="How Zord works"
     >
       <LandingReveal>
-        <LandingSectionHeader badge="How it works" title={landingHomeCopy.howItWorks.title} />
+        <LandingSectionHeader
+          badge="How it works"
+          title="The operating model behind"
+          titleAccent="control"
+        />
       </LandingReveal>
 
       <div className="mt-16 grid gap-6 sm:grid-cols-2 lg:gap-8 xl:grid-cols-4">

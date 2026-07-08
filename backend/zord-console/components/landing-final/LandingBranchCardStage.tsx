@@ -69,7 +69,8 @@ export function LandingBranchCardStage() {
       <div className={LANDING_SECTION_SHELL}>
         <LandingSectionHeader
           badge="Live signals"
-          title="Signals surface before money leaks"
+          title="Signals surface before"
+          titleAccent="money leaks"
           description="Live payment health, routing quality, and settlement behavior — scored continuously and acted on before finance feels the impact."
           animated
           inView={inView}

@@ -5,16 +5,10 @@ import { Check } from 'lucide-react'
 import {
   LandingReveal,
   LandingSection,
-  LandingSectionHeader,
 } from '@/components/landing-final/landingSectionLayout'
+import { landingPricingCopy } from '@/components/landing-final/copy/landingPagesCopy'
 
-const comparisonData = [
-  { feature: 'Multi-rail routing & processing', zord: true, other: false },
-  { feature: 'Real-time data & synchronization', zord: true, other: true },
-  { feature: 'AI-driven anomaly detection', zord: true, other: false },
-  { feature: 'Unified dashboard across all systems', zord: true, other: true },
-  { feature: 'Automated Evidence Pack generation', zord: true, other: false },
-]
+const plans = landingPricingCopy.plans
 
 export function LandingCapabilitiesSection() {
   return (
@@ -52,55 +46,63 @@ export function LandingCapabilitiesSection() {
         </LandingReveal>
 
         <LandingReveal className="mt-20 sm:mt-24">
-          <div className="relative mx-auto max-w-[900px]">
-            {/* Table Header */}
-            <div className="grid grid-cols-[1fr_160px_160px] items-end gap-4 px-8 pb-4 text-[13px] font-medium text-white/50">
-              <div>Core capabilities</div>
-              <div className="text-center invisible">Zord</div> {/* Hidden header, covered by the card */}
-              <div className="text-center">Other platform</div>
-            </div>
-
-            {/* Glass Container */}
-            <div className="relative rounded-[2rem] border border-white/20 bg-white/10 p-8 shadow-2xl backdrop-blur-2xl">
-              <div className="flex flex-col gap-6 relative z-10">
-                {comparisonData.map((row, i) => (
-                  <div key={i} className="grid grid-cols-[1fr_160px_160px] items-center gap-4 border-b border-white/10 pb-6 last:border-0 last:pb-0">
-                    <div className="text-[15px] font-medium text-white">{row.feature}</div>
-                    <div className="text-center" /> {/* Spacer for Zord column */}
-                    <div className="text-center text-[13px] font-medium text-white/60">
-                      {row.other ? <Check className="mx-auto h-5 w-5" /> : 'Absent'}
+          <div className="grid gap-5 lg:grid-cols-3">
+            {plans.map((plan) => {
+              const featured = 'featured' in plan && plan.featured
+              return (
+                <article
+                  key={plan.title}
+                  className={`flex flex-col rounded-[1.75rem] border p-6 shadow-2xl backdrop-blur-2xl sm:p-7 ${
+                    featured
+                      ? 'border-[#34D399]/40 bg-[#34D399]/12'
+                      : 'border-white/20 bg-white/10'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55">
+                        {plan.subtitle}
+                      </p>
+                      <h3 className="mt-3 text-2xl font-semibold tracking-[-0.03em] text-white">{plan.title}</h3>
                     </div>
+                    {featured ? (
+                      <span className="shrink-0 rounded-full bg-[#047857] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-white">
+                        Recommended
+                      </span>
+                    ) : null}
                   </div>
-                ))}
-              </div>
 
-              {/* Footer row */}
-              <div className="mt-8 grid grid-cols-[1fr_160px_160px] items-center gap-4 pt-6 relative z-10 border-t border-white/10">
-                <div>
-                  <div className="text-[14px] font-semibold text-white">Total operational cost:</div>
-                  <div className="text-[12px] text-white/60">Based on typical multi-platform setups.</div>
-                </div>
-                <div className="text-center" /> {/* Spacer for Zord column */}
-                <div className="text-center text-[14px] font-semibold text-white">$1,700 / month</div>
-              </div>
+                  <p className="mt-5 text-[1.65rem] font-semibold tracking-[-0.04em] text-[#6EE7B7]">{plan.metric}</p>
+                  <p className="mt-3 text-[14px] leading-relaxed text-white/70">{plan.detail}</p>
 
-              {/* The Elevated Zord Column Card */}
-              <div className="absolute -inset-y-6 right-[192px] w-[180px] rounded-[1.5rem] bg-[#F4F6D4] shadow-[0_20px_40px_rgba(0,0,0,0.3)] flex flex-col z-20">
-                <div className="flex h-20 items-center justify-center border-b border-black/10 font-bold text-lg tracking-tight text-[#1A1A1A]">
-                  <span className="mr-2 h-4 w-4 bg-[#1A1A1A] mask-squircle" /> zord
-                </div>
-                <div className="flex flex-1 flex-col gap-6 px-4 py-8">
-                  {comparisonData.map((row, i) => (
-                    <div key={i} className="flex items-center justify-center h-[22px]">
-                      {row.zord && <Check className="h-6 w-6 text-[#1A1A1A]" strokeWidth={2.5} />}
-                    </div>
-                  ))}
-                </div>
-                <div className="flex h-24 items-center justify-center font-bold text-[15px] text-[#1A1A1A] border-t border-black/10">
-                  $499 / month
-                </div>
-              </div>
-            </div>
+                  <ul className="mt-6 flex-1 space-y-3">
+                    {plan.points.map((point) => (
+                      <li key={point} className="flex items-start gap-3 text-[14px] text-white/85">
+                        <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#34D399]/20 text-[#6EE7B7]">
+                          <Check className="h-3 w-3" strokeWidth={3} />
+                        </span>
+                        {point}
+                      </li>
+                    ))}
+                  </ul>
+
+                  <a
+                    href={
+                      plan.title === 'Sandbox'
+                        ? '/signin'
+                        : 'mailto:Support@zordnet.com?subject=ZORD%20pricing%20discussion'
+                    }
+                    className={`mt-8 inline-flex w-full cursor-pointer items-center justify-center rounded-full px-5 py-3.5 text-[14px] font-semibold transition-colors duration-150 ${
+                      featured
+                        ? 'bg-white text-[#111111] hover:bg-white/92'
+                        : 'border border-white/25 bg-white/10 text-white hover:bg-white/15'
+                    }`}
+                  >
+                    {plan.title === 'Sandbox' ? 'Start in sandbox' : 'Talk to sales'}
+                  </a>
+                </article>
+              )
+            })}
           </div>
         </LandingReveal>
       </div>

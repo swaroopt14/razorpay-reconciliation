@@ -22,13 +22,13 @@ const PILLAR_BACKGROUNDS = {
 const PILLAR_FRAME_CLASS = 'relative aspect-[4/4.65] w-full overflow-hidden rounded-[1.5rem]'
 
 const GLASS_CARD_BASE =
-  'relative z-10 flex h-[296px] min-h-[296px] w-full flex-col overflow-hidden rounded-t-[1.125rem] rounded-b-[2.125rem] border p-4 text-white shadow-[0_28px_64px_rgba(0,0,0,0.28)] backdrop-blur-2xl sm:p-[1.125rem]'
+  'relative z-10 flex h-[296px] min-h-[296px] w-full flex-col overflow-hidden rounded-t-[1.125rem] rounded-b-[2.125rem] border p-4 text-white shadow-[0_28px_64px_rgba(0,0,0,0.28),inset_0_1px_0_rgba(255,255,255,0.28)] backdrop-blur-2xl transition-[box-shadow,transform] duration-300 sm:p-[1.125rem]'
 
 /** Per-pillar glass material — each card picks up its photo's hue (blue / near-black / warm sand). */
 const GLASS_TONES = {
-  frost: 'border-white/25 bg-[rgba(42,64,102,0.72)]',
-  dark: 'border-white/12 bg-[rgba(13,19,13,0.8)]',
-  warm: 'border-white/30 bg-[rgba(96,84,70,0.66)]',
+  frost: 'border-white/30 bg-[rgba(42,64,102,0.68)]',
+  dark: 'border-white/18 bg-[rgba(13,19,13,0.76)]',
+  warm: 'border-white/28 bg-[rgba(96,84,70,0.64)]',
 } as const
 
 type GlassTone = keyof typeof GLASS_TONES
@@ -94,8 +94,8 @@ function CountUp({
   prefix = '',
   suffix = '',
   className = VALUE,
-  delay = 1.25,
-  duration = 2.8,
+  delay = 0.35,
+  duration = 1.8,
 }: {
   to: number
   decimals?: number
@@ -106,7 +106,7 @@ function CountUp({
   duration?: number
 }) {
   const ref = useRef<HTMLSpanElement>(null)
-  const inView = useInView(ref, { once: true, amount: 0.45 })
+  const inView = useInView(ref, { once: true, amount: 0.2, margin: '0px 0px -8% 0px' })
   const shouldReduceMotion = useReducedMotion()
 
   const format = (n: number) =>
@@ -123,8 +123,18 @@ function CountUp({
 
     let frame = 0
     let start: number | null = null
+    let settled = false
     const delayMs = delay * 1000
     const durationMs = duration * 1000
+
+    const finish = () => {
+      if (settled) return
+      settled = true
+      setDisplay(format(to))
+    }
+
+    // Guarantee final values even if rAF is throttled / interrupted mid-scroll.
+    const safety = window.setTimeout(finish, delayMs + durationMs + 250)
 
     const tick = (time: number) => {
       if (start === null) start = time
@@ -135,12 +145,19 @@ function CountUp({
       }
       const progress = Math.min(elapsed / durationMs, 1)
       const eased = 1 - (1 - progress) ** 3
-      setDisplay(progress >= 1 ? format(to) : format(to * eased))
-      if (progress < 1) frame = requestAnimationFrame(tick)
+      if (progress >= 1) {
+        finish()
+        return
+      }
+      setDisplay(format(to * eased))
+      frame = requestAnimationFrame(tick)
     }
 
     frame = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(frame)
+    return () => {
+      cancelAnimationFrame(frame)
+      window.clearTimeout(safety)
+    }
   }, [inView, shouldReduceMotion, to, decimals, prefix, suffix, delay, duration])
 
   return (
@@ -256,6 +273,12 @@ function AnimatedBars({ bars, barDelay = 1.35 }: { bars: number[]; barDelay?: nu
 
 function PayoutOverviewCard() {
   const bars = [38, 52, 44, 68, 58, 72, 48, 64, 42, 56, 50]
+  const connectors = [
+    { name: 'Razorpay', status: 'Stable', tone: 'text-[#A7F3D0]' },
+    { name: 'Cashfree', status: 'Watch', tone: 'text-amber-200' },
+    { name: 'PayU', status: 'Review', tone: 'text-rose-200' },
+    { name: 'Stripe', status: 'Stable', tone: 'text-[#A7F3D0]' },
+  ] as const
 
   return (
     <AnimatedBlurShell backgroundSrc={PILLAR_BACKGROUNDS.connector}>
@@ -266,35 +289,30 @@ function PayoutOverviewCard() {
           <div>
             <div className={LABEL}>Total value</div>
             <div className="mt-1">
-              <CountUp to={3.45} decimals={2} prefix="₹" suffix=" Cr" delay={1.3} />
+              <CountUp to={3.45} decimals={2} prefix="₹" suffix=" Cr" delay={0.35} />
             </div>
           </div>
           <div>
             <div className={LABEL}>Period change</div>
             <div className="mt-1">
-              <CountUp to={24.8} decimals={1} prefix="+₹" suffix=" L" delay={1.42} />
+              <CountUp to={24.8} decimals={1} prefix="+₹" suffix=" L" delay={0.45} />
             </div>
           </div>
           <div>
             <div className={LABEL}>Connectors</div>
             <div className="mt-1">
-              <CountUp to={12} decimals={0} delay={1.54} />
+              <CountUp to={12} decimals={0} delay={0.55} />
             </div>
           </div>
         </div>
 
-        <AnimatedBars bars={bars} />
+        <AnimatedBars bars={bars} barDelay={0.55} />
 
         <div className="mt-3 flex flex-1 flex-col space-y-2 border-t border-white/10 pt-2.5">
-          {[
-            ['Razorpay', 'Stable'],
-            ['Cashfree', 'Watch'],
-            ['PayU', 'Review'],
-            ['Stripe', 'Stable'],
-          ].map(([name, status]) => (
+          {connectors.map(({ name, status, tone }) => (
             <div key={name} className="flex items-center justify-between text-[10px]">
               <span className="text-white/90">{name}</span>
-              <span className="text-white/45">{status}</span>
+              <span className={`rounded-full bg-white/8 px-2 py-0.5 ${tone}`}>{status}</span>
             </div>
           ))}
         </div>
@@ -328,10 +346,10 @@ function PerformanceCardGlass() {
           decimals={1}
           suffix="%"
           className="text-[2.1rem] font-semibold leading-none tracking-[-0.05em] text-white"
-          delay={1.3}
-          duration={3}
+          delay={0.35}
+          duration={2}
         />
-        <TrendingUp className="mb-1 h-4 w-4 text-emerald-400" />
+        <TrendingUp className="mb-1 h-4 w-4 text-[#6EE7B7]" />
       </div>
       <p className="mt-1 shrink-0 text-[9px] text-white/45">Match confidence · last 7 days</p>
 
@@ -365,9 +383,15 @@ function PerformanceCardGlass() {
           <div key={label} className="text-center">
             <div className={LABEL}>{label}</div>
             <div className="mt-1 flex items-center justify-center gap-0.5">
-              <CountUp to={Math.abs(to)} decimals={1} prefix={to < 0 ? '-' : prefix} suffix={suffix} delay={1.45 + index * 0.1} />
+              <CountUp
+                to={Math.abs(to)}
+                decimals={1}
+                prefix={to < 0 ? '-' : prefix}
+                suffix={suffix}
+                delay={0.5 + index * 0.08}
+              />
               <TrendingUp
-                className={`h-2.5 w-2.5 shrink-0 ${up ? 'text-emerald-400' : 'rotate-180 text-amber-400/90'}`}
+                className={`h-2.5 w-2.5 shrink-0 ${up ? 'text-[#6EE7B7]' : 'rotate-180 text-amber-300/90'}`}
               />
             </div>
           </div>
@@ -411,8 +435,8 @@ function EvidenceTrustCard() {
             to={1248}
             decimals={0}
             className="text-[2.1rem] font-semibold leading-none tracking-[-0.05em] text-white"
-            delay={1.3}
-            duration={3}
+            delay={0.35}
+            duration={2}
           />
           <p className="mt-1.5 flex items-center gap-1.5 text-[9px] text-white/60">
             <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-orange-400" />
@@ -442,8 +466,8 @@ function EvidenceTrustCard() {
           <div className="shrink-0 rounded-xl border border-white/10 bg-white/6 p-2.5">
             <p className={LABEL}>Consent on file</p>
             <div className="mt-1.5 flex gap-2">
-              <span className="mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] border border-emerald-400/50 bg-emerald-500/15">
-                <Check className="h-2.5 w-2.5 text-emerald-300" strokeWidth={3} />
+              <span className="mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] border border-[#34D399]/45 bg-[#059669]/20">
+                <Check className="h-2.5 w-2.5 text-[#A7F3D0]" strokeWidth={3} />
               </span>
               <div className="min-w-0">
                 <p className="text-[9px] leading-snug text-white/82">
@@ -476,32 +500,38 @@ function LandingThreePillars() {
         initial={shouldReduceMotion ? false : 'hidden'}
         whileInView="visible"
         viewport={{ once: true, amount: 0.28 }}
+        className="mx-auto flex max-w-4xl flex-col items-center text-center"
       >
+        <motion.div
+          variants={shouldReduceMotion ? undefined : fadeUpItem}
+          className="flex max-w-2xl items-center justify-center gap-2.5 text-[13px] leading-relaxed text-[#111111] sm:text-[14px]"
+        >
+          <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#34D399]/15 text-[#059669]">
+            <LayoutGrid className="h-3.5 w-3.5" strokeWidth={2.25} />
+          </span>
+          <p>Payout intelligence for operators, finance teams, and proof-ready close.</p>
+        </motion.div>
+
+        <motion.h2
+          variants={shouldReduceMotion ? undefined : fadeUpItem}
+          className="mt-10 text-[2.35rem] font-semibold leading-[1.02] tracking-[-0.055em] text-[#111111] sm:text-5xl lg:text-[3.75rem]"
+        >
+          Clarity and control across
+          <span className="mt-1 block sm:mt-2">
+            <span className="text-[#047857]">every payout surface.</span>
+          </span>
+        </motion.h2>
+
         <motion.p
           variants={shouldReduceMotion ? undefined : fadeUpItem}
-          className="mb-8 inline-flex w-fit rounded border border-[#111111] bg-[#111111] px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.14em] text-white"
+          className="mt-8 max-w-2xl text-base leading-relaxed text-[#6B7280] sm:text-lg sm:leading-8"
         >
-          Payout intelligence
+          {F.subcopy}
         </motion.p>
-
-        <div className="grid gap-6 lg:grid-cols-[1.12fr_0.88fr] lg:items-start lg:gap-x-14 xl:gap-x-20">
-          <motion.h2
-            variants={shouldReduceMotion ? undefined : fadeUpItem}
-            className="max-w-[15ch] text-[2.5rem] font-semibold leading-[0.94] tracking-[-0.04em] text-[#1A1A1A] sm:text-[3.25rem] lg:text-[4.5rem]"
-          >
-            {F.headline}
-          </motion.h2>
-          <motion.p
-            variants={shouldReduceMotion ? undefined : fadeUpItem}
-            className="max-w-xl text-base font-medium leading-relaxed text-[#4B5563] sm:text-lg lg:max-w-[30rem] lg:pt-1"
-          >
-            {F.subcopy}
-          </motion.p>
-        </div>
       </motion.div>
 
       <motion.div
-        className="mt-16 grid w-full grid-cols-1 gap-8 overflow-visible md:grid-cols-3 md:items-start md:gap-6 lg:mt-16 lg:gap-10"
+        className="mt-14 grid w-full grid-cols-1 gap-10 overflow-visible md:grid-cols-3 md:items-start md:gap-6 lg:mt-16 lg:gap-10"
         variants={shouldReduceMotion ? undefined : pillarGrid}
         initial={shouldReduceMotion ? false : 'hidden'}
         whileInView="visible"
@@ -516,19 +546,19 @@ function LandingThreePillars() {
             <motion.div className="w-full min-w-0">
               <motion.p
                 variants={shouldReduceMotion ? undefined : pillarText}
-                className="text-[10px] font-medium tracking-[0.1em] text-[#B8BFCA]"
+                className="text-[10px] font-semibold tracking-[0.14em] text-[#9CA3AF]"
               >
-                [ {index + 1} ]
+                [ {String(index + 1).padStart(2, '0')} ]
               </motion.p>
               <motion.h3
                 variants={shouldReduceMotion ? undefined : pillarText}
-                className="mt-5 max-w-[22ch] text-xl font-semibold tracking-[-0.03em] text-[#1A1A1A] sm:text-[1.35rem]"
+                className="mt-4 max-w-[22ch] text-xl font-semibold tracking-[-0.03em] text-[#111111] sm:text-[1.35rem]"
               >
                 {pillar.title}
               </motion.h3>
               <motion.p
                 variants={shouldReduceMotion ? undefined : pillarText}
-                className="mt-[18px] max-w-[34ch] text-[15px] leading-relaxed text-[#4B5563]"
+                className="mt-3.5 max-w-[34ch] text-[15px] leading-relaxed text-[#6B7280]"
               >
                 {pillar.description}
               </motion.p>

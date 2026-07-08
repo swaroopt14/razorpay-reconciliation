@@ -114,7 +114,7 @@ export const landingHomeCopy = {
   featuresSection: {
     headline: 'Clarity and control across every payout surface',
     subcopy:
-      'Get a structured view of payment instructions, connector posture, and evidence readiness — from command center to finance close.',
+      'One operating layer for payment instructions, connector posture, and evidence readiness — from command center through finance close.',
   },
   howItWorks: {
     title: 'The operating model behind control',
@@ -149,19 +149,19 @@ export const landingHomeCopy = {
   capabilities: [
     {
       title: H.connectorPerformance.title,
-      description: `See which PSPs, banks, and rails need attention before ${H.kpis.preventableLeakage} spreads.`,
+      description: `See which PSPs, banks, and rails need attention before ${H.kpis.preventableLeakage} becomes an incident.`,
       bullets: ['Connector grid & health signals', `Leakage composition & ${H.kpis.unconfirmedExposure}`],
       icon: 'refresh' as const,
     },
     {
       title: 'Visibility & risk',
-      description: 'Watch confirmation, SLA drift, and finality risk on one timeline.',
+      description: 'Watch confirmation, SLA drift, and finality risk on one shared timeline.',
       bullets: [H.pages.matchingConfidence, `Payment gaps & ${H.kpis.valueAtRisk}`],
       icon: 'eye' as const,
     },
     {
       title: 'Evidence & finance',
-      description: 'Close with Evidence Packs, not screenshots and scattered exports.',
+      description: 'Close with Evidence Packs — not screenshots and scattered exports.',
       bullets: [`${H.evidence.artifact} generation`, 'Reconciliation clarity for finance'],
       icon: 'book' as const,
     },

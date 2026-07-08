@@ -37,6 +37,7 @@ const fadeUpItem = {
 type LandingSectionHeaderProps = {
   badge: string
   title: string
+  titleAccent?: string
   description?: string
   theme?: LandingSectionTheme
   className?: string
@@ -48,6 +49,7 @@ type LandingSectionHeaderProps = {
 export function LandingSectionHeader({
   badge,
   title,
+  titleAccent,
   description,
   theme = 'light',
   className = '',
@@ -68,7 +70,14 @@ export function LandingSectionHeader({
     <h2
       className={`max-w-[15ch] text-[2.5rem] font-semibold leading-[0.94] tracking-[-0.04em] sm:text-[3.25rem] lg:text-[4.5rem] ${titleClass}`}
     >
-      {title}
+      {titleAccent ? (
+        <>
+          {title}{' '}
+          <span className="text-[#047857]">{titleAccent}</span>
+        </>
+      ) : (
+        title
+      )}
     </h2>
   )
 
