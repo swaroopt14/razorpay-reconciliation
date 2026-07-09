@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE dispatch_index(
 	dispatch_id UUID PRIMARY KEY,
 	contract_id UUID NOT NULL,

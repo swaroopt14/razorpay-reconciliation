@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE orphan_settlement_records (
 	orphan_id UUID PRIMARY KEY,
 	tenant_id UUID NOT NULL,

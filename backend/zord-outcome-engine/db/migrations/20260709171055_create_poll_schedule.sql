@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE poll_schedule(
 	contract_id UUID PRIMARY KEY,
 	dispatch_id UUID NOT NULL,

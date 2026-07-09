@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE settlement_parsed_rows(
 	parsed_row_id UUID PRIMARY KEY,
 	ingest_run_id TEXT NOT NULL,

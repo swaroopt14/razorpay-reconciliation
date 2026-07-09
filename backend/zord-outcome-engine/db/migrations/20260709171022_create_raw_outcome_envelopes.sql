@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE raw_outcome_envelopes(
 	raw_outcome_envelope_id UUID PRIMARY KEY,
 	tenant_id UUID NOT NULL,

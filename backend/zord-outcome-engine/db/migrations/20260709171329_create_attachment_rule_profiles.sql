@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE attachment_rule_profiles (
 	profile_id TEXT NOT NULL,
 	tenant_id UUID NOT NULL,

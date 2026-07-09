@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE canonical_settlement_batches(
 	settlement_batch_id UUID PRIMARY KEY,
 	tenant_id UUID NOT NULL,

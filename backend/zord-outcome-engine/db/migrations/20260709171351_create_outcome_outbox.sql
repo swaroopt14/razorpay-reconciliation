@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE outcome_outbox (
 	event_id UUID PRIMARY KEY,
 	envelope_id UUID,

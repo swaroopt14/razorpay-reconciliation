@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE settlement_parse_errors(
 	error_id UUID PRIMARY KEY,
 	tenant_id UUID NOT NULL,

@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE finality_certificates(
 	finality_certificate_id UUID PRIMARY KEY,
 	contract_id UUID NOT NULL,

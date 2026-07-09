@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE batch_attachment_summaries (
 	batch_attachment_summary_id UUID PRIMARY KEY,
 	tenant_id UUID NOT NULL,

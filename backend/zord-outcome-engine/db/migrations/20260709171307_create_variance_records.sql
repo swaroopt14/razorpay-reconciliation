@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE variance_records (
 	variance_record_id UUID PRIMARY KEY,
 	tenant_id UUID NOT NULL,

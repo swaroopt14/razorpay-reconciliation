@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE ambiguous_intent_records (
 	ambiguous_id UUID PRIMARY KEY,
 	tenant_id UUID NOT NULL,

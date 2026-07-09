@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE unresolved_intent_records (
 	unresolved_id UUID PRIMARY KEY,
 	tenant_id UUID NOT NULL,

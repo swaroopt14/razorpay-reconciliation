@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE attachment_decisions (
 	attachment_decision_id UUID PRIMARY KEY,
 	tenant_id UUID NOT NULL,

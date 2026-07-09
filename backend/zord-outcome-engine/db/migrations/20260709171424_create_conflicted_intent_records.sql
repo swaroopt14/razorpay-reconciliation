@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE conflicted_intent_records (
 	conflicted_id UUID PRIMARY KEY,
 	tenant_id UUID NOT NULL,

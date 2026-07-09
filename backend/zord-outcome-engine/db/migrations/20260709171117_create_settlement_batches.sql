@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE settlement_batches (
 	settlement_batch_id TEXT PRIMARY KEY,
 	tenant_id UUID NOT NULL,

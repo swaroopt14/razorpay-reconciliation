@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE fused_outcomes(
 	contract_id UUID PRIMARY KEY,
 	current_state TEXT NOT NULL,

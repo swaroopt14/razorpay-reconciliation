@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE attachment_outbox_events (
 	outbox_event_id UUID PRIMARY KEY,
 	tenant_id UUID NOT NULL,

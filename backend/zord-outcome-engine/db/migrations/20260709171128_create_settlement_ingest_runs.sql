@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE settlement_ingest_runs (
 	ingest_run_id TEXT PRIMARY KEY,
 	settlement_batch_id TEXT NOT NULL REFERENCES settlement_batches(settlement_batch_id),

@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE canonical_outcome_events(
 	event_id UUID PRIMARY KEY,
 	raw_outcome_envelope_id UUID NOT NULL,

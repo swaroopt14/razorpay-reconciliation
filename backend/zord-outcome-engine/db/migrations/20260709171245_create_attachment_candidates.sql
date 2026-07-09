@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE attachment_candidates (
 	candidate_id UUID PRIMARY KEY,
 	attachment_job_id UUID NOT NULL REFERENCES attachment_jobs(attachment_job_id),
