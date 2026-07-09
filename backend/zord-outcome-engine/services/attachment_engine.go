@@ -572,7 +572,7 @@ func (e *AttachmentEngine) runAttachment(
 	// same transaction as decisions/variances/candidates.
 	outboxSvc := &AttachmentOutboxService{}
 	outboxRows, leafRows, outboxBuildErr := outboxSvc.BuildOutboxRows(
-		ctx, job, allDecisions, allVariances, obsMap, parsedByRowRef, intentMap)
+		ctx, job, allDecisions, allVariances, obsMap, parsedByRowRef, intentMap, batchSummary)
 	if outboxBuildErr != nil {
 		// Non-fatal: log and continue — persistence of decisions must not be
 		// blocked by an outbox build failure.

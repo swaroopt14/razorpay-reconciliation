@@ -60,6 +60,7 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 	obsMap map[uuid.UUID]*models.CanonicalSettlementObservation,
 	parsedByRowRef map[string]*models.SettlementParsedRow,
 	intentMap map[uuid.UUID]models.CanonicalIntent, // FIX #10: passed in, not re-fetched
+	batchSummary models.BatchAttachmentSummary, // FIX: passed in, not re-fetched
 ) (decisionRows []models.OutboxRow, leafRows []models.OutboxRow, lastErr error) {
 
 	log.Printf("attachment.outbox.build_start job=%s decisions=%d variances=%d",
@@ -72,17 +73,11 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 
 	// FIX #10: fetch batch summary and corridor/batchID info using obsMap
 	// (already in memory) and a single batch summary query — NOT re-fetching intents.
+	// UPDATE: batchSummary is now passed in to avoid querying before persistence.
 	var summaryBatchID *string
-	var totalIntendedAmount, totalConfirmedAmount, totalVariance, originalSettledAmount decimal.Decimal
-	row := db.DB.QueryRowContext(ctx, `
-		SELECT batch_id, total_intended_amount, original_settled_amount, total_observed_amount, total_variance
-		FROM batch_attachment_summaries
-		WHERE attachment_job_id = $1
-		LIMIT 1`,
-		job.AttachmentJobID,
-	)
-	_ = row.Scan(&summaryBatchID, &totalIntendedAmount, &originalSettledAmount,
-		&totalConfirmedAmount, &totalVariance)
+	if batchSummary.BatchID != nil {
+		summaryBatchID = batchSummary.BatchID
+	}
 
 	// ── Decision + variance + flag events ────────────────────────────────────
 	for _, d := range decisions {
@@ -413,7 +408,7 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 	}
 
 	// ── Batch updated event ───────────────────────────────────────────────────
-	batchRow, err := s.buildBatchUpdatedRow(ctx, job, decisions, obsMap, intentMap, summaryBatchID)
+	batchRow, err := s.buildBatchUpdatedRow(ctx, job, decisions, obsMap, intentMap, batchSummary)
 	if err != nil {
 		lastErr = err
 	} else {
@@ -440,7 +435,7 @@ func (s *AttachmentOutboxService) buildBatchUpdatedRow(
 	decisions []models.AttachmentDecision,
 	obsMap map[uuid.UUID]*models.CanonicalSettlementObservation,
 	intentMap map[uuid.UUID]models.CanonicalIntent,
-	summaryBatchID *string,
+	batchSummary models.BatchAttachmentSummary,
 ) (models.OutboxRow, error) {
 
 	var (
@@ -451,63 +446,13 @@ func (s *AttachmentOutboxService) buildBatchUpdatedRow(
 		failedCount        int
 		pendingCount       int
 		reversedCount      int
-		aggregateAmbiguity float64
-		finalityStatus     string
 		fileSHA            string
-		summarySourceRef   string
 	)
 
-	var totalIntendedAmount, totalConfirmedAmount, totalVariance, originalSettledAmount decimal.Decimal
-	var summaryAmbiguity, summaryMatchConfidence, summaryQualityScore float64
-	var matchedIntentCount, totalIntentCount int
-	var matchedPairVariance, netBatchDelta, orphanObservedAmount decimal.Decimal
-	var unresolvedIntendedAmount, ambiguousAmount, conflictedAmount decimal.Decimal
-	var orphanObservationCount, unresolvedIntentCount int
-	var summaryExactMatchCount, summaryHighConfidenceCount, summaryAmbiguousCount, summaryConflictedCount int
-	var intentCountCoverage, intentValueCoverage, observedCountCoverage, observedValueCoverage float64
-	var originalIntendedAmount, matchedIntendedAmount, matchedObservedAmount decimal.Decimal
-
-	row := db.DB.QueryRowContext(ctx, `
-		SELECT
-			batch_id, source_reference, total_intended_amount,
-			total_observed_amount, total_variance, batch_attachment_status,
-			avg_matched_attachment_ambiguity, avg_matched_attachment_confidence,
-			avg_matched_attachment_quality,
-			matched_intent_count, total_intent_count,
-			matched_pair_variance, net_batch_delta, orphan_observed_amount,
-			unresolved_intended_amount, ambiguous_amount, conflicted_amount,
-			orphan_observation_count,
-			exact_match_count, high_confidence_count, ambiguous_count,
-			unresolved_count, conflicted_count,
-			intent_count_coverage, intent_value_coverage,
-			observed_count_allocation_coverage, observed_value_allocation_coverage,
-			original_intended_amount, original_settled_amount,
-			matched_intended_amount, matched_observed_amount
-		FROM batch_attachment_summaries
-		WHERE attachment_job_id = $1
-		LIMIT 1`,
-		job.AttachmentJobID,
-	)
-	if err := row.Scan(
-		&summaryBatchID, &summarySourceRef, &totalIntendedAmount,
-		&totalConfirmedAmount, &totalVariance, &finalityStatus,
-		&summaryAmbiguity, &summaryMatchConfidence, &summaryQualityScore,
-		&matchedIntentCount, &totalIntentCount,
-		&matchedPairVariance, &netBatchDelta, &orphanObservedAmount,
-		&unresolvedIntendedAmount, &ambiguousAmount, &conflictedAmount,
-		&orphanObservationCount,
-		&summaryExactMatchCount, &summaryHighConfidenceCount, &summaryAmbiguousCount,
-		&unresolvedIntentCount, &summaryConflictedCount,
-		&intentCountCoverage, &intentValueCoverage,
-		&observedCountCoverage, &observedValueCoverage,
-		&originalIntendedAmount, &originalSettledAmount,
-		&matchedIntendedAmount, &matchedObservedAmount,
-	); err == nil {
-		if summaryBatchID != nil {
-			batchID = *summaryBatchID
-		}
-		aggregateAmbiguity = summaryAmbiguity
+	if batchSummary.BatchID != nil {
+		batchID = *batchSummary.BatchID
 	}
+	aggregateAmbiguity := batchSummary.AmbiguityScore
 
 	if batchID == "" {
 		for _, obs := range obsMap {
@@ -569,7 +514,7 @@ func (s *AttachmentOutboxService) buildBatchUpdatedRow(
 		"trace_id":                           uuid.Nil.String(),
 		"occurred_at":                        time.Now().UTC().Format(time.RFC3339),
 		"batch_id":                           batchID,
-		"source_reference":                   summarySourceRef,
+		"source_reference":                   batchSummary.SourceReference,
 		"corridor_id":                        corridorID,
 		"file_sha256":                        fileSHA,
 		"total_count":                        totalCount,
@@ -578,36 +523,36 @@ func (s *AttachmentOutboxService) buildBatchUpdatedRow(
 		"pending_count":                      pendingCount,
 		"reversed_count":                     reversedCount,
 		"partial_recon_count":                0,
-		"total_intent_count":                 totalIntentCount,
-		"matched_intent_count":               matchedIntentCount,
-		"exact_match_count":                  summaryExactMatchCount,
-		"high_confidence_count":              summaryHighConfidenceCount,
-		"ambiguous_count":                    summaryAmbiguousCount,
-		"unresolved_count":                   unresolvedIntentCount,
-		"conflicted_count":                   summaryConflictedCount,
-		"unresolved_intent_count":            unresolvedIntentCount,
-		"orphan_observation_count":           orphanObservationCount,
-		"total_intended_amount_minor":        totalIntendedAmount.String(),
-		"total_confirmed_amount_minor":       totalConfirmedAmount.String(),
-		"original_intended_amount":           originalIntendedAmount.String(),
-		"original_settled_amount":            originalSettledAmount.String(),
-		"matched_intended_amount":            matchedIntendedAmount.String(),
-		"matched_observed_amount":            matchedObservedAmount.String(),
-		"unresolved_intended_amount":         unresolvedIntendedAmount.String(),
-		"ambiguous_amount":                   ambiguousAmount.String(),
-		"conflicted_amount":                  conflictedAmount.String(),
-		"orphan_observed_amount":             orphanObservedAmount.String(),
-		"matched_pair_variance":              matchedPairVariance.String(),
-		"net_batch_delta":                    netBatchDelta.String(),
-		"total_variance_minor":               totalVariance.String(),
-		"intent_count_coverage":              intentCountCoverage,
-		"intent_value_coverage":              intentValueCoverage,
-		"observed_count_allocation_coverage": observedCountCoverage,
-		"observed_value_allocation_coverage": observedValueCoverage,
+		"total_intent_count":                 batchSummary.TotalIntentCount,
+		"matched_intent_count":               batchSummary.MatchedIntentCount,
+		"exact_match_count":                  batchSummary.ExactMatchCount,
+		"high_confidence_count":              batchSummary.HighConfidenceCount,
+		"ambiguous_count":                    batchSummary.AmbiguousCount,
+		"unresolved_count":                   batchSummary.UnresolvedCount,
+		"conflicted_count":                   batchSummary.ConflictedCount,
+		"unresolved_intent_count":            batchSummary.UnresolvedCount,
+		"orphan_observation_count":           batchSummary.OrphanObservationCount,
+		"total_intended_amount_minor":        batchSummary.TotalIntendedAmount.String(),
+		"total_confirmed_amount_minor":       batchSummary.TotalObservedAmount.String(),
+		"original_intended_amount":           batchSummary.OriginalIntendedAmount.String(),
+		"original_settled_amount":            batchSummary.OriginalSettledAmount.String(),
+		"matched_intended_amount":            batchSummary.MatchedIntendedAmount.String(),
+		"matched_observed_amount":            batchSummary.MatchedObservedAmount.String(),
+		"unresolved_intended_amount":         batchSummary.UnresolvedIntendedAmount.String(),
+		"ambiguous_amount":                   batchSummary.AmbiguousAmount.String(),
+		"conflicted_amount":                  batchSummary.ConflictedAmount.String(),
+		"orphan_observed_amount":             batchSummary.OrphanObservedAmount.String(),
+		"matched_pair_variance":              batchSummary.MatchedPairVariance.String(),
+		"net_batch_delta":                    batchSummary.NetBatchDelta.String(),
+		"total_variance_minor":               batchSummary.TotalVariance.String(),
+		"intent_count_coverage":              batchSummary.IntentCountCoverage,
+		"intent_value_coverage":              batchSummary.IntentValueCoverage,
+		"observed_count_allocation_coverage": batchSummary.ObservedCountAllocationCoverage,
+		"observed_value_allocation_coverage": batchSummary.ObservedValueAllocationCoverage,
 		"ambiguity_score":                    aggregateAmbiguity,
-		"aggregate_score":                    summaryQualityScore,
-		"aggregate_match_confidence":         summaryMatchConfidence,
-		"batch_finality_status":              finalityStatus,
+		"aggregate_score":                    batchSummary.AggregateScore,
+		"aggregate_match_confidence":         batchSummary.AggregateMatchConfidence,
+		"batch_finality_status":              batchSummary.BatchAttachmentStatus,
 		"job_status":                         job.Status,
 	}
 
