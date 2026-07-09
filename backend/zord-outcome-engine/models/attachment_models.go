@@ -2,6 +2,7 @@ package models
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -67,6 +68,29 @@ const (
 	BatchStatusRequiresReview   = "REQUIRES_REVIEW"
 	BatchStatusClosed           = "CLOSED"
 )
+
+// NormalizeBatchAttachmentStatus maps legacy settlement labels stored in older
+// batch_attachment_summaries rows to canonical reconciliation vocabulary.
+func NormalizeBatchAttachmentStatus(status string) string {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "", "PENDING", "OPEN":
+		return BatchStatusProcessing
+	case "FULLY_SETTLED", "SETTLED", BatchStatusFullySettled:
+		return BatchStatusFullySettled
+	case "PARTIALLY_SETTLED", BatchStatusPartiallySettled:
+		return BatchStatusPartiallySettled
+	case BatchStatusFailed, "CANCELLED":
+		return BatchStatusFailed
+	case BatchStatusRequiresReview:
+		return BatchStatusRequiresReview
+	case BatchStatusClosed:
+		return BatchStatusClosed
+	case BatchStatusProcessing:
+		return BatchStatusProcessing
+	default:
+		return BatchStatusProcessing
+	}
+}
 
 // ─── Job scope constants ──────────────────────────────────────────────────────
 
@@ -337,16 +361,16 @@ type BatchAttachmentSummary struct {
 	AttachmentJobID          uuid.UUID `json:"attachment_job_id" db:"attachment_job_id"`
 
 	// Counts
-	TotalIntentCount         int `json:"total_intent_count" db:"total_intent_count"`
-	TotalObservationCount    int `json:"total_observation_count" db:"total_observation_count"`
-	MatchedIntentCount       int `json:"matched_intent_count" db:"matched_intent_count"`
-	MatchedObservationCount  int `json:"matched_observation_count" db:"matched_observation_count"`
-	ExactMatchCount          int `json:"exact_match_count" db:"exact_match_count"`
-	HighConfidenceCount      int `json:"high_confidence_count" db:"high_confidence_count"`
-	AmbiguousCount           int `json:"ambiguous_count" db:"ambiguous_count"`
-	UnresolvedCount          int `json:"unresolved_count" db:"unresolved_count"`
-	ConflictedCount          int `json:"conflicted_count" db:"conflicted_count"`
-	OrphanObservationCount   int `json:"orphan_observation_count" db:"orphan_observation_count"`
+	TotalIntentCount        int `json:"total_intent_count" db:"total_intent_count"`
+	TotalObservationCount   int `json:"total_observation_count" db:"total_observation_count"`
+	MatchedIntentCount      int `json:"matched_intent_count" db:"matched_intent_count"`
+	MatchedObservationCount int `json:"matched_observation_count" db:"matched_observation_count"`
+	ExactMatchCount         int `json:"exact_match_count" db:"exact_match_count"`
+	HighConfidenceCount     int `json:"high_confidence_count" db:"high_confidence_count"`
+	AmbiguousCount          int `json:"ambiguous_count" db:"ambiguous_count"`
+	UnresolvedCount         int `json:"unresolved_count" db:"unresolved_count"`
+	ConflictedCount         int `json:"conflicted_count" db:"conflicted_count"`
+	OrphanObservationCount  int `json:"orphan_observation_count" db:"orphan_observation_count"`
 
 	// Amount aggregates
 	TotalIntendedAmount      decimal.Decimal `json:"total_intended_amount" db:"total_intended_amount"`
@@ -370,10 +394,10 @@ type BatchAttachmentSummary struct {
 	NetUnexplainedVariance   decimal.Decimal `json:"net_unexplained_variance" db:"net_unexplained_variance"`
 
 	// Coverage (0–1 ratios)
-	IntentCountCoverage              float64 `json:"intent_count_coverage" db:"intent_count_coverage"`
-	IntentValueCoverage              float64 `json:"intent_value_coverage" db:"intent_value_coverage"`
-	ObservedCountAllocationCoverage  float64 `json:"observed_count_allocation_coverage" db:"observed_count_allocation_coverage"`
-	ObservedValueAllocationCoverage  float64 `json:"observed_value_allocation_coverage" db:"observed_value_allocation_coverage"`
+	IntentCountCoverage             float64 `json:"intent_count_coverage" db:"intent_count_coverage"`
+	IntentValueCoverage             float64 `json:"intent_value_coverage" db:"intent_value_coverage"`
+	ObservedCountAllocationCoverage float64 `json:"observed_count_allocation_coverage" db:"observed_count_allocation_coverage"`
+	ObservedValueAllocationCoverage float64 `json:"observed_value_allocation_coverage" db:"observed_value_allocation_coverage"`
 
 	// Derived status
 	BatchAttachmentStatus    string    `json:"batch_attachment_status" db:"batch_attachment_status"`
