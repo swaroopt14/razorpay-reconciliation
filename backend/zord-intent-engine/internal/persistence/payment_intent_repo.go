@@ -28,6 +28,7 @@ func (r *PaymentIntentRepo) Save(
 	nir *models.NormalizedIngestRecord,
 	intent models.CanonicalIntent, outbox models.OutboxEvent,
 	registry *models.BusinessIdempotencyEntry,
+	policyDecision *models.IntentPolicyDecision,
 ) (models.CanonicalIntent, error) {
 
 	if intent.ContractID == "" {
@@ -109,7 +110,8 @@ func (r *PaymentIntentRepo) Save(
     payment_instruction_received,
     canonical_intent_created,
     intent_lifecycle_state,
-    mapping_profile_hash
+    mapping_profile_hash,
+    policy_source, policy_version, policy_hash
 )
 VALUES (
     $1,$2,$3,$4,
@@ -131,7 +133,8 @@ VALUES (
     $46, $47, $48, $49, $50, -- UPDATED
     $51, $52, $53, $54, $55, $56, $57,
     $58, $59, $60, $61, $62,
-    $63, $64
+    $63, $64,
+    $65, $66, $67
 ) `
 
 	_, err = tx.ExecContext(
@@ -201,6 +204,9 @@ VALUES (
 		intent.CanonicalIntentCreated,     // $62
 		intent.IntentLifecycleState,       // $63
 		intent.MappingProfileHash,         // $64
+		intent.PolicySource,               // $65
+		intent.PolicyVersion,              // $66
+		intent.PolicyHash,                 // $67
 	)
 
 	if err != nil {
@@ -271,7 +277,8 @@ INSERT INTO outbox (
     payment_instruction_received,
     canonical_intent_created,
     intent_lifecycle_state,
-    mapping_profile_hash
+    mapping_profile_hash,
+    policy_source, policy_version, policy_hash
 ) VALUES (
     $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
     $11,$12,$13,$14,$15,$16,$17,$18,$19,
@@ -279,7 +286,8 @@ INSERT INTO outbox (
     $30,$31,$32,$33,$34,$35,$36,$37,$38,$39,
     $40,$41,$42,$43,$44,$45,$46,$47,$48,$49,
     $50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,
-    $61, $62
+    $61, $62,
+    $63, $64, $65
 )`
 
 	outbox.ContractID = intent.ContractID
@@ -349,6 +357,9 @@ INSERT INTO outbox (
 		outbox.CanonicalIntentCreated,     // $60
 		outbox.IntentLifecycleState,       // $61
 		outbox.MappingProfileHash,         // $62
+		outbox.PolicySource,               // $63
+		outbox.PolicyVersion,              // $64
+		outbox.PolicyHash,                 // $65
 	)
 	if err != nil {
 		log.Printf("Repo.Save: INSERT outbox failed: %v", err)
@@ -398,6 +409,25 @@ INSERT INTO outbox (
 				log.Printf("Repo.Save: UPDATE duplicate flag failed: %v", err)
 				return intent, err
 			}
+		}
+	}
+
+	if policyDecision != nil {
+		policyQuery := `
+		INSERT INTO intent_policy_decisions (
+			tenant_id, intent_id, policy_source, policy_version, policy_hash,
+			policy_result, reason_codes_json, input_facts_hash, input_facts_json, evaluated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		ON CONFLICT (tenant_id, intent_id, policy_source, policy_version) DO NOTHING`
+		_, err = tx.ExecContext(ctx, policyQuery,
+			policyDecision.TenantID, policyDecision.IntentID, policyDecision.PolicySource,
+			policyDecision.PolicyVersion, policyDecision.PolicyHash, policyDecision.PolicyResult,
+			policyDecision.ReasonCodesJSON, policyDecision.InputFactsHash, policyDecision.InputFactsJSON,
+			policyDecision.EvaluatedAt,
+		)
+		if err != nil {
+			log.Printf("Repo.Save: INSERT intent_policy_decisions failed: %v", err)
+			return intent, err
 		}
 	}
 
@@ -468,7 +498,10 @@ func (r *PaymentIntentRepo) FindByEnvelope(
 		payment_instruction_received,
 		canonical_intent_created,
 		intent_lifecycle_state,
-		COALESCE(mapping_profile_hash, '') as mapping_profile_hash
+		COALESCE(mapping_profile_hash, '') as mapping_profile_hash,
+		COALESCE(policy_source, '') as policy_source,
+		COALESCE(policy_version, '') as policy_version,
+		COALESCE(policy_hash, '') as policy_hash
 	FROM payment_intents
 	WHERE tenant_id = $1
 	  AND envelope_id = $2
@@ -535,6 +568,9 @@ func (r *PaymentIntentRepo) FindByEnvelope(
 		&intent.CanonicalIntentCreated,
 		&intent.IntentLifecycleState,
 		&intent.MappingProfileHash,
+		&intent.PolicySource,
+		&intent.PolicyVersion,
+		&intent.PolicyHash,
 	)
 
 	if err == sql.ErrNoRows {
@@ -682,7 +718,10 @@ func (r *PaymentIntentRepo) FindByBusinessIdempotencyKey(
 		payment_instruction_received,
 		canonical_intent_created,
 		intent_lifecycle_state,
-		COALESCE(mapping_profile_hash, '') as mapping_profile_hash
+		COALESCE(mapping_profile_hash, '') as mapping_profile_hash,
+		COALESCE(policy_source, '') as policy_source,
+		COALESCE(policy_version, '') as policy_version,
+		COALESCE(policy_hash, '') as policy_hash
 	FROM payment_intents
 	WHERE tenant_id = $1
 	  AND business_idempotency_key = $2
@@ -749,6 +788,9 @@ func (r *PaymentIntentRepo) FindByBusinessIdempotencyKey(
 		&intent.CanonicalIntentCreated,
 		&intent.IntentLifecycleState,
 		&intent.MappingProfileHash,
+		&intent.PolicySource,
+		&intent.PolicyVersion,
+		&intent.PolicyHash,
 	)
 
 	if err == sql.ErrNoRows {
@@ -1122,7 +1164,7 @@ func (r *PaymentIntentRepo) SaveBatch(
 						savedDLQs = append(savedDLQs, savedDlq)
 					}
 				} else if item.Intent != nil && item.Outbox != nil {
-					savedIntent, err := r.Save(ctx, item.Nir, *item.Intent, *item.Outbox, item.RegistryEntry)
+					savedIntent, err := r.Save(ctx, item.Nir, *item.Intent, *item.Outbox, item.RegistryEntry, item.PolicyDecision)
 					if err != nil {
 						log.Printf("⚠️ Fallback Intent Save failed: %v", err)
 					} else {
@@ -1202,7 +1244,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 		}
 	}
 	if len(intents) > 0 {
-		const piCols = 64
+		const piCols = 67
 		var placeholders strings.Builder
 		args := make([]interface{}, 0, len(intents)*piCols)
 		for i, intent := range intents {
@@ -1283,6 +1325,9 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 				intent.CanonicalIntentCreated,     // $62
 				intent.IntentLifecycleState,       // $63
 				intent.MappingProfileHash,         // $64
+				intent.PolicySource,               // $65
+				intent.PolicyVersion,              // $66
+				intent.PolicyHash,                 // $67
 			)
 		}
 		q := fmt.Sprintf(`INSERT INTO payment_intents (
@@ -1320,7 +1365,8 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 			payment_instruction_received,
 			canonical_intent_created,
 			intent_lifecycle_state,
-			mapping_profile_hash
+			mapping_profile_hash,
+			policy_source, policy_version, policy_hash
 		) VALUES %s`, placeholders.String())
 		_, err = tx.ExecContext(ctx, q, args...)
 		if err != nil {
@@ -1337,7 +1383,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 		}
 	}
 	if len(outboxes) > 0 {
-		const outboxCols = 62
+		const outboxCols = 65
 		var placeholders strings.Builder
 		args := make([]interface{}, 0, len(outboxes)*outboxCols)
 		for i, outbox := range outboxes {
@@ -1416,6 +1462,9 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 				outbox.CanonicalIntentCreated,     // $60
 				outbox.IntentLifecycleState,       // $61
 				outbox.MappingProfileHash,         // $62
+				outbox.PolicySource,               // $63
+				outbox.PolicyVersion,              // $64
+				outbox.PolicyHash,                 // $65
 			)
 		}
 		q := fmt.Sprintf(`INSERT INTO outbox (
@@ -1438,7 +1487,8 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 			source_row_num, aggregate_confidence_score,
 			required_fields_status, tokenization_status, governance_decision,
 			payment_instruction_received, canonical_intent_created,
-			intent_lifecycle_state, mapping_profile_hash
+			intent_lifecycle_state, mapping_profile_hash,
+			policy_source, policy_version, policy_hash
 		) VALUES %s`, placeholders.String())
 		_, err = tx.ExecContext(ctx, q, args...)
 		if err != nil {
@@ -1519,6 +1569,40 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 					}
 				}
 			}
+		}
+	}
+
+	// 4.5. Insert Intent Policy Decisions
+	var policyDecisions []*models.IntentPolicyDecision
+	for _, item := range chunk {
+		if item.PolicyDecision != nil {
+			policyDecisions = append(policyDecisions, item.PolicyDecision)
+		}
+	}
+	if len(policyDecisions) > 0 {
+		const policyCols = 10
+		var placeholders strings.Builder
+		args := make([]interface{}, 0, len(policyDecisions)*policyCols)
+		for i, pd := range policyDecisions {
+			if i > 0 {
+				placeholders.WriteString(",")
+			}
+			base := i * policyCols
+			placeholders.WriteString(fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+				base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10))
+			args = append(args,
+				pd.TenantID, pd.IntentID, pd.PolicySource, pd.PolicyVersion, pd.PolicyHash,
+				pd.PolicyResult, pd.ReasonCodesJSON, pd.InputFactsHash, pd.InputFactsJSON, pd.EvaluatedAt,
+			)
+		}
+		q := fmt.Sprintf(`INSERT INTO intent_policy_decisions (
+			tenant_id, intent_id, policy_source, policy_version, policy_hash,
+			policy_result, reason_codes_json, input_facts_hash, input_facts_json, evaluated_at
+		) VALUES %s
+		ON CONFLICT (tenant_id, intent_id, policy_source, policy_version) DO NOTHING`, placeholders.String())
+		_, err = tx.ExecContext(ctx, q, args...)
+		if err != nil {
+			return fmt.Errorf("batch insert intent_policy_decisions: %w", err)
 		}
 	}
 

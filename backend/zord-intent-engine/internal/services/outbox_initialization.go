@@ -68,6 +68,9 @@ func CanonicalIntentToOutboxEvent(
 		MappingProfileID:      intent.MappingProfileID,
 		MappingProfileVersion: intent.MappingProfileVersion,
 		MappingProfileHash:    intent.MappingProfileHash,
+		PolicySource:          intent.PolicySource,
+		PolicyVersion:         intent.PolicyVersion,
+		PolicyHash:            intent.PolicyHash,
 		SourceSystem:          intent.SourceSystem,
 
 		PaymentInstructionReceived: intent.PaymentInstructionReceived,

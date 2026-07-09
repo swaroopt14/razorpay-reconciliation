@@ -127,6 +127,7 @@ type CanonicalIntentRepository interface {
 		intent models.CanonicalIntent,
 		outbox models.OutboxEvent,
 		registry *models.BusinessIdempotencyEntry,
+		policyDecision *models.IntentPolicyDecision,
 	) (models.CanonicalIntent, error)
 
 	SaveBatch(
@@ -894,6 +895,7 @@ func (s *IntentService) processIncomingIntentInternal(
 	retRegistry *models.BusinessIdempotencyEntry,
 	retDlq *models.DLQEntry,
 	retErr error,
+	retPolicyDecision *models.IntentPolicyDecision,
 ) {
 
 	//Unmarshal Payload into IncomingIntent struct
@@ -1839,7 +1841,6 @@ return
 
 	// -------- STEP 9.1: AGGREGATE GOVERNANCE REASONS --------
 	canonical.Governance = governance
-	canonical.GovernanceReasonCodesJSON = s.aggregateGovernanceReasons(&canonical, nir)
 
 	// UPDATED: Determine GovernanceState (VALID / INVALID / FLAGGED)
 	canonical.GovernanceState = "VALID"
@@ -1852,6 +1853,17 @@ return
 	if iScore < 0.5 {
 		canonical.GovernanceState = "FLAGGED"
 	}
+
+	// Batch-size policy limit (ledger item #10): a batch this large gets
+	// held for review rather than blocked outright, since we've never
+	// enforced this before and don't want day-one enforcement to reject a
+	// legitimate large batch from an existing tenant.
+	if in.RowCountEstimate != nil && *in.RowCountEstimate > guards.MaxBatchSize {
+		canonical.GovernanceState = "REQUIRES_REVIEW"
+		canonical.Governance.PolicyFlags = append(canonical.Governance.PolicyFlags, "BATCH_SIZE_EXCEEDS_LIMIT")
+	}
+
+	canonical.GovernanceReasonCodesJSON = s.aggregateGovernanceReasons(&canonical, nir)
 
 	// 🆕 Status Fields
 	govDec := "Pass"
@@ -1880,6 +1892,14 @@ return
 	if canonical.GovernanceState != "VALID" {
 		canonical.GovernanceHash = s.computeGovernanceHash(&canonical)
 	}
+
+	retPolicyDecision = buildIntentPolicyDecision(
+		canonical.TenantID, canonical.IntentID, canonical.GovernanceState,
+		append(append([]string{}, canonical.Governance.SemanticErrors...), canonical.Governance.PolicyFlags...),
+		policyInputFacts(&canonical, in.RowCountEstimate),
+	)
+	canonical.PolicySource, canonical.PolicyVersion, canonical.PolicyHash =
+		retPolicyDecision.PolicySource, retPolicyDecision.PolicyVersion, retPolicyDecision.PolicyHash
 
 	// -------- RETURN PREPARED VALUES --------
 	canonicalPayload, err := json.Marshal(canonical)
@@ -2036,9 +2056,10 @@ func (s *IntentService) ProcessIncomingIntent(
 	var canonical *models.CanonicalIntent
 	var outbox *models.OutboxEvent
 	var registryEntry *models.BusinessIdempotencyEntry
+	var policyDecision *models.IntentPolicyDecision
 
 	in, resolvedProfile, decryptedPayload, rawAuditPayload, auditProfileID, auditProfileVersion, sourceRowNum,
-		nir, canonical, outbox, registryEntry, retDlq, retErr = s.processIncomingIntentInternal(ctx, event)
+		nir, canonical, outbox, registryEntry, retDlq, retErr, policyDecision = s.processIncomingIntentInternal(ctx, event)
 	if retErr != nil {
 		return nil, nil, retErr
 	}
@@ -2062,7 +2083,7 @@ func (s *IntentService) ProcessIncomingIntent(
 		return canonical, nil, nil
 	}
 
-	saved, err := s.repo.Save(ctx, nir, *canonical, *outbox, registryEntry)
+	saved, err := s.repo.Save(ctx, nir, *canonical, *outbox, registryEntry, policyDecision)
 	if err != nil {
 		log.Printf("⚠️ Repo.Save failed for EnvelopeID=%s: %v", in.EnvelopeID, err)
 		retErr = err
@@ -2143,7 +2164,7 @@ func (s *IntentService) ProcessIncomingIntentsBatch(
 
 	for _, event := range events {
 		in, resolvedProfile, decryptedPayload, rawAuditPayload, auditProfileID, auditProfileVersion, sourceRowNum,
-			nir, canonical, outbox, registryEntry, dlq, err := s.processIncomingIntentInternal(ctx, event)
+			nir, canonical, outbox, registryEntry, dlq, err, policyDecision := s.processIncomingIntentInternal(ctx, event)
 		if err != nil {
 			log.Printf("⚠️ ProcessIncomingIntentsBatch: system error preparing intent: %v", err)
 			continue
@@ -2225,11 +2246,12 @@ func (s *IntentService) ProcessIncomingIntentsBatch(
 		// Skip idempotency cache hits and webhook paths — outbox is nil, nothing to write.
 		if outbox != nil || dlq != nil {
 			batchItems = append(batchItems, models.SaveBatchItem{
-				Nir:           nir,
-				Intent:        canonical,
-				Outbox:        outbox,
-				RegistryEntry: registryEntry,
-				DlqEntry:      dlq,
+				Nir:            nir,
+				Intent:         canonical,
+				Outbox:         outbox,
+				RegistryEntry:  registryEntry,
+				DlqEntry:       dlq,
+				PolicyDecision: policyDecision,
 			})
 		}
 	}
@@ -2672,6 +2694,13 @@ func (s *IntentService) ProcessTokenizeResult(
 	// FIX: Compute deterministic governance_hash (UPDATED)
 	intent.GovernanceHash = s.computeGovernanceHash(&intent)
 
+	policyDecision := buildIntentPolicyDecision(
+		intent.TenantID, intent.IntentID, intent.GovernanceState,
+		append(append([]string{}, intent.Governance.SemanticErrors...), intent.Governance.PolicyFlags...),
+		policyInputFacts(&intent, nil),
+	)
+	intent.PolicySource, intent.PolicyVersion, intent.PolicyHash = policyDecision.PolicySource, policyDecision.PolicyVersion, policyDecision.PolicyHash
+
 	payload, err := json.Marshal(intent)
 	if err != nil {
 		return nil, err
@@ -2682,7 +2711,7 @@ func (s *IntentService) ProcessTokenizeResult(
 		return nil, err
 	}
 
-	saved, err := s.repo.Save(ctx, nir, intent, outbox, registryEntry)
+	saved, err := s.repo.Save(ctx, nir, intent, outbox, registryEntry, policyDecision)
 	if err != nil {
 		return nil, err
 	}
@@ -2825,7 +2854,7 @@ func (s *IntentService) processWebhook(
 		CreatedAt:     time.Now(),
 	}
 
-	saved, err := s.repo.Save(ctx, nil, canonical, outbox, nil)
+	saved, err := s.repo.Save(ctx, nil, canonical, outbox, nil, nil)
 	if err != nil {
 		return nil, nil, err
 	}

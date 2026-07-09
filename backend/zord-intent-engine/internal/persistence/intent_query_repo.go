@@ -128,7 +128,10 @@ func (r *IntentQueryRepo) ListIntents(
 		payment_instruction_received,
 		canonical_intent_created,
 		COALESCE(intent_lifecycle_state, '') as intent_lifecycle_state,
-		COALESCE(mapping_profile_hash, '') as mapping_profile_hash
+		COALESCE(mapping_profile_hash, '') as mapping_profile_hash,
+		COALESCE(policy_source, '') as policy_source,
+		COALESCE(policy_version, '') as policy_version,
+		COALESCE(policy_hash, '') as policy_hash
 	FROM payment_intents
 	%s
 	ORDER BY created_at DESC
@@ -187,6 +190,9 @@ func (r *IntentQueryRepo) ListIntents(
 			&intent.CanonicalIntentCreated,
 			&intent.IntentLifecycleState,
 			&intent.MappingProfileHash,
+			&intent.PolicySource,
+			&intent.PolicyVersion,
+			&intent.PolicyHash,
 		)
 
 		if err != nil {
@@ -240,7 +246,10 @@ func (r *IntentQueryRepo) GetIntentByID(
 		payment_instruction_received,
 		canonical_intent_created,
 		COALESCE(intent_lifecycle_state, '') as intent_lifecycle_state,
-		COALESCE(mapping_profile_hash, '') as mapping_profile_hash
+		COALESCE(mapping_profile_hash, '') as mapping_profile_hash,
+		COALESCE(policy_source, '') as policy_source,
+		COALESCE(policy_version, '') as policy_version,
+		COALESCE(policy_hash, '') as policy_hash
 	FROM payment_intents
 	WHERE tenant_id = $1
 	AND intent_id=$2
@@ -287,6 +296,9 @@ func (r *IntentQueryRepo) GetIntentByID(
 		&intent.CanonicalIntentCreated,
 		&intent.IntentLifecycleState,
 		&intent.MappingProfileHash,
+		&intent.PolicySource,
+		&intent.PolicyVersion,
+		&intent.PolicyHash,
 	)
 
 	if err != nil {
@@ -448,7 +460,10 @@ func (r *IntentQueryRepo) ListPaymentIntentsByBatch(
 			payment_instruction_received,
 			canonical_intent_created,
 			COALESCE(intent_lifecycle_state, '') as intent_lifecycle_state,
-		COALESCE(mapping_profile_hash, '') as mapping_profile_hash
+		COALESCE(mapping_profile_hash, '') as mapping_profile_hash,
+		COALESCE(policy_source, '') as policy_source,
+		COALESCE(policy_version, '') as policy_version,
+		COALESCE(policy_hash, '') as policy_hash
 		FROM payment_intents
 		WHERE tenant_id = $1
 		  AND batchid = $2
@@ -506,6 +521,9 @@ func (r *IntentQueryRepo) ListPaymentIntentsByBatch(
 			&intent.CanonicalIntentCreated,
 			&intent.IntentLifecycleState,
 			&intent.MappingProfileHash,
+			&intent.PolicySource,
+			&intent.PolicyVersion,
+			&intent.PolicyHash,
 		); err != nil {
 			return nil, 0, fmt.Errorf("failed to scan payment intent detail row: %w", err)
 		}

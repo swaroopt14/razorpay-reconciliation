@@ -65,6 +65,9 @@ type OutboxEvent struct {
 	MappingProfileID      string          `json:"mapping_profile_used,omitempty" db:"mapping_profile_id"`
 	MappingProfileVersion string          `json:"mapping_profile_version,omitempty" db:"mapping_profile_version"`
 	MappingProfileHash    string          `json:"mapping_profile_hash,omitempty" db:"mapping_profile_hash"`
+	PolicySource          string          `json:"policy_source,omitempty" db:"policy_source"`
+	PolicyVersion         string          `json:"policy_version,omitempty" db:"policy_version"`
+	PolicyHash            string          `json:"policy_hash,omitempty" db:"policy_hash"`
 	SourceSystem          string          `json:"source_system,omitempty" db:"source_system"`
 
 	PaymentInstructionReceived *time.Time `json:"payment_instruction_received,omitempty" db:"payment_instruction_received"`

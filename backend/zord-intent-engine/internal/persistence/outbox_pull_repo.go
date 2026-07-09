@@ -95,7 +95,10 @@ leased AS (
 		o.canonical_intent_created,
 		COALESCE(o.client_payout_ref, '') as client_payout_ref,
 		COALESCE(o.intent_lifecycle_state, '') as intent_lifecycle_state,
-		COALESCE(o.mapping_profile_hash, '') as mapping_profile_hash
+		COALESCE(o.mapping_profile_hash, '') as mapping_profile_hash,
+		COALESCE(o.policy_source, '') as policy_source,
+		COALESCE(o.policy_version, '') as policy_version,
+		COALESCE(o.policy_hash, '') as policy_hash
 )
 SELECT
 	event_id,
@@ -130,7 +133,10 @@ SELECT
 	canonical_intent_created,
 	client_payout_ref,
 	intent_lifecycle_state,
-	mapping_profile_hash
+	mapping_profile_hash,
+	policy_source,
+	policy_version,
+	policy_hash
 FROM leased
 ORDER BY created_at ASC;
 `
@@ -187,6 +193,9 @@ ORDER BY created_at ASC;
 			&evt.ClientPayoutRef,
 			&evt.IntentLifecycleState,
 			&evt.MappingProfileHash,
+			&evt.PolicySource,
+			&evt.PolicyVersion,
+			&evt.PolicyHash,
 		); err != nil {
 			return "", nil, nil, err
 		}

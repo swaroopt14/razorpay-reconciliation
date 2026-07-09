@@ -26,21 +26,10 @@ func RunPreGuards(
 		batchID = *in.BatchID
 	}
 
-	// -------- Corridor guard --------
-	if intent.Amount.Currency != "INR" {
-
-		return &models.DLQEntry{
-			TenantID:    in.TenantID.String(),
-			EnvelopeID:  in.EnvelopeID.String(),
-			Stage:       "PREGUARD",
-			ReasonCode:  "TENANT_CORRIDOR_NOT_ALLOWED",
-			DLQStatus:   models.ClassifyDLQ("TENANT_CORRIDOR_NOT_ALLOWED"),
-			ErrorDetail: "only INR corridor allowed",
-			Replayable:  false,
-			BatchID:     batchID,
-			CreatedAt:   time.Now().UTC(),
-		}
-	}
+	// Corridor guard removed: validator.validateCurrency (SemanticValidate,
+	// which runs before RunPreGuards) now rejects non-INR currency first with
+	// the same TENANT_CORRIDOR_NOT_ALLOWED reason code — this stage would
+	// never see a non-INR intent anymore.
 
 	// -------- Deadline guard --------
 
