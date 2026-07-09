@@ -294,20 +294,211 @@ func EnsureTables(ctx context.Context, d *sql.DB) error {
 	}
 
 	// ── Schema migrations (add columns that may be missing on older DBs) ──────
-	// Add new ALTER TABLE statements here when columns are added to existing tables.
 	// These are idempotent — safe to run on every startup.
+	// IMPORTANT: never DROP or rename columns here; only ADD IF NOT EXISTS.
+	// Destructive schema changes belong in a versioned migration file.
 	migrations := []string{
-		// Add future column migrations here, e.g.:
-		// `ALTER TABLE evidence_packs ADD COLUMN IF NOT EXISTS new_column TEXT;`,
 		`ALTER TABLE pending_leaf_candidates ADD COLUMN IF NOT EXISTS client_payout_ref TEXT;`,
 		`ALTER TABLE evidence_packs ADD COLUMN IF NOT EXISTS client_payout_ref TEXT;`,
 		`ALTER TABLE merkle_inclusion_proofs DROP CONSTRAINT IF EXISTS merkle_inclusion_proofs_pkey;`,
 		`ALTER TABLE merkle_inclusion_proofs ADD COLUMN IF NOT EXISTS leaf_index INT;`,
 		`ALTER TABLE merkle_inclusion_proofs ADD PRIMARY KEY (evidence_pack_id, leaf_index);`,
+
+		// FIX-14: evidence_pack_id links outbox row to the sealed pack for relay correlation.
+		`ALTER TABLE evidence_outbox_events ADD COLUMN IF NOT EXISTS evidence_pack_id TEXT;`,
+
+		// FIX-14: payload_hash lets consumers verify payload integrity without re-fetching the pack.
+		`ALTER TABLE evidence_outbox_events ADD COLUMN IF NOT EXISTS payload_hash TEXT;`,
+
+		// FIX-14: Index outbox by evidence_pack_id for fast relay correlation queries.
+		`CREATE INDEX IF NOT EXISTS idx_evidence_outbox_pack_id ON evidence_outbox_events(evidence_pack_id) WHERE evidence_pack_id IS NOT NULL;`,
+
+		// FIX P1-08: Track Merkle scheme version so VerifyPack uses the right recomputation.
+		// 'merkle_v1' = legacy (no domain sep). 'merkle_v2' = current (domain-separated).
+		`ALTER TABLE evidence_packs ADD COLUMN IF NOT EXISTS merkle_scheme_version TEXT NOT NULL DEFAULT 'merkle_v1';`,
+
+		// FIX-16: Store failure reason for FAILED replay jobs.
+		`ALTER TABLE evidence_replay_jobs ADD COLUMN IF NOT EXISTS failure_reason TEXT;`,
 	}
 	for _, m := range migrations {
 		if _, err := d.ExecContext(ctx, m); err != nil {
 			return fmt.Errorf("migration: %w (stmt: %.80s)", err, m)
+		}
+	}
+
+	// ── Foreign key constraints ───────────────────────────────────────────────
+	// P0-02: Enforce referential integrity between child tables and evidence_packs.
+	//
+	// Strategy: for each constraint —
+	//   1. Query pg_constraint to check whether it already exists.
+	//      (PostgreSQL has no "ADD CONSTRAINT IF NOT EXISTS" for FK constraints —
+	//      that syntax is only valid for CHECK constraints. Attempting it produces
+	//      "syntax error at or near NOT".)
+	//   2. If absent: ADD CONSTRAINT ... NOT VALID (instant — no row scan, no
+	//      AccessExclusiveLock on existing rows, enforces only new writes).
+	//   3. VALIDATE CONSTRAINT (non-blocking ShareUpdateExclusiveLock — scans
+	//      existing rows; if orphans exist it fails with a clear error).
+	//
+	// If the service restarts between steps 2 and 3 the NOT VALID constraint is
+	// already present. Step 1 detects it, skips step 2, and goes straight to
+	// step 3 to finish the validation — fully idempotent.
+	type fkDef struct {
+		desc           string
+		constraintName string
+		table          string
+		addStmt        string
+		validateStmt   string
+	}
+
+	fkConstraints := []fkDef{
+		{
+			desc:           "evidence_items → evidence_packs",
+			constraintName: "fk_evidence_items_pack",
+			table:          "evidence_items",
+			addStmt: `ALTER TABLE evidence_items
+				ADD CONSTRAINT fk_evidence_items_pack
+				FOREIGN KEY (evidence_pack_id)
+				REFERENCES evidence_packs(evidence_pack_id)
+				ON DELETE CASCADE
+				NOT VALID`,
+			validateStmt: `ALTER TABLE evidence_items
+				VALIDATE CONSTRAINT fk_evidence_items_pack`,
+		},
+		{
+			desc:           "evidence_signatures → evidence_packs",
+			constraintName: "fk_evidence_signatures_pack",
+			table:          "evidence_signatures",
+			addStmt: `ALTER TABLE evidence_signatures
+				ADD CONSTRAINT fk_evidence_signatures_pack
+				FOREIGN KEY (evidence_pack_id)
+				REFERENCES evidence_packs(evidence_pack_id)
+				ON DELETE CASCADE
+				NOT VALID`,
+			validateStmt: `ALTER TABLE evidence_signatures
+				VALIDATE CONSTRAINT fk_evidence_signatures_pack`,
+		},
+		{
+			// RESTRICT not CASCADE: an S3 archive exists independently.
+			// Force explicit cleanup before allowing pack deletion.
+			desc:           "evidence_archives → evidence_packs",
+			constraintName: "fk_evidence_archives_pack",
+			table:          "evidence_archives",
+			addStmt: `ALTER TABLE evidence_archives
+				ADD CONSTRAINT fk_evidence_archives_pack
+				FOREIGN KEY (evidence_pack_id)
+				REFERENCES evidence_packs(evidence_pack_id)
+				ON DELETE RESTRICT
+				NOT VALID`,
+			validateStmt: `ALTER TABLE evidence_archives
+				VALIDATE CONSTRAINT fk_evidence_archives_pack`,
+		},
+		{
+			desc:           "merkle_inclusion_proofs → evidence_packs",
+			constraintName: "fk_merkle_proofs_pack",
+			table:          "merkle_inclusion_proofs",
+			addStmt: `ALTER TABLE merkle_inclusion_proofs
+				ADD CONSTRAINT fk_merkle_proofs_pack
+				FOREIGN KEY (evidence_pack_id)
+				REFERENCES evidence_packs(evidence_pack_id)
+				ON DELETE CASCADE
+				NOT VALID`,
+			validateStmt: `ALTER TABLE merkle_inclusion_proofs
+				VALIDATE CONSTRAINT fk_merkle_proofs_pack`,
+		},
+		{
+			// RESTRICT not CASCADE: replay jobs are audit records.
+			// Deleting a pack that has replay history must fail loudly.
+			desc:           "evidence_replay_jobs → evidence_packs",
+			constraintName: "fk_replay_jobs_source_pack",
+			table:          "evidence_replay_jobs",
+			addStmt: `ALTER TABLE evidence_replay_jobs
+				ADD CONSTRAINT fk_replay_jobs_source_pack
+				FOREIGN KEY (source_evidence_pack_id)
+				REFERENCES evidence_packs(evidence_pack_id)
+				ON DELETE RESTRICT
+				NOT VALID`,
+			validateStmt: `ALTER TABLE evidence_replay_jobs
+				VALIDATE CONSTRAINT fk_replay_jobs_source_pack`,
+		},
+		{
+			// RESTRICT: export logs are legal/audit records.
+			// A pack cannot be deleted if it has been exported.
+			desc:           "evidence_export_log → evidence_packs",
+			constraintName: "fk_export_log_pack",
+			table:          "evidence_export_log",
+			addStmt: `ALTER TABLE evidence_export_log
+				ADD CONSTRAINT fk_export_log_pack
+				FOREIGN KEY (evidence_pack_id)
+				REFERENCES evidence_packs(evidence_pack_id)
+				ON DELETE RESTRICT
+				NOT VALID`,
+			validateStmt: `ALTER TABLE evidence_export_log
+				VALIDATE CONSTRAINT fk_export_log_pack`,
+		},
+		{
+			// SET NULL not RESTRICT: outbox rows must remain relay-able even if
+			// the pack row is removed. NULL evidence_pack_id is a degraded but
+			// safe state; silently losing the outbox event is not acceptable.
+			desc:           "evidence_outbox_events → evidence_packs",
+			constraintName: "fk_outbox_events_pack",
+			table:          "evidence_outbox_events",
+			addStmt: `ALTER TABLE evidence_outbox_events
+				ADD CONSTRAINT fk_outbox_events_pack
+				FOREIGN KEY (evidence_pack_id)
+				REFERENCES evidence_packs(evidence_pack_id)
+				ON DELETE SET NULL
+				NOT VALID`,
+			validateStmt: `ALTER TABLE evidence_outbox_events
+				VALIDATE CONSTRAINT fk_outbox_events_pack`,
+		},
+	}
+
+	for _, fk := range fkConstraints {
+		// Step 1: Check whether the constraint already exists in pg_constraint.
+		// convalidated=true  → fully validated, nothing to do.
+		// convalidated=false → was added NOT VALID but never validated; skip
+		//                      ADD and go straight to VALIDATE.
+		// no row             → constraint absent; run ADD then VALIDATE.
+		var convalidated bool
+		err := d.QueryRowContext(ctx, `
+			SELECT convalidated
+			FROM pg_constraint c
+			JOIN pg_class t ON t.oid = c.conrelid
+			WHERE c.conname = $1
+			  AND t.relname = $2
+			  AND c.contype = 'f'`,
+			fk.constraintName, fk.table,
+		).Scan(&convalidated)
+
+		switch {
+		case err == sql.ErrNoRows:
+			// Constraint does not exist — add it (NOT VALID, instant).
+			if _, addErr := d.ExecContext(ctx, fk.addStmt); addErr != nil {
+				return fmt.Errorf("add FK constraint (%s): %w", fk.desc, addErr)
+			}
+			// Fall through to validate below.
+
+		case err != nil:
+			return fmt.Errorf("check FK constraint existence (%s): %w", fk.desc, err)
+
+		case convalidated:
+			// Already fully validated — nothing to do.
+			continue
+
+		default:
+			// Constraint exists but was never validated (NOT VALID state).
+			// Skip ADD, fall through to validate below.
+		}
+
+		// Step 2: Validate existing rows (non-blocking ShareUpdateExclusiveLock).
+		// If this fails, orphan rows exist. The NOT VALID constraint continues
+		// to enforce integrity on new writes. Fix the orphans and restart.
+		if _, valErr := d.ExecContext(ctx, fk.validateStmt); valErr != nil {
+			return fmt.Errorf(
+				"validate FK constraint (%s): orphan rows detected — "+
+					"clean up orphan rows in %s and restart the service: %w",
+				fk.desc, fk.table, valErr,
+			)
 		}
 	}
 

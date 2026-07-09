@@ -11,27 +11,35 @@ import (
 )
 
 type Config struct {
-	ServiceName         string
-	HTTPPort            string
-	PostgresDSN         string
-	KafkaBrokers        []string
-	KafkaEnabled        bool // false when KAFKA_BROKERS is unset or empty
-	KafkaTopic          string
-	KafkaConsumerGroup  string
-	// OutcomeKafkaTopic is the topic zord-relay publishes outcome leaf bundles to.
-	// Consumed by the OutcomeConsumer goroutine.
-	OutcomeKafkaTopic  string
-	OutcomeKafkaGroup  string
-	EdgeKafkaTopic     string
-	EdgeKafkaGroup     string
-	IntentKafkaTopic   string
-	IntentKafkaGroup   string
-	S3Bucket           string
-	S3Region            string
-	ArchivePrefix       string
-	ArchiveEncryptKey   string
+	ServiceName  string
+	HTTPPort     string
+	PostgresDSN  string
+	AppEnv       string // "production" | "development"
+	IsProduction bool
+
+	KafkaBrokers       []string
+	KafkaEnabled       bool // false when KAFKA_BROKERS is unset or empty
+	KafkaTopic         string
+	KafkaConsumerGroup string
+	OutcomeKafkaTopic string
+	OutcomeKafkaGroup string
+	EdgeKafkaTopic    string
+	EdgeKafkaGroup    string
+	IntentKafkaTopic  string
+	IntentKafkaGroup  string
+	S3Bucket      string
+	S3Region      string
+	ArchivePrefix string
+	ArchiveEncryptKey string
+	SigningPrivateKey  string
+
+	// AllowEphemeralKeys is true only when APP_ENV != "production".
+	// When false, signer and archive crypto constructors fail if keys are missing.
+	AllowEphemeralKeys bool
+
+	// WorkerCount controls how many async pack-generation goroutines are started.
+	WorkerCount int
 	ReplayCompareStrict bool
-	SigningPrivateKey    string
 	ReadTimeout         time.Duration
 	WriteTimeout        time.Duration
 	ShutdownTimeout     time.Duration
@@ -79,10 +87,22 @@ func Load() (*Config, error) {
 		shutdownSec = 30
 	}
 
-	return &Config{
+	workerCount, err := strconv.Atoi(getenv("EVIDENCE_WORKER_COUNT", "30"))
+	if err != nil || workerCount <= 0 {
+		workerCount = 30
+	}
+
+	appEnv := strings.ToLower(strings.TrimSpace(getenv("APP_ENV", "development")))
+	isProduction := appEnv == "production"
+	allowEphemeralKeys := !isProduction
+
+
+	cfg := &Config{
 		ServiceName:         "zord-evidence",
 		HTTPPort:            port,
 		PostgresDSN:         dsn,
+		AppEnv:              appEnv,
+		IsProduction:        isProduction,
 		KafkaBrokers:        brokers,
 		KafkaEnabled:        kafkaEnabled,
 		KafkaTopic:          getenv("EVIDENCE_KAFKA_TOPIC", "z.outcome.events.v1"),
@@ -97,12 +117,48 @@ func Load() (*Config, error) {
 		S3Region:            getenv("AWS_REGION", ""),
 		ArchivePrefix:       getenv("EVIDENCE_ARCHIVE_PREFIX", "evidence-packs"),
 		ArchiveEncryptKey:   os.Getenv("EVIDENCE_ARCHIVE_ENCRYPTION_KEY_BASE64"),
+		SigningPrivateKey:    os.Getenv("EVIDENCE_SIGNING_PRIVATE_KEY_BASE64"),
+		AllowEphemeralKeys:  allowEphemeralKeys,
+		WorkerCount:         workerCount,
 		ReplayCompareStrict: strict,
-		SigningPrivateKey:   os.Getenv("EVIDENCE_SIGNING_PRIVATE_KEY_BASE64"),
 		ReadTimeout:         10 * time.Second,
 		WriteTimeout:        20 * time.Second,
 		ShutdownTimeout:     time.Duration(shutdownSec) * time.Second,
-	}, nil
+	}
+
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
+}
+
+// validate enforces production-only hard requirements. Development environments
+// skip these checks so engineers can run the service without full config.
+func (c *Config) validate() error {
+	if !c.IsProduction {
+		return nil
+	}
+
+	var errs []string
+
+	if strings.TrimSpace(c.S3Bucket) == "" {
+		errs = append(errs, "S3_BUCKET is required in production")
+	}
+	if strings.TrimSpace(c.S3Region) == "" {
+		errs = append(errs, "AWS_REGION is required in production")
+	}
+	if len(c.KafkaBrokers) == 0 || c.KafkaBrokers[0] == "" {
+		errs = append(errs, "KAFKA_BROKERS is required in production")
+	}
+	// Note: signing key and archive key are validated in their respective
+	// constructors (NewSigner / NewArchiveCrypto) which receive allowEphemeralKeys=false
+	// when IsProduction is true. We do not duplicate those checks here.
+
+	if len(errs) > 0 {
+		return fmt.Errorf("production config validation failed:\n  - %s", strings.Join(errs, "\n  - "))
+	}
+	return nil
 }
 
 func getenv(k, def string) string {
