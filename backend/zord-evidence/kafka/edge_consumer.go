@@ -41,6 +41,7 @@ func buildEdgeHandler(pg PackGenerator) MessageHandler {
 				Hash:          relayEvt.EnvelopeHash,
 				SchemaVersion: "v1",
 				SourceTopic:   "payments.ledger.events.v1",
+				SourceEventID: relayEvt.EventID,
 			},
 		}
 
@@ -50,10 +51,11 @@ func buildEdgeHandler(pg PackGenerator) MessageHandler {
 				EnvelopeID:    &relayEvt.EnvelopeID,
 				ClientBatchID: &relayEvt.ClientBatchID,
 				LeafType:      models.LeafTypeFileContentHash,
-				ItemRef:       relayEvt.ClientBatchID, // Use envelopeID as ref for the file hash link
+				ItemRef:       relayEvt.ClientBatchID,
 				Hash:          relayEvt.FileContentHash,
 				SchemaVersion: "v1",
 				SourceTopic:   "payments.ledger.events.v1",
+				SourceEventID: relayEvt.EventID,
 			})
 		}
 

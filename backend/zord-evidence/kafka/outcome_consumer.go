@@ -165,8 +165,9 @@ func handleLeafBundle(ctx context.Context, raw []byte, pg PackGenerator) error {
 			Hash:          l.Hash,
 			SchemaVersion: sv,
 			SourceTopic:   "payments.outcome.events.v1",
+			SourceEventID: relayEvt.EventID,
 
-			// 🆕 Settlement Metadata
+			// Settlement Metadata
 			SettlementRecordReceived:   relayEvt.SettlementRecordReceived,
 			CanonicalSettlementCreated: relayEvt.CanonicalSettlementCreated,
 			BankReference:              relayEvt.BankReference,
@@ -276,30 +277,33 @@ func handleBatchUpdated(ctx context.Context, raw []byte, pg PackGenerator) error
 	leaves := []models.PendingLeafCandidate{
 		{
 			TenantID:      relayEvt.TenantID,
-			ClientBatchID:       &batchID,
+			ClientBatchID: &batchID,
 			LeafType:      models.LeafTypeBatchAttachmentSummary,
 			ItemRef:       batchID,
 			Hash:          attachmentHash,
 			SchemaVersion: "v1",
 			SourceTopic:   "batch.summary.updated",
+			SourceEventID: relayEvt.EventID,
 		},
 		{
 			TenantID:      relayEvt.TenantID,
-			ClientBatchID:       &batchID,
+			ClientBatchID: &batchID,
 			LeafType:      models.LeafTypeBatchVarianceSummary,
 			ItemRef:       batchID,
 			Hash:          varianceHash,
 			SchemaVersion: "v1",
 			SourceTopic:   "batch.summary.updated",
+			SourceEventID: relayEvt.EventID,
 		},
 		{
 			TenantID:      relayEvt.TenantID,
-			ClientBatchID:       &batchID,
+			ClientBatchID: &batchID,
 			LeafType:      models.LeafTypeCanonicalBatch,
 			ItemRef:       batchID,
 			Hash:          batchHash,
 			SchemaVersion: "v1",
 			SourceTopic:   "batch.summary.updated",
+			SourceEventID: relayEvt.EventID,
 		},
 		{
 			TenantID:      relayEvt.TenantID,
@@ -309,6 +313,7 @@ func handleBatchUpdated(ctx context.Context, raw []byte, pg PackGenerator) error
 			Hash:          rawSettlementHash,
 			SchemaVersion: "v1",
 			SourceTopic:   "batch.summary.updated",
+			SourceEventID: relayEvt.EventID,
 		},
 		{
 			TenantID:      relayEvt.TenantID,
@@ -318,6 +323,7 @@ func handleBatchUpdated(ctx context.Context, raw []byte, pg PackGenerator) error
 			Hash:          fileHash,
 			SchemaVersion: "v1",
 			SourceTopic:   "batch.summary.updated",
+			SourceEventID: relayEvt.EventID,
 		},
 	}
 

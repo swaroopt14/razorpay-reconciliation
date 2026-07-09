@@ -93,6 +93,7 @@ func main() {
 	pendingLeafRepo := repositories.NewPendingLeafRepository(database)
 	outboxPullRepo := repositories.NewOutboxPullRepo(database)
 	enrichRepo := repositories.NewEnrichmentRepository(database)
+	leafReceiptRepo := repositories.NewLeafReceiptRepository(database)
 
 	evidenceSvc := services.NewEvidenceService(
 		repo,
@@ -104,6 +105,7 @@ func main() {
 		cfg.ArchivePrefix,
 		cfg.ReplayCompareStrict,
 		pub,
+		leafReceiptRepo,
 	)
 
 	h := handlers.NewEvidenceHandler(evidenceSvc)

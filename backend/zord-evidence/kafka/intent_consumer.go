@@ -52,8 +52,9 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			Hash:          relayEvt.CanonicalHash,
 			SchemaVersion: "v1",
 			SourceTopic:   "payments.intent.events.v1",
+			SourceEventID: relayEvt.EventID,
 
-			// 🆕 Traceability & Status Fields
+			// Traceability & Status Fields
 			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
 			CanonicalIntentCreated:    relayEvt.CanonicalIntentCreated,
 			MappingProfileUsed:        relayEvt.MappingProfileID,
@@ -61,7 +62,7 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			TokenizationStatus:        relayEvt.TokenizationStatus,
 			GovernanceDecision:        relayEvt.GovernanceDecision,
 
-			// 🆕 Intent financial identity
+			// Intent financial identity
 			ClientPayoutRef: relayEvt.ClientPayoutRef,
 			Amount:          relayEvt.Amount,
 			Currency:        relayEvt.Currency,
@@ -78,8 +79,9 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			Hash:          relayEvt.GovernanceHash,
 			SchemaVersion: "v1",
 			SourceTopic:   "payments.intent.events.v1",
+			SourceEventID: relayEvt.EventID,
 
-			// 🆕 Traceability & Status Fields
+			// Traceability & Status Fields
 			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
 			CanonicalIntentCreated:    relayEvt.CanonicalIntentCreated,
 			MappingProfileUsed:        relayEvt.MappingProfileID,
@@ -87,7 +89,7 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			TokenizationStatus:        relayEvt.TokenizationStatus,
 			GovernanceDecision:        relayEvt.GovernanceDecision,
 
-			// 🆕 Intent financial identity
+			// Intent financial identity
 			ClientPayoutRef: relayEvt.ClientPayoutRef,
 			Amount:          relayEvt.Amount,
 			Currency:        relayEvt.Currency,
