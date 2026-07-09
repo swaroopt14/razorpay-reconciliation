@@ -834,6 +834,11 @@ func BuildEnrichedPack(pack *models.EvidencePack) *models.EnrichedEvidencePack {
 
 // RecomputeMerkleRoot deterministically re-derives the Merkle root from stored
 // items exactly as GeneratePack does. Used by the verify endpoint.
+//
+// FIX P1-08: Respects the MerkleSchemeVersion stored on the pack so that packs
+// sealed before the V2 upgrade (domain-separated internal nodes) continue to
+// verify correctly with their original V1 scheme. New packs (merkle_v2) are
+// verified with the domain-separated scheme.
 func RecomputeMerkleRoot(pack *models.EvidencePack) string {
 	leaves := make([]utils.MerkleLeaf, 0, len(pack.Items))
 	for i, item := range pack.Items {
@@ -841,6 +846,11 @@ func RecomputeMerkleRoot(pack *models.EvidencePack) string {
 		leafHash := utils.SHA256Hex(leafInput)
 		leaves = append(leaves, utils.MerkleLeaf{Index: i, LeafHash: leafHash})
 	}
+	if pack.MerkleSchemeVersion == utils.MerkleSchemeV1 || pack.MerkleSchemeVersion == "" {
+		// Legacy packs: use V1 (no domain separation) to reproduce original root.
+		return utils.BuildMerkleRootV1(leaves)
+	}
+	// Current packs (merkle_v2): use domain-separated internal node hashing.
 	return utils.BuildMerkleRoot(leaves)
 }
 

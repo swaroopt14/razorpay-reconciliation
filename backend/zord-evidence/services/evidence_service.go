@@ -24,8 +24,11 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// validModes are the three lifecycle operating modes defined in spec §3.2
-var validModes = []string{"INTELLIGENCE_ATTACH", "SECONDARY_DISPATCH", "FULL_CONTROL"}
+// validModes are the lifecycle operating modes defined in spec §3.2.
+// BATCH_ATTACH is valid for batch-level packs; it is handled by GenerateBatchPackInTx
+// which does not call GeneratePack (and therefore does not hit the validModes check).
+// It is listed here for documentation and for any future consolidated validation path.
+var validModes = []string{"INTELLIGENCE_ATTACH", "SECONDARY_DISPATCH", "FULL_CONTROL", "BATCH_ATTACH"}
 
 type IntentJob struct {
 	TenantID   string
@@ -72,8 +75,14 @@ type EvidenceService struct {
 	intentCheckQueue chan IntentCheckJob
 	batchCheckQueue  chan BatchCheckJob
 	workerWG         sync.WaitGroup
-	shutdownQueues sync.Once
-	shuttingDown   atomic.Bool
+	shutdownQueues   sync.Once // closes s.done — used by PrepareShutdown
+	shutdownChans    sync.Once // closes queue channels — used by ShutdownWorkers
+	shuttingDown     atomic.Bool
+	// done is closed by PrepareShutdown to signal all enqueue helpers to stop
+	// sending. This eliminates the TOCTOU race between shuttingDown.Load() and
+	// a channel send that could panic if ShutdownWorkers closes the channel
+	// between the check and the send.
+	done chan struct{}
 }
 
 func NewEvidenceService(
@@ -99,6 +108,7 @@ func NewEvidenceService(
 		publisher:           publisher,
 		intentCheckQueue:    make(chan IntentCheckJob, 10000),
 		batchCheckQueue:     make(chan BatchCheckJob, 10000),
+		done:                make(chan struct{}),
 	}
 }
 
@@ -156,20 +166,39 @@ func (s *EvidenceService) HandleLeafUpdate(ctx context.Context, tenantID, envelo
 	return nil
 }
 
+// enqueueIntentCheck sends a job to the intent worker queue.
+// FIX-06a: The previous implementation had a TOCTOU race: shuttingDown.Load()
+// could return false, then ShutdownWorkers could close the channel before the
+// send, causing a panic ("send on closed channel").
+// Fixed by using a select with a default case on the done channel. The done
+// channel is closed by ShutdownWorkers before the queue channels are closed,
+// so any send that races with shutdown is safely dropped instead of panicking.
 func (s *EvidenceService) enqueueIntentCheck(job IntentCheckJob) {
-	if s.shuttingDown.Load() {
+	select {
+	case <-s.done:
 		log.Printf("evidence.service.enqueue_intent_check intent=%s skipped during shutdown", job.IntentID)
-		return
+	default:
+		select {
+		case s.intentCheckQueue <- job:
+		case <-s.done:
+			log.Printf("evidence.service.enqueue_intent_check intent=%s dropped during shutdown", job.IntentID)
+		}
 	}
-	s.intentCheckQueue <- job
 }
 
+// enqueueBatchCheck sends a job to the batch worker queue.
+// Same TOCTOU fix as enqueueIntentCheck.
 func (s *EvidenceService) enqueueBatchCheck(job BatchCheckJob) {
-	if s.shuttingDown.Load() {
+	select {
+	case <-s.done:
 		log.Printf("evidence.service.enqueue_batch_check batch=%s skipped during shutdown", job.BatchID)
-		return
+	default:
+		select {
+		case s.batchCheckQueue <- job:
+		case <-s.done:
+			log.Printf("evidence.service.enqueue_batch_check batch=%s dropped during shutdown", job.BatchID)
+		}
 	}
-	s.batchCheckQueue <- job
 }
 
 // HandleBatchLeafUpdate persists batch leaves on the Kafka fast path and delegates
@@ -242,14 +271,24 @@ func (s *EvidenceService) runWorker(workerID int) {
 // PrepareShutdown signals that the process is stopping. Kafka handlers may still
 // persist leaves, but no new readiness checks are enqueued. Pending leaves
 // remain in the DB and will be picked up on the next process start.
+// FIX-06a: Closes the done channel first so enqueue helpers stop safely, then
+// sets the atomic bool for any legacy callers. Order matters: done must be
+// closed before the queue channels are closed by ShutdownWorkers.
 func (s *EvidenceService) PrepareShutdown() {
+	s.shutdownQueues.Do(func() {
+		close(s.done)
+	})
 	s.shuttingDown.Store(true)
 }
 
 // ShutdownWorkers closes the job queues and waits for all in-flight readiness
 // checks and pack generation to complete, or until ctx is cancelled.
+// FIX-06a: Queue channel close is now in a separate sync.Once (shutdownChans)
+// so it doesn't conflict with PrepareShutdown's Once that closes s.done.
+// The done channel must already be closed before this runs so workers see the
+// shutdown signal and don't attempt to send on a closed queue channel.
 func (s *EvidenceService) ShutdownWorkers(ctx context.Context) error {
-	s.shutdownQueues.Do(func() {
+	s.shutdownChans.Do(func() {
 		log.Printf("evidence.service.shutdown closing worker queues")
 		close(s.intentCheckQueue)
 		close(s.batchCheckQueue)
@@ -299,13 +338,17 @@ func (s *EvidenceService) processIntentCheckJob(ctx context.Context, job IntentC
 	}
 
 	resolvedContractID := resolveContractIDFromLeaves(leaves, job.ContractID)
+	// FIX-06b: Pass the already-fetched leaves directly to processIntentJob.
+	// Previously processIntentJob re-fetched leaves from the DB, creating a
+	// redundant round-trip and a TOCTOU window where leaves could change between
+	// the readiness check and the generation fetch.
 	return s.processIntentJob(ctx, IntentJob{
 		TenantID:   job.TenantID,
 		EnvelopeID: job.EnvelopeID,
 		IntentID:   job.IntentID,
 		ContractID: resolvedContractID,
 		TraceID:    job.TraceID,
-	})
+	}, leaves)
 }
 
 // processBatchCheckJob loads buffered batch leaves, checks readiness, and generates
@@ -344,14 +387,12 @@ func (s *EvidenceService) processBatchCheckJob(ctx context.Context, job BatchChe
 }
 
 // processIntentJob executes the pack generation for a ready intent.
-func (s *EvidenceService) processIntentJob(ctx context.Context, job IntentJob) error {
-	// Re-fetch leaves as they contain the data required for generation
-	leaves, err := s.pendingLeafRepo.GetLeavesForIntent(ctx, job.TenantID, job.IntentID)
-	if err != nil {
-		return err
-	}
-
-	// Re-build items
+// processIntentJob executes pack generation for a ready intent.
+// FIX-06b: The leaves parameter is the already-fetched, readiness-confirmed slice
+// passed from processIntentCheckJob. This eliminates the previous redundant
+// GetLeavesForIntent call and the TOCTOU window between readiness check and generation.
+func (s *EvidenceService) processIntentJob(ctx context.Context, job IntentJob, leaves []models.PendingLeafCandidate) error {
+	// Build items from the provided leaves
 	var items []models.EvidenceItem
 	for _, l := range leaves {
 		if slices.Contains(models.RequiredLeafTypes, l.LeafType) {
@@ -385,7 +426,9 @@ func (s *EvidenceService) processIntentJob(ctx context.Context, job IntentJob) e
 		for _, ep := range existingPacks {
 			if ep.PackStatus == models.PackStatusActive {
 				log.Printf("evidence.service.process_intent intent=%s pack already exists ep=%s — skipping generation", job.IntentID, ep.EvidencePackID)
-				_ = s.pendingLeafRepo.DeleteForIntent(ctx, job.TenantID, job.IntentID)
+				if delErr := s.pendingLeafRepo.DeleteForIntent(ctx, job.TenantID, job.IntentID); delErr != nil {
+					log.Printf("evidence.service.process_intent intent=%s delete_pending_leaves_failed err=%v — leaves will accumulate until next cycle", job.IntentID, delErr)
+				}
 				return nil
 			}
 		}
@@ -472,7 +515,9 @@ func (s *EvidenceService) processIntentJob(ctx context.Context, job IntentJob) e
 	if err != nil {
 		if errors.Is(err, repositories.ErrPackAlreadyExists) {
 			log.Printf("evidence.service.process_intent intent=%s duplicate_pack_detected_at_insert — treating as success", job.IntentID)
-			_ = s.pendingLeafRepo.DeleteForIntent(ctx, job.TenantID, job.IntentID)
+			if delErr := s.pendingLeafRepo.DeleteForIntent(ctx, job.TenantID, job.IntentID); delErr != nil {
+				log.Printf("evidence.service.process_intent intent=%s delete_pending_leaves_failed err=%v — leaves will accumulate until next cycle", job.IntentID, delErr)
+			}
 			return nil
 		}
 		return fmt.Errorf("generate pack from buffered leaves: %w", err)
@@ -543,7 +588,9 @@ func (s *EvidenceService) processBatchJob(ctx context.Context, job BatchJob) err
 	existing, existErr := s.repo.GetPackByBatchID(ctx, job.TenantID, job.BatchID)
 	if existErr == nil && existing != nil {
 		log.Printf("evidence.service.process_batch batch=%s pack already exists — skipping generation", job.BatchID)
-		_ = s.pendingLeafRepo.DeleteForBatch(ctx, job.TenantID, job.BatchID)
+		if delErr := s.pendingLeafRepo.DeleteForBatch(ctx, job.TenantID, job.BatchID); delErr != nil {
+			log.Printf("evidence.service.process_batch batch=%s delete_pending_leaves_failed err=%v — leaves will accumulate until next cycle", job.BatchID, delErr)
+		}
 		return nil
 	}
 	// ─────────────────────────────────────────────────────────────────────────
@@ -619,7 +666,9 @@ func (s *EvidenceService) processBatchJob(ctx context.Context, job BatchJob) err
 	if err != nil {
 		if errors.Is(err, repositories.ErrPackAlreadyExists) {
 			log.Printf("evidence.service.process_batch batch=%s duplicate_pack_detected_at_insert — treating as success", job.BatchID)
-			_ = s.pendingLeafRepo.DeleteForBatch(ctx, job.TenantID, job.BatchID)
+			if delErr := s.pendingLeafRepo.DeleteForBatch(ctx, job.TenantID, job.BatchID); delErr != nil {
+				log.Printf("evidence.service.process_batch batch=%s delete_pending_leaves_failed err=%v — leaves will accumulate until next cycle", job.BatchID, delErr)
+			}
 			return nil
 		}
 		return fmt.Errorf("generate pack from buffered batch leaves: %w", err)
@@ -797,12 +846,16 @@ func (s *EvidenceService) GeneratePackInTx(ctx context.Context, packTx *sql.Tx, 
 	var requiredLeafCount int
 	var settlementLeafFlag, attachmentDecisionLeafFlag bool
 
+	// FIX-06c: Use package-level constants so this function and
+	// ComputeCompletenessMetadata always agree on the denominator.
+	// Previously this function used 6 for batch (wrong) while the model used 5
+	// (correct), producing different completeness scores for the same pack.
 	if req.IntentID != "" {
-		requiredLeafCount = 9
+		requiredLeafCount = models.RequiredIntentLeafCount // 9
 		settlementLeafFlag = hasRawSettlementFile && hasRawSettlementLine && hasCanonicalSettlementObs
 		attachmentDecisionLeafFlag = hasAttachmentDecision && hasVarianceDecision
 	} else if req.ClientBatchID != "" {
-		requiredLeafCount = 6
+		requiredLeafCount = models.RequiredBatchLeafCount // 5
 		settlementLeafFlag = hasRawSettlementFile
 		attachmentDecisionLeafFlag = hasBatchAttachmentSummary && hasBatchVarianceSummary
 	}
@@ -837,19 +890,31 @@ func (s *EvidenceService) GeneratePackInTx(ctx context.Context, packTx *sql.Tx, 
 		SettlementLeafPresentFlag:         settlementLeafFlag,
 		AttachmentDecisionLeafPresentFlag: attachmentDecisionLeafFlag,
 	}
-	payloadBytes, _ := json.Marshal(packEvent)
+	// FIX-15a: json.Marshal on a well-typed struct will not fail in practice,
+	// but silently discarding the error hides future schema issues. Log and
+	// fall back to an empty payload rather than silently proceeding.
+	payloadBytes, marshalErr := json.Marshal(packEvent)
+	if marshalErr != nil {
+		log.Printf("evidence.service.generate_pack marshal_event_failed pack=%s err=%v — outbox event will have empty payload", packID, marshalErr)
+		payloadBytes = []byte("{}")
+	}
 
+	// FIX-17: EvidencePackID and PayloadHash are now written to the outbox row.
+	// PayloadHash is SHA-256(payload bytes) so relay consumers can verify integrity
+	// without re-fetching the pack from the DB.
 	outboxEvt := &models.OutboxEvent{
-		TraceID:       req.TraceID,
-		EnvelopeID:    req.EnvelopeID,
-		TenantID:      req.TenantID,
-		ContractID:    req.ContractID,
-		AggregateType: "evidence_pack",
-		AggregateID:   req.IntentID,
-		EventType:     eventType,
-		Payload:       payloadBytes,
-		Status:        "PENDING",
-		CreatedAt:     now,
+		TraceID:        req.TraceID,
+		EnvelopeID:     req.EnvelopeID,
+		TenantID:       req.TenantID,
+		ContractID:     req.ContractID,
+		AggregateType:  "evidence_pack",
+		AggregateID:    req.IntentID,
+		EventType:      eventType,
+		Payload:        payloadBytes,
+		Status:         "PENDING",
+		CreatedAt:      now,
+		EvidencePackID: packID,
+		PayloadHash:    utils.SHA256Hex(string(payloadBytes)),
 	}
 
 	log.Printf("evidence.service.generate_pack persisting draft pack=%s intent=%s", packID, req.IntentID)
@@ -1039,17 +1104,25 @@ func (s *EvidenceService) GenerateBatchPackInTx(ctx context.Context, packTx *sql
 		RulesetVersion: req.RulesetVersion,
 		OccurredAt:     now,
 	}
-	payloadBytes, _ := json.Marshal(packEvent)
+	// FIX-15a: Handle marshal error explicitly.
+	payloadBytes, marshalErr := json.Marshal(packEvent)
+	if marshalErr != nil {
+		log.Printf("evidence.service.generate_batch_pack marshal_event_failed pack=%s err=%v — outbox event will have empty payload", packID, marshalErr)
+		payloadBytes = []byte("{}")
+	}
 
+	// FIX-17: EvidencePackID and PayloadHash written to outbox for relay correlation and integrity.
 	outboxEvt := &models.OutboxEvent{
-		TraceID:       req.TraceID,
-		TenantID:      req.TenantID,
-		AggregateType: "evidence_pack",
-		AggregateID:   req.ClientBatchID,
-		EventType:     "evidence.batch.pack.created",
-		Payload:       payloadBytes,
-		Status:        "PENDING",
-		CreatedAt:     now,
+		TraceID:        req.TraceID,
+		TenantID:       req.TenantID,
+		AggregateType:  "evidence_pack",
+		AggregateID:    req.ClientBatchID,
+		EventType:      "evidence.batch.pack.created",
+		Payload:        payloadBytes,
+		Status:         "PENDING",
+		CreatedAt:      now,
+		EvidencePackID: packID,
+		PayloadHash:    utils.SHA256Hex(string(payloadBytes)),
 	}
 
 	log.Printf("evidence.service.generate_batch_pack persisting draft pack=%s batch=%s", packID, req.ClientBatchID)
@@ -1153,10 +1226,20 @@ func (s *EvidenceService) ReplayPack(ctx context.Context, req models.ReplayReque
 		Mode:           req.Mode,
 		RulesetVersion: req.RulesetVersion,
 		SchemaVersions: req.SchemaVersions,
-		Items:          req.Items,
+		// FIX-16: Set SupersedesPackID so GeneratePack marks the original pack
+		// as REVOKED_SUPERSEDED inside the same DB transaction. Without this, every
+		// ReplayPack call created a new ACTIVE pack for the same intent, making it
+		// impossible to determine the canonical pack from a list query.
+		SupersedesPackID: req.OriginalPackID,
+		Items:            req.Items,
 	})
 	if err != nil {
-		return nil, err
+		// FIX-16: If generation fails, update the job to FAILED status so callers
+		// can distinguish a failed replay from a pending or completed one.
+		if failErr := s.repo.FailReplayJob(ctx, jobID, err.Error()); failErr != nil {
+			log.Printf("evidence.service.replay fail_replay_job_failed job=%s err=%v", jobID, failErr)
+		}
+		return nil, fmt.Errorf("replay pack generation failed: %w", err)
 	}
 
 	equivalent := oldPack.MerkleRoot == newPack.MerkleRoot
@@ -1181,10 +1264,13 @@ func (s *EvidenceService) ReplayPack(ctx context.Context, req models.ReplayReque
 	}
 
 	// --- Complete the replay job ---
-	_ = s.repo.CompleteReplayJob(ctx, jobID, newPack.EvidencePackID, equivalenceResult, diffSummary)
+	// FIX-15c: Log errors instead of silently discarding them.
+	if completeErr := s.repo.CompleteReplayJob(ctx, jobID, newPack.EvidencePackID, equivalenceResult, diffSummary); completeErr != nil {
+		log.Printf("evidence.service.replay complete_replay_job_failed job=%s err=%v", jobID, completeErr)
+	}
 
 	// --- Publish evidence.pack.replayed event ---
-	_ = s.publisher.Publish(ctx, kafka.PackEvent{
+	if pubErr := s.publisher.Publish(ctx, kafka.PackEvent{
 		EventType:      kafka.EventPackReplayed,
 		EvidencePackID: newPack.EvidencePackID,
 		TenantID:       req.TenantID,
@@ -1199,7 +1285,9 @@ func (s *EvidenceService) ReplayPack(ctx context.Context, req models.ReplayReque
 			"equivalence_result": equivalenceResult,
 			"original_pack_id":   req.OriginalPackID,
 		},
-	})
+	}); pubErr != nil {
+		log.Printf("evidence.service.replay publish_event_failed job=%s pack=%s err=%v", jobID, newPack.EvidencePackID, pubErr)
+	}
 
 	return &models.ReplayResponse{
 		ReplayJobID:      jobID,

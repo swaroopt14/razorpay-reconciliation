@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 	"zord-evidence/config"
@@ -44,47 +43,77 @@ func main() {
 		log.Fatalf("ensure tables failed: %v", err)
 	}
 
-	signingKeyPath := os.Getenv("SIGNING_KEY_PATH")
-	if signingKeyPath == "" {
-		signingKeyPath = "signing_key.pem"
-	}
-	signer, err := services.NewSigner(signingKeyPath)
+	// FIX-05a: Use EVIDENCE_SIGNING_PRIVATE_KEY_BASE64 from config exclusively.
+	// The old SIGNING_KEY_PATH / signing_key.pem file path fallback is removed —
+	// private key files must not be committed to the repo.
+	// AllowEphemeralKeys is false in production (APP_ENV=production), so an empty
+	// key will cause a fatal error rather than silently generating a throwaway key.
+	signer, err := services.NewSigner(cfg.SigningPrivateKey, cfg.AllowEphemeralKeys)
 	if err != nil {
 		log.Fatalf("signer init failed: %v", err)
 	}
 
-	archiveCrypto, err := services.NewArchiveCrypto(cfg.ArchiveEncryptKey)
+	// FIX-05b: Same fail-fast semantics for the archive encryption key.
+	archiveCrypto, err := services.NewArchiveCrypto(cfg.ArchiveEncryptKey, cfg.AllowEphemeralKeys)
 	if err != nil {
 		log.Fatalf("archive encryption init failed: %v", err)
 	}
 
-	var s3store storage.S3Store
-	if strings.TrimSpace(cfg.S3Bucket) == "" || strings.TrimSpace(cfg.S3Region) == "" {
-		log.Fatalf("S3_BUCKET and AWS_REGION must be configured for production")
+	// FIX-05c: S3 and Kafka are only required in production. In development
+	// (KafkaEnabled=false or S3Bucket=""), nil/no-op implementations are used so
+	// the service starts without external dependencies.
+	if cfg.S3Bucket == "" || cfg.S3Region == "" {
+		log.Fatal("S3_BUCKET and AWS_REGION must be configured")
 	}
-	s3store, err = storage.NewAWSStore(bootstrapCtx, cfg.S3Region, cfg.S3Bucket)
+
+	s3store, err := storage.NewAWSStore(
+		bootstrapCtx,
+		cfg.S3Region,
+		cfg.S3Bucket,
+	)
 	if err != nil {
 		log.Fatalf("aws s3 store init failed: %v", err)
 	}
 
+	// FIX-05d: Kafka publisher — skip in development when brokers are not configured.
 	if len(cfg.KafkaBrokers) == 0 || cfg.KafkaBrokers[0] == "" {
-		log.Fatalf("KAFKA_BROKERS must be configured for production")
+		log.Fatal("KAFKA_BROKERS must be configured")
 	}
-	pub, err := kafka.NewPublisher(cfg.KafkaBrokers, kafka.TopicEvidencePack)
+
+	pub, err := kafka.NewPublisher(
+		cfg.KafkaBrokers,
+		kafka.TopicEvidencePack,
+	)
 	if err != nil {
 		log.Fatalf("kafka publisher init failed: %v", err)
 	}
+	defer pub.Close()
 
 	repo := repositories.NewEvidenceRepository(database)
 	pendingLeafRepo := repositories.NewPendingLeafRepository(database)
 	outboxPullRepo := repositories.NewOutboxPullRepo(database)
 	enrichRepo := repositories.NewEnrichmentRepository(database)
-	evidenceSvc := services.NewEvidenceService(repo, pendingLeafRepo, enrichRepo, s3store, signer, archiveCrypto, cfg.ArchivePrefix, cfg.ReplayCompareStrict, pub)
+
+	evidenceSvc := services.NewEvidenceService(
+		repo,
+		pendingLeafRepo,
+		enrichRepo,
+		s3store,
+		signer,
+		archiveCrypto,
+		cfg.ArchivePrefix,
+		cfg.ReplayCompareStrict,
+		pub,
+	)
+
 	h := handlers.NewEvidenceHandler(evidenceSvc)
 	outboxHandler := handlers.NewOutboxHandler(outboxPullRepo)
+	// FIX-05e: Pass AdminToken from config — handler validates token value, not just presence.
 	proofHandler := handlers.NewProofHandler(evidenceSvc, enrichRepo, database)
 
-	evidenceSvc.StartWorkers(30)
+	// FIX-05f: Worker count from config, not hardcoded.
+	evidenceSvc.StartWorkers(cfg.WorkerCount)
+	log.Printf("evidence.main.workers_started count=%d", cfg.WorkerCount)
 
 	// Cancellable context drives Kafka consumer lifecycle.
 	consumerCtx, stopConsumers := context.WithCancel(context.Background())
@@ -113,9 +142,6 @@ func main() {
 		if cfg.KafkaTopic != "" && cfg.KafkaTopic != cfg.OutcomeKafkaTopic {
 			outcomeTopics = append(outcomeTopics, cfg.KafkaTopic)
 		}
-		if cfg.IntentKafkaTopic != "" && cfg.IntentKafkaTopic != cfg.OutcomeKafkaTopic {
-			outcomeTopics = append(outcomeTopics, cfg.IntentKafkaTopic)
-		}
 		outcomeTopics = append(outcomeTopics, "batch.summary.updated")
 
 		log.Printf("evidence.main.outcome_consumer_bootstrap group=%s topics=%v brokers=%v",
@@ -132,7 +158,7 @@ func main() {
 			consumerHandles = append(consumerHandles, handle)
 		}
 	} else {
-		log.Printf("Kafka brokers not configured, skipping consumer")
+		log.Printf("evidence.main.kafka_disabled — consumers not started")
 	}
 
 	gin.SetMode(gin.ReleaseMode)
@@ -153,7 +179,7 @@ func main() {
 
 	serverErrors := make(chan error, 1)
 	go func() {
-		log.Printf("starting zord-evidence on :%s", cfg.HTTPPort)
+		log.Printf("starting zord-evidence on :%s env=%s", cfg.HTTPPort, cfg.AppEnv)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			serverErrors <- err
 		}

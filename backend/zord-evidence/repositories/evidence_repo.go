@@ -2,13 +2,15 @@ package repositories
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"time"
 	"zord-evidence/models"
+	"zord-evidence/utils"
 
 	"github.com/lib/pq"
 	"github.com/shopspring/decimal"
@@ -69,13 +71,20 @@ func (r *EvidenceRepository) BeginTx(ctx context.Context) (*sql.Tx, error) {
 }
 
 // advisoryLockKey converts an arbitrary string key into a stable int64
-// suitable for pg_try_advisory_xact_lock. Uses FNV-1a 64-bit for speed and
-// low collision probability across typical intent/batch ID namespaces.
+// suitable for pg_try_advisory_xact_lock.
+//
+// FIX-11: Replaced FNV-1a with SHA-256 truncated to the first 8 bytes.
+// FNV-64 cast to int64 loses one bit of range and has non-uniform distribution
+// in the upper half, raising birthday-paradox collision probability at scale.
+// SHA-256 has cryptographically uniform distribution; taking the first 8 bytes
+// as a big-endian int64 gives 2^63 effective keys with collision probability
+// negligible even at millions of concurrent intents.
 func advisoryLockKey(key string) int64 {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(key))
-	// Cast to int64 — wraps on overflow, which is fine for advisory locks.
-	return int64(h.Sum64())
+	sum := sha256.Sum256([]byte(key))
+	// Interpret the first 8 bytes as a big-endian uint64, then reinterpret as
+	// int64. This preserves the full bit distribution without sign bias.
+	u := binary.BigEndian.Uint64(sum[:8])
+	return int64(u)
 }
 
 // SavePack persists the full evidence pack in a single transaction:
@@ -245,8 +254,9 @@ INSERT INTO evidence_packs(
 	settlement_record_received, canonical_settlement_created, bank_reference,
 	client_reference, attachment_decision, match_confidence,
 	value_date_check, amount_match, zord_signature,
+	merkle_scheme_version,
 	created_at, updated_at
-) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39)
+) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40)
 ON CONFLICT DO NOTHING`,
 		pack.EvidencePackID,
 		pack.TenantID,
@@ -285,6 +295,7 @@ ON CONFLICT DO NOTHING`,
 		pack.ValueDateCheck,
 		pack.AmountMatch,
 		nullStr(pack.ZordSignature),
+		utils.MerkleSchemeV2, // FIX P1-08: all new packs use domain-separated V2
 		pack.CreatedAt,
 		pack.CreatedAt,
 	)
@@ -363,28 +374,39 @@ func isUniqueViolation(err error) bool {
 	return errors.As(err, &pqErr) && pqErr.Code == "23505"
 }
 
+// SaveToOutbox inserts a single outbox event into evidence_outbox_events.
+// FIX-17: evidence_pack_id and payload_hash are now written so downstream
+// relay consumers can correlate outbox rows directly to pack rows and detect
+// payload tampering without re-fetching the full pack.
 func (r *EvidenceRepository) SaveToOutbox(ctx context.Context, tx *sql.Tx, event *models.OutboxEvent) error {
 	query := `
 INSERT INTO evidence_outbox_events (
-	trace_id, envelope_id, tenant_id, contract_id, aggregate_type, aggregate_id, 
-	event_type, payload, status, created_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	trace_id, envelope_id, tenant_id, contract_id, aggregate_type, aggregate_id,
+	event_type, payload, status, created_at, evidence_pack_id, payload_hash
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 `
+	args := []any{
+		nullStr(event.TraceID), nullStr(event.EnvelopeID), event.TenantID, nullStr(event.ContractID),
+		event.AggregateType, event.AggregateID, event.EventType,
+		event.Payload, event.Status, event.CreatedAt,
+		nullStr(event.EvidencePackID),
+		nullStr(event.PayloadHash),
+	}
 	var err error
 	if tx != nil {
-		_, err = tx.ExecContext(ctx, query,
-			nullStr(event.TraceID), nullStr(event.EnvelopeID), event.TenantID, nullStr(event.ContractID),
-			event.AggregateType, event.AggregateID, event.EventType,
-			event.Payload, event.Status, event.CreatedAt,
-		)
+		_, err = tx.ExecContext(ctx, query, args...)
 	} else {
-		_, err = r.db.ExecContext(ctx, query,
-			nullStr(event.TraceID), nullStr(event.EnvelopeID), event.TenantID, nullStr(event.ContractID),
-			event.AggregateType, event.AggregateID, event.EventType,
-			event.Payload, event.Status, event.CreatedAt,
-		)
+		_, err = r.db.ExecContext(ctx, query, args...)
 	}
 	return err
+}
+
+// nullStrPtr converts a *string to sql.NullString safely.
+func nullStrPtr(s *string) sql.NullString {
+	if s == nil || *s == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: *s, Valid: true}
 }
 
 // GetPackByID fetches a pack with its items from evidence_packs + evidence_items.
@@ -415,6 +437,7 @@ func (r *EvidenceRepository) GetPackByID(ctx context.Context, packID string) (*m
 	             settlement_record_received, canonical_settlement_created, bank_reference,
 	             client_reference, attachment_decision, match_confidence,
 	             value_date_check, amount_match, zord_signature,
+	             COALESCE(merkle_scheme_version, 'merkle_v1'),
 	             created_at
 	      FROM evidence_packs WHERE evidence_pack_id=$1`
 	err := r.db.QueryRowContext(ctx, q, packID).Scan(
@@ -426,6 +449,7 @@ func (r *EvidenceRepository) GetPackByID(ctx context.Context, packID string) (*m
 		&pack.PaymentInstructionReceived, &pack.CanonicalIntentCreated, &pack.MappingProfileUsed,
 		&pack.RequiredFieldsStatus, &pack.TokenizationStatus, &pack.GovernanceDecision,
 		&srr, &csc, &br, &cr, &ad, &mc, &vdc, &am, &pack.ZordSignature,
+		&pack.MerkleSchemeVersion,
 		&createdAt,
 	)
 	if err != nil {
@@ -902,6 +926,21 @@ SET status='COMPLETED', new_evidence_pack_id=$2, equivalence_result=$3,
     difference_summary_json=$4, completed_at=$5
 WHERE replay_job_id=$1`,
 		jobID, nullStr(newPackID), equivalenceResult, diffJSON, now,
+	)
+	return err
+}
+
+// FailReplayJob transitions a replay job to FAILED status and records the reason.
+// FIX-16: Previously there was no FAILED state — a generation error left the
+// job permanently in PENDING with no signal to the caller. Callers can now
+// distinguish PENDING (in progress), COMPLETED (done), and FAILED (errored).
+func (r *EvidenceRepository) FailReplayJob(ctx context.Context, jobID, reason string) error {
+	now := time.Now().UTC()
+	_, err := r.db.ExecContext(ctx, `
+UPDATE evidence_replay_jobs
+SET status='FAILED', failure_reason=$2, completed_at=$3
+WHERE replay_job_id=$1`,
+		jobID, reason, now,
 	)
 	return err
 }

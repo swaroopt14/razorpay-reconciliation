@@ -4,12 +4,18 @@ import "zord-evidence/models"
 
 // proofWeights defines the five scoring components and their weights (must sum to 100).
 //
-//	20% — original payment instruction
-//	20% — settlement / bank record
-//	20% — match decision (Service 5)
-//	15% — governance check (Service 2)
-//	15% — replay protection
-//	10% — cryptographic seal
+//   20% — original payment instruction
+//   20% — settlement / bank record
+//   20% — match decision (Service 5 reconciliation)
+//   15% — governance check (Service 2 policy/compliance)
+//   15% — variance and decision evidence (amount-match + attachment decision present)
+//   10% — cryptographic seal (Merkle root generated and signed)
+//
+// FIX-08: "Replay Protection" renamed to "Variance / Decision Evidence".
+// The VARIANCE_DECISION leaf records amount-variance and attachment-decision
+// results — it is not a duplicate-spend / replay-detection signal. Labelling
+// it "Replay Protection" was misleading to finance and audit consumers of the
+// proof score breakdown.
 var proofWeights = []struct {
 	check  string
 	weight int
@@ -18,7 +24,7 @@ var proofWeights = []struct {
 	{"Settlement / Bank Record", 20},
 	{"Match Decision", 20},
 	{"Governance Check", 15},
-	{"Replay Protection", 15},
+	{"Variance / Decision Evidence", 15},
 	{"Cryptographic Seal", 10},
 }
 
@@ -32,7 +38,7 @@ func ComputeProofScore(c models.ProofComponents, sealExists bool) models.ProofSc
 		c.SettlementRecordAvailable,
 		c.MatchDecisionAvailable,
 		c.GovernanceDecisionAvailable,
-		c.ReplayCheckPassed,
+		c.ReplayCheckPassed, // field name kept for DB/JSON compatibility; semantics = variance+decision evidence present
 		sealExists,
 	}
 
@@ -77,8 +83,8 @@ func deductionReason(check string) string {
 		return "Service 5 reconciliation output pending"
 	case "Governance Check":
 		return "Service 2 policy/compliance validations not yet passed"
-	case "Replay Protection":
-		return "double-spend/replay analysis not yet executed"
+	case "Variance / Decision Evidence":
+		return "variance decision leaf and attachment decision leaf not yet received"
 	case "Cryptographic Seal":
 		return "Merkle root has not yet been generated and sealed"
 	default:
@@ -88,6 +94,11 @@ func deductionReason(check string) string {
 
 // DeriveProofStatus derives the correct ProofStatus enum from ProofComponents
 // and pack state. The status is deterministic — no arbitrary assignment.
+//
+// FIX-10: packExists now returns ProofStatusProofAssembled (not ProofStatusCertified).
+// "CERTIFIED" implies an external certification step that does not exist in
+// this service. A sealed pack is "assembled and ready" — PROOF_ASSEMBLED.
+// CERTIFIED is reserved for a future external certification workflow.
 func DeriveProofStatus(c models.ProofComponents, packExists bool, superseded bool, exported bool) models.ProofStatus {
 	if superseded {
 		return models.ProofStatusRevokedSuperseded
@@ -96,9 +107,9 @@ func DeriveProofStatus(c models.ProofComponents, packExists bool, superseded boo
 		return models.ProofStatusExported
 	}
 	if packExists {
-		return models.ProofStatusCertified
+		return models.ProofStatusProofAssembled
 	}
-	// Not yet sealed — work out the most specific missing-piece status
+	// Not yet sealed — return the most specific missing-piece status.
 	if !c.PaymentInstructionAvailable {
 		return models.ProofStatusMissingIntent
 	}
@@ -112,7 +123,7 @@ func DeriveProofStatus(c models.ProofComponents, packExists bool, superseded boo
 		return models.ProofStatusMissingGovernance
 	}
 	if !c.ReplayCheckPassed {
-		return models.ProofStatusMissingReplayCheck
+		return models.ProofStatusMissingVarianceEvidence
 	}
 	return models.ProofStatusProofReady
 }
