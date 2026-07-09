@@ -1741,6 +1741,7 @@ func (s *ProjectionService) HandleBatchSummaryUpdated(
 			e.TenantID, e.EventID, e.BatchID)
 		return nil
 	}
+	e.BatchFinalityStatus = models.NormalizeBatchFinalityStatus(e.BatchFinalityStatus)
 
 	log.Printf("[batch.summary.updated] RECEIVED event_id=%s tenant=%s batch=%s status=%s total=%d intended=%s ambiguity=%.2f original_settled=%s ambiguous_count=%d ambiguous_amount=%s conflicted_count=%d conflicted_amount=%s unresolved_count=%d unresolved_intended_amount=%s",
 		e.EventID, e.TenantID, e.BatchID, e.BatchFinalityStatus, e.TotalCount, e.TotalIntendedAmountMinor, e.AmbiguityScore, e.OriginalSettledAmountMinor,
@@ -1879,7 +1880,7 @@ func (s *ProjectionService) HandleBatchSummaryUpdated(
 	// canonicalized summary stage. We only attempt inference for genuinely
 	// pre-settlement summaries, so finalized batches never get a late forecast.
 	if s.leakagePredSvc != nil {
-		allowPrediction := !isTerminalBatchFinalityStatus(e.BatchFinalityStatus) &&
+		allowPrediction := !models.IsTerminalBatchFinalityStatus(e.BatchFinalityStatus) &&
 			e.TotalConfirmedAmountMinor.LessThanOrEqual(decimal.Zero) &&
 			e.OriginalSettledAmountMinor.LessThanOrEqual(decimal.Zero)
 		s.leakagePredSvc.CaptureBatchOnce(ctx, e.TenantID, e.BatchID, window.start, window.end, allowPrediction)
@@ -1887,10 +1888,12 @@ func (s *ProjectionService) HandleBatchSummaryUpdated(
 
 	// If batch reached a terminal state, the true ambiguity outcome is now known.
 	// Feed it back to the LR model as a labeled training example (online SGD).
-	if e.BatchFinalityStatus == "FULLY_SETTLED" || e.BatchFinalityStatus == "FAILED" {
+	normalizedFinality := models.NormalizeBatchFinalityStatus(e.BatchFinalityStatus)
+	if normalizedFinality == models.BatchFinalityFullyReconciled || normalizedFinality == models.BatchFinalityFailed {
 		s.ambiguitySvc.TrainOnLabel(ctx, e.TenantID, e.BatchID, e.AmbiguityScore, window.start, window.end)
 	}
-	if e.BatchFinalityStatus == "FULLY_SETTLED" || e.BatchFinalityStatus == "FAILED" || e.BatchFinalityStatus == "CLOSED" || e.PendingCount == 0 {
+	if normalizedFinality == models.BatchFinalityFullyReconciled || normalizedFinality == models.BatchFinalityFailed ||
+		normalizedFinality == models.BatchFinalityClosed || e.PendingCount == 0 {
 		if s.leakagePredSvc != nil {
 			s.leakagePredSvc.TrainOnLabel(ctx, e.TenantID, e.BatchID)
 		}
@@ -2200,11 +2203,3 @@ func deriveLeakageProviderAndRail(corridorID, providerHint, sourceSystem string)
 	return providerKey, rail
 }
 
-func isTerminalBatchFinalityStatus(status string) bool {
-	switch strings.ToUpper(strings.TrimSpace(status)) {
-	case "FULLY_SETTLED", "PARTIALLY_SETTLED", "FAILED", "REQUIRES_REVIEW", "CLOSED":
-		return true
-	default:
-		return false
-	}
-}

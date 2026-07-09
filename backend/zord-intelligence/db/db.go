@@ -167,3 +167,35 @@ func ValidateSchema(ctx context.Context, pool *pgxpool.Pool) {
 	}
 	log.Println("db: schema validation passed")
 }
+
+// EnsureBatchFinalityStatusVocabulary rewrites legacy SETTLED row values and
+// ensures the batch_contracts check constraint accepts canonical RECONCILED labels.
+func EnsureBatchFinalityStatusVocabulary(ctx context.Context, pool *pgxpool.Pool) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	stmts := []string{
+		`UPDATE batch_contracts SET batch_finality_status = 'FULLY_RECONCILED'
+		 WHERE batch_finality_status IN ('FULLY_SETTLED', 'SETTLED')`,
+		`UPDATE batch_contracts SET batch_finality_status = 'PARTIALLY_RECONCILED'
+		 WHERE batch_finality_status = 'PARTIALLY_SETTLED'`,
+		`ALTER TABLE batch_contracts DROP CONSTRAINT IF EXISTS batch_contracts_batch_finality_status_check`,
+		`ALTER TABLE batch_contracts ADD CONSTRAINT batch_contracts_batch_finality_status_check
+		 CHECK (batch_finality_status IN (
+		   'PROCESSING',
+		   'FULLY_RECONCILED',
+		   'PARTIALLY_RECONCILED',
+		   'FAILED',
+		   'REQUIRES_REVIEW',
+		   'CLOSED'
+		 ))`,
+	}
+
+	for _, stmt := range stmts {
+		if _, err := pool.Exec(ctx, stmt); err != nil {
+			log.Printf("db: EnsureBatchFinalityStatusVocabulary skipped statement: %v", err)
+		}
+	}
+	log.Println("db: batch finality vocabulary ensured")
+}

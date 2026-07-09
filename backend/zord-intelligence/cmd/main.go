@@ -88,6 +88,7 @@ func main() {
 	defer pool.Close()
 	db.EnsureSchema(context.Background(), pool)
 	db.ValidateSchema(context.Background(), pool)
+	db.EnsureBatchFinalityStatusVocabulary(context.Background(), pool)
 	db.EnsureProductionIndexes(context.Background(), pool)
 	syncIntelligenceMode(context.Background(), pool, string(cfg.IntelligenceMode))
 

@@ -235,7 +235,7 @@ func (h *BatchHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 	switch statusFilter {
 	case "REQUIRES_REVIEW":
 		raw, err = h.batchRepo.ListRequiringReview(r.Context(), tenantID, limit)
-	case "SETTLED", "PARTIALLY_SETTLED", "PENDING", "FAILED", "CANCELLED":
+	case "SETTLED","FULLY_RECONCILED", "PARTIALLY_SETTLED","PARTIALLY_RECONCILED", "PENDING", "FAILED", "CANCELLED":
 		raw, err = h.batchRepo.ListByFinalityStatus(r.Context(), tenantID, statusFilter, limit)
 	default:
 		raw, err = h.batchRepo.ListByTenant(r.Context(), tenantID, limit)
