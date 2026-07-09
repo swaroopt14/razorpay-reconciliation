@@ -19,6 +19,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	"github.com/pressly/goose/v3"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
@@ -36,8 +37,12 @@ func main() {
 		log.Fatal("DB is nil after InitDB")
 	}
 
-	if err := db.EnsureTables(ctx); err != nil {
-		log.Fatal("Failed to ensure DB tables: ", err)
+	goose.SetBaseFS(nil)
+	if err := goose.SetDialect("postgres"); err != nil {
+		log.Fatal("goose dialect error:", err)
+	}
+	if err := goose.Up(db.DB, "db/migrations"); err != nil {
+		log.Fatal("migrations failed:", err)
 	}
 	err := godotenv.Load()
 	if err != nil {
