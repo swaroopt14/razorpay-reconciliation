@@ -379,8 +379,9 @@ INSERT INTO outbox (
                 duplicate_reason_code = $1,
                 governance_state = 'FLAGGED',
                 updated_at = now()
-            WHERE intent_id = $2`,
+            WHERE tenant_id = $2 AND intent_id = $3`,
 				intent.DuplicateReasonCode,
+				intent.TenantID,
 				intent.IntentID,
 			)
 			if err != nil {
@@ -534,6 +535,7 @@ func (r *PaymentIntentRepo) FindByEnvelope(
 
 func (r *PaymentIntentRepo) UpdateSnapshotRefs(
 	ctx context.Context,
+	tenantID string,
 	intentID string,
 	canonicalRef string,
 	nirRef string,
@@ -546,11 +548,12 @@ func (r *PaymentIntentRepo) UpdateSnapshotRefs(
 	SET canonical_snapshot_ref = $1,
 	    nir_snapshot_ref = $2,
 	    governance_snapshot_ref = $3,
-	    canonical_hash = $4
-	WHERE intent_id = $5
+	    canonical_hash = $4,
+	    updated_at = now()
+	WHERE tenant_id = $5 AND intent_id = $6
 	`
 
-	if _, err := r.db.ExecContext(ctx, query, canonicalRef, nirRef, govRef, hash, intentID); err != nil {
+	if _, err := r.db.ExecContext(ctx, query, canonicalRef, nirRef, govRef, hash, tenantID, intentID); err != nil {
 		return err
 	}
 
@@ -560,10 +563,10 @@ func (r *PaymentIntentRepo) UpdateSnapshotRefs(
 	    nir_snapshot_ref = $2,
 	    governance_snapshot_ref = $3,
 	    canonical_hash = $4
-	WHERE aggregate_id = $5
+	WHERE tenant_id = $5 AND aggregate_id = $6
 	`
 
-	if _, err := r.db.ExecContext(ctx, outboxQuery, canonicalRef, nirRef, govRef, hash, intentID); err != nil {
+	if _, err := r.db.ExecContext(ctx, outboxQuery, canonicalRef, nirRef, govRef, hash, tenantID, intentID); err != nil {
 		return err
 	}
 
@@ -1480,8 +1483,9 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 							duplicate_reason_code = $1,
 							governance_state = 'FLAGGED',
 							updated_at = now()
-						WHERE intent_id = $2`,
+						WHERE tenant_id = $2 AND intent_id = $3`,
 						item.Intent.DuplicateReasonCode,
+						item.Intent.TenantID,
 						item.Intent.IntentID,
 					)
 					if err != nil {

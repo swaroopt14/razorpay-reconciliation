@@ -144,6 +144,7 @@ type CanonicalIntentRepository interface {
 
 	UpdateSnapshotRefs(
 		ctx context.Context,
+		tenantID string,
 		intentID string,
 		canonicalRef string,
 		nirRef string,
@@ -2054,7 +2055,7 @@ func (s *IntentService) ProcessIncomingIntent(
 		log.Printf("⚠️ S3 Governance Snapshot failed: %v", err)
 	}
 
-	err = s.repo.UpdateSnapshotRefs(ctx, saved.IntentID, canonicalRef, nirRef, govRef, hash, prevHash)
+	err = s.repo.UpdateSnapshotRefs(ctx, saved.TenantID, saved.IntentID, canonicalRef, nirRef, govRef, hash, prevHash)
 	if err != nil {
 		retErr = err
 		return nil, nil, err
@@ -2222,7 +2223,7 @@ func (s *IntentService) ProcessIncomingIntentsBatch(
 		govBytes := []byte(`{"state":"` + saved.GovernanceState + `"}`)
 		govRef, _, _ := s.s3.StoreSnapshot(ctx, "governance", saved.TenantID, saved.IntentID, version, govBytes, "")
 
-		err = s.repo.UpdateSnapshotRefs(ctx, saved.IntentID, canonicalRef, nirRef, govRef, hash, prevHash)
+		err = s.repo.UpdateSnapshotRefs(ctx, saved.TenantID, saved.IntentID, canonicalRef, nirRef, govRef, hash, prevHash)
 		if err != nil {
 			log.Printf("⚠️ Batch S3: UpdateSnapshotRefs failed for intent %s: %v", saved.IntentID, err)
 		}
@@ -2689,6 +2690,7 @@ func (s *IntentService) ProcessTokenizeResult(
 
 	err = s.repo.UpdateSnapshotRefs(
 		ctx,
+		saved.TenantID,
 		saved.IntentID,
 		canonicalRef,
 		nirRef,

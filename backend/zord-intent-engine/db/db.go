@@ -11,7 +11,8 @@ import (
 var DB *sql.DB
 
 // UpsertIngestRun inserts or updates an intent_ingest_runs row at the end of
-// a bulk ingest. It uses ON CONFLICT on batch_id to update run stats atomically.
+// a bulk ingest. It uses ON CONFLICT on (tenant_id, batch_id) to update run stats
+// atomically, since batch_id alone is client-supplied and not globally unique.
 func UpsertIngestRun(
 	ctx context.Context,
 	db *sql.DB,
@@ -25,7 +26,7 @@ func UpsertIngestRun(
 		     total_rows, accepted_rows, failed_rows, duplicate_rows, status, completed_at)
 		VALUES ($1, $2, $3, NULLIF($4,''), NULLIF($5,''), NULLIF($6,''), NULLIF($7,''),
 		        $8, $9, $10, $11, $12, now())
-		ON CONFLICT (batch_id) DO UPDATE SET
+		ON CONFLICT (tenant_id, batch_id) DO UPDATE SET
 		    mapping_id     = EXCLUDED.mapping_id,
 		    total_rows     = EXCLUDED.total_rows,
 		    accepted_rows  = EXCLUDED.accepted_rows,
