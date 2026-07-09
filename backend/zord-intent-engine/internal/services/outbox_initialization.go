@@ -63,6 +63,7 @@ func CanonicalIntentToOutboxEvent(
 		RoutingHintsJSON:      intent.RoutingHintsJSON,
 		GovernanceState:       intent.GovernanceState,
 		BusinessState:         intent.BusinessState,
+		IntentLifecycleState:  intent.IntentLifecycleState,
 		DuplicateRiskFlag:     intent.DuplicateRiskFlag,
 		MappingProfileID:      intent.MappingProfileID,
 		MappingProfileVersion: intent.MappingProfileVersion,

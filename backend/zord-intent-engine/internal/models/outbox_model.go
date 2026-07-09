@@ -60,6 +60,7 @@ type OutboxEvent struct {
 	RoutingHintsJSON      json.RawMessage `json:"routing_hints_json,omitempty" db:"routing_hints_json"`
 	GovernanceState       string          `json:"governance_state,omitempty" db:"governance_state"`
 	BusinessState         string          `json:"business_state,omitempty" db:"business_state"`
+	IntentLifecycleState  string          `json:"intent_lifecycle_state,omitempty" db:"intent_lifecycle_state"`
 	DuplicateRiskFlag     bool            `json:"duplicate_risk_flag,omitempty" db:"duplicate_risk_flag"`
 	MappingProfileID      string          `json:"mapping_profile_used,omitempty" db:"mapping_profile_id"`
 	MappingProfileVersion string          `json:"mapping_profile_version,omitempty" db:"mapping_profile_version"`

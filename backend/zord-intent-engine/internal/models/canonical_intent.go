@@ -52,6 +52,12 @@ type CanonicalIntent struct {
 	RoutingHintsJSON      json.RawMessage `json:"routing_hints_json,omitempty"`
 	GovernanceState       string          `json:"governance_state,omitempty"`
 	BusinessState         string          `json:"business_state,omitempty"`
+	// IntentLifecycleState is the real per-intent lifecycle tracker that replaces
+	// the dead business_state field (always "NEW" historically). Only a subset of
+	// the full state vocabulary is set today (RECEIVED/ACCEPTED/FLAGGED_FOR_REVIEW);
+	// the remaining states are reserved for policy/duplicate/evidence/dispatch
+	// phases that don't exist yet.
+	IntentLifecycleState string `json:"intent_lifecycle_state,omitempty" db:"intent_lifecycle_state"`
 	DuplicateRiskFlag     bool            `json:"duplicate_risk_flag,omitempty"`
 	MappingProfileID      string          `json:"mapping_profile_used,omitempty" db:"mapping_profile_id"`
 	MappingProfileVersion string          `json:"mapping_profile_version,omitempty" db:"mapping_profile_version"`

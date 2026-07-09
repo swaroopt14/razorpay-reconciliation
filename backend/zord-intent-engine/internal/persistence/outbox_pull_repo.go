@@ -93,7 +93,8 @@ leased AS (
 		o.governance_decision,
 		o.payment_instruction_received,
 		o.canonical_intent_created,
-		COALESCE(o.client_payout_ref, '') as client_payout_ref
+		COALESCE(o.client_payout_ref, '') as client_payout_ref,
+		COALESCE(o.intent_lifecycle_state, '') as intent_lifecycle_state
 )
 SELECT
 	event_id,
@@ -126,7 +127,8 @@ SELECT
 	governance_decision,
 	payment_instruction_received,
 	canonical_intent_created,
-	client_payout_ref
+	client_payout_ref,
+	intent_lifecycle_state
 FROM leased
 ORDER BY created_at ASC;
 `
@@ -181,6 +183,7 @@ ORDER BY created_at ASC;
 			&evt.PaymentInstructionReceived,
 			&evt.CanonicalIntentCreated,
 			&evt.ClientPayoutRef,
+			&evt.IntentLifecycleState,
 		); err != nil {
 			return "", nil, nil, err
 		}

@@ -107,7 +107,8 @@ func (r *PaymentIntentRepo) Save(
     tokenization_status,
     governance_decision,
     payment_instruction_received,
-    canonical_intent_created
+    canonical_intent_created,
+    intent_lifecycle_state
 )
 VALUES (
     $1,$2,$3,$4,
@@ -128,7 +129,8 @@ VALUES (
     $44, $45,
     $46, $47, $48, $49, $50, -- UPDATED
     $51, $52, $53, $54, $55, $56, $57,
-    $58, $59, $60, $61, $62
+    $58, $59, $60, $61, $62,
+    $63
 ) `
 
 	_, err = tx.ExecContext(
@@ -196,6 +198,7 @@ VALUES (
 		intent.GovernanceDecision,         // $60
 		intent.PaymentInstructionReceived, // $61
 		intent.CanonicalIntentCreated,     // $62
+		intent.IntentLifecycleState,       // $63
 	)
 
 	if err != nil {
@@ -264,14 +267,16 @@ INSERT INTO outbox (
     tokenization_status,
     governance_decision,
     payment_instruction_received,
-    canonical_intent_created
+    canonical_intent_created,
+    intent_lifecycle_state
 ) VALUES (
     $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
     $11,$12,$13,$14,$15,$16,$17,$18,$19,
     $20,$21,$22,$23,$24,$25,$26,$27,$28,$29,
     $30,$31,$32,$33,$34,$35,$36,$37,$38,$39,
     $40,$41,$42,$43,$44,$45,$46,$47,$48,$49,
-    $50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60
+    $50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,
+    $61
 )`
 
 	outbox.ContractID = intent.ContractID
@@ -339,6 +344,7 @@ INSERT INTO outbox (
 		outbox.GovernanceDecision,         // $58
 		outbox.PaymentInstructionReceived, // $59
 		outbox.CanonicalIntentCreated,     // $60
+		outbox.IntentLifecycleState,       // $61
 	)
 	if err != nil {
 		log.Printf("Repo.Save: INSERT outbox failed: %v", err)
@@ -456,7 +462,8 @@ func (r *PaymentIntentRepo) FindByEnvelope(
 		tokenization_status,
 		governance_decision,
 		payment_instruction_received,
-		canonical_intent_created
+		canonical_intent_created,
+		intent_lifecycle_state
 	FROM payment_intents
 	WHERE tenant_id = $1
 	  AND envelope_id = $2
@@ -521,6 +528,7 @@ func (r *PaymentIntentRepo) FindByEnvelope(
 		&intent.GovernanceDecision,
 		&intent.PaymentInstructionReceived,
 		&intent.CanonicalIntentCreated,
+		&intent.IntentLifecycleState,
 	)
 
 	if err == sql.ErrNoRows {
@@ -666,7 +674,8 @@ func (r *PaymentIntentRepo) FindByBusinessIdempotencyKey(
 		tokenization_status,
 		governance_decision,
 		payment_instruction_received,
-		canonical_intent_created
+		canonical_intent_created,
+		intent_lifecycle_state
 	FROM payment_intents
 	WHERE tenant_id = $1
 	  AND business_idempotency_key = $2
@@ -731,6 +740,7 @@ func (r *PaymentIntentRepo) FindByBusinessIdempotencyKey(
 		&intent.GovernanceDecision,
 		&intent.PaymentInstructionReceived,
 		&intent.CanonicalIntentCreated,
+		&intent.IntentLifecycleState,
 	)
 
 	if err == sql.ErrNoRows {
@@ -958,7 +968,8 @@ func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, 
 	// Step 5: Update payment_intents with batch quality score + counters
 	_, err = r.db.ExecContext(ctx, `
         UPDATE payment_intents
-        SET aggregate_confidence_score = $1
+        SET aggregate_confidence_score = $1,
+            updated_at = now()
         WHERE tenant_id = $2 AND batchid = $3
     `, batchScore, tenantID, batchID) // stored as 0–1
 	if err != nil {
@@ -1183,7 +1194,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 		}
 	}
 	if len(intents) > 0 {
-		const piCols = 62
+		const piCols = 63
 		var placeholders strings.Builder
 		args := make([]interface{}, 0, len(intents)*piCols)
 		for i, intent := range intents {
@@ -1262,6 +1273,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 				intent.GovernanceDecision,         // $60
 				intent.PaymentInstructionReceived, // $61
 				intent.CanonicalIntentCreated,     // $62
+				intent.IntentLifecycleState,       // $63
 			)
 		}
 		q := fmt.Sprintf(`INSERT INTO payment_intents (
@@ -1297,7 +1309,8 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 			tokenization_status,
 			governance_decision,
 			payment_instruction_received,
-			canonical_intent_created
+			canonical_intent_created,
+			intent_lifecycle_state
 		) VALUES %s`, placeholders.String())
 		_, err = tx.ExecContext(ctx, q, args...)
 		if err != nil {
@@ -1314,7 +1327,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 		}
 	}
 	if len(outboxes) > 0 {
-		const outboxCols = 60
+		const outboxCols = 61
 		var placeholders strings.Builder
 		args := make([]interface{}, 0, len(outboxes)*outboxCols)
 		for i, outbox := range outboxes {
@@ -1391,6 +1404,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 				outbox.GovernanceDecision,         // $58
 				outbox.PaymentInstructionReceived, // $59
 				outbox.CanonicalIntentCreated,     // $60
+				outbox.IntentLifecycleState,       // $61
 			)
 		}
 		q := fmt.Sprintf(`INSERT INTO outbox (
@@ -1412,7 +1426,8 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 			retry_count, next_attempt_at, created_at, batchid,
 			source_row_num, aggregate_confidence_score,
 			required_fields_status, tokenization_status, governance_decision,
-			payment_instruction_received, canonical_intent_created
+			payment_instruction_received, canonical_intent_created,
+			intent_lifecycle_state
 		) VALUES %s`, placeholders.String())
 		_, err = tx.ExecContext(ctx, q, args...)
 		if err != nil {

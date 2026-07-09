@@ -1672,7 +1672,7 @@ return
 		EnvelopeID:                 in.EnvelopeID.String(),
 		TenantID:                   in.TenantID.String(),
 		IdempotencyKey:             in.IdempotencyKey,
-		SalientHash:                "NA",
+		SalientHash:                reqFingerprint,
 		PayloadHash:                in.PayloadHash,
 		IntentType:                 canonicalInput.IntentType,
 		CanonicalVersion:           "v1",
@@ -1739,7 +1739,7 @@ return
 		EnvelopeID:     in.EnvelopeID.String(),
 		TenantID:       in.TenantID.String(),
 		IdempotencyKey: in.IdempotencyKey,
-		SalientHash:    "NA",
+		SalientHash:    reqFingerprint,
 		PayloadHash:    in.PayloadHash,
 
 		IntentType:       canonicalInput.IntentType,
@@ -1822,6 +1822,16 @@ return
 		govDec = "Fail"
 	}
 	canonical.GovernanceDecision = &govDec
+
+	// A row only ever reaches payment_intents once it has cleared governance,
+	// so the only lifecycle states reachable here today are ACCEPTED and
+	// FLAGGED_FOR_REVIEW. The remaining states in the CHECK constraint are
+	// reserved for later phases (policy engine, duplicate decisions, evidence,
+	// dispatch readiness) that don't persist a state transition yet.
+	canonical.IntentLifecycleState = "ACCEPTED"
+	if canonical.GovernanceState == "FLAGGED" || canonical.GovernanceState == "REQUIRES_REVIEW" {
+		canonical.IntentLifecycleState = "FLAGGED_FOR_REVIEW"
+	}
 
 	reqStatus := nir.RequiredFieldGapCount == 0
 	canonical.RequiredFieldsStatus = &reqStatus
@@ -2465,7 +2475,7 @@ func (s *IntentService) ProcessTokenizeResult(
 		EnvelopeID:                 event.EnvelopeID,
 		TenantID:                   event.TenantID,
 		IdempotencyKey:             idempotencyKey,
-		SalientHash:                "NA",
+		SalientHash:                reqFingerprint,
 		PayloadHash:                canonicalInput.PayloadHash,
 		IntentType:                 canonicalInput.IntentType,
 		CanonicalVersion:           "v1",
@@ -2527,6 +2537,7 @@ func (s *IntentService) ProcessTokenizeResult(
 		EnvelopeID:     event.EnvelopeID,
 		TenantID:       event.TenantID,
 		IdempotencyKey: idempotencyKey,
+		SalientHash:    reqFingerprint,
 
 		IntentType:       canonicalInput.IntentType,
 		CanonicalVersion: "v1",
@@ -2607,6 +2618,12 @@ func (s *IntentService) ProcessTokenizeResult(
 		govDec = "Fail"
 	}
 	intent.GovernanceDecision = &govDec
+
+	// See single-item path for why only ACCEPTED/FLAGGED_FOR_REVIEW are reachable here.
+	intent.IntentLifecycleState = "ACCEPTED"
+	if intent.GovernanceState == "FLAGGED" || intent.GovernanceState == "REQUIRES_REVIEW" {
+		intent.IntentLifecycleState = "FLAGGED_FOR_REVIEW"
+	}
 
 	reqStatus := nir.RequiredFieldGapCount == 0
 	intent.RequiredFieldsStatus = &reqStatus
@@ -2730,7 +2747,7 @@ func (s *IntentService) processWebhook(
 		EnvelopeID:     in.EnvelopeID.String(),
 		TenantID:       in.TenantID.String(),
 		IdempotencyKey: in.IdempotencyKey,
-		SalientHash:    "NA",
+		SalientHash:    in.IdempotencyKey,
 		IntentType:     "WEBHOOK",
 		SchemaVersion:  "v1",
 		Amount:         decimal.Zero,
@@ -2748,6 +2765,7 @@ func (s *IntentService) processWebhook(
 		RoutingHintsJSON:      json.RawMessage(`{}`),
 		GovernanceState:       "WEBHOOK",
 		BusinessState:         "NEW",
+		IntentLifecycleState:  "RECEIVED", // webhook path skips mapping/validation/scoring today
 		DuplicateRiskFlag:     false,
 		MappingProfileID:      "WEBHOOK_PROFILE",
 		MappingProfileVersion: "WEBHOOK",

@@ -126,7 +126,8 @@ func (r *IntentQueryRepo) ListIntents(
 		tokenization_status,
 		governance_decision,
 		payment_instruction_received,
-		canonical_intent_created
+		canonical_intent_created,
+		COALESCE(intent_lifecycle_state, '') as intent_lifecycle_state
 	FROM payment_intents
 	%s
 	ORDER BY created_at DESC
@@ -183,6 +184,7 @@ func (r *IntentQueryRepo) ListIntents(
 			&intent.GovernanceDecision,
 			&intent.PaymentInstructionReceived,
 			&intent.CanonicalIntentCreated,
+			&intent.IntentLifecycleState,
 		)
 
 		if err != nil {
@@ -234,7 +236,8 @@ func (r *IntentQueryRepo) GetIntentByID(
 		tokenization_status,
 		governance_decision,
 		payment_instruction_received,
-		canonical_intent_created
+		canonical_intent_created,
+		COALESCE(intent_lifecycle_state, '') as intent_lifecycle_state
 	FROM payment_intents
 	WHERE tenant_id = $1
 	AND intent_id=$2
@@ -279,6 +282,7 @@ func (r *IntentQueryRepo) GetIntentByID(
 		&intent.GovernanceDecision,
 		&intent.PaymentInstructionReceived,
 		&intent.CanonicalIntentCreated,
+		&intent.IntentLifecycleState,
 	)
 
 	if err != nil {
@@ -438,7 +442,8 @@ func (r *IntentQueryRepo) ListPaymentIntentsByBatch(
 			tokenization_status,
 			governance_decision,
 			payment_instruction_received,
-			canonical_intent_created
+			canonical_intent_created,
+			COALESCE(intent_lifecycle_state, '') as intent_lifecycle_state
 		FROM payment_intents
 		WHERE tenant_id = $1
 		  AND batchid = $2
@@ -494,6 +499,7 @@ func (r *IntentQueryRepo) ListPaymentIntentsByBatch(
 			&intent.GovernanceDecision,
 			&intent.PaymentInstructionReceived,
 			&intent.CanonicalIntentCreated,
+			&intent.IntentLifecycleState,
 		); err != nil {
 			return nil, 0, fmt.Errorf("failed to scan payment intent detail row: %w", err)
 		}
