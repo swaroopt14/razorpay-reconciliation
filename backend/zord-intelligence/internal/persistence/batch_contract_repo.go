@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
+	"github.com/zord/zord-intelligence/internal/models"
 )
 
 // batchContractSelectColumns is the authoritative column list for all
@@ -100,22 +101,22 @@ type BatchContract struct {
 	PredictedAt                *time.Time       `json:"predicted_at,omitempty"`
 
 	// ── Attachment completeness snapshot (Service 5C batch summary — intent-centric) ──
-	TotalIntentCount                 int             `json:"total_intent_count"`
-	MatchedIntentCount               int             `json:"matched_intent_count"`
-	AmbiguousCount                   int             `json:"ambiguous_count"`
-	UnresolvedIntentCount            int             `json:"unresolved_intent_count"`
-	ConflictedCount                  int             `json:"conflicted_count"`
-	OrphanObservationCount           int             `json:"orphan_observation_count"`
-	OriginalIntendedAmountMinor      decimal.Decimal `json:"original_intended_amount_minor"`
-	AmbiguousAmountMinor             decimal.Decimal `json:"ambiguous_amount_minor"`
-	UnresolvedIntendedAmountMinor    decimal.Decimal `json:"unresolved_intended_amount_minor"`
-	ConflictedAmountMinor            decimal.Decimal `json:"conflicted_amount_minor"`
-	OrphanObservedAmountMinor        decimal.Decimal `json:"orphan_observed_amount_minor"`
-	NetBatchDeltaMinor               decimal.Decimal `json:"net_batch_delta_minor"`
-	IntentCountCoverage              float64         `json:"intent_count_coverage"`
-	IntentValueCoverage              float64         `json:"intent_value_coverage"`
-	ObservedCountAllocationCoverage  float64         `json:"observed_count_allocation_coverage"`
-	ObservedValueAllocationCoverage  float64         `json:"observed_value_allocation_coverage"`
+	TotalIntentCount                int             `json:"total_intent_count"`
+	MatchedIntentCount              int             `json:"matched_intent_count"`
+	AmbiguousCount                  int             `json:"ambiguous_count"`
+	UnresolvedIntentCount           int             `json:"unresolved_intent_count"`
+	ConflictedCount                 int             `json:"conflicted_count"`
+	OrphanObservationCount          int             `json:"orphan_observation_count"`
+	OriginalIntendedAmountMinor     decimal.Decimal `json:"original_intended_amount_minor"`
+	AmbiguousAmountMinor            decimal.Decimal `json:"ambiguous_amount_minor"`
+	UnresolvedIntendedAmountMinor   decimal.Decimal `json:"unresolved_intended_amount_minor"`
+	ConflictedAmountMinor           decimal.Decimal `json:"conflicted_amount_minor"`
+	OrphanObservedAmountMinor       decimal.Decimal `json:"orphan_observed_amount_minor"`
+	NetBatchDeltaMinor              decimal.Decimal `json:"net_batch_delta_minor"`
+	IntentCountCoverage             float64         `json:"intent_count_coverage"`
+	IntentValueCoverage             float64         `json:"intent_value_coverage"`
+	ObservedCountAllocationCoverage float64         `json:"observed_count_allocation_coverage"`
+	ObservedValueAllocationCoverage float64         `json:"observed_value_allocation_coverage"`
 
 	// ── Per-batch risk attribution (Pattern Intelligence) ─────────────────────
 	// Incremented by individual event handlers — NOT reset by BatchSummaryUpdatedEvent.
@@ -185,6 +186,7 @@ func (r *BatchContractRepo) SetBatchWriter(bw *BatchWriter) {
 // IMPORTANT: defensibility_tier is NOT set here — it is set by the
 // Defensibility intelligence service (Phase 4) once it has scored the batch.
 func (r *BatchContractRepo) Upsert(ctx context.Context, bc BatchContract) error {
+	bc.BatchFinalityStatus = models.NormalizeBatchFinalityStatus(bc.BatchFinalityStatus)
 	sql := `
 		INSERT INTO batch_contracts
 			(batch_id, tenant_id, source_reference,
@@ -1013,6 +1015,7 @@ func (r *BatchContractRepo) UpsertIntentSnapshot(
 	if bc.BatchID == "" || bc.TenantID == "" || bc.IntentRowCount <= 0 || !bc.IntentTotalAmountMinor.IsPositive() {
 		return nil
 	}
+	bc.BatchFinalityStatus = models.NormalizeBatchFinalityStatus(bc.BatchFinalityStatus)
 
 	createdAt := bc.CreatedAt
 	if createdAt.IsZero() {
@@ -1045,7 +1048,7 @@ func (r *BatchContractRepo) UpsertIntentSnapshot(
 		ON CONFLICT (batch_id) DO UPDATE SET
 			total_count = GREATEST(batch_contracts.total_count, EXCLUDED.total_count),
 			pending_count = CASE
-				WHEN batch_contracts.batch_finality_status IN ('FULLY_SETTLED', 'PARTIALLY_SETTLED', 'FAILED', 'REQUIRES_REVIEW', 'CLOSED')
+				WHEN batch_contracts.batch_finality_status IN ('FULLY_RECONCILED', 'PARTIALLY_RECONCILED', 'FAILED', 'REQUIRES_REVIEW', 'CLOSED')
 					THEN batch_contracts.pending_count
 				ELSE GREATEST(batch_contracts.pending_count, EXCLUDED.pending_count)
 			END,
@@ -1054,7 +1057,7 @@ func (r *BatchContractRepo) UpsertIntentSnapshot(
 				EXCLUDED.total_intended_amount_minor
 			),
 			batch_finality_status = CASE
-				WHEN batch_contracts.batch_finality_status IN ('FULLY_SETTLED', 'PARTIALLY_SETTLED', 'FAILED', 'REQUIRES_REVIEW', 'CLOSED')
+				WHEN batch_contracts.batch_finality_status IN ('FULLY_RECONCILED', 'PARTIALLY_RECONCILED', 'FAILED', 'REQUIRES_REVIEW', 'CLOSED')
 					THEN batch_contracts.batch_finality_status
 				ELSE EXCLUDED.batch_finality_status
 			END,

@@ -56,7 +56,7 @@ func (r *LiveSQLRetriever) fetchFromIntelligence(tenantID string, topK int, fail
 			args = append(args, tenantID)
 		}
 		if failureOnly {
-			q += " AND (failed_count > 0 OR pending_count > 0 OR unmatched_amount_minor > 0 OR orphan_amount_minor > 0 OR unexplained_variance_minor > 0 OR batch_finality_status IN ('FAILED','REQUIRES_REVIEW','PARTIALLY_SETTLED'))"
+			q += " AND (failed_count > 0 OR pending_count > 0 OR unmatched_amount_minor > 0 OR orphan_amount_minor > 0 OR unexplained_variance_minor > 0 OR batch_finality_status IN ('FAILED','REQUIRES_REVIEW','PARTIALLY_RECONCILED'))"
 		}
 		if scope.HasExplicitTime {
 			q += fmt.Sprintf(" AND last_updated_at >= $%d AND last_updated_at < $%d", len(args)+1, len(args)+2)

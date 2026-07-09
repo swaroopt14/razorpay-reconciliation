@@ -21,9 +21,16 @@ import (
 	"github.com/google/uuid"
 )
 
-// SettlementUploadHandler manages the end-to-end flow of settlement file ingestion.
-// Following the structure of zord-edge/intent_handler, the orchestration logic
-// resides directly here for maximum visibility.
+// SettlementUploadHandler manages end-to-end settlement file ingestion.
+//
+// FIX #18: SeedDefaultAttachmentRuleProfile replaced with ensureRuleProfileSeeded
+//          (at-most-once per tenant per process, via sync.Map cache).
+//
+// FIX #14: attachment job pre-registration now includes stale_after so the
+//          reaper goroutine can recover stuck jobs after EC2 replacement.
+//
+// FIX #20: PersistParseErrorsBatch error is now logged instead of silently
+//          swallowed with _ =.
 func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 	// ── PRE-FLIGHT ───────────────────────────────────────────────────────────
 		const maxPayloadSize = 1000 * 1024 // 1000 KB
@@ -45,24 +52,17 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 		return
 	}
 
-	// Auto-seed default ruleset for this tenant if they don't have one
-	_ = db.SeedDefaultAttachmentRuleProfile(c.Request.Context(), tenantID)
+	// FIX #18: at-most-once seed via cache instead of per-request DB upsert.
+	ensureRuleProfileSeeded(c.Request.Context(), tenantID)
 
-	// Read the PSP identifier from the query param.
-	// This tells the system which parser and mapping profile to use.
-	// Example: POST /v1/settlement/upload?tenant_id=xxx&psp=razorpay
 	psp := strings.ToLower(strings.TrimSpace(c.Query("psp")))
 	if psp == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "psp query param is required (e.g. ?psp=razorpay)"})
 		return
 	}
 
-	// Look up the mapping profile for this PSP.
-	// If the PSP is not registered, reject the request immediately.
 	profile, ok := models.GetProfile(psp)
 	if !ok {
-		// Build supported PSP list dynamically from KnownProfiles so this message
-		// never goes out of date when new PSPs are added to the registry.
 		supportedKeys := make([]string, 0, len(models.KnownProfiles))
 		for k := range models.KnownProfiles {
 			supportedKeys = append(supportedKeys, k)
@@ -75,7 +75,6 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 		return
 	}
 
-	// Retrieve the file from the multipart form data.
 	file, header, err := c.Request.FormFile("file")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "file is required"})
@@ -83,7 +82,6 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 	}
 	defer file.Close()
 
-	// Accept common settlement export formats for any registered PSP (parser may still fail on content).
 	lowerName := strings.ToLower(header.Filename)
 	allowedExt := []string{".csv", ".xlsx", ".xls"}
 	hasAllowedExt := false
@@ -94,41 +92,32 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 		}
 	}
 	if !hasAllowedExt {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "unsupported file type: use .csv, .xlsx, or .xls",
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported file type: use .csv, .xlsx, or .xls"})
 		return
 	}
 
 	// ── PHASE 1: METRICS & STORAGE ───────────────────────────────────────────
-	// Compute file hash and size while reading into memory.
-	// We use io.TeeReader to compute a SHA256 content fingerprint in a single pass.
 	hasher := sha256.New()
 	fileBytes, err := io.ReadAll(io.TeeReader(file, hasher))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read file"})
 		return
 	}
-
-	// Capture metrics for logging and job metadata.
 	fileHash := hex.EncodeToString(hasher.Sum(nil))
 	fileSize := int64(len(fileBytes))
 
 	log.Printf("settlement.upload.metrics tenant_id=%s filename=%s hash=%s size=%d",
 		tenantID, header.Filename, fileHash, fileSize)
 
-	// ── IDEMPOTENCY INPUTS ───────────────────────────────────────────────────────
+	// ── IDEMPOTENCY ───────────────────────────────────────────────────────────
 	externalBatchIDRaw := strings.TrimSpace(c.Query("batch_id"))
 	if externalBatchIDRaw == "" {
-		externalBatchIDRaw = strings.TrimSpace(c.GetHeader("Batch-ID")) // Fallback to honor prior request
+		externalBatchIDRaw = strings.TrimSpace(c.GetHeader("Batch-ID"))
 	}
 	forceReprocess := strings.ToLower(strings.TrimSpace(
 		c.GetHeader("X-Zord-Force-Reprocess"))) == "true"
-	// X-Zord-Force-Reprocess-Reason is required when force reprocessing.
-	// Allowed values: CLIENT_CORRECTED_FILE | PARSER_FIX | BACKFILL | MANUAL
 	reprocessReason := strings.TrimSpace(c.GetHeader("X-Zord-Force-Reprocess-Reason"))
 
-	// ── OPTION C IDEMPOTENCY ─────────────────────────────────────────────────
 	svc := &services.SettlementIngestService{S3: h.S3store}
 
 	clientBatchID := externalBatchIDRaw
@@ -178,8 +167,6 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 		}
 	}
 
-	// Persist the raw file payload to S3. This is our immutable source of truth
-	// for the ingestion job. The storage layer returns an envelopeID and objRef.
 	envelopeID, _, objRef, err := h.S3store.StoreRawPayload(c.Request.Context(), fileBytes, tenantID.String())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "S3 storage failed: " + err.Error()})
@@ -223,8 +210,7 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 		"received_at":       time.Now().UTC().Format(time.RFC3339),
 	})
 
-	// ── ASYNC BACKGROUND PIPELINE ───────────────────────────────────────────
-	// Push parsing and canonicalization to background to free up HTTP worker.
+	// ── ASYNC BACKGROUND PIPELINE ─────────────────────────────────────────────
 	bgCtx, cancel := backgroundJobContext()
 	go func(
 		bgCtx context.Context,
@@ -240,14 +226,13 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 		data []byte,
 	) {
 		defer cancel()
-		// ── CONCURRENCY GATE ─────────────────────────────────────────────────────
-		// Block until a background-job slot is free. The 202 has already been
-		// sent to the caller above, so this does not affect HTTP response timing.
+
 		waitStart := acquireJobSlot()
 		defer releaseJobSlot()
-		log.Printf("settlement.upload.slot_acquired job_id=%s wait_ms=%d", bgIngestRunID, time.Since(waitStart).Milliseconds())
+		log.Printf("settlement.upload.slot_acquired job_id=%s wait_ms=%d",
+			bgIngestRunID, time.Since(waitStart).Milliseconds())
 
-		// ── PHASE 3: PARSING ─────────────────────────────────────────────────────
+		// ── PHASE 3: PARSING ──────────────────────────────────────────────────
 		parser, err := services.GetParser(pspProfile.ParserKey)
 		if err != nil {
 			svc.MarkJobFailed(bgCtx, bgIngestRunID, "MAPPING_PROFILE_MISSING")
@@ -256,9 +241,7 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 
 		results, err := parser.Parse(data, bgRef, bgEnvelope, pspProfile)
 		if err != nil {
-			// Type-assert to RunLevelError to get the exact failure code.
-			// All parsers are required to return *RunLevelError for fatal file-level errors.
-			failureCode := "FILE_CORRUPTED" // safe fallback
+			failureCode := "FILE_CORRUPTED"
 			var rle *services.RunLevelError
 			if errors.As(err, &rle) {
 				failureCode = string(rle.Kind)
@@ -272,7 +255,7 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 		var parsedRowItems []services.ParsedRowBatchItem
 		var parseErrorItems []services.ParseErrorBatchItem
 
-		// ── PHASE 4: PERSISTENCE ─────────────────────────────────────────────────
+		// ── PHASE 4: PERSISTENCE ──────────────────────────────────────────────
 		for _, result := range results {
 			rowRef := fmt.Sprintf("%d", result.RowIndex)
 
@@ -280,7 +263,6 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 				log.Printf("settlement.parse.row_failed job_id=%s row=%d reason=%s",
 					bgIngestRunID, result.RowIndex, result.FailureReason)
 				rowCountFailed++
-
 				parsedRowItems = append(parsedRowItems, services.ParsedRowBatchItem{
 					RowRef:            rowRef,
 					Result:            result,
@@ -302,8 +284,21 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 			})
 		}
 
-		persistResult, _ := svc.PersistParsedRowsBatch(bgCtx, bgTenant, bgIngestRunID, bgEnvelope, bgRef, pspProfile, bgSettlementBatchID, bgClientBatchID, parsedRowItems)
-		_ = svc.PersistParseErrorsBatch(bgCtx, bgTenant, bgIngestRunID, bgEnvelope, pspProfile, bgSettlementBatchID, bgClientBatchID, parseErrorItems)
+		persistResult, _ := svc.PersistParsedRowsBatch(
+			bgCtx, bgTenant, bgIngestRunID, bgEnvelope, bgRef,
+			pspProfile, bgSettlementBatchID, bgClientBatchID, parsedRowItems)
+
+		// FIX #20: log parse-error persistence failures rather than silently
+		// swallowing them. The run is not failed — parse errors are non-fatal
+		// at the row level — but missing audit rows must be visible to operators.
+		if parseErr := svc.PersistParseErrorsBatch(
+			bgCtx, bgTenant, bgIngestRunID, bgEnvelope,
+			pspProfile, bgSettlementBatchID, bgClientBatchID, parseErrorItems,
+		); parseErr != nil {
+			log.Printf("settlement.upload.parse_errors_persist_failed job_id=%s err=%v — parse error audit rows may be missing",
+				bgIngestRunID, parseErr)
+		}
+
 		rowCountParsed := persistResult.ParsedCount
 		confidenceSum := persistResult.ConfidenceSum
 
@@ -315,43 +310,46 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 			log.Printf("settlement.upload.finalize_error job_id=%s err=%v", bgIngestRunID, err)
 		}
 
-		// ── PHASE 5: CANONICALIZATION & OUTPUTS ──────────────────────────────────
+		// ── PHASE 5: CANONICALIZATION ─────────────────────────────────────────
 		log.Printf("settlement.upload.canonicalize_start job_id=%s", bgIngestRunID)
 		canonSvc := &services.SettlementCanonicalizeService{}
 		if err := canonSvc.RunForJob(bgCtx, bgIngestRunID, bgTenant, pspProfile, bgClientBatchID); err != nil {
 			log.Printf("settlement.upload.canonicalize_error job_id=%s err=%v", bgIngestRunID, err)
-		} else {
-			if err := svc.ActivateRun(bgCtx, bgSettlementBatchID, bgIngestRunID, bgPreviousRunID, bgRunNumber); err != nil {
-				log.Printf("settlement.upload.activate_run_error run_id=%s err=%v", bgIngestRunID, err)
-			}
-			// Trigger attachment engine automatically on success.
-			// Pre-insert the attachment_job row as RUNNING so the engine can
-			// reuse the same UUID it was handed — same contract as the explicit
-			// POST /v1/attachment/run handler.
-			attachJobID := uuid.New()
-			attachNow := time.Now().UTC()
-			if _, insErr := db.DB.ExecContext(bgCtx, `
-				INSERT INTO attachment_jobs (
-					attachment_job_id, tenant_id, job_scope_type, scope_ref,
-					matching_ruleset_version, status,
-					candidate_count_total, exact_match_count, high_confidence_count,
-					ambiguous_count, unresolved_count, conflicted_count,
-					started_at, created_at
-				) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-				attachJobID, bgTenant, "INGEST_RUN", bgIngestRunID,
-				services.RulesetVersion, "RUNNING",
-				0, 0, 0, 0, 0, 0,
-				attachNow, attachNow,
-			); insErr != nil {
-				log.Printf("settlement.upload.attachment_preregister_failed job_id=%s err=%v", bgIngestRunID, insErr)
-				// Continue without pre-registration — engine will still run but
-				// the job row won't be pollable via the attachment API.
-			}
-			log.Printf("settlement.upload.attachment_start ingest_run=%s attachment_job=%s", bgIngestRunID, attachJobID)
-			engine := &services.AttachmentEngine{}
-			if _, err := engine.RunForJob(bgCtx, bgTenant, bgIngestRunID, attachJobID); err != nil {
-				log.Printf("settlement.upload.attachment_error ingest_run=%s attachment_job=%s err=%v", bgIngestRunID, attachJobID, err)
-			}
+			return
 		}
-	}(bgCtx, profile, ingestRunID, settlementBatchID, previousRunID, runNumber, tenantID, envelopeID, objRef, clientBatchID, fileBytes)
+
+		if err := svc.ActivateRun(bgCtx, bgSettlementBatchID, bgIngestRunID, bgPreviousRunID, bgRunNumber); err != nil {
+			log.Printf("settlement.upload.activate_run_error run_id=%s err=%v", bgIngestRunID, err)
+		}
+
+		// Trigger attachment engine automatically on canonicalization success.
+		// FIX #14: include stale_after in the pre-registration row.
+		attachJobID := uuid.New()
+		attachNow := time.Now().UTC()
+		attachStaleAfter := attachNow.Add(jobStaleAfterDuration)
+		if _, insErr := db.DB.ExecContext(bgCtx, `
+			INSERT INTO attachment_jobs (
+				attachment_job_id, tenant_id, job_scope_type, scope_ref,
+				matching_ruleset_version, status,
+				candidate_count_total, exact_match_count, high_confidence_count,
+				ambiguous_count, unresolved_count, conflicted_count,
+				started_at, stale_after, created_at
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+			attachJobID, bgTenant, "INGEST_RUN", bgIngestRunID,
+			services.RulesetVersion, "RUNNING",
+			0, 0, 0, 0, 0, 0,
+			attachNow, attachStaleAfter, attachNow,
+		); insErr != nil {
+			log.Printf("settlement.upload.attachment_preregister_failed job_id=%s err=%v", bgIngestRunID, insErr)
+		}
+
+		log.Printf("settlement.upload.attachment_start ingest_run=%s attachment_job=%s",
+			bgIngestRunID, attachJobID)
+		engine := &services.AttachmentEngine{}
+		if _, err := engine.RunForJob(bgCtx, bgTenant, bgIngestRunID, attachJobID); err != nil {
+			log.Printf("settlement.upload.attachment_error ingest_run=%s attachment_job=%s err=%v",
+				bgIngestRunID, attachJobID, err)
+		}
+	}(bgCtx, profile, ingestRunID, settlementBatchID, previousRunID, runNumber,
+		tenantID, envelopeID, objRef, clientBatchID, fileBytes)
 }

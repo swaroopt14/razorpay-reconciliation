@@ -400,12 +400,14 @@ CREATE TABLE IF NOT EXISTS settlement_outbox_events(
 			conflicted_count         INT NOT NULL DEFAULT 0,
 			started_at               TIMESTAMPTZ,
 			completed_at             TIMESTAMPTZ,
+			stale_after             TIMESTAMPTZ,
 			created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);`,
 		`CREATE INDEX IF NOT EXISTS attachment_jobs_tenant_idx
 			ON attachment_jobs(tenant_id);`,
 		`CREATE INDEX IF NOT EXISTS attachment_jobs_status_idx
 			ON attachment_jobs(status);`,
+		`CREATE INDEX IF NOT EXISTS attachment_jobs_stale_idx ON attachment_jobs(status, stale_after) WHERE status = 'RUNNING';`,
 
 		// ── attachment_candidates ────────────────────────────────────────────
 		// Every candidate evaluated for an intent, with per-carrier match flags
@@ -839,6 +841,7 @@ CREATE TABLE IF NOT EXISTS settlement_outbox_events(
 		`ALTER TABLE batch_attachment_summaries ADD COLUMN IF NOT EXISTS observed_value_allocation_coverage NUMERIC(10,6) NOT NULL DEFAULT 0;`,
 		`ALTER TABLE batch_attachment_summaries ADD COLUMN IF NOT EXISTS ambiguous_amount NUMERIC(20,2) NOT NULL DEFAULT 0;`,
 		`ALTER TABLE batch_attachment_summaries ADD COLUMN IF NOT EXISTS conflicted_amount NUMERIC(20,2) NOT NULL DEFAULT 0;`,
+		`ALTER TABLE attachment_jobs ADD COLUMN IF NOT EXISTS stale_after TIMESTAMPTZ;`,
 		`CREATE INDEX IF NOT EXISTS attachment_decisions_obs_tenant_strong_match_idx
 			ON attachment_decisions(tenant_id, settlement_observation_id)
 			WHERE settlement_observation_id IS NOT NULL
@@ -856,6 +859,7 @@ CREATE TABLE IF NOT EXISTS settlement_outbox_events(
 			WHERE client_batch_id IS NOT NULL AND client_batch_id <> '';`,
 		`CREATE INDEX IF NOT EXISTS canonical_obs_tenant_curr_amt_ts_idx
 			ON canonical_settlement_observations(tenant_id, currency_code, amount, observation_timestamp);`,
+		`CREATE INDEX IF NOT EXISTS attachment_jobs_stale_idx ON attachment_jobs(status, stale_after) WHERE status = 'RUNNING';`,
 	}
 
 	for _, s := range stmts {

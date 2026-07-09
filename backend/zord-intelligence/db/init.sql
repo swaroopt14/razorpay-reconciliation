@@ -838,7 +838,7 @@ CREATE INDEX IF NOT EXISTS idx_batch_tenant_updated
 
 CREATE INDEX IF NOT EXISTS idx_batch_status
     ON batch_contracts (tenant_id, batch_finality_status)
-    WHERE batch_finality_status IN ('REQUIRES_REVIEW', 'PARTIALLY_SETTLED', 'FAILED');
+    WHERE batch_finality_status IN ('REQUIRES_REVIEW', 'PARTIALLY_RECONCILED', 'FAILED');
 
 CREATE INDEX IF NOT EXISTS idx_batch_ambiguity
     ON batch_contracts (tenant_id, ambiguity_score DESC)
