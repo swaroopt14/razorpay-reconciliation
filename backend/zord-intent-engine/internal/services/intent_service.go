@@ -115,10 +115,8 @@ var enclaveHTTPClient = &http.Client{
 
 // getTenantSynonyms returns tenant-specific synonym overrides from DB.
 // Returns empty map if tenant has no custom synonyms — falls back to global dict.
-func (s *IntentService) getTenantSynonyms(tenantID uuid.UUID) map[string]string {
-	// TODO Phase 2: load from tenant_synonym_profiles table
-	// For now return empty — global synonym dict in normalizer package handles everything
-	return map[string]string{}
+func (s *IntentService) getTenantSynonyms(ctx context.Context, tenantID uuid.UUID) map[string]string {
+	return loadTenantSynonyms(ctx, s.db, tenantID)
 }
 
 // Repository abstraction
@@ -1146,6 +1144,7 @@ func (s *IntentService) processIncomingIntentInternal(
 	// apply column_map to translate tenant headers → canonical JSON keys.
 	// This is the correct location for profile-driven normalization.
 	// The normalizer at Step 5.1 then runs as a fast-path (no-op for canonical JSON).
+	var profileUnmappedFields map[string]any
 	if in.SourceSystem != "" && in.SourceSystem != "UNKNOWN" {
 		artifactFamily := models.ArtifactFamilyLiveIntentJSON
 		if in.Source == "CSV" || in.Source == "XLSX" || in.Source == "BULK_FILE" {
@@ -1165,12 +1164,13 @@ func (s *IntentService) processIncomingIntentInternal(
 		} else if profile != nil {
 			resolvedProfile = profile
 			parser := NewGenericSourceParser()
-			mapped, mapErr := parser.ParseToCanonicalJSON(decryptedPayload, profile)
+			mapped, unmapped, mapErr := parser.ParseToCanonicalJSON(decryptedPayload, profile)
 			if mapErr != nil {
 				log.Printf("⚠️ [profile] ParseToCanonicalJSON failed envelope=%s: %v — continuing with raw payload",
 					in.EnvelopeID, mapErr)
 			} else {
 				decryptedPayload = mapped
+				profileUnmappedFields = unmapped
 				log.Printf("ℹ️ [profile] applied profile=%s source=%s envelope=%s",
 					profile.ProfileID, in.SourceSystem, in.EnvelopeID)
 			}
@@ -1181,7 +1181,7 @@ func (s *IntentService) processIncomingIntentInternal(
 	// -------- STEP 5.1: Header normalization (ETL 10.1 / 10.2 / 10.3) --------
 	// Normalize tenant-specific field names → Zord canonical JSON keys.
 	// If payload is already canonical, this is a no-op (fast path).
-	normResult, normErr := normalizer.Normalize(decryptedPayload, s.getTenantSynonyms(in.TenantID))
+	normResult, normErr := normalizer.Normalize(decryptedPayload, s.getTenantSynonyms(ctx, in.TenantID))
 	if normErr != nil {
 		log.Printf("⚠️ Normalization failed for EnvelopeID=%s: %v — falling back to raw payload", in.EnvelopeID, normErr)
 		// Do NOT DLQ — fall through with original payload (graceful degradation)
@@ -1248,15 +1248,35 @@ func (s *IntentService) processIncomingIntentInternal(
 		}
 	}
 
+	// requiredFor lets a tenant's mapping profile promote an otherwise-optional
+	// field to required (StrictRequiredFieldsJSON), driving the existing
+	// required-field-gap -> governance FLAGGED mechanism below. The 5 baseline
+	// fields above are always required regardless of profile — tenant policy
+	// can only ADD requirements on top of core structural safety, never remove
+	// them. OBSERVE mode records these fields for visibility but never flags,
+	// since it has no gate to enforce yet (that's Phase 4 policy engine work).
+	requiredFor := func(name string, hardcodedDefault bool) bool {
+		if resolvedProfile == nil {
+			return hardcodedDefault
+		}
+		if resolvedProfile.ValidationMode == models.ValidationModeObserve {
+			return false
+		}
+		if resolvedProfile.IsFieldRequired(name) {
+			return true
+		}
+		return hardcodedDefault
+	}
+
 	addFields("intent_type", parsed.IntentType, "$.intent_type", true)
 	addFields("amount", parsed.Amount.Value, "$.amount.value", true)
 	addFields("currency", parsed.Amount.Currency, "$.amount.currency", true)
 	addFields("beneficiary_name", parsed.Beneficiary.Name, "$.beneficiary.name", true)
 	addFields("idempotency_key", parsed.IdempotencyKey, "$.idempotency_key", true)
-	addFields("client_batch_ref", parsed.ClientBatchRef, "$.client_batch_ref", false)
-	addFields("client_payout_ref", parsed.ClientPayoutRef, "$.client_payout_ref", false)
-	addFields("provider_hint", parsed.ProviderHint, "$.provider_hint", false)
-	addFields("intended_execution_at", parsed.IntendedExecutionAt, "$.intended_execution_at", false)
+	addFields("client_batch_ref", parsed.ClientBatchRef, "$.client_batch_ref", requiredFor("client_batch_ref", false))
+	addFields("client_payout_ref", parsed.ClientPayoutRef, "$.client_payout_ref", requiredFor("client_payout_ref", false))
+	addFields("provider_hint", parsed.ProviderHint, "$.provider_hint", requiredFor("provider_hint", false))
+	addFields("intended_execution_at", parsed.IntendedExecutionAt, "$.intended_execution_at", requiredFor("intended_execution_at", false))
 
 	fieldsJSON, _ := json.Marshal(fieldsMap)
 
@@ -1274,6 +1294,11 @@ func (s *IntentService) processIncomingIntentInternal(
 		profileVersion = parsed.SchemaVersion
 	}
 
+	profileHash := ""
+	if resolvedProfile != nil {
+		profileHash = resolvedProfile.ProfileHash
+	}
+
 	nir := &models.NormalizedIngestRecord{
 		NIRID:                   uuid.New(),
 		EnvelopeID:              in.EnvelopeID,
@@ -1288,6 +1313,17 @@ func (s *IntentService) processIncomingIntentInternal(
 		RequiredFieldGapCount:   gapCount,
 		LowConfidenceFieldCount: lowConfCount,
 		CreatedAt:               time.Now().UTC(),
+		MappingProfileHash:      profileHash,
+	}
+
+	// Fields the resolved mapping profile's column_map didn't account for are
+	// never dropped — they're preserved here for audit/lineage even though the
+	// normalizer sees profile-parsed JSON as already-canonical (WasNormalized=false)
+	// and so wouldn't otherwise report them.
+	if len(profileUnmappedFields) > 0 {
+		if unmappedBytes, err := json.Marshal(profileUnmappedFields); err == nil {
+			nir.UnmappedJSON = unmappedBytes
+		}
 	}
 
 	if normResult != nil && normResult.WasNormalized {
@@ -1771,6 +1807,7 @@ return
 		DuplicateRiskFlag:     dupRisk,
 		MappingProfileID:      nir.ProfileID,
 		MappingProfileVersion: nir.ProfileVersion,
+		MappingProfileHash:    nir.MappingProfileHash,
 		SourceSystem:          in.SourceSystem,
 		GovernanceHash:        governanceHash,
 
@@ -2393,6 +2430,7 @@ func (s *IntentService) ProcessTokenizeResult(
 		RequiredFieldGapCount:   gapCount,
 		LowConfidenceFieldCount: lowConfCount,
 		CreatedAt:               time.Now().UTC(),
+		// No resolvedProfile in this async (post-tokenization) flow, so no hash to snapshot.
 	}
 
 	// -------- COMPUTE SCORES & FINGERPRINT --------

@@ -67,6 +67,7 @@ func CanonicalIntentToOutboxEvent(
 		DuplicateRiskFlag:     intent.DuplicateRiskFlag,
 		MappingProfileID:      intent.MappingProfileID,
 		MappingProfileVersion: intent.MappingProfileVersion,
+		MappingProfileHash:    intent.MappingProfileHash,
 		SourceSystem:          intent.SourceSystem,
 
 		PaymentInstructionReceived: intent.PaymentInstructionReceived,

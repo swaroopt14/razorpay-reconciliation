@@ -61,6 +61,7 @@ type CanonicalIntent struct {
 	DuplicateRiskFlag     bool            `json:"duplicate_risk_flag,omitempty"`
 	MappingProfileID      string          `json:"mapping_profile_used,omitempty" db:"mapping_profile_id"`
 	MappingProfileVersion string          `json:"mapping_profile_version,omitempty" db:"mapping_profile_version"`
+	MappingProfileHash    string          `json:"mapping_profile_hash,omitempty" db:"mapping_profile_hash"`
 	SourceSystem          string          `json:"source_system,omitempty" db:"source_system"`
 
 	// 🆕 Traceability Fields

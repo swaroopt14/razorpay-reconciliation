@@ -166,6 +166,11 @@ func main() {
 	mux.HandleFunc("/v1/admin/mapping-profiles", profileHandler.ListOrCreate)
 	mux.HandleFunc("/v1/admin/mapping-profiles/", profileHandler.GetUpdateOrDeactivate)
 
+	// ── Admin: Tenant Synonym CRUD ────────────────────────────────────────────
+	tenantSynonymHandler := handlers.NewTenantSynonymHandler(db.DB)
+	mux.HandleFunc("/v1/admin/tenant-synonyms", tenantSynonymHandler.ListOrCreate)
+	mux.HandleFunc("/v1/admin/tenant-synonyms/", tenantSynonymHandler.Deactivate)
+
 	handler := func(msg []byte) error {
 		var event models.Event
 		err := json.Unmarshal(msg, &event)

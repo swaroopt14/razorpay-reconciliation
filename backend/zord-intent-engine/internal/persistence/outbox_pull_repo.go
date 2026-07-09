@@ -94,7 +94,8 @@ leased AS (
 		o.payment_instruction_received,
 		o.canonical_intent_created,
 		COALESCE(o.client_payout_ref, '') as client_payout_ref,
-		COALESCE(o.intent_lifecycle_state, '') as intent_lifecycle_state
+		COALESCE(o.intent_lifecycle_state, '') as intent_lifecycle_state,
+		COALESCE(o.mapping_profile_hash, '') as mapping_profile_hash
 )
 SELECT
 	event_id,
@@ -128,7 +129,8 @@ SELECT
 	payment_instruction_received,
 	canonical_intent_created,
 	client_payout_ref,
-	intent_lifecycle_state
+	intent_lifecycle_state,
+	mapping_profile_hash
 FROM leased
 ORDER BY created_at ASC;
 `
@@ -184,6 +186,7 @@ ORDER BY created_at ASC;
 			&evt.CanonicalIntentCreated,
 			&evt.ClientPayoutRef,
 			&evt.IntentLifecycleState,
+			&evt.MappingProfileHash,
 		); err != nil {
 			return "", nil, nil, err
 		}

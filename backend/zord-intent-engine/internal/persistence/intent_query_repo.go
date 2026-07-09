@@ -127,7 +127,8 @@ func (r *IntentQueryRepo) ListIntents(
 		governance_decision,
 		payment_instruction_received,
 		canonical_intent_created,
-		COALESCE(intent_lifecycle_state, '') as intent_lifecycle_state
+		COALESCE(intent_lifecycle_state, '') as intent_lifecycle_state,
+		COALESCE(mapping_profile_hash, '') as mapping_profile_hash
 	FROM payment_intents
 	%s
 	ORDER BY created_at DESC
@@ -185,6 +186,7 @@ func (r *IntentQueryRepo) ListIntents(
 			&intent.PaymentInstructionReceived,
 			&intent.CanonicalIntentCreated,
 			&intent.IntentLifecycleState,
+			&intent.MappingProfileHash,
 		)
 
 		if err != nil {
@@ -237,7 +239,8 @@ func (r *IntentQueryRepo) GetIntentByID(
 		governance_decision,
 		payment_instruction_received,
 		canonical_intent_created,
-		COALESCE(intent_lifecycle_state, '') as intent_lifecycle_state
+		COALESCE(intent_lifecycle_state, '') as intent_lifecycle_state,
+		COALESCE(mapping_profile_hash, '') as mapping_profile_hash
 	FROM payment_intents
 	WHERE tenant_id = $1
 	AND intent_id=$2
@@ -283,6 +286,7 @@ func (r *IntentQueryRepo) GetIntentByID(
 		&intent.PaymentInstructionReceived,
 		&intent.CanonicalIntentCreated,
 		&intent.IntentLifecycleState,
+		&intent.MappingProfileHash,
 	)
 
 	if err != nil {
@@ -443,7 +447,8 @@ func (r *IntentQueryRepo) ListPaymentIntentsByBatch(
 			governance_decision,
 			payment_instruction_received,
 			canonical_intent_created,
-			COALESCE(intent_lifecycle_state, '') as intent_lifecycle_state
+			COALESCE(intent_lifecycle_state, '') as intent_lifecycle_state,
+		COALESCE(mapping_profile_hash, '') as mapping_profile_hash
 		FROM payment_intents
 		WHERE tenant_id = $1
 		  AND batchid = $2
@@ -500,6 +505,7 @@ func (r *IntentQueryRepo) ListPaymentIntentsByBatch(
 			&intent.PaymentInstructionReceived,
 			&intent.CanonicalIntentCreated,
 			&intent.IntentLifecycleState,
+			&intent.MappingProfileHash,
 		); err != nil {
 			return nil, 0, fmt.Errorf("failed to scan payment intent detail row: %w", err)
 		}

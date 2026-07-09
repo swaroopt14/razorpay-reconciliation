@@ -52,20 +52,20 @@ func (r *PaymentIntentRepo) Save(
 			detected_format, profile_id, profile_version,
 			fields_json, field_confidence_summary, unmapped_json, mapping_uncertain_flag,
 			required_field_gap_count, low_confidence_field_count,
-			created_at
+			created_at, mapping_profile_hash
 		) VALUES (
 			$1, $2, $3,
 			$4, $5, $6,
 			$7, $8, $9, $10,
 			$11, $12,
-			$13
+			$13, $14
 		)`
 		_, err = tx.ExecContext(ctx, nirQuery,
 			nir.NIRID, nir.EnvelopeID, nir.TenantID,
 			nir.DetectedFormat, nir.ProfileID, nir.ProfileVersion,
 			nir.FieldsJSON, nir.FieldConfidenceSummary, nir.UnmappedJSON, nir.MappingUncertainFlag,
 			nir.RequiredFieldGapCount, nir.LowConfidenceFieldCount,
-			nir.CreatedAt,
+			nir.CreatedAt, nir.MappingProfileHash,
 		)
 		if err != nil {
 			log.Printf("Repo.Save: INSERT normalized_ingest_records failed: %v", err)
@@ -108,7 +108,8 @@ func (r *PaymentIntentRepo) Save(
     governance_decision,
     payment_instruction_received,
     canonical_intent_created,
-    intent_lifecycle_state
+    intent_lifecycle_state,
+    mapping_profile_hash
 )
 VALUES (
     $1,$2,$3,$4,
@@ -130,7 +131,7 @@ VALUES (
     $46, $47, $48, $49, $50, -- UPDATED
     $51, $52, $53, $54, $55, $56, $57,
     $58, $59, $60, $61, $62,
-    $63
+    $63, $64
 ) `
 
 	_, err = tx.ExecContext(
@@ -199,6 +200,7 @@ VALUES (
 		intent.PaymentInstructionReceived, // $61
 		intent.CanonicalIntentCreated,     // $62
 		intent.IntentLifecycleState,       // $63
+		intent.MappingProfileHash,         // $64
 	)
 
 	if err != nil {
@@ -268,7 +270,8 @@ INSERT INTO outbox (
     governance_decision,
     payment_instruction_received,
     canonical_intent_created,
-    intent_lifecycle_state
+    intent_lifecycle_state,
+    mapping_profile_hash
 ) VALUES (
     $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
     $11,$12,$13,$14,$15,$16,$17,$18,$19,
@@ -276,7 +279,7 @@ INSERT INTO outbox (
     $30,$31,$32,$33,$34,$35,$36,$37,$38,$39,
     $40,$41,$42,$43,$44,$45,$46,$47,$48,$49,
     $50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,
-    $61
+    $61, $62
 )`
 
 	outbox.ContractID = intent.ContractID
@@ -345,6 +348,7 @@ INSERT INTO outbox (
 		outbox.PaymentInstructionReceived, // $59
 		outbox.CanonicalIntentCreated,     // $60
 		outbox.IntentLifecycleState,       // $61
+		outbox.MappingProfileHash,         // $62
 	)
 	if err != nil {
 		log.Printf("Repo.Save: INSERT outbox failed: %v", err)
@@ -463,7 +467,8 @@ func (r *PaymentIntentRepo) FindByEnvelope(
 		governance_decision,
 		payment_instruction_received,
 		canonical_intent_created,
-		intent_lifecycle_state
+		intent_lifecycle_state,
+		COALESCE(mapping_profile_hash, '') as mapping_profile_hash
 	FROM payment_intents
 	WHERE tenant_id = $1
 	  AND envelope_id = $2
@@ -529,6 +534,7 @@ func (r *PaymentIntentRepo) FindByEnvelope(
 		&intent.PaymentInstructionReceived,
 		&intent.CanonicalIntentCreated,
 		&intent.IntentLifecycleState,
+		&intent.MappingProfileHash,
 	)
 
 	if err == sql.ErrNoRows {
@@ -675,7 +681,8 @@ func (r *PaymentIntentRepo) FindByBusinessIdempotencyKey(
 		governance_decision,
 		payment_instruction_received,
 		canonical_intent_created,
-		intent_lifecycle_state
+		intent_lifecycle_state,
+		COALESCE(mapping_profile_hash, '') as mapping_profile_hash
 	FROM payment_intents
 	WHERE tenant_id = $1
 	  AND business_idempotency_key = $2
@@ -741,6 +748,7 @@ func (r *PaymentIntentRepo) FindByBusinessIdempotencyKey(
 		&intent.PaymentInstructionReceived,
 		&intent.CanonicalIntentCreated,
 		&intent.IntentLifecycleState,
+		&intent.MappingProfileHash,
 	)
 
 	if err == sql.ErrNoRows {
@@ -1155,7 +1163,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 		}
 	}
 	if len(nirs) > 0 {
-		const nirCols = 13
+		const nirCols = 14
 		var placeholders strings.Builder
 		args := make([]interface{}, 0, len(nirs)*nirCols)
 		for i, nir := range nirs {
@@ -1163,14 +1171,14 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 				placeholders.WriteString(",")
 			}
 			base := i * nirCols
-			placeholders.WriteString(fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
-				base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10, base+11, base+12, base+13))
+			placeholders.WriteString(fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+				base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10, base+11, base+12, base+13, base+14))
 			args = append(args,
 				nir.NIRID, nir.EnvelopeID, nir.TenantID,
 				nir.DetectedFormat, nir.ProfileID, nir.ProfileVersion,
 				nir.FieldsJSON, nir.FieldConfidenceSummary, nir.UnmappedJSON, nir.MappingUncertainFlag,
 				nir.RequiredFieldGapCount, nir.LowConfidenceFieldCount,
-				nir.CreatedAt,
+				nir.CreatedAt, nir.MappingProfileHash,
 			)
 		}
 		q := fmt.Sprintf(`INSERT INTO normalized_ingest_records (
@@ -1178,7 +1186,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 			detected_format, profile_id, profile_version,
 			fields_json, field_confidence_summary, unmapped_json, mapping_uncertain_flag,
 			required_field_gap_count, low_confidence_field_count,
-			created_at
+			created_at, mapping_profile_hash
 		) VALUES %s`, placeholders.String())
 		_, err = tx.ExecContext(ctx, q, args...)
 		if err != nil {
@@ -1194,7 +1202,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 		}
 	}
 	if len(intents) > 0 {
-		const piCols = 63
+		const piCols = 64
 		var placeholders strings.Builder
 		args := make([]interface{}, 0, len(intents)*piCols)
 		for i, intent := range intents {
@@ -1274,6 +1282,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 				intent.PaymentInstructionReceived, // $61
 				intent.CanonicalIntentCreated,     // $62
 				intent.IntentLifecycleState,       // $63
+				intent.MappingProfileHash,         // $64
 			)
 		}
 		q := fmt.Sprintf(`INSERT INTO payment_intents (
@@ -1310,7 +1319,8 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 			governance_decision,
 			payment_instruction_received,
 			canonical_intent_created,
-			intent_lifecycle_state
+			intent_lifecycle_state,
+			mapping_profile_hash
 		) VALUES %s`, placeholders.String())
 		_, err = tx.ExecContext(ctx, q, args...)
 		if err != nil {
@@ -1327,7 +1337,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 		}
 	}
 	if len(outboxes) > 0 {
-		const outboxCols = 61
+		const outboxCols = 62
 		var placeholders strings.Builder
 		args := make([]interface{}, 0, len(outboxes)*outboxCols)
 		for i, outbox := range outboxes {
@@ -1405,6 +1415,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 				outbox.PaymentInstructionReceived, // $59
 				outbox.CanonicalIntentCreated,     // $60
 				outbox.IntentLifecycleState,       // $61
+				outbox.MappingProfileHash,         // $62
 			)
 		}
 		q := fmt.Sprintf(`INSERT INTO outbox (
@@ -1427,7 +1438,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 			source_row_num, aggregate_confidence_score,
 			required_fields_status, tokenization_status, governance_decision,
 			payment_instruction_received, canonical_intent_created,
-			intent_lifecycle_state
+			intent_lifecycle_state, mapping_profile_hash
 		) VALUES %s`, placeholders.String())
 		_, err = tx.ExecContext(ctx, q, args...)
 		if err != nil {
