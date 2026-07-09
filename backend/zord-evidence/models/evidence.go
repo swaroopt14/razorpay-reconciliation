@@ -74,6 +74,12 @@ type PendingLeafCandidate struct {
 	SchemaVersion string  `json:"schema_version" db:"schema_version"`
 	SourceTopic   string  `json:"source_topic" db:"source_topic"`
 
+	// SourceEventID is the event_id from the upstream RelayEvent that produced
+	// this leaf. It is the idempotency key for evidence_leaf_receipts: two Kafka
+	// deliveries of the same upstream event share the same SourceEventID, so the
+	// receipt INSERT can use ON CONFLICT DO NOTHING to deduplicate exactly.
+	SourceEventID string `json:"source_event_id,omitempty" db:"source_event_id"`
+
 	// Metadata carried from RelayEvent (traceability & governance).
 	PaymentInstructionReceived *time.Time `json:"payment_instruction_received,omitempty" db:"payment_instruction_received"`
 	CanonicalIntentCreated     *time.Time `json:"canonical_intent_created,omitempty" db:"canonical_intent_created"`

@@ -64,6 +64,7 @@ type BatchCheckJob struct {
 type EvidenceService struct {
 	repo                *repositories.EvidenceRepository
 	pendingLeafRepo     repositories.PendingLeafRepository
+	leafReceiptRepo     *repositories.PostgresLeafReceiptRepo
 	enrichRepo          *repositories.EnrichmentRepository
 	s3                  storage.S3Store
 	signer              *Signer
@@ -95,10 +96,12 @@ func NewEvidenceService(
 	archivePrefix string,
 	strict bool,
 	publisher kafka.EventPublisher,
+	leafReceiptRepo *repositories.PostgresLeafReceiptRepo,
 ) *EvidenceService {
 	return &EvidenceService{
 		repo:                repo,
 		pendingLeafRepo:     pendingLeafRepo,
+		leafReceiptRepo:     leafReceiptRepo,
 		enrichRepo:          enrichRepo,
 		s3:                  s3,
 		signer:              signer,
@@ -114,6 +117,12 @@ func NewEvidenceService(
 
 // HandleLeafUpdate persists incoming leaves on the Kafka fast path and delegates
 // readiness checks plus pack generation to the worker pool.
+//
+// P1-04: Before each UpsertLeaf call, WriteReceipt classifies the event as
+// ACCEPTED / DUPLICATE / CONFLICT and writes an immutable receipt row.
+//   ACCEPTED  → upsert proceeds normally.
+//   DUPLICATE → skip upsert (idempotent Kafka re-delivery, leaf unchanged).
+//   CONFLICT  → upsert proceeds (latest wins) + WARNING log so ops can investigate.
 func (s *EvidenceService) HandleLeafUpdate(ctx context.Context, tenantID, envelopeID, intentID, contractID, traceID string, newLeaves []models.PendingLeafCandidate) error {
 	// 0. If intentID is missing but envelopeID is present, try to resolve it from existing leaves
 	if intentID == "" && envelopeID != "" {
@@ -122,7 +131,6 @@ func (s *EvidenceService) HandleLeafUpdate(ctx context.Context, tenantID, envelo
 			log.Printf("evidence.service.resolve_intent_failed env=%s err=%v", envelopeID, err)
 		} else if resolved != "" {
 			intentID = resolved
-			// Update the new leaves to have the resolved intentID
 			for i := range newLeaves {
 				newLeaves[i].IntentID = &intentID
 			}
@@ -136,9 +144,32 @@ func (s *EvidenceService) HandleLeafUpdate(ctx context.Context, tenantID, envelo
 		}
 	}
 
-	// 2. Upsert new leaves
+	// 2. Write receipt then upsert each leaf.
 	var lastBatchID string
 	for i := range newLeaves {
+		outcome, receiptErr := s.leafReceiptRepo.WriteReceipt(ctx, &newLeaves[i])
+		if receiptErr != nil {
+			// Receipt write failure is logged but does not block the upsert —
+			// losing a receipt is less harmful than losing the leaf itself.
+			log.Printf("[ERROR] evidence.service.leaf_receipt_failed tenant=%s intent=%s leaf_type=%s err=%v",
+				tenantID, intentID, newLeaves[i].LeafType, receiptErr)
+		}
+
+		switch outcome {
+		case models.LeafReceiptDuplicate:
+			// Kafka at-least-once re-delivery. Leaf already stored; skip upsert.
+			log.Printf("evidence.service.leaf_duplicate tenant=%s intent=%s leaf_type=%s source_event_id=%s — skipping upsert",
+				tenantID, intentID, newLeaves[i].LeafType, newLeaves[i].SourceEventID)
+			continue
+
+		case models.LeafReceiptConflict:
+			// Two different upstream events claim the same leaf slot.
+			// Latest wins (upsert proceeds) but this is a data quality issue.
+			log.Printf("[WARN] evidence.service.leaf_conflict tenant=%s intent=%s leaf_type=%s source_event_id=%s — conflicting leaf overwrite detected, proceeding with upsert",
+				tenantID, intentID, newLeaves[i].LeafType, newLeaves[i].SourceEventID)
+		}
+
+		// ACCEPTED or CONFLICT — proceed with upsert.
 		if err := s.pendingLeafRepo.UpsertLeaf(ctx, &newLeaves[i]); err != nil {
 			return err
 		}
@@ -203,9 +234,26 @@ func (s *EvidenceService) enqueueBatchCheck(job BatchCheckJob) {
 
 // HandleBatchLeafUpdate persists batch leaves on the Kafka fast path and delegates
 // readiness checks plus pack generation to the worker pool.
+//
+// P1-04: Same receipt-before-upsert pattern as HandleLeafUpdate.
 func (s *EvidenceService) HandleBatchLeafUpdate(ctx context.Context, tenantID, batchID string, newLeaves []models.PendingLeafCandidate, isFinal bool) error {
-	// 1. Upsert new leaves
 	for i := range newLeaves {
+		outcome, receiptErr := s.leafReceiptRepo.WriteReceipt(ctx, &newLeaves[i])
+		if receiptErr != nil {
+			log.Printf("[ERROR] evidence.service.batch_leaf_receipt_failed tenant=%s batch=%s leaf_type=%s err=%v",
+				tenantID, batchID, newLeaves[i].LeafType, receiptErr)
+		}
+
+		switch outcome {
+		case models.LeafReceiptDuplicate:
+			log.Printf("evidence.service.batch_leaf_duplicate tenant=%s batch=%s leaf_type=%s source_event_id=%s — skipping upsert",
+				tenantID, batchID, newLeaves[i].LeafType, newLeaves[i].SourceEventID)
+			continue
+		case models.LeafReceiptConflict:
+			log.Printf("[WARN] evidence.service.batch_leaf_conflict tenant=%s batch=%s leaf_type=%s source_event_id=%s — conflicting leaf overwrite",
+				tenantID, batchID, newLeaves[i].LeafType, newLeaves[i].SourceEventID)
+		}
+
 		if err := s.pendingLeafRepo.UpsertLeaf(ctx, &newLeaves[i]); err != nil {
 			return err
 		}

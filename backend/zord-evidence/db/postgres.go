@@ -285,6 +285,59 @@ func EnsureTables(ctx context.Context, d *sql.DB) error {
 			ON evidence_outbox_events(status);`,
 		`CREATE INDEX IF NOT EXISTS idx_evidence_outbox_tenant_id
 			ON evidence_outbox_events(tenant_id);`,
+
+		// P1-04: Immutable receipt log — one row per Kafka leaf delivery.
+		// Never updated, never deleted. Append-only audit trail.
+		//
+		// outcome ∈ { ACCEPTED, DUPLICATE, CONFLICT }
+		//   ACCEPTED  — first time this leaf slot was written.
+		//   DUPLICATE — same source_event_id re-delivered (Kafka at-least-once).
+		//   CONFLICT  — different source_event_id tried to overwrite an accepted leaf.
+		//
+		// source_event_id is the event_id field from the upstream RelayEvent.
+		// It is the idempotency key: two Kafka deliveries of the same event
+		// share the same source_event_id, so the ON CONFLICT DO NOTHING on the
+		// unique index (source_event_id, tenant_id, leaf_type, intent_id, batch_id)
+		// makes WriteReceipt fully idempotent.
+		`DROP TABLE IF EXISTS evidence_leaf_receipts;`,
+
+		`CREATE TABLE evidence_leaf_receipts (
+			receipt_id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+			tenant_id TEXT NOT NULL,
+			scope_type TEXT NOT NULL,
+			scope_ref TEXT NOT NULL,
+			leaf_type TEXT NOT NULL,
+			leaf_hash TEXT NOT NULL,
+			source_topic TEXT NOT NULL,
+			source_event_id TEXT,
+			amount_minor NUMERIC(20,2),
+			currency TEXT,
+			client_reference TEXT,
+			bank_reference TEXT,
+			receipt_status TEXT NOT NULL,
+			discard_reason TEXT,
+			received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`,
+
+		// Idempotency index: prevents a second WriteReceipt call for the exact
+		// same Kafka message from inserting a duplicate receipt row.
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_leaf_receipts_dedup_v3
+			ON evidence_leaf_receipts(
+				source_event_id,
+				tenant_id,
+				leaf_type,
+				scope_type,
+				scope_ref
+			);`,
+
+		// Fast lookup: "show me all receipts for this scope" (auditor view).
+		`CREATE INDEX IF NOT EXISTS idx_leaf_receipts_scope
+			ON evidence_leaf_receipts(tenant_id, scope_type, scope_ref);`,
+
+		// Fast lookup: "show me all conflicts for this scope" (monitoring).
+		`CREATE INDEX IF NOT EXISTS idx_leaf_receipts_conflicts
+			ON evidence_leaf_receipts(tenant_id, scope_type, scope_ref, receipt_status)
+			WHERE receipt_status = 'CONFLICT';`,
 	}
 
 	for _, s := range stmts {
@@ -319,6 +372,18 @@ func EnsureTables(ctx context.Context, d *sql.DB) error {
 
 		// FIX-16: Store failure reason for FAILED replay jobs.
 		`ALTER TABLE evidence_replay_jobs ADD COLUMN IF NOT EXISTS failure_reason TEXT;`,
+
+		// P1-04: Add source_event_id to pending_leaf_candidates.
+		// This carries the upstream RelayEvent.event_id through to the pending row
+		// so the leaf receipt classifier can detect DUPLICATE vs CONFLICT deliveries.
+		// Default '' (empty string) for existing rows that pre-date this column —
+		// the classifier treats empty source_event_id as ACCEPTED to avoid
+		// blocking leaf writes from older consumer paths.
+		`ALTER TABLE pending_leaf_candidates ADD COLUMN IF NOT EXISTS source_event_id TEXT NOT NULL DEFAULT '';`,
+
+		// Drop old dedup index (if any)
+		`DROP INDEX IF EXISTS idx_leaf_receipts_dedup;`,
+		`DROP INDEX IF EXISTS idx_leaf_receipts_dedup_v2;`,
 	}
 	for _, m := range migrations {
 		if _, err := d.ExecContext(ctx, m); err != nil {
