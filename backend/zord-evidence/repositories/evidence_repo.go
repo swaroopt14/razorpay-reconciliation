@@ -88,9 +88,9 @@ func advisoryLockKey(key string) int64 {
 }
 
 // SavePack persists the full evidence pack in a single transaction:
-//   - evidence_packs row (§14.1)
+//   - evidence_packs row (§14.1) with denormalized signature_alg/signature_value
 //   - evidence_items rows (§14.2)
-//   - evidence_signatures rows
+//   - evidence_pack_signatures rows (canonical signature store)
 //   - evidence_outbox_events row (for relay polling)
 //
 // If an ACTIVE pack for the same (tenant_id, intent_id) already exists (inserted
@@ -240,6 +240,13 @@ func (r *EvidenceRepository) savePackCoreInTx(
 ) error {
 	schemaVersionsJSON, _ := json.Marshal(pack.SchemaVersions)
 
+	sigAlg := "ed25519"
+	sigValue := ""
+	if len(pack.Signatures) > 0 {
+		sigAlg = pack.Signatures[0].Alg
+		sigValue = pack.Signatures[0].Sig
+	}
+
 	// INSERT ... ON CONFLICT DO NOTHING is the last line of defence against
 	// duplicate packs. The partial unique index on ACTIVE rows is enforced at
 	// activation time via ActivatePackInTx.
@@ -271,8 +278,8 @@ ON CONFLICT DO NOTHING`,
 		pack.MerkleRoot,
 		pack.RulesetVersion,
 		schemaVersionsJSON,
-		"ed25519",
-		pack.Signatures[0].Sig,
+		sigAlg,
+		sigValue,
 		objectRef,
 		nullStr(pack.SupersedesPackID),
 		pack.PackCompletenessScore,
@@ -325,12 +332,8 @@ INSERT INTO evidence_items(
 	}
 
 	for _, sig := range pack.Signatures {
-		_, err = tx.ExecContext(ctx, `
-INSERT INTO evidence_signatures(evidence_pack_id, signer, alg, signature, signed_at)
-VALUES($1,$2,$3,$4,$5)`,
-			pack.EvidencePackID, sig.Signer, sig.Alg, sig.Sig, sig.SignedAt)
-		if err != nil {
-			return fmt.Errorf("insert signature: %w", err)
+		if err := r.savePackSignatureInTx(ctx, tx, pack.EvidencePackID, sig); err != nil {
+			return err
 		}
 	}
 
@@ -340,6 +343,118 @@ VALUES($1,$2,$3,$4,$5)`,
 		}
 	}
 
+	return nil
+}
+
+func (r *EvidenceRepository) savePackSignatureInTx(ctx context.Context, tx *sql.Tx, packID string, sig models.Signature) error {
+	keyID := sig.KeyID
+	if keyID == "" {
+		keyID = "unknown"
+	}
+	canonicalVersion := sig.CanonicalizationVersion
+	if canonicalVersion == "" {
+		canonicalVersion = models.CanonicalLegacyV1
+	}
+	signedPayloadHash := sig.SignedPayloadHash
+	verificationStatus := sig.VerificationStatus
+	if verificationStatus == "" {
+		verificationStatus = models.SignatureVerificationNotVerified
+	}
+
+	_, err := tx.ExecContext(ctx, `
+INSERT INTO evidence_pack_signatures(
+	evidence_pack_id, signer_id, alg, key_id, signature_value,
+	signed_payload_hash, canonicalization_version, signed_at, verification_status
+) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+ON CONFLICT (evidence_pack_id, signer_id, alg, key_id) DO NOTHING`,
+		packID,
+		sig.Signer,
+		sig.Alg,
+		keyID,
+		sig.Sig,
+		signedPayloadHash,
+		canonicalVersion,
+		sig.SignedAt,
+		verificationStatus,
+	)
+	if err != nil {
+		return fmt.Errorf("insert pack signature: %w", err)
+	}
+	return nil
+}
+
+// loadPackSignatures reads canonical signature rows for a pack. Falls back to
+// denormalized evidence_packs columns when no rows exist (legacy packs).
+func (r *EvidenceRepository) loadPackSignatures(
+	ctx context.Context,
+	packID string,
+	fallbackAlg, fallbackSig string,
+	fallbackSignedAt time.Time,
+) ([]models.Signature, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT signer_id, alg, key_id, signature_value, signed_payload_hash,
+       canonicalization_version, signed_at, verification_status
+FROM evidence_pack_signatures
+WHERE evidence_pack_id = $1
+ORDER BY signed_at ASC`, packID)
+	if err != nil {
+		return nil, fmt.Errorf("load pack signatures: %w", err)
+	}
+	defer rows.Close()
+
+	var sigs []models.Signature
+	for rows.Next() {
+		var sig models.Signature
+		if err := rows.Scan(
+			&sig.Signer,
+			&sig.Alg,
+			&sig.KeyID,
+			&sig.Sig,
+			&sig.SignedPayloadHash,
+			&sig.CanonicalizationVersion,
+			&sig.SignedAt,
+			&sig.VerificationStatus,
+		); err != nil {
+			return nil, fmt.Errorf("scan pack signature: %w", err)
+		}
+		sigs = append(sigs, sig)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if len(sigs) > 0 {
+		return sigs, nil
+	}
+
+	if fallbackSig == "" {
+		return nil, nil
+	}
+
+	return []models.Signature{{
+		Signer:                  models.SignerIDZordEvidence,
+		Alg:                     fallbackAlg,
+		Sig:                     fallbackSig,
+		SignedAt:                fallbackSignedAt,
+		KeyID:                   "legacy_unknown",
+		CanonicalizationVersion: models.CanonicalLegacyV1,
+		VerificationStatus:      models.SignatureVerificationNotVerified,
+	}}, nil
+}
+
+// MarkPackSignaturesVerified updates verification_status on all signatures for a pack.
+func (r *EvidenceRepository) MarkPackSignaturesVerified(ctx context.Context, packID string, verified bool) error {
+	status := models.SignatureVerificationNotVerified
+	if verified {
+		status = models.SignatureVerificationVerified
+	}
+	_, err := r.db.ExecContext(ctx, `
+UPDATE evidence_pack_signatures
+SET verification_status = $2
+WHERE evidence_pack_id = $1`, packID, status)
+	if err != nil {
+		return fmt.Errorf("mark pack signatures verified: %w", err)
+	}
 	return nil
 }
 
@@ -505,7 +620,11 @@ func (r *EvidenceRepository) GetPackByID(ctx context.Context, packID string) (*m
 	}
 	pack.EvidencePackID = packID
 	pack.CreatedAt = createdAt
-	pack.Signatures = []models.Signature{{Signer: "zord_evidence", Alg: sigAlg, Sig: signature, SignedAt: createdAt}}
+	sigs, err := r.loadPackSignatures(ctx, packID, sigAlg, signature, createdAt)
+	if err != nil {
+		return nil, "", err
+	}
+	pack.Signatures = sigs
 
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT item_type, item_ref, item_hash, leaf_hash, schema_version

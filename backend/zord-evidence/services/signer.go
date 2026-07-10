@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"os"
@@ -74,6 +75,12 @@ func NewSigner(privateKeyData string, allowEphemeral bool) (*Signer, error) {
 		return nil, fmt.Errorf("invalid private key length: got %d bytes, want %d", len(raw), ed25519.PrivateKeySize)
 	}
 	return &Signer{private: ed25519.PrivateKey(raw)}, nil
+}
+
+// KeyID returns a stable identifier for the active signing public key.
+func (s *Signer) KeyID() string {
+	pub := s.private.Public().(ed25519.PublicKey)
+	return "ed25519:" + hex.EncodeToString(pub)
 }
 
 // Sign produces a base64-encoded ed25519 signature over payload, prefixed with "ZORD".

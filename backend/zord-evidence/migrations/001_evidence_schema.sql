@@ -59,15 +59,32 @@ CREATE TABLE IF NOT EXISTS evidence_items (
 
 CREATE INDEX IF NOT EXISTS evidence_items_pack_idx ON evidence_items(evidence_pack_id);
 
--- Evidence Signatures
+-- Evidence Signatures (legacy — superseded by evidence_pack_signatures)
 CREATE TABLE IF NOT EXISTS evidence_signatures (
-    evidence_pack_id UUID NOT NULL,
+    evidence_pack_id TEXT NOT NULL,
     signer TEXT NOT NULL,
     alg TEXT NOT NULL,
     signature TEXT NOT NULL,
     signed_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY(evidence_pack_id, signer, alg)
 );
+
+-- P1-01: canonical pack signature store
+CREATE TABLE IF NOT EXISTS evidence_pack_signatures (
+    evidence_pack_id TEXT NOT NULL REFERENCES evidence_packs(evidence_pack_id),
+    signer_id TEXT NOT NULL,
+    alg TEXT NOT NULL,
+    key_id TEXT NOT NULL,
+    signature_value TEXT NOT NULL,
+    signed_payload_hash TEXT NOT NULL,
+    canonicalization_version TEXT NOT NULL,
+    signed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    verification_status TEXT NOT NULL DEFAULT 'NOT_VERIFIED',
+    PRIMARY KEY (evidence_pack_id, signer_id, alg, key_id)
+);
+
+CREATE INDEX IF NOT EXISTS evidence_pack_signatures_pack_idx
+    ON evidence_pack_signatures(evidence_pack_id);
 
 -- Evidence Outbox Events (for relay polling)
 CREATE TABLE IF NOT EXISTS evidence_outbox_events (
