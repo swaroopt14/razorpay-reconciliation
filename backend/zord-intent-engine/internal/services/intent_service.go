@@ -2029,8 +2029,16 @@ func (s *IntentService) ProcessIncomingIntent(
 			totalRows = *in.RowCountEstimate
 		}
 
+		runID, errRun := db.EnsureIngestRun(ctx, s.db, in.TenantID.String(), *in.BatchID)
+		if errRun != nil {
+			log.Printf("⚠️ Audit: failed to ensure ingest run for batch=%s: %v", *in.BatchID, errRun)
+			// Fall back to a fresh id so the row/run upserts below still have a
+			// valid UUID to write — best-effort audit, not worth failing the intent over.
+			runID = uuid.New().String()
+		}
+
 		errInsert := db.InsertIngestRow(ctx, s.db,
-			*in.BatchID, in.TenantID.String(), mappingID, profileIDHint,
+			runID, *in.BatchID, in.TenantID.String(), mappingID, profileIDHint,
 			rowIndex, in.IdempotencyKey, status, errDetail, in.SourceSystem,
 			fileName, fileHash, auditPayload,
 		)
@@ -2047,8 +2055,8 @@ func (s *IntentService) ProcessIncomingIntent(
 				COUNT(*) FILTER (WHERE status = 'FAILED'),
 				COUNT(*) FILTER (WHERE status = 'DUPLICATE')
 			FROM intent_ingest_rows
-			WHERE batch_id = $1`,
-			*in.BatchID,
+			WHERE tenant_id = $1 AND batch_id = $2`,
+			in.TenantID.String(), *in.BatchID,
 		).Scan(&acceptedCount, &failedCount, &duplicateCount)
 
 		if errStats != nil {
@@ -2068,7 +2076,7 @@ func (s *IntentService) ProcessIncomingIntent(
 		}
 
 		errUpsert := db.UpsertIngestRun(ctx, s.db,
-			uuid.New().String(), *in.BatchID, in.TenantID.String(),
+			runID, *in.BatchID, in.TenantID.String(),
 			mappingID, profileIDHint, fileName, fileHash,
 			totalRows, acceptedCount, failedCount, duplicateCount,
 			runStatus,
@@ -2189,6 +2197,18 @@ func (s *IntentService) ProcessIncomingIntentsBatch(
 	var resolvedMappingID string
 	var resolvedProfileVersion string
 
+	// All events in one call share the same batch upload, so a single stable
+	// run_id covers the whole batch — resolved once upfront rather than per row.
+	var batchRunID string
+	if events[0].BatchID != nil && *events[0].BatchID != "" {
+		if id, errRun := db.EnsureIngestRun(ctx, s.db, events[0].TenantID.String(), *events[0].BatchID); errRun != nil {
+			log.Printf("⚠️ ProcessIncomingIntentsBatch: failed to ensure ingest run for batch=%s: %v", *events[0].BatchID, errRun)
+			batchRunID = uuid.New().String()
+		} else {
+			batchRunID = id
+		}
+	}
+
 	for _, event := range events {
 		in, resolvedProfile, decryptedPayload, rawAuditPayload, auditProfileID, auditProfileVersion, sourceRowNum,
 			nir, canonical, outbox, registryEntry, dlq, err, policyDecision, duplicateDecision := s.processIncomingIntentInternal(ctx, event)
@@ -2255,6 +2275,7 @@ func (s *IntentService) ProcessIncomingIntentsBatch(
 			}
 
 			ingestRows = append(ingestRows, db.IngestRowItem{
+				RunID:          batchRunID,
 				BatchID:        *in.BatchID,
 				TenantID:       in.TenantID.String(),
 				MappingID:      mappingID,
@@ -2364,8 +2385,11 @@ func (s *IntentService) ProcessIncomingIntentsBatch(
 			runStatus = "PROCESSING"
 		}
 
+		if batchRunID == "" {
+			batchRunID = uuid.New().String()
+		}
 		errUpsert := db.UpsertIngestRun(ctx, s.db,
-			uuid.New().String(), *firstIn.BatchID, firstIn.TenantID.String(),
+			batchRunID, *firstIn.BatchID, firstIn.TenantID.String(),
 			resolvedMappingID, resolvedProfileVersion, fileName, fileHash,
 			totalRows, actualAccepted, actualFailed, actualDuplicate,
 			runStatus,

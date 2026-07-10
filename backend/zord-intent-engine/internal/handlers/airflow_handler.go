@@ -40,26 +40,16 @@ func (h *AirflowHandler) Transform(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ttl := 300
-	if raw := r.URL.Query().Get("lease_ttl_seconds"); raw != "" {
-		if n, err := strconv.Atoi(raw); err == nil && n > 0 && n <= 600 {
-			ttl = n
-		}
-	}
-
-	leasedBy := relayInstanceID(r) // reuse existing helper — reads X-Relay-Instance-ID header
-
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 
-	summary, err := h.airflowWorker.RunOnce(ctx, limit, ttl, leasedBy)
+	summary, err := h.airflowWorker.RunOnce(ctx, limit)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 
 	writeJSON(w, http.StatusOK, etl.BatchTransformResponse{
-		LeaseID:          summary.LeaseID,
 		Leased:           summary.Leased,
 		Accepted:         summary.Accepted,
 		Failed:           summary.Failed,

@@ -9,8 +9,15 @@ from config.connections import (
 class ZordTransformOperator(BaseOperator):
     """
     Calls POST /internal/airflow/transform on zord-intent-engine.
-    zord-intent-engine leases its own outbox, runs ETL quality scoring
-    on already-canonical intents, acks/nacks, and returns a summary.
+    zord-intent-engine fetches outbox events that haven't been ETL-scored yet
+    (tracked via etl_ingest_runs, independent of delivery status), runs
+    quality scoring on already-canonical intents, and returns a summary.
+
+    This is a read-only, non-leasing fetch — it does NOT lease/ack/nack the
+    outbox, so it never competes with zord-relay's delivery pipeline for the
+    same rows. `lease_ttl_seconds` is accepted for backward compatibility but
+    has no effect server-side; it's kept as a template field so existing DAG
+    configs don't need to change.
 
     This operator does NOT decrypt anything.
     Decryption happened upstream inside ProcessIncomingIntent (Kafka consumer).

@@ -307,3 +307,67 @@ WHERE o.event_id = l.event_id;
 	}
 	return res.RowsAffected()
 }
+
+// FetchUnscoredEvents returns outbox events that have no active ETL quality
+// run yet, for the (future) Airflow-triggered quality-scoring pipeline.
+//
+// Deliberately NOT a lease: it reads independent of outbox.status, so it
+// never competes with zord-relay's LeaseOutboxBatch/AckOutboxBatch for the
+// same PENDING rows. Before this fix, the Airflow ETL worker used the same
+// lease-then-ack mechanism as the relay — if the ETL worker acked an event
+// first, that row would flip to 'SENT' and zord-relay would never see it,
+// silently dropping it from downstream delivery. ETL scoring is a read-only
+// quality check on already-canonical events; it has no business consuming
+// the delivery queue.
+//
+// A previously-failed run (is_active=false) is eligible for retry on the
+// next fetch — matches the existing run_generation column's intent.
+func (r *OutboxPullRepo) FetchUnscoredEvents(ctx context.Context, limit int) ([]models.OutboxEvent, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 500
+	}
+
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT
+			o.event_id::text, o.envelope_id, o.tenant_id, o.event_type,
+			COALESCE(o.amount, 0), COALESCE(o.currency, ''),
+			COALESCE(o.canonical_hash, ''), COALESCE(o.governance_hash, ''), o.governance_state,
+			COALESCE(o.canonical_snapshot_ref, ''), COALESCE(o.nir_snapshot_ref, ''),
+			COALESCE(o.beneficiary_fingerprint, ''), COALESCE(o.client_payout_ref, ''),
+			COALESCE(o.mapping_profile_id, ''), COALESCE(o.batchid, ''), o.aggregate_id
+		FROM outbox o
+		LEFT JOIN etl_ingest_runs e
+			ON e.outbox_event_id = o.event_id::text AND e.is_active = true
+		WHERE e.run_id IS NULL
+		ORDER BY o.created_at ASC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	events := make([]models.OutboxEvent, 0, limit)
+	for rows.Next() {
+		var evt models.OutboxEvent
+		var batchID string
+		if err := rows.Scan(
+			&evt.EventID, &evt.EnvelopeID, &evt.TenantID, &evt.EventType,
+			&evt.Amount, &evt.Currency, &evt.CanonicalHash, &evt.GovernanceHash, &evt.GovernanceState,
+			&evt.CanonicalSnapshotRef, &evt.NIRSnapshotRef,
+			&evt.BeneficiaryFingerprint, &evt.ClientPayoutRef,
+			&evt.MappingProfileID, &batchID, &evt.AggregateID,
+		); err != nil {
+			return nil, err
+		}
+		if batchID != "" {
+			evt.BatchID = &batchID
+		}
+		evt.IntentID = evt.AggregateID.String()
+		events = append(events, evt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return events, nil
+}
