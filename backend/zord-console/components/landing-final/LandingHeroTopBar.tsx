@@ -143,7 +143,7 @@ export function LandingHeroTopBar({
           </button>
 
           <Link
-            href="/signup"
+            href="/signin"
             className={`inline-flex cursor-pointer items-center gap-2.5 rounded-full py-2 pl-2 pr-4 text-[13px] font-semibold transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-zord-blue-500 focus:ring-offset-2 sm:pr-5 ${
               useLightChrome
                 ? 'bg-[#0A0A0A] text-white shadow-[0_8px_24px_rgba(0,0,0,0.12)] hover:bg-[#1f1f1f]'

@@ -3,8 +3,8 @@
 import Image from 'next/image'
 import { Check } from 'lucide-react'
 import {
+  LANDING_SECTION_SHELL,
   LandingReveal,
-  LandingSection,
 } from '@/components/landing-final/landingSectionLayout'
 import { landingPricingCopy } from '@/components/landing-final/copy/landingPagesCopy'
 
@@ -12,26 +12,26 @@ const plans = landingPricingCopy.plans
 
 export function LandingCapabilitiesSection() {
   return (
-    <LandingSection
+    <section
       id="use-cases"
-      className="relative overflow-hidden scroll-mt-32 py-16 pb-20 sm:py-24 sm:pb-32 lg:py-32 lg:pb-40"
       aria-label="Product capabilities"
+      className="relative scroll-mt-32 overflow-hidden py-16 pb-20 sm:py-24 sm:pb-32 lg:py-32 lg:pb-40"
     >
-      {/* Background Image */}
-      <div className="absolute inset-0 z-0">
-        <Image 
-          src="/final-landing/hero/bg-removebg-preview.png" 
-          alt="Mossy rocks background" 
-          fill 
-          className="object-cover object-bottom"
+      <div className="pointer-events-none absolute inset-0 z-0" aria-hidden>
+        <Image
+          src="/final-landing/sections/mossy-rocks-bg.png"
+          alt=""
+          fill
+          unoptimized
           sizes="100vw"
+          className="object-cover object-center"
         />
-        {/* Darker overlay to make white text pop */}
-        <div className="absolute inset-0 bg-[#111827]/40" />
-        <div className="absolute inset-0 bg-gradient-to-b from-[#1A1A24] via-[#1A1A24]/60 to-transparent opacity-90" />
+        <div className="absolute inset-0 bg-black/35" />
+        <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-black/20 to-black/35" />
       </div>
 
-      <div className="relative z-10 mx-auto max-w-5xl">
+      <div className={`${LANDING_SECTION_SHELL} relative z-10`}>
+      <div className="mx-auto max-w-5xl">
         <LandingReveal className="flex flex-col items-center text-center">
           <p className="mb-6 inline-flex w-fit rounded-full border border-white/20 bg-white/10 backdrop-blur-sm px-4 py-1.5 text-[10px] font-semibold uppercase tracking-[0.15em] text-white/80">
             WHY ZORD
@@ -52,18 +52,18 @@ export function LandingCapabilitiesSection() {
               return (
                 <article
                   key={plan.title}
-                  className={`flex flex-col rounded-[1.75rem] border p-6 shadow-2xl backdrop-blur-2xl sm:p-7 ${
+                  className={`flex flex-col rounded-[1.75rem] border p-6 sm:p-7 ${
                     featured
-                      ? 'border-[#34D399]/40 bg-[#34D399]/12'
-                      : 'border-white/20 bg-white/10'
+                      ? 'border-[#34D399]/35 bg-[#F0FDF9] shadow-[0_24px_60px_rgba(5,150,105,0.14)]'
+                      : 'border-black/[0.06] bg-white shadow-[0_20px_50px_rgba(0,0,0,0.18)]'
                   }`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#9CA3AF]">
                         {plan.subtitle}
                       </p>
-                      <h3 className="mt-3 text-2xl font-semibold tracking-[-0.03em] text-white">{plan.title}</h3>
+                      <h3 className="mt-3 text-2xl font-semibold tracking-[-0.03em] text-[#111111]">{plan.title}</h3>
                     </div>
                     {featured ? (
                       <span className="shrink-0 rounded-full bg-[#047857] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-white">
@@ -72,13 +72,13 @@ export function LandingCapabilitiesSection() {
                     ) : null}
                   </div>
 
-                  <p className="mt-5 text-[1.65rem] font-semibold tracking-[-0.04em] text-[#6EE7B7]">{plan.metric}</p>
-                  <p className="mt-3 text-[14px] leading-relaxed text-white/70">{plan.detail}</p>
+                  <p className="mt-5 text-[1.65rem] font-semibold tracking-[-0.04em] text-[#047857]">{plan.metric}</p>
+                  <p className="mt-3 text-[14px] leading-relaxed text-[#6B7280]">{plan.detail}</p>
 
                   <ul className="mt-6 flex-1 space-y-3">
                     {plan.points.map((point) => (
-                      <li key={point} className="flex items-start gap-3 text-[14px] text-white/85">
-                        <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#34D399]/20 text-[#6EE7B7]">
+                      <li key={point} className="flex items-start gap-3 text-[14px] text-[#374151]">
+                        <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#E8F8F5] text-[#059669]">
                           <Check className="h-3 w-3" strokeWidth={3} />
                         </span>
                         {point}
@@ -94,8 +94,8 @@ export function LandingCapabilitiesSection() {
                     }
                     className={`mt-8 inline-flex w-full cursor-pointer items-center justify-center rounded-full px-5 py-3.5 text-[14px] font-semibold transition-colors duration-150 ${
                       featured
-                        ? 'bg-white text-[#111111] hover:bg-white/92'
-                        : 'border border-white/25 bg-white/10 text-white hover:bg-white/15'
+                        ? 'bg-[#111111] text-white hover:bg-black/90'
+                        : 'border border-black/10 bg-[#F7F8FA] text-[#111111] hover:bg-[#F0F1F3]'
                     }`}
                   >
                     {plan.title === 'Sandbox' ? 'Start in sandbox' : 'Talk to sales'}
@@ -106,6 +106,7 @@ export function LandingCapabilitiesSection() {
           </div>
         </LandingReveal>
       </div>
-    </LandingSection>
+      </div>
+    </section>
   )
 }

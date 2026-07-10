@@ -1,16 +1,19 @@
 'use client'
 
+import Image from 'next/image'
 import Link from 'next/link'
 import { useEffect, useRef } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
-import { ArrowRight, Play, Sparkles } from 'lucide-react'
+import { ArrowUpRight, Sparkles } from 'lucide-react'
 
 import { LandingHeroDashboardPreview } from '@/components/landing-final/LandingHeroDashboardPreview'
 import { LandingHeroRocks } from '@/components/landing-final/LandingHeroRocks'
 import { landingHomeCopy } from '@/components/landing-final/copy/landingHomeCopy'
 
 const heroCopy = landingHomeCopy.hero.slides[0]
-const HERO_WATERFALL_SRC = '/final-landing/hero/hero-waterfall-bg-hq.mp4'
+/** Home-only generated forest loop (greenery + mossy rocks) */
+const HERO_VIDEO_SRC = '/final-landing/hero/hero-forest-loop.mp4'
+const HERO_FALLBACK_BG = '/final-landing/sections/greenery-cta-bg.png'
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -48,10 +51,10 @@ const instantVisible = { opacity: 1, y: 0, scale: 1 }
 
 export function LandingHeroSection() {
   const shouldReduceMotion = useReducedMotion()
-  const waterfallVideoRef = useRef<HTMLVideoElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
 
   useEffect(() => {
-    const video = waterfallVideoRef.current
+    const video = videoRef.current
     if (!video) return
     if (shouldReduceMotion) {
       video.pause()
@@ -70,30 +73,37 @@ export function LandingHeroSection() {
 
   return (
     <section
-      className="relative z-10 w-full overflow-hidden bg-[#0B1210] text-[#0A0A0A]"
+      className="relative z-10 w-full overflow-hidden bg-[#0B1220] text-[#0A0A0A]"
       aria-labelledby="landing-hero-heading"
     >
-      {/* Full-hero back layer: waterfall video behind headline + rocks + dashboard */}
       <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden" aria-hidden="true">
         {!shouldReduceMotion ? (
           <video
-            ref={waterfallVideoRef}
+            ref={videoRef}
             autoPlay
             muted
             loop
             playsInline
             preload="auto"
-            className="absolute inset-0 h-full w-full object-cover object-center brightness-[1.12] contrast-[1.06] saturate-[1.1] [transform:translateZ(0)]"
+            poster={HERO_FALLBACK_BG}
+            className="absolute inset-0 h-full w-full object-cover object-center scale-[1.03] [transform:translateZ(0)]"
           >
-            <source src={HERO_WATERFALL_SRC} type="video/mp4" />
+            <source src={HERO_VIDEO_SRC} type="video/mp4" />
           </video>
         ) : (
-          <div className="absolute inset-0 bg-[linear-gradient(165deg,#0B1210_0%,#111827_48%,#0F172A_100%)]" />
+          <Image
+            src={HERO_FALLBACK_BG}
+            alt=""
+            fill
+            priority
+            className="object-cover object-center scale-[1.02]"
+            sizes="100vw"
+          />
         )}
-        <div className="absolute inset-0 bg-black/14" />
-        <div className="absolute inset-0 bg-gradient-to-b from-black/28 via-black/14 to-black/40" />
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_90%_50%_at_50%_8%,rgba(0,0,0,0.08)_0%,transparent_55%)]" />
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_50%_72%,rgba(0,0,0,0.04)_0%,rgba(0,0,0,0.38)_100%)]" />
+        {/* Transparent black scrim — video visible underneath, text stays readable */}
+        <div className="absolute inset-0 bg-black/50" />
+        <div className="absolute inset-0 bg-gradient-to-b from-black/55 via-black/40 to-black/55" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/25 to-black/35" />
       </div>
 
       <motion.div
@@ -102,10 +112,10 @@ export function LandingHeroSection() {
         initial={motionInitial}
         animate="visible"
       >
-        <div className="relative mx-auto max-w-[1280px] px-4 pb-6 pt-28 text-center sm:px-6 sm:pt-32 md:pt-36">
+        <div className="relative mx-auto max-w-[920px] px-4 pb-8 pt-28 text-center sm:px-6 sm:pt-32 md:pt-36">
           <motion.p
             {...textItemMotion}
-            className="text-[11px] font-medium uppercase tracking-[0.2em] text-white/55"
+            className="text-[11px] font-medium uppercase tracking-[0.22em] text-white/60"
           >
             {heroCopy.eyebrow}
           </motion.p>
@@ -113,36 +123,30 @@ export function LandingHeroSection() {
           <motion.h1
             {...textItemMotion}
             id="landing-hero-heading"
-            className="mx-auto mt-6 max-w-[820px] text-[2.25rem] font-semibold leading-[1.08] tracking-[-0.04em] sm:text-5xl md:text-6xl lg:text-[4.25rem]"
+            className="mx-auto mt-8 max-w-[16ch] text-[2.65rem] font-semibold leading-[1.02] tracking-[-0.045em] sm:max-w-none sm:text-[3.4rem] lg:text-[4.25rem]"
           >
             <span className="block text-white">{heroCopy.headlineLead}</span>
-            <span className="mt-1 block text-white">{heroCopy.headlineTail}</span>
+            <span className="block text-white">{heroCopy.headlineTail}</span>
           </motion.h1>
-
-          <motion.p
-            {...textItemMotion}
-            className="mx-auto mt-6 max-w-[560px] text-base leading-relaxed text-[#0A0A0A] sm:text-lg md:text-[1.125rem]"
-          >
-            {heroCopy.copy}
-          </motion.p>
 
           <motion.div
             {...textItemMotion}
-            className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row"
+            className="mt-10 flex w-full flex-col items-center justify-center gap-3 sm:w-auto sm:flex-row sm:gap-4"
           >
-            <a
-              href="/signup"
-              className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl bg-[#0A0A0A] px-8 py-3.5 text-base font-semibold text-white shadow-[0_16px_40px_rgba(0,0,0,0.14)] transition-colors duration-150 hover:bg-[#1f1f1f] focus:outline-none focus:ring-2 focus:ring-zord-blue-500 sm:w-auto"
-            >
-              Book Demo
-              <ArrowRight className="h-4 w-4" />
-            </a>
             <Link
-              href="/final-landing/how-it-works"
-              className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl border border-black/10 bg-white px-6 py-3.5 text-base font-semibold text-[#0A0A0A] transition-colors duration-150 hover:bg-[#f5f5f5] focus:outline-none focus:ring-2 focus:ring-zord-blue-500 sm:w-auto"
+              href="/signin"
+              className="inline-flex w-full cursor-pointer items-center justify-center rounded-full border border-white/20 bg-white/10 px-8 py-3.5 text-[15px] font-medium text-white backdrop-blur-md transition-colors duration-150 hover:bg-white/20 focus:outline-none focus:ring-2 focus:ring-white/50 focus:ring-offset-2 focus:ring-offset-[#0B1220] sm:w-auto"
             >
-              See how it works
-              <Play className="h-4 w-4" />
+              Launch
+            </Link>
+            <Link
+              href="/signup"
+              className="inline-flex w-full cursor-pointer items-center justify-center gap-3 rounded-full bg-white py-2 pl-2 pr-6 text-[15px] font-semibold text-[#111111] transition-colors duration-150 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-[#0B1220] sm:w-auto"
+            >
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#111111] text-white">
+                <ArrowUpRight className="h-[18px] w-[18px]" strokeWidth={2.25} />
+              </span>
+              Book Demo
             </Link>
           </motion.div>
         </div>

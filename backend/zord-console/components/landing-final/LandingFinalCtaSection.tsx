@@ -44,20 +44,20 @@ export function LandingFinalCtaSection() {
 
           <div className="mt-10 flex w-full flex-col items-center justify-center gap-3 sm:w-auto sm:flex-row sm:gap-4">
             <Link
-              href="/final-landing/how-it-works"
+              href="/signin"
               className="inline-flex w-full cursor-pointer items-center justify-center rounded-full bg-white/10 backdrop-blur-md px-8 py-3.5 text-[15px] font-medium text-white border border-white/20 transition-colors duration-150 hover:bg-white/20 focus:outline-none focus:ring-2 focus:ring-white/50 focus:ring-offset-2 sm:w-auto focus:ring-offset-[#0B1220]"
             >
-              See how it works
+              Launch
             </Link>
-            <a
-              href="mailto:Support@zordnet.com?subject=Book%20Demo%20for%20Zord"
+            <Link
+              href="/signup"
               className="inline-flex w-full cursor-pointer items-center justify-center gap-3 rounded-full bg-white py-2 pl-2 pr-6 text-[15px] font-semibold text-[#111111] transition-colors duration-150 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 sm:w-auto focus:ring-offset-[#0B1220]"
             >
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#111111] text-white">
                 <ArrowUpRight className="h-[18px] w-[18px]" strokeWidth={2.25} />
               </span>
               Book Demo
-            </a>
+            </Link>
           </div>
         </LandingReveal>
 
