@@ -52,6 +52,8 @@ type SettlementActivityTab = 'observations' | 'parseErrors'
 const SETTLEMENT_PAGE_SUMMARY = dockItems.find((d) => d.id === 'settlement')?.summary ?? ''
 
 const ROW_SIZE_OPTIONS = [25, 50, 100, 200] as const
+/** Cap sidebar status enrichment — avoids hundreds of batch_contract calls in smoke mode. */
+const BATCH_CONTRACT_PREFETCH_CAP = SETTLEMENT_SIDEBAR_PAGE_SIZE * 2
 
 export function SettlementJournalSurface({
   initialClientBatchId,
@@ -195,21 +197,22 @@ function SettlementJournalSurfaceContent({
     }
   }, [mode, feedLoaded, observationTotal])
 
-  // Pre-populate sidebar status for all batches in parallel via batch contract KPI
+  // Pre-populate sidebar status for the first page of batches (not the full catalogue).
   useEffect(() => {
     if (!feedLoaded || !tenantReady || clientBatches.length === 0) return
+    const idsToPrefetch = clientBatches.slice(0, BATCH_CONTRACT_PREFETCH_CAP)
     void (async () => {
       try {
         const results = await Promise.allSettled(
-          clientBatches.map((bid) => getBatchContractKpis(bid)),
+          idsToPrefetch.map((bid) => getBatchContractKpis(bid)),
         )
         const entries: Record<string, SettlementSidebarOutcome> = {}
-        for (let i = 0; i < clientBatches.length; i++) {
+        for (let i = 0; i < idsToPrefetch.length; i++) {
           const result = results[i]
           if (result?.status !== 'fulfilled' || !result.value) continue
           const confidence = parseMatchConfidence(result.value.match_confidence)
           if (confidence == null) continue
-          entries[clientBatches[i]!] = outcomeFromMatchConfidence(confidence)
+          entries[idsToPrefetch[i]!] = outcomeFromMatchConfidence(confidence)
         }
         if (Object.keys(entries).length > 0) {
           setBatchMatchOutcomeCache((prev) => ({ ...entries, ...prev }))

@@ -199,21 +199,34 @@ export function mapSidebarItemToBatchRecord(it: IntentEngineBatchSidebarItem): J
   }
 }
 
+function readMinorAmount(value: number | string | undefined | null): number {
+  if (value == null || value === '') return 0
+  const n = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(n) ? n : 0
+}
+
+function readMatchConfidenceAsFraction(raw: number | undefined | null): number | undefined {
+  if (raw == null || !Number.isFinite(raw)) return undefined
+  return raw <= 1 ? raw : raw / 100
+}
+
 export function mapIntelligenceRowToBatchRecord(b: IntelligenceBatchRow): JournalBatchRecord {
+  const failed = b.failed_count ?? 0
   return {
     batchId: b.batch_id,
     type: 'Disbursement',
     apiType: '—',
     source: inferBatchSource(b.batch_id, b.finality_status),
-    totalValue: 0,
+    totalValue: readMinorAmount(b.total_intended_amount_minor),
     transactions: b.total_count ?? 0,
     confirmedCount: b.success_count ?? 0,
     highConfidenceCount: 0,
-    mismatchCount: 0,
-    unresolvedCount: 0,
+    aggregateConfidenceScore: readMatchConfidenceAsFraction(b.match_confidence),
+    mismatchCount: failed,
+    unresolvedCount: failed,
     intelligenceCounts: {
       success_count: b.success_count ?? 0,
-      failed_count: b.failed_count ?? 0,
+      failed_count: failed,
       pending_count: b.pending_count ?? 0,
       finality_status: b.finality_status,
     },
