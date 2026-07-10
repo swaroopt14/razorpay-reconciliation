@@ -160,11 +160,30 @@ type EvidenceItem struct {
 	LeafHash      string `json:"leaf_hash,omitempty"`
 }
 
+// Pack signature canonicalization versions — identify how signed_payload was formed.
+const (
+	CanonicalIntentPackCommitmentV1 = "intent_pack_commitment_v1"
+	CanonicalBatchPackCommitmentV1  = "batch_pack_commitment_v1"
+	CanonicalLegacyV1               = "legacy_v1"
+
+	SignerIDZordEvidence = "zord_evidence"
+
+	SignatureVerificationNotVerified = "NOT_VERIFIED"
+	SignatureVerificationVerified    = "VERIFIED"
+)
+
+// Signature is one cryptographic commitment over a pack. Persisted in
+// evidence_pack_signatures; evidence_packs.signature_alg/signature_value hold
+// the denormalized latest/default signature for fast reads.
 type Signature struct {
-	Signer   string    `json:"signer"`
-	Alg      string    `json:"alg"`
-	Sig      string    `json:"sig"`
-	SignedAt time.Time `json:"signed_at"`
+	Signer                  string    `json:"signer"`
+	Alg                     string    `json:"alg"`
+	Sig                     string    `json:"sig"`
+	SignedAt                time.Time `json:"signed_at"`
+	KeyID                   string    `json:"key_id,omitempty"`
+	SignedPayloadHash       string    `json:"signed_payload_hash,omitempty"`
+	CanonicalizationVersion string    `json:"canonicalization_version,omitempty"`
+	VerificationStatus      string    `json:"verification_status,omitempty"`
 }
 
 // EvidencePack is the canonical committed proof bundle for one payment lifecycle.

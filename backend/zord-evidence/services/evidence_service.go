@@ -799,7 +799,7 @@ func (s *EvidenceService) GeneratePackInTx(ctx context.Context, packTx *sql.Tx, 
 	signPayload := strings.Join([]string{
 		packID, merkleRoot, req.IntentID, req.ContractID, now.Format(time.RFC3339Nano), req.RulesetVersion,
 	}, "|")
-	sig := s.signer.Sign(signPayload)
+	packSig := buildPackSignature(s.signer, models.CanonicalIntentPackCommitmentV1, signPayload, now)
 
 	pack := &models.EvidencePack{
 		EvidencePackID:   packID,
@@ -814,13 +814,8 @@ func (s *EvidenceService) GeneratePackInTx(ctx context.Context, packTx *sql.Tx, 
 		RulesetVersion:   req.RulesetVersion,
 		SchemaVersions:   req.SchemaVersions,
 		SupersedesPackID: req.SupersedesPackID,
-		Signatures: []models.Signature{{
-			Signer:   "zord_evidence",
-			Alg:      "ed25519",
-			Sig:      sig,
-			SignedAt: now,
-		}},
-		ZordSignature:              sig,
+		Signatures:       []models.Signature{packSig},
+		ZordSignature:              packSig.Sig,
 		PaymentInstructionReceived: req.PaymentInstructionReceived,
 		CanonicalIntentCreated:     req.CanonicalIntentCreated,
 		MappingProfileUsed:         req.MappingProfileUsed,
@@ -1104,7 +1099,7 @@ func (s *EvidenceService) GenerateBatchPackInTx(ctx context.Context, packTx *sql
 	signPayload := strings.Join([]string{
 		packID, merkleRoot, req.ClientBatchID, now.Format(time.RFC3339Nano), req.RulesetVersion,
 	}, "|")
-	sig := s.signer.Sign(signPayload)
+	packSig := buildPackSignature(s.signer, models.CanonicalBatchPackCommitmentV1, signPayload, now)
 
 	pack := &models.EvidencePack{
 		EvidencePackID: packID,
@@ -1116,13 +1111,8 @@ func (s *EvidenceService) GenerateBatchPackInTx(ctx context.Context, packTx *sql
 		MerkleRoot:     merkleRoot,
 		RulesetVersion: req.RulesetVersion,
 		SchemaVersions: req.SchemaVersions,
-		Signatures: []models.Signature{{
-			Signer:   "zord_evidence",
-			Alg:      "ed25519",
-			Sig:      sig,
-			SignedAt: now,
-		}},
-		ZordSignature:   sig,
+		Signatures:     []models.Signature{packSig},
+		ZordSignature:   packSig.Sig,
 		ClientPayoutRef: req.ClientPayoutRef,
 		Amount:          req.Amount,
 		Currency:        req.Currency,

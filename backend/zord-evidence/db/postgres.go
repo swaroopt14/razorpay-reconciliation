@@ -176,7 +176,7 @@ func EnsureTables(ctx context.Context, d *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS evidence_items_pack_idx
 			ON evidence_items(evidence_pack_id)`,
 
-		// signatures sub-table
+		// Legacy signatures table (superseded by evidence_pack_signatures).
 		`CREATE TABLE IF NOT EXISTS evidence_signatures (
 			evidence_pack_id TEXT NOT NULL,
 			signer           TEXT NOT NULL,
@@ -185,6 +185,24 @@ func EnsureTables(ctx context.Context, d *sql.DB) error {
 			signed_at        TIMESTAMPTZ NOT NULL,
 			PRIMARY KEY(evidence_pack_id, signer, alg)
 		)`,
+
+		// P1-01: canonical pack signature store. Pack-level signature_alg/signature_value
+		// remain denormalized for fast reads; this table is the source of truth.
+		`CREATE TABLE IF NOT EXISTS evidence_pack_signatures (
+			evidence_pack_id          TEXT NOT NULL,
+			signer_id                 TEXT NOT NULL,
+			alg                       TEXT NOT NULL,
+			key_id                    TEXT NOT NULL,
+			signature_value           TEXT NOT NULL,
+			signed_payload_hash       TEXT NOT NULL,
+			canonicalization_version  TEXT NOT NULL,
+			signed_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			verification_status       TEXT NOT NULL DEFAULT 'NOT_VERIFIED',
+			PRIMARY KEY (evidence_pack_id, signer_id, alg, key_id)
+		)`,
+
+		`CREATE INDEX IF NOT EXISTS evidence_pack_signatures_pack_idx
+			ON evidence_pack_signatures(evidence_pack_id)`,
 
 		// §14.3 — immutable archive body metadata
 		`CREATE TABLE IF NOT EXISTS evidence_archives (
@@ -299,7 +317,6 @@ func EnsureTables(ctx context.Context, d *sql.DB) error {
 		// share the same source_event_id, so the ON CONFLICT DO NOTHING on the
 		// unique index (source_event_id, tenant_id, leaf_type, intent_id, batch_id)
 		// makes WriteReceipt fully idempotent.
-		`DROP TABLE IF EXISTS evidence_leaf_receipts;`,
 
 		`CREATE TABLE evidence_leaf_receipts (
 			receipt_id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
@@ -384,6 +401,48 @@ func EnsureTables(ctx context.Context, d *sql.DB) error {
 		// Drop old dedup index (if any)
 		`DROP INDEX IF EXISTS idx_leaf_receipts_dedup;`,
 		`DROP INDEX IF EXISTS idx_leaf_receipts_dedup_v2;`,
+
+		// P1-01: Backfill evidence_pack_signatures from legacy evidence_signatures rows.
+		`INSERT INTO evidence_pack_signatures (
+			evidence_pack_id, signer_id, alg, key_id, signature_value,
+			signed_payload_hash, canonicalization_version, signed_at, verification_status
+		)
+		SELECT
+			es.evidence_pack_id,
+			es.signer,
+			es.alg,
+			'legacy_unknown',
+			es.signature,
+			'',
+			'legacy_v1',
+			es.signed_at,
+			'NOT_VERIFIED'
+		FROM evidence_signatures es
+		ON CONFLICT (evidence_pack_id, signer_id, alg, key_id) DO NOTHING`,
+
+		// P1-01: Backfill from denormalized pack columns when no signature row exists.
+		`INSERT INTO evidence_pack_signatures (
+			evidence_pack_id, signer_id, alg, key_id, signature_value,
+			signed_payload_hash, canonicalization_version, signed_at, verification_status
+		)
+		SELECT
+			ep.evidence_pack_id,
+			'zord_evidence',
+			ep.signature_alg,
+			'legacy_unknown',
+			ep.signature_value,
+			'',
+			'legacy_v1',
+			ep.created_at,
+			'NOT_VERIFIED'
+		FROM evidence_packs ep
+		WHERE ep.signature_value IS NOT NULL
+		  AND ep.signature_value <> ''
+		  AND NOT EXISTS (
+			SELECT 1 FROM evidence_pack_signatures eps
+			WHERE eps.evidence_pack_id = ep.evidence_pack_id
+		  )
+		ON CONFLICT (evidence_pack_id, signer_id, alg, key_id) DO NOTHING`,
 	}
 	for _, m := range migrations {
 		if _, err := d.ExecContext(ctx, m); err != nil {
@@ -441,6 +500,19 @@ func EnsureTables(ctx context.Context, d *sql.DB) error {
 				NOT VALID`,
 			validateStmt: `ALTER TABLE evidence_signatures
 				VALIDATE CONSTRAINT fk_evidence_signatures_pack`,
+		},
+		{
+			desc:           "evidence_pack_signatures → evidence_packs",
+			constraintName: "fk_evidence_pack_signatures_pack",
+			table:          "evidence_pack_signatures",
+			addStmt: `ALTER TABLE evidence_pack_signatures
+				ADD CONSTRAINT fk_evidence_pack_signatures_pack
+				FOREIGN KEY (evidence_pack_id)
+				REFERENCES evidence_packs(evidence_pack_id)
+				ON DELETE CASCADE
+				NOT VALID`,
+			validateStmt: `ALTER TABLE evidence_pack_signatures
+				VALIDATE CONSTRAINT fk_evidence_pack_signatures_pack`,
 		},
 		{
 			// RESTRICT not CASCADE: an S3 archive exists independently.
