@@ -14,8 +14,11 @@ export function parsePositiveInt(value, fallback) {
 /** Rows per batch for intents + settlement observations. */
 export const SMOKE_ROWS_PER_DAY = 15
 
-/** How many demo batches to expose (default: 10 recent days; set 366 for full-year trend). */
-export const SMOKE_DEMO_DAY_COUNT = parsePositiveInt(process.env.SMOKE_DEMO_DAY_COUNT, 10)
+/**
+ * Days available for home/leakage trend charts (default: full calendar year, like master).
+ * Journal list APIs still honour SMOKE_BATCH_COUNT separately.
+ */
+export const SMOKE_DEMO_DAY_COUNT = parsePositiveInt(process.env.SMOKE_DEMO_DAY_COUNT, 366)
 
 /** Varied intent vs settlement profiles — cycled for rolling windows. */
 const SMOKE_DAY_PROFILES = [
@@ -275,20 +278,26 @@ export function buildSmokeBatches() {
   }))
 }
 
-const ALL_BATCHES = buildSmokeBatches()
-export const BATCH_COUNT = parsePositiveInt(process.env.SMOKE_BATCH_COUNT, ALL_BATCHES.length)
+/** Full trend catalogue (home month/quarter/year charts). */
+export const ALL_BATCHES = buildSmokeBatches()
+export const BATCH_COUNT = parsePositiveInt(process.env.SMOKE_BATCH_COUNT, 10)
 
 /** Cap to recent batches while keeping pinned demo/evidence days available. */
 function selectSmokeBatches(all, count) {
   if (count >= all.length) return all
-  const recent = all.slice(-count)
+  const today = isoDateUtc(new Date())
+  const upToToday = all.filter((b) => b.date <= today)
+  const recent = (upToToday.length > 0 ? upToToday : all).slice(-count)
   const recentIds = new Set(recent.map((b) => b.id))
   const pinnedDates = new Set(PINNED_DEMO_DAYS.map((p) => p.date))
   const pinned = all.filter((b) => pinnedDates.has(b.date) && !recentIds.has(b.id))
   return [...pinned, ...recent].sort((a, b) => a.date.localeCompare(b.date))
 }
 
-/** Most recent N batches — honours SMOKE_BATCH_COUNT for lighter local smoke runs. */
+/**
+ * Journal / evidence list catalogue — capped for fast sidebar loads.
+ * Trend KPIs use ALL_BATCHES so Month/Year charts still match master.
+ */
 export const BATCHES = selectSmokeBatches(ALL_BATCHES, BATCH_COUNT)
 
 export const PRIMARY_BATCH =

@@ -43,9 +43,14 @@ npm run dev
 
 Open http://localhost:3000/payout-command-view/today and sign in with **any** email/password.
 
-## Default batch catalogue (10 dated demo days)
+## Default batch catalogue
 
-Each batch = **15 payment intents** + **15 settlement observations** on that calendar day. Home trend uses `GET /v1/intelligence/dashboard/leakage?from_date=&to_date=` per day.
+- **`SMOKE_DEMO_DAY_COUNT` (default 366)** — full calendar year of dated values for Home Month/Quarter/Year charts.
+- **`SMOKE_BATCH_COUNT` (default 10)** — capped journal/evidence sidebar list (plus pinned Jun demo batches).
+
+Each listed journal batch = **15 payment intents** + **15 settlement observations**. Home trend uses `GET /v1/intelligence/dashboard/leakage?from_date=&to_date=` per day against the full-year catalogue.
+
+Pinned journal deep-link batches (always included when the list is capped):
 
 | Batch ID | Day | Intent ₹ | Settlement ₹ | DLQ | Partner |
 |----------|-----|----------|--------------|-----|---------|
@@ -60,11 +65,11 @@ Each batch = **15 payment intents** + **15 settlement observations** on that cal
 | `batch-2026-06-20-sweep` | 20 Jun sweep | 59,000 | 45,000 | 2 | razorpay |
 | `batch-2026-06-21-close-out` | 21 Jun close-out | 76,000 | 68,000 | 0 | cashfree |
 
-Use **Month** period on Home (Jun 2026) to see bars move up/down across these days.
+Use **Month** period on Home to see bars across the full current month (same as master).
 
 Counts use deterministic formulas so each batch differs (pagination still works on large observation sets).
 
-Change batch count:
+Change journal list size (charts stay full-year unless you also lower `SMOKE_DEMO_DAY_COUNT`):
 
 ```bash
 SMOKE_BATCH_COUNT=10 docker compose -f docker-compose.smoke.yml up -d --build
@@ -77,8 +82,9 @@ SMOKE_BATCH_COUNT=10 docker compose -f docker-compose.smoke.yml up -d --build
 | `SMOKE_SIMULATOR_PORT` | `8099` | Host port mapping |
 | `SMOKE_TENANT_ID` | `00000000-0000-0000-0000-000000000001` | Tenant on all fixtures |
 | `SMOKE_API_KEY` | `zord-local-dev-api-key` | Accepted Bearer key for settlement routes |
-| `SMOKE_BATCH_COUNT` | `10` | Number of batches to generate |
-| `SMOKE_LATENCY_MS` | `120` | Artificial delay on heavy list routes |
+| `SMOKE_DEMO_DAY_COUNT` | `366` | Days for home/leakage trend charts |
+| `SMOKE_BATCH_COUNT` | `10` | Journal/evidence list batch count |
+| `SMOKE_LATENCY_MS` | `0` | Artificial delay on heavy list routes |
 
 ## Health check
 

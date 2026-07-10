@@ -1,5 +1,6 @@
 import { buildAmbiguityMixSegments } from './bubbleMapChart.js'
 import {
+  ALL_BATCHES,
   BATCHES,
   EVIDENCE_BATCH,
   PACK_BATCH,
@@ -15,7 +16,7 @@ import {
 const PROVIDERS = ['razorpay', 'cashfree']
 
 function batchMeta(batchId) {
-  return BATCHES.find((b) => b.id === batchId) ?? BATCHES[0]
+  return ALL_BATCHES.find((b) => b.id === batchId) ?? BATCHES.find((b) => b.id === batchId) ?? ALL_BATCHES[0]
 }
 
 /** Split a rupee total across N rows; last row absorbs rounding so the sum is exact. */
@@ -402,7 +403,8 @@ const LEAKAGE_DAY_MS = 86_400_000
 
 /** Per-day leakage from dated smoke batches (home trend calls one day at a time). */
 function leakageComponentsForDay(dateStr) {
-  const batch = BATCHES.find((b) => b.date === dateStr)
+  // Use full-year catalogue so Month/Year charts match master even when BATCHES is capped.
+  const batch = ALL_BATCHES.find((b) => b.date === dateStr)
   if (!batch) {
     return { intended: 0, settled: 0, unmatched: 0, under: 0, orphan: 0, reversal: 0 }
   }
@@ -418,11 +420,68 @@ function* leakageDaysInWindow(fromStr, toStr) {
 }
 
 /**
- * Leakage KPIs for a date window. The home trend chart calls this once per
- * bucket with from_date=to_date=<day>, so each bar gets that day's own value.
- * With no window (KPI strip) it returns the current calendar month aggregate.
+ * Leakage KPIs for a date window or a single batch. The home trend chart calls
+ * this once per bucket with from_date=to_date=<day>, so each bar gets that
+ * day's own value. With no window (KPI strip) it returns the current calendar
+ * month aggregate. With batch_id it returns that batch's scoped snapshot.
  */
-export function leakageKpi(fromDate, toDate) {
+export function leakageKpi(fromDate, toDate, batchId) {
+  if (batchId?.trim()) {
+    const meta = batchMeta(batchId.trim())
+    const sum = leakageFromBatchMeta(meta)
+    const totalExposure = sum.unmatched + sum.under + sum.orphan + sum.reversal
+    const exposureDenom = totalExposure > 0 ? totalExposure : 1
+    const leakagePct = sum.intended > 0 ? Number((sum.unmatched / sum.intended).toFixed(4)) : 0
+    const day = meta.date ?? new Date().toISOString().slice(0, 10)
+    return {
+      data_available: sum.intended > 0 || sum.settled > 0,
+      tenant_id: TENANT_ID,
+      batch_id: meta.id,
+      computed_at: new Date().toISOString(),
+      window_start: `${day}T00:00:00Z`,
+      window_end: `${day}T23:59:59Z`,
+      total_intended_amount_minor: sum.intended,
+      total_amount_minor: totalExposure,
+      unmatched_amount_minor: sum.unmatched,
+      under_settlement_amount_minor: sum.under,
+      orphan_amount_minor: sum.orphan,
+      reversal_exposure_minor: sum.reversal,
+      total_observed_settled_amount_minor: sum.settled,
+      ambiguous_value_at_risk_minor: Math.round((sum.unmatched + sum.under) * 0.22),
+      risk_adjusted_leakage_minor: Math.round(totalExposure * 0.72),
+      leakage_percentage: leakagePct,
+      risk_tier: leakagePct >= 0.15 ? 'CRITICAL' : leakagePct >= 0.08 ? 'HIGH' : leakagePct >= 0.05 ? 'MEDIUM' : 'LOW',
+      exposure_bands: [
+        {
+          band: 'Unmatched Payment Value',
+          amount_minor: sum.unmatched,
+          share_pct: Number(((sum.unmatched / exposureDenom) * 100).toFixed(1)),
+        },
+        {
+          band: 'Short-Settled Value',
+          amount_minor: sum.under,
+          share_pct: Number(((sum.under / exposureDenom) * 100).toFixed(1)),
+        },
+        {
+          band: 'Unlinked Settlement Value',
+          amount_minor: sum.orphan,
+          share_pct: Number(((sum.orphan / exposureDenom) * 100).toFixed(1)),
+        },
+        {
+          band: 'Reversal Exposure',
+          amount_minor: sum.reversal,
+          share_pct: Number(((sum.reversal / exposureDenom) * 100).toFixed(1)),
+        },
+      ],
+      segment_roll_rates: [
+        { from_band: 'settled', to_band: 'unmatched', roll_pct: 4.2 },
+        { from_band: 'settled', to_band: 'short_settled', roll_pct: 2.1 },
+        { from_band: 'short_settled', to_band: 'orphan', roll_pct: 0.8 },
+        { from_band: 'orphan', to_band: 'reversal', roll_pct: 0.4 },
+      ],
+    }
+  }
+
   let from = fromDate
   let to = toDate
   if (!from || !to) {
@@ -460,6 +519,8 @@ export function leakageKpi(fromDate, toDate) {
     orphan_amount_minor: sum.orphan,
     reversal_exposure_minor: sum.reversal,
     total_observed_settled_amount_minor: sum.settled,
+    ambiguous_value_at_risk_minor: Math.round((sum.unmatched + sum.under) * 0.22),
+    risk_adjusted_leakage_minor: Math.round(totalExposure * 0.72),
     leakage_percentage: leakagePct,
     risk_tier: leakagePct >= 0.05 ? 'MEDIUM' : 'LOW',
     exposure_bands: [
@@ -592,9 +653,13 @@ export function ambiguityKpi() {
   const providerRefMissingRate = 0.16
   const ambiguityRate = 0.08
   const avgAttachmentConfidence = 0.82
+  const lowConfidenceRate = 0.18
+  const carrierCompletenessRate = 0.84
+  const candidateCollisionRate = 0.04
   const mix = buildAmbiguityMixSegments({
     providerRefMissingRate,
     ambiguityRate,
+    lowConfidenceRate,
     avgAttachmentConfidence,
   })
   return {
@@ -604,6 +669,9 @@ export function ambiguityKpi() {
     value_at_risk_minor: 250_000,
     avg_attachment_confidence: avgAttachmentConfidence,
     provider_ref_missing_rate: providerRefMissingRate,
+    low_confidence_rate: lowConfidenceRate,
+    carrier_completeness_rate: carrierCompletenessRate,
+    candidate_collision_rate: candidateCollisionRate,
     ambiguous_intent_count: 12,
     ambiguity_rate: ambiguityRate,
     intelligence_headline: '12 intents need provider reference review before dispatch.',
@@ -728,11 +796,19 @@ export function bubbleMap() {
 
 export function patternsDashboard(batchId) {
   const bid = batchId?.trim() || null
-  const batchIndex = bid ? BATCHES.findIndex((b) => b.id === bid) : -1
+  const batchIndex = bid ? ALL_BATCHES.findIndex((b) => b.id === bid) : -1
   const meta = bid ? batchMeta(bid) : null
+  const known = Boolean(!bid || batchIndex >= 0 || meta)
 
   const tenantBatchCount = BATCHES.length
-  const totalCount = bid ? (meta?.intentCount ?? 100) : tenantBatchCount
+  const totalCount = bid ? (meta?.intentCount ?? 100) : Math.max(tenantBatchCount, 100)
+  const successCount = bid
+    ? (meta?.settledRows ?? 12)
+    : BATCHES.reduce((sum, b) => sum + (b.settledRows ?? 0), 0)
+  const failedCount = bid ? (meta?.failedRows ?? 1) : BATCHES.reduce((sum, b) => sum + (b.failedRows ?? 0), 0)
+  const pendingCount = bid
+    ? (meta?.pendingRows ?? 2)
+    : BATCHES.reduce((sum, b) => sum + (b.pendingRows ?? 0), 0)
   const ambiguousCount = bid ? 8 + ((batchIndex >= 0 ? batchIndex : 0) % 7) : 18
   const batchRiskScore = bid
     ? Number((0.31 + ((batchIndex >= 0 ? batchIndex : 0) % 6) * 0.04).toFixed(2))
@@ -743,13 +819,11 @@ export function patternsDashboard(batchId) {
   const ambiguousDriverCount = bid ? 3 + ((batchIndex >= 0 ? batchIndex : 0) % 4) : 7
 
   return {
-    data_available: Boolean(!bid || batchIndex >= 0),
+    data_available: known,
     tenant_id: TENANT_ID,
     computed_at: new Date().toISOString(),
     ...(bid ? { batch_id: bid } : {}),
-    ...(!bid || batchIndex >= 0
-      ? {}
-      : { reason: 'No batch data available for this period' }),
+    ...(known ? {} : { reason: 'No batch data available for this period' }),
     decision_success_rate: '64.95%',
     by_provider: {
       razorpay: {
@@ -774,12 +848,13 @@ export function patternsDashboard(batchId) {
     batch_risk_score: batchRiskScore,
     batch_quality_score: batchQualityScore,
     risk_tier: 'MEDIUM',
-    finality_status: 'PARTIALLY_SETTLED',
+    finality_status: meta?.finality ?? 'PARTIALLY_SETTLED',
     total_count: totalCount,
-    success_count: 82,
-    failed_count: 4,
-    pending_count: 14,
+    success_count: successCount,
+    failed_count: failedCount,
+    pending_count: pendingCount,
     ambiguous_count: ambiguousCount,
+    value_date_mismatch_count: bid ? 2 + ((batchIndex >= 0 ? batchIndex : 0) % 3) : 5,
     risk_driver_breakdown: [
       { label: 'Orphan settlements', count: orphanCount, share_pct: 42 },
       { label: 'Short settlement', count: shortCount, share_pct: 31 },
@@ -795,32 +870,160 @@ export function patternsDashboard(batchId) {
   }
 }
 
-export function operationsSummary() {
+export function operationsSummary(batchId) {
+  const bid = batchId?.trim() || null
+  const scope = bid ? [batchMeta(bid)] : BATCHES
+  const leak = bid ? leakageKpi(undefined, undefined, bid) : leakageKpi()
+  const blocked = scope.filter((b) => b.finality === 'OPEN')
+  const closeReady = scope.filter((b) => b.finality === 'FULLY_SETTLED')
+  const dlqTotal = scope.reduce((sum, b) => sum + (b.dlqCount ?? 0), 0)
+  const intended = leak.total_intended_amount_minor ?? 0
+  const settled = leak.total_observed_settled_amount_minor ?? 0
+  const coverage = intended > 0 ? Number(((settled / intended) * 100).toFixed(1)) : 87.4
+  const exceptionValue = leak.total_amount_minor ?? 18_500_000
+
   return {
     data_available: true,
     tenant_id: TENANT_ID,
     computed_at: new Date().toISOString(),
-    settlement_confirmation_coverage_pct: 87.4,
-    confirmed_matched_value_minor: 42_000_000,
-    total_intended_amount_minor: 48_000_000,
-    open_exception_queue_count: 12,
-    open_exception_queue_value_minor: 18_500_000,
+    ...(bid ? { batch_id: bid } : {}),
+    window_start: leak.window_start,
+    window_end: leak.window_end,
+    settlement_confirmation_coverage_pct: coverage,
+    confirmed_matched_value_minor: settled,
+    total_intended_amount_minor: intended,
+    open_exception_queue_count: Math.max(dlqTotal, blocked.length + 2),
+    open_exception_queue_value_minor: exceptionValue,
     batch_close_readiness: {
-      blocked_batch_count: BATCHES.filter((b) => b.finality === 'OPEN').length,
-      close_ready_batch_count: BATCHES.filter((b) => b.finality === 'FULLY_SETTLED').length,
-      blocked_batch_ids: BATCHES.filter((b) => b.finality === 'OPEN').map((b) => b.id),
-      close_ready_batch_ids: BATCHES.filter((b) => b.finality === 'FULLY_SETTLED').map((b) => b.id),
+      blocked_batch_count: blocked.length,
+      close_ready_batch_count: closeReady.length,
+      blocked_batch_ids: blocked.map((b) => b.id),
+      close_ready_batch_ids: closeReady.map((b) => b.id),
     },
+    operations_insights: [
+      {
+        title: 'Batches blocked from close',
+        detail: blocked.length
+          ? `${blocked.length} batch(es) still OPEN and need review before close.`
+          : 'No batches are currently blocked from close.',
+        severity: blocked.length ? 'high' : 'low',
+        case_count: blocked.length,
+        href: '/payout-command-view/today?dock=grid',
+      },
+      {
+        title: 'Open financial exceptions',
+        detail: `Exception queue value is ₹${Number(exceptionValue).toLocaleString('en-IN')} across ${Math.max(dlqTotal, 1)} case(s).`,
+        severity: 'medium',
+        case_count: Math.max(dlqTotal, blocked.length + 2),
+        href: '/payout-command-view/today?dock=leakage',
+      },
+      {
+        title: 'Settlement confirmation coverage',
+        detail: `Bank/settlement confirmation covers ${coverage}% of intended payment value.`,
+        severity: coverage < 85 ? 'medium' : 'low',
+        case_count: scope.length,
+      },
+    ],
   }
 }
 
-export function exceptionsSummary() {
+export function exceptionsSummary(batchId) {
+  const ops = operationsSummary(batchId)
   return {
     data_available: true,
     tenant_id: TENANT_ID,
     computed_at: new Date().toISOString(),
-    open_financial_exception_count: 12,
-    open_financial_exception_value_minor: 18_500_000,
+    ...(batchId?.trim() ? { batch_id: batchId.trim() } : {}),
+    open_financial_exception_count: ops.open_exception_queue_count,
+    open_financial_exception_value_minor: ops.open_exception_queue_value_minor,
+  }
+}
+
+/** Aggregate manual-review DLQ across journal batches for Payment Operations View. */
+export function buildManualReviewDlq() {
+  const items = BATCHES.flatMap((b) => buildDlqItems(b.id).items)
+  return {
+    items,
+    pagination: { page: 1, page_size: items.length, total: items.length },
+  }
+}
+
+/**
+ * Smoke stand-in for zord-prompt-layer POST /query — grounds Ask Zord on Payment
+ * Operations View using the same catalogue as leakage / ops summary.
+ */
+export function promptLayerQuery(body = {}) {
+  const query = String(body.query ?? '').trim() || 'Summarize payment operations'
+  const batchId = body.ui_context?.batch_id?.trim() || undefined
+  const ops = operationsSummary(batchId)
+  const amb = ambiguityKpi()
+  const patterns = patternsDashboard(batchId)
+  const dlq = buildManualReviewDlq()
+  const q = query.toLowerCase()
+
+  let answer
+  if (q.includes('exception') || q.includes('financial')) {
+    answer =
+      `There are ${ops.open_exception_queue_count} open financial exception case(s) ` +
+      `worth ₹${Number(ops.open_exception_queue_value_minor).toLocaleString('en-IN')}. ` +
+      `Next step: open Payment Gaps to clear unmatched and short-settled value.`
+  } else if (q.includes('blocked') || q.includes('close')) {
+    const blocked = ops.batch_close_readiness.blocked_batch_count
+    const ready = ops.batch_close_readiness.close_ready_batch_count
+    answer =
+      `${blocked} batch(es) are blocked from close and ${ready} are close-ready. ` +
+      (blocked
+        ? `Blocked ids: ${ops.batch_close_readiness.blocked_batch_ids.slice(0, 3).join(', ')}.`
+        : 'No close blockers in the current smoke catalogue.')
+  } else if (q.includes('proof') || q.includes('evidence') || q.includes('missing')) {
+    answer =
+      `Evidence and source probes are available in smoke. Settlement confirmation coverage is ` +
+      `${ops.settlement_confirmation_coverage_pct}%. Reference completeness is ` +
+      `${Math.round(amb.carrier_completeness_rate * 100)}% and match confidence averages ` +
+      `${Math.round(amb.avg_attachment_confidence * 100)}%.`
+  } else if (q.includes('review') || q.includes('ambiguous') || q.includes('match')) {
+    answer =
+      `${amb.ambiguous_intent_count} payment(s) need match review. ` +
+      `Manual-review DLQ has ${dlq.pagination.total} item(s). ` +
+      `Average attachment confidence is ${Math.round(amb.avg_attachment_confidence * 100)}%. ` +
+      `Next step: open Match Review or Intent Journal.`
+  } else {
+    answer =
+      `Payment Operations smoke snapshot: ${patterns.total_count} in-scope rows, ` +
+      `₹${Number(ops.total_intended_amount_minor).toLocaleString('en-IN')} intended, ` +
+      `₹${Number(ops.confirmed_matched_value_minor).toLocaleString('en-IN')} bank-confirmed ` +
+      `(${ops.settlement_confirmation_coverage_pct}% coverage). ` +
+      `${ops.batch_close_readiness.blocked_batch_count} batch(es) blocked from close, ` +
+      `${dlq.pagination.total} DLQ review item(s). Ask about exceptions, proof gaps, or close readiness for detail.`
+  }
+
+  return {
+    answer,
+    confidence: 'high',
+    entities_found: {
+      ...(batchId ? { intent_id: intentId(batchId, 0) } : {}),
+    },
+    citations: [
+      {
+        source_type: 'operations_summary',
+        record_id: batchId || 'tenant',
+        chunk_id: 'ops-summary',
+        snippet: `coverage ${ops.settlement_confirmation_coverage_pct}% · exceptions ${ops.open_exception_queue_count}`,
+        score: 0.94,
+      },
+      {
+        source_type: 'ambiguity',
+        record_id: 'ambiguity-kpi',
+        chunk_id: 'match-review',
+        snippet: `${amb.ambiguous_intent_count} ambiguous intents`,
+        score: 0.88,
+      },
+    ],
+    next_actions: [
+      'Open Match Review for ambiguous intents',
+      'Clear blocked batches before close',
+      'Inspect Payment Gaps for exception value',
+    ],
   }
 }
 

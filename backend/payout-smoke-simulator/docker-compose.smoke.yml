@@ -12,6 +12,7 @@ services:
       SMOKE_API_KEY: "${SMOKE_API_KEY:-zord-local-dev-api-key}"
       # Artificial latency (ms) on heavy list routes — set 0 to disable
       SMOKE_LATENCY_MS: "${SMOKE_LATENCY_MS:-0}"
-      SMOKE_DEMO_DAY_COUNT: "${SMOKE_DEMO_DAY_COUNT:-10}"
+      # Full-year days for home Month/Quarter/Year charts; journals stay capped.
+      SMOKE_DEMO_DAY_COUNT: "${SMOKE_DEMO_DAY_COUNT:-366}"
       SMOKE_BATCH_COUNT: "${SMOKE_BATCH_COUNT:-10}"
     restart: unless-stopped
