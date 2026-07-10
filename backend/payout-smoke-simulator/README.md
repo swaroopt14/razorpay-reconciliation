@@ -36,7 +36,8 @@ docker compose up -d --build
 
 # 2. Wire the console to the simulator
 cd ../zord-console
-cp .env.smoke.example .env.local
+# Point every ZORD_*_URL + PROMPT_LAYER_URL at http://localhost:8099 in .env.local
+# (see Console env below). Do not commit .env.local.
 npm install
 npm run dev
 ```
@@ -103,21 +104,18 @@ SMOKE_BATCH_COUNT=10 npm start
 
 ## Console env
 
-| File | When to use |
-|------|-------------|
-| `zord-console/.env.smoke.example` | Console talks to **this smoke simulator** (all `ZORD_*_URL` → one host) |
-| `zord-console/.env.live.example` | Console talks to **real microservices** (each `ZORD_*_URL` → its own service) |
+Do **not** commit console env files. Use a local `.env.local` (gitignored) or AWS task/env secrets.
 
-Local: copy the smoke example → `.env.local` (gitignored). All `ZORD_*_URL` values point to `http://localhost:8099`.
+| Mode | What to set |
+|------|-------------|
+| **Smoke (demo)** | Every `ZORD_*_URL` + `PROMPT_LAYER_URL` → smoke host (`http://localhost:8099` locally, or your smoke ALB on AWS). Match `ZORD_SETTLEMENT_API_KEY` / `ZORD_BULK_INGEST_API_KEY` to smoke `SMOKE_API_KEY`. |
+| **Live backends** | Each `ZORD_*_URL` / `PROMPT_LAYER_URL` → that microservice’s URL. Do not point them at smoke. |
+
+Smoke and live are mutually exclusive for a given console deployment.
 
 ### AWS / deployed console
 
-Do **not** commit `.env.local`. Set the same keys as runtime env (ECS task definition, Amplify, Parameter Store, etc.):
-
-1. **Demo / UI review against smoke** — start from `.env.smoke.example`, replace every `http://localhost:8099` with your smoke service URL (ALB / ECS public URL), e.g. `https://smoke.example.com`. Keep API keys aligned with the smoke container (`SMOKE_API_KEY`).
-2. **Real backends** — start from `.env.live.example`, set each `ZORD_*_URL` / `PROMPT_LAYER_URL` to that service’s AWS URL. Do not point them at smoke.
-
-Smoke and live are mutually exclusive for a given console deployment: one set of URLs, not both.
+Set the same keys as runtime env (ECS task definition, Amplify, Parameter Store, etc.) — never commit secrets.
 
 ## Notes
 
