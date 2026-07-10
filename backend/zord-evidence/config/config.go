@@ -33,10 +33,6 @@ type Config struct {
 	ArchiveEncryptKey string
 	SigningPrivateKey  string
 
-	// AllowEphemeralKeys is true only when APP_ENV != "production".
-	// When false, signer and archive crypto constructors fail if keys are missing.
-	AllowEphemeralKeys bool
-
 	// WorkerCount controls how many async pack-generation goroutines are started.
 	WorkerCount int
 	ReplayCompareStrict bool
@@ -92,10 +88,8 @@ func Load() (*Config, error) {
 		workerCount = 30
 	}
 
-	appEnv := strings.ToLower(strings.TrimSpace(getenv("APP_ENV", "development")))
+	appEnv := strings.ToLower(strings.TrimSpace(getenv("APP_ENV", "production")))
 	isProduction := appEnv == "production"
-	allowEphemeralKeys := !isProduction
-
 
 	cfg := &Config{
 		ServiceName:         "zord-evidence",
@@ -117,8 +111,7 @@ func Load() (*Config, error) {
 		S3Region:            getenv("AWS_REGION", ""),
 		ArchivePrefix:       getenv("EVIDENCE_ARCHIVE_PREFIX", "evidence-packs"),
 		ArchiveEncryptKey:   os.Getenv("EVIDENCE_ARCHIVE_ENCRYPTION_KEY_BASE64"),
-		SigningPrivateKey:    os.Getenv("EVIDENCE_SIGNING_PRIVATE_KEY_BASE64"),
-		AllowEphemeralKeys:  allowEphemeralKeys,
+		SigningPrivateKey:   os.Getenv("EVIDENCE_SIGNING_PRIVATE_KEY_BASE64"),
 		WorkerCount:         workerCount,
 		ReplayCompareStrict: strict,
 		ReadTimeout:         10 * time.Second,
@@ -151,9 +144,12 @@ func (c *Config) validate() error {
 	if len(c.KafkaBrokers) == 0 || c.KafkaBrokers[0] == "" {
 		errs = append(errs, "KAFKA_BROKERS is required in production")
 	}
-	// Note: signing key and archive key are validated in their respective
-	// constructors (NewSigner / NewArchiveCrypto) which receive allowEphemeralKeys=false
-	// when IsProduction is true. We do not duplicate those checks here.
+	if strings.TrimSpace(c.SigningPrivateKey) == "" {
+		errs = append(errs, "EVIDENCE_SIGNING_PRIVATE_KEY_BASE64 is required in production")
+	}
+	if strings.TrimSpace(c.ArchiveEncryptKey) == "" {
+		errs = append(errs, "EVIDENCE_ARCHIVE_ENCRYPTION_KEY_BASE64 is required in production")
+	}
 
 	if len(errs) > 0 {
 		return fmt.Errorf("production config validation failed:\n  - %s", strings.Join(errs, "\n  - "))

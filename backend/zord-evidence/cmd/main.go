@@ -43,18 +43,13 @@ func main() {
 		log.Fatalf("ensure tables failed: %v", err)
 	}
 
-	// FIX-05a: Use EVIDENCE_SIGNING_PRIVATE_KEY_BASE64 from config exclusively.
-	// The old SIGNING_KEY_PATH / signing_key.pem file path fallback is removed —
-	// private key files must not be committed to the repo.
-	// AllowEphemeralKeys is false in production (APP_ENV=production), so an empty
-	// key will cause a fatal error rather than silently generating a throwaway key.
-	signer, err := services.NewSigner(cfg.SigningPrivateKey, cfg.AllowEphemeralKeys)
+	// Signing and archive keys are required — no ephemeral fallback.
+	signer, err := services.NewSigner(cfg.SigningPrivateKey)
 	if err != nil {
 		log.Fatalf("signer init failed: %v", err)
 	}
 
-	// FIX-05b: Same fail-fast semantics for the archive encryption key.
-	archiveCrypto, err := services.NewArchiveCrypto(cfg.ArchiveEncryptKey, cfg.AllowEphemeralKeys)
+	archiveCrypto, err := services.NewArchiveCrypto(cfg.ArchiveEncryptKey)
 	if err != nil {
 		log.Fatalf("archive encryption init failed: %v", err)
 	}
