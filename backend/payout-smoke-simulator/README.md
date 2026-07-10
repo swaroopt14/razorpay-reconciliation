@@ -32,7 +32,7 @@ buildSmokeBatches() // batch-2026-06-12-payroll … batch-2026-06-21-close-out
 ```bash
 # 1. Start the simulator (10 batches by default)
 cd backend/payout-smoke-simulator
-docker compose -f docker-compose.smoke.yml up -d --build
+docker compose up -d --build
 
 # 2. Wire the console to the simulator
 cd ../zord-console
@@ -72,7 +72,7 @@ Counts use deterministic formulas so each batch differs (pagination still works 
 Change journal list size (charts stay full-year unless you also lower `SMOKE_DEMO_DAY_COUNT`):
 
 ```bash
-SMOKE_BATCH_COUNT=10 docker compose -f docker-compose.smoke.yml up -d --build
+SMOKE_BATCH_COUNT=10 docker compose up -d --build
 ```
 
 ## Environment
@@ -103,7 +103,21 @@ SMOKE_BATCH_COUNT=10 npm start
 
 ## Console env
 
-Copy `backend/zord-console/.env.smoke.example` → `.env.local`. All `ZORD_*_URL` values point to `http://localhost:8099`.
+| File | When to use |
+|------|-------------|
+| `zord-console/.env.smoke.example` | Console talks to **this smoke simulator** (all `ZORD_*_URL` → one host) |
+| `zord-console/.env.live.example` | Console talks to **real microservices** (each `ZORD_*_URL` → its own service) |
+
+Local: copy the smoke example → `.env.local` (gitignored). All `ZORD_*_URL` values point to `http://localhost:8099`.
+
+### AWS / deployed console
+
+Do **not** commit `.env.local`. Set the same keys as runtime env (ECS task definition, Amplify, Parameter Store, etc.):
+
+1. **Demo / UI review against smoke** — start from `.env.smoke.example`, replace every `http://localhost:8099` with your smoke service URL (ALB / ECS public URL), e.g. `https://smoke.example.com`. Keep API keys aligned with the smoke container (`SMOKE_API_KEY`).
+2. **Real backends** — start from `.env.live.example`, set each `ZORD_*_URL` / `PROMPT_LAYER_URL` to that service’s AWS URL. Do not point them at smoke.
+
+Smoke and live are mutually exclusive for a given console deployment: one set of URLs, not both.
 
 ## Notes
 
