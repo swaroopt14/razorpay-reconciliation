@@ -183,7 +183,9 @@ export async function handleRequest(request) {
     return jsonResponse({ count: 0, snapshots: [] })
   }
   if (method === 'GET' && pathname === '/v1/intelligence/batches') {
-    return jsonResponse(buildIntelligenceBatches())
+    const limit = url.searchParams.get('limit')?.trim() || undefined
+    const status = url.searchParams.get('status')?.trim() || undefined
+    return jsonResponse(buildIntelligenceBatches({ limit, status }))
   }
   if (method === 'GET' && pathname.startsWith('/v1/intelligence/batches/')) {
     const batchId = batchIdFromPath(pathname, 2)

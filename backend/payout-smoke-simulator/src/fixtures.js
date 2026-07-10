@@ -221,10 +221,14 @@ export function buildSettlementObservations(batchId, page, pageSize) {
   }
 }
 
-export function buildSettlementBatchList() {
+export function buildSettlementBatchList(page = 1, pageSize = 20) {
+  const all = BATCHES.map((b) => ({ client_batch_id: b.id }))
+  const safePage = Math.max(1, page)
+  const safeSize = Math.max(1, Math.min(100, pageSize))
+  const start = (safePage - 1) * safeSize
   return {
-    items: BATCHES.map((b) => ({ client_batch_id: b.id })),
-    pagination: { page: 1, page_size: 20, total: BATCHES.length },
+    items: all.slice(start, start + safeSize),
+    pagination: { page: safePage, page_size: safeSize, total: all.length },
   }
 }
 
@@ -280,11 +284,11 @@ function batchMatchConfidencePct(meta) {
   return Math.round(ratio * 1000) / 10
 }
 
-export function buildIntelligenceBatches() {
-  return {
-    tenant_id: TENANT_ID,
-    intelligence_mode: 'GRADE_A',
-    batches: BATCHES.map((b) => {
+export function buildIntelligenceBatches(opts = {}) {
+  const limit = opts.limit ? parsePositiveInt(opts.limit, BATCHES.length) : BATCHES.length
+  const status = opts.status?.trim().toUpperCase()
+
+  let batchRows = BATCHES.map((b) => {
       const leak = leakageFromBatchMeta(b)
       const leakagePct =
         b.intentTotalRupees > 0 ? Number((leak.unmatched / b.intentTotalRupees).toFixed(4)) : 0
@@ -316,7 +320,21 @@ export function buildIntelligenceBatches() {
         under_settlement_amount_minor: leak.under,
         orphan_amount_minor: leak.orphan,
       }
-    }),
+    })
+
+  if (status) {
+    batchRows = batchRows.filter(
+      (row) => row.finality_status === status || row.batch_finality_status === status,
+    )
+  }
+
+  // Newest batches first — matches production list ordering.
+  batchRows = [...batchRows].reverse().slice(0, limit)
+
+  return {
+    tenant_id: TENANT_ID,
+    intelligence_mode: 'GRADE_A',
+    batches: batchRows,
   }
 }
 
@@ -1284,7 +1302,11 @@ export function intentsListPage(page, pageSize) {
 
 export function settlementObservationsRoute(url) {
   const clientBatchId = url.searchParams.get('client_batch_id')?.trim()
-  if (!clientBatchId) return buildSettlementBatchList()
+  if (!clientBatchId) {
+    const page = parsePositiveInt(url.searchParams.get('page'), 1)
+    const pageSize = Math.min(100, parsePositiveInt(url.searchParams.get('page_size'), 20))
+    return buildSettlementBatchList(page, pageSize)
+  }
   const page = parsePositiveInt(url.searchParams.get('page'), 1)
   const pageSize = Math.min(100, parsePositiveInt(url.searchParams.get('page_size'), 20))
   return buildSettlementObservations(clientBatchId, page, pageSize)
