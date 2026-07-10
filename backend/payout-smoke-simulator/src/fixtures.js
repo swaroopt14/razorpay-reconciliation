@@ -650,30 +650,34 @@ export function leakageExposureTimeseries(granularity = 'day') {
 }
 
 export function ambiguityKpi() {
-  const providerRefMissingRate = 0.16
-  const ambiguityRate = 0.08
-  const avgAttachmentConfidence = 0.82
-  const lowConfidenceRate = 0.18
-  const carrierCompletenessRate = 0.84
-  const candidateCollisionRate = 0.04
+  // Ambiguity KPI strip appends "%" to these fields — use 0–100 scale (not 0–1).
+  const providerRefMissingRatePct = 16
+  const ambiguityRatePct = 8
+  /** Home Match Confidence card displays this value as-is with a % suffix (0–100 scale). */
+  const avgAttachmentConfidencePct = 80
+  const lowConfidenceRatePct = 18
+  const carrierCompletenessRatePct = 84
+  const candidateCollisionRatePct = 4
   const mix = buildAmbiguityMixSegments({
-    providerRefMissingRate,
-    ambiguityRate,
-    lowConfidenceRate,
-    avgAttachmentConfidence,
+    providerRefMissingRate: providerRefMissingRatePct / 100,
+    ambiguityRate: ambiguityRatePct / 100,
+    lowConfidenceRate: lowConfidenceRatePct / 100,
+    avgAttachmentConfidence: avgAttachmentConfidencePct / 100,
   })
   return {
     data_available: true,
     tenant_id: TENANT_ID,
     computed_at: new Date().toISOString(),
     value_at_risk_minor: 250_000,
-    avg_attachment_confidence: avgAttachmentConfidence,
-    provider_ref_missing_rate: providerRefMissingRate,
-    low_confidence_rate: lowConfidenceRate,
-    carrier_completeness_rate: carrierCompletenessRate,
-    candidate_collision_rate: candidateCollisionRate,
+    avg_attachment_confidence: avgAttachmentConfidencePct,
+    /** A7 — avg(WinningScore − RunnerUpScore); Settlement Certainty bucket. */
+    avg_score_margin: 0.24,
+    provider_ref_missing_rate: providerRefMissingRatePct,
+    low_confidence_rate: lowConfidenceRatePct,
+    carrier_completeness_rate: carrierCompletenessRatePct,
+    candidate_collision_rate: candidateCollisionRatePct,
     ambiguous_intent_count: 12,
-    ambiguity_rate: ambiguityRate,
+    ambiguity_rate: ambiguityRatePct,
     intelligence_headline: '12 intents need provider reference review before dispatch.',
     intelligence_body: 'Missing UTR cluster on Cashfree rail is the top driver this week.',
     total_intended_amount_minor: 34_200_000,
@@ -979,13 +983,13 @@ export function promptLayerQuery(body = {}) {
     answer =
       `Evidence and source probes are available in smoke. Settlement confirmation coverage is ` +
       `${ops.settlement_confirmation_coverage_pct}%. Reference completeness is ` +
-      `${Math.round(amb.carrier_completeness_rate * 100)}% and match confidence averages ` +
-      `${Math.round(amb.avg_attachment_confidence * 100)}%.`
+      `${Math.round(Number(amb.carrier_completeness_rate))}% and match confidence averages ` +
+      `${Math.round(Number(amb.avg_attachment_confidence))}%.`
   } else if (q.includes('review') || q.includes('ambiguous') || q.includes('match')) {
     answer =
       `${amb.ambiguous_intent_count} payment(s) need match review. ` +
       `Manual-review DLQ has ${dlq.pagination.total} item(s). ` +
-      `Average attachment confidence is ${Math.round(amb.avg_attachment_confidence * 100)}%. ` +
+      `Average attachment confidence is ${Math.round(Number(amb.avg_attachment_confidence))}%. ` +
       `Next step: open Match Review or Intent Journal.`
   } else {
     answer =
@@ -1147,12 +1151,15 @@ export function defensibilityKpi() {
     defensibility_score: 58,
     defensibility_tier: 'STRONG',
     bank_confirmed_rate: 0.72,
-    evidence_pack_rate: 0.75,
+    /** Home Proof Readiness card displays this value as-is with a % suffix (0–100 scale). */
+    evidence_pack_rate: 75,
     audit_ready_pct: 0.72,
     weak_evidence_count: 4,
     governance_coverage_pct: 0.85,
     replayability_pct: 0.9,
     dispute_ready_pct: 0.65,
+    /** Evidence Pack Completeness KPI — ratio or 0–100 both format via normalizePercentRatio. */
+    avg_pack_completeness_score: 0.78,
   }
 }
 
