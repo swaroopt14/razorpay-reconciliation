@@ -128,6 +128,7 @@ type CanonicalIntentRepository interface {
 		outbox models.OutboxEvent,
 		registry *models.BusinessIdempotencyEntry,
 		policyDecision *models.IntentPolicyDecision,
+		duplicateDecision *models.DuplicateDecision,
 	) (models.CanonicalIntent, error)
 
 	SaveBatch(
@@ -169,6 +170,9 @@ type CanonicalIntentRepository interface {
 		tenantID string,
 		key string,
 	) (*models.BusinessIdempotencyEntry, error)
+
+	FindIntentIDByIdempotencyKey(ctx context.Context, tenantID, idempotencyKey string) (string, error)
+	FindIntentIDByClientPayoutRef(ctx context.Context, tenantID, clientPayoutRef string) (string, error)
 
 	UpdateBatchAggregateConfidence(
 		ctx context.Context,
@@ -896,6 +900,7 @@ func (s *IntentService) processIncomingIntentInternal(
 	retDlq *models.DLQEntry,
 	retErr error,
 	retPolicyDecision *models.IntentPolicyDecision,
+	retDuplicateDecision *models.DuplicateDecision,
 ) {
 
 	//Unmarshal Payload into IncomingIntent struct
@@ -1662,6 +1667,7 @@ return
 
 	dupRisk := false
 	dupReason := "NONE"
+	comparedIntentID := ""
 	var registryEntry *models.BusinessIdempotencyEntry
 
 	if registryDuplicate != nil {
@@ -1670,6 +1676,7 @@ return
 		if dupReason == "" || dupReason == "NONE" {
 			dupReason = "SAME_BENEFICIARY_AMOUNT_TIME"
 		}
+		comparedIntentID = registryDuplicate.IntentID.String()
 	} else {
 		// Prepare registry entry for new intent
 		registryEntry = &models.BusinessIdempotencyEntry{
@@ -1683,6 +1690,19 @@ return
 			DuplicateReasonCode:    "NONE",
 			CreatedAt:              time.Now().UTC(),
 		}
+	}
+
+	// Strict duplicate signals (ledger item #11) take precedence over the
+	// semantic registry match above — a reused idempotency_key or
+	// client_payout_ref is a stronger signal than "similar-looking payment".
+	if strictID, serr := s.repo.FindIntentIDByIdempotencyKey(ctx, in.TenantID.String(), in.IdempotencyKey); serr == nil && strictID != "" {
+		dupRisk = true
+		dupReason = "SAME_IDEMPOTENCY_KEY"
+		comparedIntentID = strictID
+	} else if refID, serr := s.repo.FindIntentIDByClientPayoutRef(ctx, in.TenantID.String(), canonicalInput.ClientPayoutRef); serr == nil && refID != "" {
+		dupRisk = true
+		dupReason = "CLIENT_PAYOUT_REF_REUSED"
+		comparedIntentID = refID
 	}
 
 	var executionAt *time.Time
@@ -1901,6 +1921,12 @@ return
 	canonical.PolicySource, canonical.PolicyVersion, canonical.PolicyHash =
 		retPolicyDecision.PolicySource, retPolicyDecision.PolicyVersion, retPolicyDecision.PolicyHash
 
+	retDuplicateDecision = buildDuplicateDecision(
+		canonical.TenantID, canonical.IntentID, dupReason, dupRiskScore, comparedIntentID,
+		bIdemKey, in.IdempotencyKey, canonicalInput.ClientPayoutRef,
+		policyInputFacts(&canonical, in.RowCountEstimate),
+	)
+
 	// -------- RETURN PREPARED VALUES --------
 	canonicalPayload, err := json.Marshal(canonical)
 	if err != nil {
@@ -2057,9 +2083,10 @@ func (s *IntentService) ProcessIncomingIntent(
 	var outbox *models.OutboxEvent
 	var registryEntry *models.BusinessIdempotencyEntry
 	var policyDecision *models.IntentPolicyDecision
+	var duplicateDecision *models.DuplicateDecision
 
 	in, resolvedProfile, decryptedPayload, rawAuditPayload, auditProfileID, auditProfileVersion, sourceRowNum,
-		nir, canonical, outbox, registryEntry, retDlq, retErr, policyDecision = s.processIncomingIntentInternal(ctx, event)
+		nir, canonical, outbox, registryEntry, retDlq, retErr, policyDecision, duplicateDecision = s.processIncomingIntentInternal(ctx, event)
 	if retErr != nil {
 		return nil, nil, retErr
 	}
@@ -2083,7 +2110,7 @@ func (s *IntentService) ProcessIncomingIntent(
 		return canonical, nil, nil
 	}
 
-	saved, err := s.repo.Save(ctx, nir, *canonical, *outbox, registryEntry, policyDecision)
+	saved, err := s.repo.Save(ctx, nir, *canonical, *outbox, registryEntry, policyDecision, duplicateDecision)
 	if err != nil {
 		log.Printf("⚠️ Repo.Save failed for EnvelopeID=%s: %v", in.EnvelopeID, err)
 		retErr = err
@@ -2164,7 +2191,7 @@ func (s *IntentService) ProcessIncomingIntentsBatch(
 
 	for _, event := range events {
 		in, resolvedProfile, decryptedPayload, rawAuditPayload, auditProfileID, auditProfileVersion, sourceRowNum,
-			nir, canonical, outbox, registryEntry, dlq, err, policyDecision := s.processIncomingIntentInternal(ctx, event)
+			nir, canonical, outbox, registryEntry, dlq, err, policyDecision, duplicateDecision := s.processIncomingIntentInternal(ctx, event)
 		if err != nil {
 			log.Printf("⚠️ ProcessIncomingIntentsBatch: system error preparing intent: %v", err)
 			continue
@@ -2246,12 +2273,13 @@ func (s *IntentService) ProcessIncomingIntentsBatch(
 		// Skip idempotency cache hits and webhook paths — outbox is nil, nothing to write.
 		if outbox != nil || dlq != nil {
 			batchItems = append(batchItems, models.SaveBatchItem{
-				Nir:            nir,
-				Intent:         canonical,
-				Outbox:         outbox,
-				RegistryEntry:  registryEntry,
-				DlqEntry:       dlq,
-				PolicyDecision: policyDecision,
+				Nir:               nir,
+				Intent:            canonical,
+				Outbox:            outbox,
+				RegistryEntry:     registryEntry,
+				DlqEntry:          dlq,
+				PolicyDecision:    policyDecision,
+				DuplicateDecision: duplicateDecision,
 			})
 		}
 	}
@@ -2477,6 +2505,7 @@ func (s *IntentService) ProcessTokenizeResult(
 
 	dupRisk := false
 	dupReason := "NONE"
+	comparedIntentID := ""
 	var registryEntry *models.BusinessIdempotencyEntry
 
 	if registryDuplicate != nil {
@@ -2485,6 +2514,7 @@ func (s *IntentService) ProcessTokenizeResult(
 		if dupReason == "" {
 			dupReason = "SAME_BENEFICIARY_AMOUNT_TIME"
 		}
+		comparedIntentID = registryDuplicate.IntentID.String()
 	} else {
 		// Prepare registry entry
 		registryEntry = &models.BusinessIdempotencyEntry{
@@ -2517,6 +2547,18 @@ func (s *IntentService) ProcessTokenizeResult(
 	idempotencyKey := event.IdempotencyKey
 	if idempotencyKey == "" {
 		idempotencyKey = canonicalInput.IdempotencyKey
+	}
+
+	// Strict duplicate signals take precedence over the semantic registry
+	// match above — see single-item path for rationale.
+	if strictID, serr := s.repo.FindIntentIDByIdempotencyKey(ctx, event.TenantID, idempotencyKey); serr == nil && strictID != "" {
+		dupRisk = true
+		dupReason = "SAME_IDEMPOTENCY_KEY"
+		comparedIntentID = strictID
+	} else if refID, serr := s.repo.FindIntentIDByClientPayoutRef(ctx, event.TenantID, canonicalInput.ClientPayoutRef); serr == nil && refID != "" {
+		dupRisk = true
+		dupReason = "CLIENT_PAYOUT_REF_REUSED"
+		comparedIntentID = refID
 	}
 
 	// FIX: Deterministic Request Fingerprint (Replacing KAFKA_TOKENIZED)
@@ -2701,6 +2743,12 @@ func (s *IntentService) ProcessTokenizeResult(
 	)
 	intent.PolicySource, intent.PolicyVersion, intent.PolicyHash = policyDecision.PolicySource, policyDecision.PolicyVersion, policyDecision.PolicyHash
 
+	duplicateDecision := buildDuplicateDecision(
+		intent.TenantID, intent.IntentID, dupReason, dupRiskScore, comparedIntentID,
+		bIdemKey, idempotencyKey, canonicalInput.ClientPayoutRef,
+		policyInputFacts(&intent, nil),
+	)
+
 	payload, err := json.Marshal(intent)
 	if err != nil {
 		return nil, err
@@ -2711,7 +2759,7 @@ func (s *IntentService) ProcessTokenizeResult(
 		return nil, err
 	}
 
-	saved, err := s.repo.Save(ctx, nir, intent, outbox, registryEntry, policyDecision)
+	saved, err := s.repo.Save(ctx, nir, intent, outbox, registryEntry, policyDecision, duplicateDecision)
 	if err != nil {
 		return nil, err
 	}
@@ -2854,7 +2902,7 @@ func (s *IntentService) processWebhook(
 		CreatedAt:     time.Now(),
 	}
 
-	saved, err := s.repo.Save(ctx, nil, canonical, outbox, nil, nil)
+	saved, err := s.repo.Save(ctx, nil, canonical, outbox, nil, nil, nil)
 	if err != nil {
 		return nil, nil, err
 	}

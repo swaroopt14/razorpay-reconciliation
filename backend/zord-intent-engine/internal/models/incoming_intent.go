@@ -94,11 +94,12 @@ type Instrument struct {
 }
 
 type SaveBatchItem struct {
-	Nir            *NormalizedIngestRecord
-	Intent         *CanonicalIntent
-	Outbox         *OutboxEvent
-	RegistryEntry  *BusinessIdempotencyEntry
-	DlqEntry       *DLQEntry
-	PolicyDecision *IntentPolicyDecision
+	Nir               *NormalizedIngestRecord
+	Intent            *CanonicalIntent
+	Outbox            *OutboxEvent
+	RegistryEntry     *BusinessIdempotencyEntry
+	DlqEntry          *DLQEntry
+	PolicyDecision    *IntentPolicyDecision
+	DuplicateDecision *DuplicateDecision
 }
 

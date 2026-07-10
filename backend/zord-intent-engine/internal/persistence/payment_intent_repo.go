@@ -29,6 +29,7 @@ func (r *PaymentIntentRepo) Save(
 	intent models.CanonicalIntent, outbox models.OutboxEvent,
 	registry *models.BusinessIdempotencyEntry,
 	policyDecision *models.IntentPolicyDecision,
+	duplicateDecision *models.DuplicateDecision,
 ) (models.CanonicalIntent, error) {
 
 	if intent.ContractID == "" {
@@ -427,6 +428,24 @@ INSERT INTO outbox (
 		)
 		if err != nil {
 			log.Printf("Repo.Save: INSERT intent_policy_decisions failed: %v", err)
+			return intent, err
+		}
+	}
+
+	if duplicateDecision != nil {
+		dupQuery := `
+		INSERT INTO duplicate_decisions (
+			tenant_id, intent_id, decision, reason_code, duplicate_score,
+			compared_intent_id, duplicate_group_id, comparison_facts_hash, policy_version, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
+		_, err = tx.ExecContext(ctx, dupQuery,
+			duplicateDecision.TenantID, duplicateDecision.IntentID, duplicateDecision.Decision,
+			duplicateDecision.ReasonCode, duplicateDecision.DuplicateScore, duplicateDecision.ComparedIntentID,
+			duplicateDecision.DuplicateGroupID, duplicateDecision.ComparisonFactsHash, duplicateDecision.PolicyVersion,
+			duplicateDecision.CreatedAt,
+		)
+		if err != nil {
+			log.Printf("Repo.Save: INSERT duplicate_decisions failed: %v", err)
 			return intent, err
 		}
 	}
@@ -855,6 +874,52 @@ func (r *PaymentIntentRepo) CheckIdempotencyRegistry(
 	return &entry, nil
 }
 
+// FindIntentIDByIdempotencyKey returns the oldest intent_id already using this
+// tenant + idempotency_key, or "" if none exists. Backs strict duplicate
+// detection (ledger item #11) — a reused idempotency_key is the strongest
+// duplicate signal available, since a client is only supposed to reuse it
+// when retrying the exact same logical operation.
+func (r *PaymentIntentRepo) FindIntentIDByIdempotencyKey(ctx context.Context, tenantID, idempotencyKey string) (string, error) {
+	if idempotencyKey == "" {
+		return "", nil
+	}
+	var intentID string
+	err := r.db.QueryRowContext(ctx, `
+		SELECT intent_id FROM payment_intents
+		WHERE tenant_id = $1 AND idempotency_key = $2
+		ORDER BY created_at ASC LIMIT 1
+	`, tenantID, idempotencyKey).Scan(&intentID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return intentID, nil
+}
+
+// FindIntentIDByClientPayoutRef returns the oldest intent_id already using
+// this tenant + client_payout_ref, or "" if none exists. Backs strict
+// duplicate detection (ledger item #11).
+func (r *PaymentIntentRepo) FindIntentIDByClientPayoutRef(ctx context.Context, tenantID, clientPayoutRef string) (string, error) {
+	if clientPayoutRef == "" {
+		return "", nil
+	}
+	var intentID string
+	err := r.db.QueryRowContext(ctx, `
+		SELECT intent_id FROM payment_intents
+		WHERE tenant_id = $1 AND client_payout_ref = $2
+		ORDER BY created_at ASC LIMIT 1
+	`, tenantID, clientPayoutRef).Scan(&intentID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return intentID, nil
+}
+
 // UpdateBatchAggregateConfidence computes the batch_quality_score using the FULL received
 // population as denominator — including DLQ rows. This fixes the problem where
 // 487 DLQ rows produced a healthy 0.77 batch score.
@@ -1164,7 +1229,7 @@ func (r *PaymentIntentRepo) SaveBatch(
 						savedDLQs = append(savedDLQs, savedDlq)
 					}
 				} else if item.Intent != nil && item.Outbox != nil {
-					savedIntent, err := r.Save(ctx, item.Nir, *item.Intent, *item.Outbox, item.RegistryEntry, item.PolicyDecision)
+					savedIntent, err := r.Save(ctx, item.Nir, *item.Intent, *item.Outbox, item.RegistryEntry, item.PolicyDecision, item.DuplicateDecision)
 					if err != nil {
 						log.Printf("⚠️ Fallback Intent Save failed: %v", err)
 					} else {
@@ -1603,6 +1668,39 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 		_, err = tx.ExecContext(ctx, q, args...)
 		if err != nil {
 			return fmt.Errorf("batch insert intent_policy_decisions: %w", err)
+		}
+	}
+
+	// 4.6. Insert Duplicate Decisions
+	var duplicateDecisions []*models.DuplicateDecision
+	for _, item := range chunk {
+		if item.DuplicateDecision != nil {
+			duplicateDecisions = append(duplicateDecisions, item.DuplicateDecision)
+		}
+	}
+	if len(duplicateDecisions) > 0 {
+		const dupCols = 9
+		var placeholders strings.Builder
+		args := make([]interface{}, 0, len(duplicateDecisions)*dupCols)
+		for i, dd := range duplicateDecisions {
+			if i > 0 {
+				placeholders.WriteString(",")
+			}
+			base := i * dupCols
+			placeholders.WriteString(fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+				base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9))
+			args = append(args,
+				dd.TenantID, dd.IntentID, dd.Decision, dd.ReasonCode, dd.DuplicateScore,
+				dd.ComparedIntentID, dd.DuplicateGroupID, dd.ComparisonFactsHash, dd.PolicyVersion,
+			)
+		}
+		q := fmt.Sprintf(`INSERT INTO duplicate_decisions (
+			tenant_id, intent_id, decision, reason_code, duplicate_score,
+			compared_intent_id, duplicate_group_id, comparison_facts_hash, policy_version
+		) VALUES %s`, placeholders.String())
+		_, err = tx.ExecContext(ctx, q, args...)
+		if err != nil {
+			return fmt.Errorf("batch insert duplicate_decisions: %w", err)
 		}
 	}
 
