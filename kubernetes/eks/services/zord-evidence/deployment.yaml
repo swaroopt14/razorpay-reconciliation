@@ -52,6 +52,8 @@ spec:
             - containerPort: 8088
               name: http
           env:
+            - name: APP_ENV
+              value: "production"
             - name: PORT
               value: "8088"
             - name: USER

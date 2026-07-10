@@ -15,38 +15,18 @@ type Signer struct {
 	private ed25519.PrivateKey
 }
 
-// NewSigner initialises the signing key from a base64-encoded PKCS8 private key
-// string or a ".pem" file path.
-//
-// Production behaviour (allowEphemeral = false):
-//
-//	Returns an error if privateKeyData is empty. No ephemeral key generation.
-//	A misconfigured production service must not silently generate a throwaway key
-//	that will be lost on restart, making all previously-signed packs unverifiable.
-//
-// Development behaviour (allowEphemeral = true):
-//
-//	Generates a random ephemeral key when privateKeyData is empty. Suitable only
-//	for local dev or testing environments (APP_ENV != "production").
-func NewSigner(privateKeyData string, allowEphemeral bool) (*Signer, error) {
+// NewSigner initialises the signing key from a base64-encoded ed25519 private key
+// or a ".pem" file path. The key must be configured — ephemeral key generation
+// is not supported because restart would invalidate all prior pack signatures.
+func NewSigner(privateKeyData string) (*Signer, error) {
 	if strings.TrimSpace(privateKeyData) == "" {
-		if !allowEphemeral {
-			return nil, fmt.Errorf(
-				"EVIDENCE_SIGNING_PRIVATE_KEY_BASE64 is required in production: " +
-					"set it to a base64-encoded PKCS8 ed25519 private key, " +
-					"or set APP_ENV=development to allow ephemeral keys (not for production use)",
-			)
-		}
-		// Development only: generate a random ephemeral key.
-		_, priv, err := ed25519.GenerateKey(nil)
-		if err != nil {
-			return nil, fmt.Errorf("generate ephemeral signing key: %w", err)
-		}
-		return &Signer{private: priv}, nil
+		return nil, fmt.Errorf(
+			"EVIDENCE_SIGNING_PRIVATE_KEY_BASE64 is required: " +
+				"set it to a base64-encoded ed25519 private key (32 bytes raw)",
+		)
 	}
 
 	if strings.HasSuffix(strings.ToLower(strings.TrimSpace(privateKeyData)), ".pem") {
-		// Treat as a file path.
 		b, err := os.ReadFile(privateKeyData)
 		if err != nil {
 			return nil, fmt.Errorf("read pem file: %w", err)
@@ -66,7 +46,6 @@ func NewSigner(privateKeyData string, allowEphemeral bool) (*Signer, error) {
 		return &Signer{private: edPriv}, nil
 	}
 
-	// Treat as a base64-encoded raw PKCS8 private key.
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(privateKeyData))
 	if err != nil {
 		return nil, fmt.Errorf("decode private key base64: %w", err)
