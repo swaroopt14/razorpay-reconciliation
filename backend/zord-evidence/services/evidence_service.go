@@ -842,11 +842,11 @@ func (s *EvidenceService) GeneratePackInTx(ctx context.Context, packTx *sql.Tx, 
 	pack.ComputeCompletenessMetadata()
 
 	// --- Step 10: encrypt archive (in memory); persist DB-first, then S3, then activate ---
-	archive, err := json.Marshal(pack)
+	plaintextArchive, err := utils.MarshalCanonicalJSON(pack)
 	if err != nil {
 		return nil, fmt.Errorf("marshal evidence pack: %w", err)
 	}
-	encryptedArchive, err := s.archiveCrypto.Encrypt(archive)
+	encryptedArchive, err := s.archiveCrypto.Encrypt(plaintextArchive)
 	if err != nil {
 		return nil, fmt.Errorf("encrypt evidence archive: %w", err)
 	}
@@ -961,7 +961,7 @@ func (s *EvidenceService) GeneratePackInTx(ctx context.Context, packTx *sql.Tx, 
 	}
 
 	log.Printf("evidence.service.generate_pack persisting draft pack=%s intent=%s", packID, req.IntentID)
-	if err := s.persistPackDBFirst(ctx, packTx, pack, leaves, objectKey, encryptedArchive, now, outboxEvt, req.SupersedesPackID); err != nil {
+	if err := s.persistPackDBFirst(ctx, packTx, pack, leaves, objectKey, plaintextArchive, encryptedArchive, now, outboxEvt, req.SupersedesPackID); err != nil {
 		log.Printf("evidence.service.generate_pack save_failed pack=%s err=%v", packID, err)
 		return nil, err
 	}
@@ -982,6 +982,7 @@ func (s *EvidenceService) persistPackDBFirst(
 	pack *models.EvidencePack,
 	leaves []utils.MerkleLeaf,
 	objectKey string,
+	plaintextArchive []byte,
 	encryptedArchive []byte,
 	now time.Time,
 	outboxEvt *models.OutboxEvent,
@@ -989,16 +990,20 @@ func (s *EvidenceService) persistPackDBFirst(
 ) error {
 	plannedRef := s.s3.ObjectRef(objectKey)
 	pack.PackStatus = models.PackStatusDraft
-	archiveHash := sha256Hex(encryptedArchive)
+	ciphertextHash := sha256Hex(encryptedArchive)
+	plaintextHash := sha256Hex(plaintextArchive)
 
 	archiveRecord := &models.EvidenceArchive{
-		ArchiveID:      "arc_" + uuid.NewString(),
-		EvidencePackID: pack.EvidencePackID,
-		TenantID:       pack.TenantID,
-		ObjectRef:      plannedRef,
-		ArchiveHash:    archiveHash,
-		ArchiveVersion: "v1",
-		CreatedAt:      now,
+		ArchiveID:             "arc_" + uuid.NewString(),
+		EvidencePackID:        pack.EvidencePackID,
+		TenantID:              pack.TenantID,
+		ObjectRef:             plannedRef,
+		EncryptionKeyID:       s.archiveCrypto.KeyID(),
+		ArchiveCiphertextHash: ciphertextHash,
+		PlaintextManifestHash: plaintextHash,
+		ArchiveSizeBytes:      int64(len(encryptedArchive)),
+		ArchiveVersion:        "v1",
+		CreatedAt:             now,
 	}
 
 	proofPaths := utils.BuildInclusionProofs(leaves)
@@ -1025,7 +1030,7 @@ func (s *EvidenceService) persistPackDBFirst(
 		return fmt.Errorf("store archive: %w", err)
 	}
 
-	if err := s.repo.ActivatePackInTx(ctx, packTx, pack.EvidencePackID, objectRef, archiveHash, outboxEvt); err != nil {
+	if err := s.repo.ActivatePackInTx(ctx, packTx, pack.EvidencePackID, objectRef, ciphertextHash, outboxEvt); err != nil {
 		if errors.Is(err, repositories.ErrPackAlreadyExists) {
 			return err
 		}
@@ -1121,11 +1126,11 @@ func (s *EvidenceService) GenerateBatchPackInTx(ctx context.Context, packTx *sql
 
 	pack.ComputeCompletenessMetadata()
 
-	archive, err := json.Marshal(pack)
+	plaintextArchive, err := utils.MarshalCanonicalJSON(pack)
 	if err != nil {
 		return nil, fmt.Errorf("marshal evidence pack: %w", err)
 	}
-	encryptedArchive, err := s.archiveCrypto.Encrypt(archive)
+	encryptedArchive, err := s.archiveCrypto.Encrypt(plaintextArchive)
 	if err != nil {
 		return nil, fmt.Errorf("encrypt evidence archive: %w", err)
 	}
@@ -1164,7 +1169,7 @@ func (s *EvidenceService) GenerateBatchPackInTx(ctx context.Context, packTx *sql
 	}
 
 	log.Printf("evidence.service.generate_batch_pack persisting draft pack=%s batch=%s", packID, req.ClientBatchID)
-	if err := s.persistPackDBFirst(ctx, packTx, pack, leaves, objectKey, encryptedArchive, now, outboxEvt, ""); err != nil {
+	if err := s.persistPackDBFirst(ctx, packTx, pack, leaves, objectKey, plaintextArchive, encryptedArchive, now, outboxEvt, ""); err != nil {
 		log.Printf("evidence.service.generate_batch_pack save_failed pack=%s err=%v", packID, err)
 		return nil, err
 	}

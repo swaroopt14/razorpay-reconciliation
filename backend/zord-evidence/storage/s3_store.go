@@ -109,3 +109,21 @@ func (s *AWSStore) GetObject(ctx context.Context, key string) ([]byte, error) {
 	}
 	return content, nil
 }
+
+// ObjectKeyFromRef extracts the object key from an s3://bucket/key URI.
+// If objectRef is already a bare key (no s3:// prefix), it is returned as-is.
+func ObjectKeyFromRef(objectRef string) (string, error) {
+	ref := strings.TrimSpace(objectRef)
+	if ref == "" {
+		return "", fmt.Errorf("empty object ref")
+	}
+	if !strings.HasPrefix(ref, "s3://") {
+		return ref, nil
+	}
+	withoutScheme := strings.TrimPrefix(ref, "s3://")
+	slash := strings.Index(withoutScheme, "/")
+	if slash < 0 || slash == len(withoutScheme)-1 {
+		return "", fmt.Errorf("invalid s3 object ref %q", objectRef)
+	}
+	return withoutScheme[slash+1:], nil
+}
