@@ -60,9 +60,14 @@ type OutboxEvent struct {
 	RoutingHintsJSON      json.RawMessage `json:"routing_hints_json,omitempty" db:"routing_hints_json"`
 	GovernanceState       string          `json:"governance_state,omitempty" db:"governance_state"`
 	BusinessState         string          `json:"business_state,omitempty" db:"business_state"`
+	IntentLifecycleState  string          `json:"intent_lifecycle_state,omitempty" db:"intent_lifecycle_state"`
 	DuplicateRiskFlag     bool            `json:"duplicate_risk_flag,omitempty" db:"duplicate_risk_flag"`
 	MappingProfileID      string          `json:"mapping_profile_used,omitempty" db:"mapping_profile_id"`
 	MappingProfileVersion string          `json:"mapping_profile_version,omitempty" db:"mapping_profile_version"`
+	MappingProfileHash    string          `json:"mapping_profile_hash,omitempty" db:"mapping_profile_hash"`
+	PolicySource          string          `json:"policy_source,omitempty" db:"policy_source"`
+	PolicyVersion         string          `json:"policy_version,omitempty" db:"policy_version"`
+	PolicyHash            string          `json:"policy_hash,omitempty" db:"policy_hash"`
 	SourceSystem          string          `json:"source_system,omitempty" db:"source_system"`
 
 	PaymentInstructionReceived *time.Time `json:"payment_instruction_received,omitempty" db:"payment_instruction_received"`

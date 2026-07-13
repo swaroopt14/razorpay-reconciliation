@@ -28,6 +28,8 @@ func (r *PaymentIntentRepo) Save(
 	nir *models.NormalizedIngestRecord,
 	intent models.CanonicalIntent, outbox models.OutboxEvent,
 	registry *models.BusinessIdempotencyEntry,
+	policyDecision *models.IntentPolicyDecision,
+	duplicateDecision *models.DuplicateDecision,
 ) (models.CanonicalIntent, error) {
 
 	if intent.ContractID == "" {
@@ -52,20 +54,20 @@ func (r *PaymentIntentRepo) Save(
 			detected_format, profile_id, profile_version,
 			fields_json, field_confidence_summary, unmapped_json, mapping_uncertain_flag,
 			required_field_gap_count, low_confidence_field_count,
-			created_at
+			created_at, mapping_profile_hash
 		) VALUES (
 			$1, $2, $3,
 			$4, $5, $6,
 			$7, $8, $9, $10,
 			$11, $12,
-			$13
+			$13, $14
 		)`
 		_, err = tx.ExecContext(ctx, nirQuery,
 			nir.NIRID, nir.EnvelopeID, nir.TenantID,
 			nir.DetectedFormat, nir.ProfileID, nir.ProfileVersion,
 			nir.FieldsJSON, nir.FieldConfidenceSummary, nir.UnmappedJSON, nir.MappingUncertainFlag,
 			nir.RequiredFieldGapCount, nir.LowConfidenceFieldCount,
-			nir.CreatedAt,
+			nir.CreatedAt, nir.MappingProfileHash,
 		)
 		if err != nil {
 			log.Printf("Repo.Save: INSERT normalized_ingest_records failed: %v", err)
@@ -107,7 +109,10 @@ func (r *PaymentIntentRepo) Save(
     tokenization_status,
     governance_decision,
     payment_instruction_received,
-    canonical_intent_created
+    canonical_intent_created,
+    intent_lifecycle_state,
+    mapping_profile_hash,
+    policy_source, policy_version, policy_hash
 )
 VALUES (
     $1,$2,$3,$4,
@@ -128,7 +133,9 @@ VALUES (
     $44, $45,
     $46, $47, $48, $49, $50, -- UPDATED
     $51, $52, $53, $54, $55, $56, $57,
-    $58, $59, $60, $61, $62
+    $58, $59, $60, $61, $62,
+    $63, $64,
+    $65, $66, $67
 ) `
 
 	_, err = tx.ExecContext(
@@ -196,6 +203,11 @@ VALUES (
 		intent.GovernanceDecision,         // $60
 		intent.PaymentInstructionReceived, // $61
 		intent.CanonicalIntentCreated,     // $62
+		intent.IntentLifecycleState,       // $63
+		intent.MappingProfileHash,         // $64
+		intent.PolicySource,               // $65
+		intent.PolicyVersion,              // $66
+		intent.PolicyHash,                 // $67
 	)
 
 	if err != nil {
@@ -264,14 +276,19 @@ INSERT INTO outbox (
     tokenization_status,
     governance_decision,
     payment_instruction_received,
-    canonical_intent_created
+    canonical_intent_created,
+    intent_lifecycle_state,
+    mapping_profile_hash,
+    policy_source, policy_version, policy_hash
 ) VALUES (
     $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
     $11,$12,$13,$14,$15,$16,$17,$18,$19,
     $20,$21,$22,$23,$24,$25,$26,$27,$28,$29,
     $30,$31,$32,$33,$34,$35,$36,$37,$38,$39,
     $40,$41,$42,$43,$44,$45,$46,$47,$48,$49,
-    $50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60
+    $50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,
+    $61, $62,
+    $63, $64, $65
 )`
 
 	outbox.ContractID = intent.ContractID
@@ -339,6 +356,11 @@ INSERT INTO outbox (
 		outbox.GovernanceDecision,         // $58
 		outbox.PaymentInstructionReceived, // $59
 		outbox.CanonicalIntentCreated,     // $60
+		outbox.IntentLifecycleState,       // $61
+		outbox.MappingProfileHash,         // $62
+		outbox.PolicySource,               // $63
+		outbox.PolicyVersion,              // $64
+		outbox.PolicyHash,                 // $65
 	)
 	if err != nil {
 		log.Printf("Repo.Save: INSERT outbox failed: %v", err)
@@ -379,14 +401,52 @@ INSERT INTO outbox (
                 duplicate_reason_code = $1,
                 governance_state = 'FLAGGED',
                 updated_at = now()
-            WHERE intent_id = $2`,
+            WHERE tenant_id = $2 AND intent_id = $3`,
 				intent.DuplicateReasonCode,
+				intent.TenantID,
 				intent.IntentID,
 			)
 			if err != nil {
 				log.Printf("Repo.Save: UPDATE duplicate flag failed: %v", err)
 				return intent, err
 			}
+		}
+	}
+
+	if policyDecision != nil {
+		policyQuery := `
+		INSERT INTO intent_policy_decisions (
+			tenant_id, intent_id, policy_source, policy_version, policy_hash,
+			policy_result, reason_codes_json, input_facts_hash, input_facts_json, evaluated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		ON CONFLICT (tenant_id, intent_id, policy_source, policy_version) DO NOTHING`
+		_, err = tx.ExecContext(ctx, policyQuery,
+			policyDecision.TenantID, policyDecision.IntentID, policyDecision.PolicySource,
+			policyDecision.PolicyVersion, policyDecision.PolicyHash, policyDecision.PolicyResult,
+			policyDecision.ReasonCodesJSON, policyDecision.InputFactsHash, policyDecision.InputFactsJSON,
+			policyDecision.EvaluatedAt,
+		)
+		if err != nil {
+			log.Printf("Repo.Save: INSERT intent_policy_decisions failed: %v", err)
+			return intent, err
+		}
+	}
+
+	if duplicateDecision != nil {
+		dupQuery := `
+		INSERT INTO duplicate_decisions (
+			tenant_id, intent_id, decision, reason_code, duplicate_score,
+			compared_intent_id, duplicate_group_id, comparison_facts_hash, policy_version, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
+		_, err = tx.ExecContext(ctx, dupQuery,
+			duplicateDecision.TenantID, duplicateDecision.IntentID, duplicateDecision.Decision,
+			duplicateDecision.ReasonCode, duplicateDecision.DuplicateScore, duplicateDecision.ComparedIntentID,
+			duplicateDecision.DuplicateGroupID, duplicateDecision.ComparisonFactsHash, duplicateDecision.PolicyVersion,
+			duplicateDecision.CreatedAt,
+		)
+		if err != nil {
+			log.Printf("Repo.Save: INSERT duplicate_decisions failed: %v", err)
+			return intent, err
 		}
 	}
 
@@ -455,7 +515,12 @@ func (r *PaymentIntentRepo) FindByEnvelope(
 		tokenization_status,
 		governance_decision,
 		payment_instruction_received,
-		canonical_intent_created
+		canonical_intent_created,
+		intent_lifecycle_state,
+		COALESCE(mapping_profile_hash, '') as mapping_profile_hash,
+		COALESCE(policy_source, '') as policy_source,
+		COALESCE(policy_version, '') as policy_version,
+		COALESCE(policy_hash, '') as policy_hash
 	FROM payment_intents
 	WHERE tenant_id = $1
 	  AND envelope_id = $2
@@ -520,6 +585,11 @@ func (r *PaymentIntentRepo) FindByEnvelope(
 		&intent.GovernanceDecision,
 		&intent.PaymentInstructionReceived,
 		&intent.CanonicalIntentCreated,
+		&intent.IntentLifecycleState,
+		&intent.MappingProfileHash,
+		&intent.PolicySource,
+		&intent.PolicyVersion,
+		&intent.PolicyHash,
 	)
 
 	if err == sql.ErrNoRows {
@@ -534,6 +604,7 @@ func (r *PaymentIntentRepo) FindByEnvelope(
 
 func (r *PaymentIntentRepo) UpdateSnapshotRefs(
 	ctx context.Context,
+	tenantID string,
 	intentID string,
 	canonicalRef string,
 	nirRef string,
@@ -546,11 +617,12 @@ func (r *PaymentIntentRepo) UpdateSnapshotRefs(
 	SET canonical_snapshot_ref = $1,
 	    nir_snapshot_ref = $2,
 	    governance_snapshot_ref = $3,
-	    canonical_hash = $4
-	WHERE intent_id = $5
+	    canonical_hash = $4,
+	    updated_at = now()
+	WHERE tenant_id = $5 AND intent_id = $6
 	`
 
-	if _, err := r.db.ExecContext(ctx, query, canonicalRef, nirRef, govRef, hash, intentID); err != nil {
+	if _, err := r.db.ExecContext(ctx, query, canonicalRef, nirRef, govRef, hash, tenantID, intentID); err != nil {
 		return err
 	}
 
@@ -560,10 +632,10 @@ func (r *PaymentIntentRepo) UpdateSnapshotRefs(
 	    nir_snapshot_ref = $2,
 	    governance_snapshot_ref = $3,
 	    canonical_hash = $4
-	WHERE aggregate_id = $5
+	WHERE tenant_id = $5 AND aggregate_id = $6
 	`
 
-	if _, err := r.db.ExecContext(ctx, outboxQuery, canonicalRef, nirRef, govRef, hash, intentID); err != nil {
+	if _, err := r.db.ExecContext(ctx, outboxQuery, canonicalRef, nirRef, govRef, hash, tenantID, intentID); err != nil {
 		return err
 	}
 
@@ -663,7 +735,12 @@ func (r *PaymentIntentRepo) FindByBusinessIdempotencyKey(
 		tokenization_status,
 		governance_decision,
 		payment_instruction_received,
-		canonical_intent_created
+		canonical_intent_created,
+		intent_lifecycle_state,
+		COALESCE(mapping_profile_hash, '') as mapping_profile_hash,
+		COALESCE(policy_source, '') as policy_source,
+		COALESCE(policy_version, '') as policy_version,
+		COALESCE(policy_hash, '') as policy_hash
 	FROM payment_intents
 	WHERE tenant_id = $1
 	  AND business_idempotency_key = $2
@@ -728,6 +805,11 @@ func (r *PaymentIntentRepo) FindByBusinessIdempotencyKey(
 		&intent.GovernanceDecision,
 		&intent.PaymentInstructionReceived,
 		&intent.CanonicalIntentCreated,
+		&intent.IntentLifecycleState,
+		&intent.MappingProfileHash,
+		&intent.PolicySource,
+		&intent.PolicyVersion,
+		&intent.PolicyHash,
 	)
 
 	if err == sql.ErrNoRows {
@@ -790,6 +872,52 @@ func (r *PaymentIntentRepo) CheckIdempotencyRegistry(
 	}
 
 	return &entry, nil
+}
+
+// FindIntentIDByIdempotencyKey returns the oldest intent_id already using this
+// tenant + idempotency_key, or "" if none exists. Backs strict duplicate
+// detection (ledger item #11) — a reused idempotency_key is the strongest
+// duplicate signal available, since a client is only supposed to reuse it
+// when retrying the exact same logical operation.
+func (r *PaymentIntentRepo) FindIntentIDByIdempotencyKey(ctx context.Context, tenantID, idempotencyKey string) (string, error) {
+	if idempotencyKey == "" {
+		return "", nil
+	}
+	var intentID string
+	err := r.db.QueryRowContext(ctx, `
+		SELECT intent_id FROM payment_intents
+		WHERE tenant_id = $1 AND idempotency_key = $2
+		ORDER BY created_at ASC LIMIT 1
+	`, tenantID, idempotencyKey).Scan(&intentID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return intentID, nil
+}
+
+// FindIntentIDByClientPayoutRef returns the oldest intent_id already using
+// this tenant + client_payout_ref, or "" if none exists. Backs strict
+// duplicate detection (ledger item #11).
+func (r *PaymentIntentRepo) FindIntentIDByClientPayoutRef(ctx context.Context, tenantID, clientPayoutRef string) (string, error) {
+	if clientPayoutRef == "" {
+		return "", nil
+	}
+	var intentID string
+	err := r.db.QueryRowContext(ctx, `
+		SELECT intent_id FROM payment_intents
+		WHERE tenant_id = $1 AND client_payout_ref = $2
+		ORDER BY created_at ASC LIMIT 1
+	`, tenantID, clientPayoutRef).Scan(&intentID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return intentID, nil
 }
 
 // UpdateBatchAggregateConfidence computes the batch_quality_score using the FULL received
@@ -955,7 +1083,8 @@ func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, 
 	// Step 5: Update payment_intents with batch quality score + counters
 	_, err = r.db.ExecContext(ctx, `
         UPDATE payment_intents
-        SET aggregate_confidence_score = $1
+        SET aggregate_confidence_score = $1,
+            updated_at = now()
         WHERE tenant_id = $2 AND batchid = $3
     `, batchScore, tenantID, batchID) // stored as 0–1
 	if err != nil {
@@ -1100,7 +1229,7 @@ func (r *PaymentIntentRepo) SaveBatch(
 						savedDLQs = append(savedDLQs, savedDlq)
 					}
 				} else if item.Intent != nil && item.Outbox != nil {
-					savedIntent, err := r.Save(ctx, item.Nir, *item.Intent, *item.Outbox, item.RegistryEntry)
+					savedIntent, err := r.Save(ctx, item.Nir, *item.Intent, *item.Outbox, item.RegistryEntry, item.PolicyDecision, item.DuplicateDecision)
 					if err != nil {
 						log.Printf("⚠️ Fallback Intent Save failed: %v", err)
 					} else {
@@ -1141,7 +1270,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 		}
 	}
 	if len(nirs) > 0 {
-		const nirCols = 13
+		const nirCols = 14
 		var placeholders strings.Builder
 		args := make([]interface{}, 0, len(nirs)*nirCols)
 		for i, nir := range nirs {
@@ -1149,14 +1278,14 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 				placeholders.WriteString(",")
 			}
 			base := i * nirCols
-			placeholders.WriteString(fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
-				base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10, base+11, base+12, base+13))
+			placeholders.WriteString(fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+				base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10, base+11, base+12, base+13, base+14))
 			args = append(args,
 				nir.NIRID, nir.EnvelopeID, nir.TenantID,
 				nir.DetectedFormat, nir.ProfileID, nir.ProfileVersion,
 				nir.FieldsJSON, nir.FieldConfidenceSummary, nir.UnmappedJSON, nir.MappingUncertainFlag,
 				nir.RequiredFieldGapCount, nir.LowConfidenceFieldCount,
-				nir.CreatedAt,
+				nir.CreatedAt, nir.MappingProfileHash,
 			)
 		}
 		q := fmt.Sprintf(`INSERT INTO normalized_ingest_records (
@@ -1164,7 +1293,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 			detected_format, profile_id, profile_version,
 			fields_json, field_confidence_summary, unmapped_json, mapping_uncertain_flag,
 			required_field_gap_count, low_confidence_field_count,
-			created_at
+			created_at, mapping_profile_hash
 		) VALUES %s`, placeholders.String())
 		_, err = tx.ExecContext(ctx, q, args...)
 		if err != nil {
@@ -1180,7 +1309,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 		}
 	}
 	if len(intents) > 0 {
-		const piCols = 62
+		const piCols = 67
 		var placeholders strings.Builder
 		args := make([]interface{}, 0, len(intents)*piCols)
 		for i, intent := range intents {
@@ -1259,6 +1388,11 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 				intent.GovernanceDecision,         // $60
 				intent.PaymentInstructionReceived, // $61
 				intent.CanonicalIntentCreated,     // $62
+				intent.IntentLifecycleState,       // $63
+				intent.MappingProfileHash,         // $64
+				intent.PolicySource,               // $65
+				intent.PolicyVersion,              // $66
+				intent.PolicyHash,                 // $67
 			)
 		}
 		q := fmt.Sprintf(`INSERT INTO payment_intents (
@@ -1294,7 +1428,10 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 			tokenization_status,
 			governance_decision,
 			payment_instruction_received,
-			canonical_intent_created
+			canonical_intent_created,
+			intent_lifecycle_state,
+			mapping_profile_hash,
+			policy_source, policy_version, policy_hash
 		) VALUES %s`, placeholders.String())
 		_, err = tx.ExecContext(ctx, q, args...)
 		if err != nil {
@@ -1311,7 +1448,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 		}
 	}
 	if len(outboxes) > 0 {
-		const outboxCols = 60
+		const outboxCols = 65
 		var placeholders strings.Builder
 		args := make([]interface{}, 0, len(outboxes)*outboxCols)
 		for i, outbox := range outboxes {
@@ -1388,6 +1525,11 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 				outbox.GovernanceDecision,         // $58
 				outbox.PaymentInstructionReceived, // $59
 				outbox.CanonicalIntentCreated,     // $60
+				outbox.IntentLifecycleState,       // $61
+				outbox.MappingProfileHash,         // $62
+				outbox.PolicySource,               // $63
+				outbox.PolicyVersion,              // $64
+				outbox.PolicyHash,                 // $65
 			)
 		}
 		q := fmt.Sprintf(`INSERT INTO outbox (
@@ -1409,7 +1551,9 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 			retry_count, next_attempt_at, created_at, batchid,
 			source_row_num, aggregate_confidence_score,
 			required_fields_status, tokenization_status, governance_decision,
-			payment_instruction_received, canonical_intent_created
+			payment_instruction_received, canonical_intent_created,
+			intent_lifecycle_state, mapping_profile_hash,
+			policy_source, policy_version, policy_hash
 		) VALUES %s`, placeholders.String())
 		_, err = tx.ExecContext(ctx, q, args...)
 		if err != nil {
@@ -1480,8 +1624,9 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 							duplicate_reason_code = $1,
 							governance_state = 'FLAGGED',
 							updated_at = now()
-						WHERE intent_id = $2`,
+						WHERE tenant_id = $2 AND intent_id = $3`,
 						item.Intent.DuplicateReasonCode,
+						item.Intent.TenantID,
 						item.Intent.IntentID,
 					)
 					if err != nil {
@@ -1489,6 +1634,73 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 					}
 				}
 			}
+		}
+	}
+
+	// 4.5. Insert Intent Policy Decisions
+	var policyDecisions []*models.IntentPolicyDecision
+	for _, item := range chunk {
+		if item.PolicyDecision != nil {
+			policyDecisions = append(policyDecisions, item.PolicyDecision)
+		}
+	}
+	if len(policyDecisions) > 0 {
+		const policyCols = 10
+		var placeholders strings.Builder
+		args := make([]interface{}, 0, len(policyDecisions)*policyCols)
+		for i, pd := range policyDecisions {
+			if i > 0 {
+				placeholders.WriteString(",")
+			}
+			base := i * policyCols
+			placeholders.WriteString(fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+				base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10))
+			args = append(args,
+				pd.TenantID, pd.IntentID, pd.PolicySource, pd.PolicyVersion, pd.PolicyHash,
+				pd.PolicyResult, pd.ReasonCodesJSON, pd.InputFactsHash, pd.InputFactsJSON, pd.EvaluatedAt,
+			)
+		}
+		q := fmt.Sprintf(`INSERT INTO intent_policy_decisions (
+			tenant_id, intent_id, policy_source, policy_version, policy_hash,
+			policy_result, reason_codes_json, input_facts_hash, input_facts_json, evaluated_at
+		) VALUES %s
+		ON CONFLICT (tenant_id, intent_id, policy_source, policy_version) DO NOTHING`, placeholders.String())
+		_, err = tx.ExecContext(ctx, q, args...)
+		if err != nil {
+			return fmt.Errorf("batch insert intent_policy_decisions: %w", err)
+		}
+	}
+
+	// 4.6. Insert Duplicate Decisions
+	var duplicateDecisions []*models.DuplicateDecision
+	for _, item := range chunk {
+		if item.DuplicateDecision != nil {
+			duplicateDecisions = append(duplicateDecisions, item.DuplicateDecision)
+		}
+	}
+	if len(duplicateDecisions) > 0 {
+		const dupCols = 9
+		var placeholders strings.Builder
+		args := make([]interface{}, 0, len(duplicateDecisions)*dupCols)
+		for i, dd := range duplicateDecisions {
+			if i > 0 {
+				placeholders.WriteString(",")
+			}
+			base := i * dupCols
+			placeholders.WriteString(fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+				base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9))
+			args = append(args,
+				dd.TenantID, dd.IntentID, dd.Decision, dd.ReasonCode, dd.DuplicateScore,
+				dd.ComparedIntentID, dd.DuplicateGroupID, dd.ComparisonFactsHash, dd.PolicyVersion,
+			)
+		}
+		q := fmt.Sprintf(`INSERT INTO duplicate_decisions (
+			tenant_id, intent_id, decision, reason_code, duplicate_score,
+			compared_intent_id, duplicate_group_id, comparison_facts_hash, policy_version
+		) VALUES %s`, placeholders.String())
+		_, err = tx.ExecContext(ctx, q, args...)
+		if err != nil {
+			return fmt.Errorf("batch insert duplicate_decisions: %w", err)
 		}
 	}
 

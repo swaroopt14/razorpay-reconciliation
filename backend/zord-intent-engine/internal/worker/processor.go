@@ -8,22 +8,17 @@ import (
 
 	"zord-intent-engine/internal/etl"
 	"zord-intent-engine/internal/models"
-	"zord-intent-engine/internal/persistence"
 )
 
 // ETLProcessor runs the post-canonicalization ETL pipeline for a batch
 // of already-processed OutboxEvents. Decrypt has already happened.
 // This is Stage 6–12 of the Zord ETL doc for the intent side.
 type ETLProcessor struct {
-	outboxRepo persistence.OutboxPullRepository
-	runRepo    *etl.RunRepository
+	runRepo *etl.RunRepository
 }
 
-func NewETLProcessor(
-	outboxRepo persistence.OutboxPullRepository,
-	runRepo *etl.RunRepository,
-) *ETLProcessor {
-	return &ETLProcessor{outboxRepo: outboxRepo, runRepo: runRepo}
+func NewETLProcessor(runRepo *etl.RunRepository) *ETLProcessor {
+	return &ETLProcessor{runRepo: runRepo}
 }
 
 type EventResult struct {
@@ -53,6 +48,7 @@ func (p *ETLProcessor) processOne(ctx context.Context, ev models.OutboxEvent) Ev
 		TenantID:         tenantID,
 		EnvelopeID:       envelopeID,
 		OutboxEventID:    ev.EventID,
+		BatchID:          ev.BatchID,
 		ArtifactFamily:   "PAYOUT_INTENT",
 		SourceSystem:     ev.SourceSystem,
 		MappingProfileID: ev.MappingProfileID,

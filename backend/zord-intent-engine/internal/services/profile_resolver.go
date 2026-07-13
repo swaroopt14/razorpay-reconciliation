@@ -196,7 +196,7 @@ func loadBuiltInMappingProfile(sourceSystem, artifactFamily string) *models.Mapp
 	}
 	requiredFieldsJSON, _ := json.Marshal(def.RequiredFields)
 
-	return &models.MappingProfile{
+	p := &models.MappingProfile{
 		ProfileID:                profileID,
 		ProfileVersion:           "1.0.0",
 		SourceVendor:             strings.ToLower(sourceSystem),
@@ -215,10 +215,13 @@ func loadBuiltInMappingProfile(sourceSystem, artifactFamily string) *models.Mapp
 		SoftInferableFieldsJSON:  json.RawMessage("[]"),
 		FieldKindPolicyJSON:      json.RawMessage("{}"),
 		SensitiveFieldPolicyJSON: json.RawMessage("{}"),
+		ValidationMode:           models.ValidationModeStrict,
 		OutputEntityFamily:       models.OutputEntityIntent,
 		Status:                   "active",
 		CreatedBy:                "global_profiles.json",
 	}
+	p.ProfileHash = p.ComputeProfileHash()
+	return p
 }
 
 func loadMappingProfile(
@@ -240,6 +243,7 @@ func loadMappingProfile(
                     column_map, amount_format, date_format, default_currency, default_intent_type, source_timezone,
                     strict_required_fields_json, soft_inferable_fields_json,
                     field_kind_policy_json, sensitive_field_policy_json,
+                    profile_hash, validation_mode,
                     output_entity_family, status, notes, created_at, updated_at, created_by
              FROM mapping_profiles
              WHERE tenant_id IS NULL
@@ -254,6 +258,7 @@ func loadMappingProfile(
                     column_map, amount_format, date_format, default_currency, default_intent_type, source_timezone,
                     strict_required_fields_json, soft_inferable_fields_json,
                     field_kind_policy_json, sensitive_field_policy_json,
+                    profile_hash, validation_mode,
                     output_entity_family, status, notes, created_at, updated_at, created_by
              FROM mapping_profiles
              WHERE tenant_id = $1
@@ -268,6 +273,7 @@ func loadMappingProfile(
                     column_map, amount_format, date_format, default_currency, default_intent_type, source_timezone,
                     strict_required_fields_json, soft_inferable_fields_json,
                     field_kind_policy_json, sensitive_field_policy_json,
+                    profile_hash, validation_mode,
                     output_entity_family, status, notes, created_at, updated_at, created_by
              FROM mapping_profiles
              WHERE tenant_id = $1
@@ -295,6 +301,7 @@ func scanMappingProfile(row *sql.Row) (*models.MappingProfile, error) {
 		&p.DefaultCurrency, &p.DefaultIntentType, &p.SourceTimezone,
 		&p.StrictRequiredFieldsJSON, &p.SoftInferableFieldsJSON,
 		&p.FieldKindPolicyJSON, &p.SensitiveFieldPolicyJSON,
+		&p.ProfileHash, &p.ValidationMode,
 		&p.OutputEntityFamily, &p.Status, &p.Notes,
 		&p.CreatedAt, &p.UpdatedAt, &p.CreatedBy,
 	)
@@ -309,5 +316,13 @@ func scanMappingProfile(row *sql.Row) (*models.MappingProfile, error) {
 		return nil, fmt.Errorf("column_map unmarshal: %w", err)
 	}
 	p.TenantID = tenantIDPtr
+	if p.ProfileHash == "" {
+		// Legacy row created before profile_hash existed — compute it now so
+		// callers never see an empty hash for an active profile.
+		p.ProfileHash = p.ComputeProfileHash()
+	}
+	if p.ValidationMode == "" {
+		p.ValidationMode = models.ValidationModeStrict
+	}
 	return &p, nil
 }

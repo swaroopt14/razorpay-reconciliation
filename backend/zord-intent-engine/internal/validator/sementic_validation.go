@@ -34,15 +34,22 @@ func validateAmount(value string) error {
 	return nil
 }
 
+// validateCurrency enforces the system's single currency policy: INR only.
+// This used to accept USD/EUR/GBP here only for guards.RunPreGuards to reject
+// them moments later with TENANT_CORRIDOR_NOT_ALLOWED — an intent could pass
+// one validation stage and fail the next for the same underlying reason. This
+// is now the single source of truth, reusing that same reason code so
+// existing DLQ classification keeps working.
 func validateCurrency(code string) error {
 	code = strings.ToUpper(strings.TrimSpace(code))
 
-	switch code {
-	case "INR", "USD", "EUR", "GBP":
-		return nil
-	default:
+	if code == "" {
 		return semanticError("currency must be ISO-4217 compliant")
 	}
+	if code != "INR" {
+		return corridorError("only INR corridor is currently supported")
+	}
+	return nil
 }
 
 func validateIntendedExecution(executionAt string) error {

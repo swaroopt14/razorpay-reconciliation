@@ -10,8 +10,29 @@ import (
 
 var DB *sql.DB
 
+// EnsureIngestRun returns the stable run_id for (tenant_id, batch_id),
+// creating the intent_ingest_runs row if it doesn't exist yet. Call this
+// before writing any intent_ingest_rows for a batch so each row can carry a
+// real run_id — previously every caller generated a throwaway uuid.New()
+// that UpsertIngestRun's ON CONFLICT silently discarded on every call after
+// the first, so run_id was never actually usable as a join key.
+func EnsureIngestRun(ctx context.Context, db *sql.DB, tenantID, batchID string) (string, error) {
+	const q = `
+		INSERT INTO intent_ingest_runs (run_id, tenant_id, batch_id, status)
+		VALUES (gen_random_uuid(), $1, $2, 'PROCESSING')
+		ON CONFLICT (tenant_id, batch_id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id
+		RETURNING run_id`
+
+	var runID string
+	if err := db.QueryRowContext(ctx, q, tenantID, batchID).Scan(&runID); err != nil {
+		return "", fmt.Errorf("EnsureIngestRun: %w", err)
+	}
+	return runID, nil
+}
+
 // UpsertIngestRun inserts or updates an intent_ingest_runs row at the end of
-// a bulk ingest. It uses ON CONFLICT on batch_id to update run stats atomically.
+// a bulk ingest. It uses ON CONFLICT on (tenant_id, batch_id) to update run stats
+// atomically, since batch_id alone is client-supplied and not globally unique.
 func UpsertIngestRun(
 	ctx context.Context,
 	db *sql.DB,
@@ -25,7 +46,7 @@ func UpsertIngestRun(
 		     total_rows, accepted_rows, failed_rows, duplicate_rows, status, completed_at)
 		VALUES ($1, $2, $3, NULLIF($4,''), NULLIF($5,''), NULLIF($6,''), NULLIF($7,''),
 		        $8, $9, $10, $11, $12, now())
-		ON CONFLICT (batch_id) DO UPDATE SET
+		ON CONFLICT (tenant_id, batch_id) DO UPDATE SET
 		    mapping_id     = EXCLUDED.mapping_id,
 		    total_rows     = EXCLUDED.total_rows,
 		    accepted_rows  = EXCLUDED.accepted_rows,
@@ -51,6 +72,7 @@ func UpsertIngestRun(
 func InsertIngestRow(
 	ctx context.Context,
 	db *sql.DB,
+	runID string,
 	batchID, tenantID, mappingID, profileID string,
 	rowIndex int,
 	idempotencyKey, status, errorDetail, sourceSystem, fileName, fileHash string,
@@ -58,15 +80,15 @@ func InsertIngestRow(
 ) error {
 	const q = `
 		INSERT INTO intent_ingest_rows
-		    (batch_id, tenant_id, mapping_id, profile_id, row_index,
+		    (run_id, batch_id, tenant_id, mapping_id, profile_id, row_index,
 		     idempotency_key, status, error_detail, source_system,
 		     file_name, file_hash, raw_row_json)
-		VALUES ($1, $2, $3, NULLIF($4,''), $5,
-		        NULLIF($6,''), $7, NULLIF($8,''), NULLIF($9,''),
-		        NULLIF($10,''), NULLIF($11,''), $12)`
+		VALUES (NULLIF($1,'')::uuid, $2, $3, $4, NULLIF($5,''), $6,
+		        NULLIF($7,''), $8, NULLIF($9,''), NULLIF($10,''),
+		        NULLIF($11,''), NULLIF($12,''), $13)`
 
 	_, err := db.ExecContext(ctx, q,
-		batchID, tenantID, mappingID, profileID, rowIndex,
+		runID, batchID, tenantID, mappingID, profileID, rowIndex,
 		idempotencyKey, status, errorDetail, sourceSystem,
 		fileName, fileHash, rawRowJSON,
 	)
@@ -77,6 +99,7 @@ func InsertIngestRow(
 }
 
 type IngestRowItem struct {
+	RunID                                    string
 	BatchID, TenantID, MappingID, ProfileID string
 	RowIndex                                int
 	IdempotencyKey, Status, ErrorDetail     string
@@ -94,7 +117,7 @@ func InsertIngestRowsBatch(
 	}
 
 	const chunkSize = 500
-	const rowCols = 12
+	const rowCols = 13
 
 	for start := 0; start < len(items); start += chunkSize {
 		end := start + chunkSize
@@ -111,17 +134,17 @@ func InsertIngestRowsBatch(
 				placeholders.WriteString(",")
 			}
 			base := i * rowCols
-			placeholders.WriteString(fmt.Sprintf("($%d,$%d,$%d,NULLIF($%d,''),$%d,NULLIF($%d,''),$%d,NULLIF($%d,''),NULLIF($%d,''),NULLIF($%d,''),NULLIF($%d,''),$%d)",
-				base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10, base+11, base+12))
+			placeholders.WriteString(fmt.Sprintf("(NULLIF($%d,'')::uuid,$%d,$%d,$%d,NULLIF($%d,''),$%d,NULLIF($%d,''),$%d,NULLIF($%d,''),NULLIF($%d,''),NULLIF($%d,''),NULLIF($%d,''),$%d)",
+				base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10, base+11, base+12, base+13))
 			args = append(args,
-				item.BatchID, item.TenantID, item.MappingID, item.ProfileID, item.RowIndex,
+				item.RunID, item.BatchID, item.TenantID, item.MappingID, item.ProfileID, item.RowIndex,
 				item.IdempotencyKey, item.Status, item.ErrorDetail, item.SourceSystem,
 				item.FileName, item.FileHash, item.RawRowJSON,
 			)
 		}
 
 		q := fmt.Sprintf(`INSERT INTO intent_ingest_rows (
-			batch_id, tenant_id, mapping_id, profile_id, row_index,
+			run_id, batch_id, tenant_id, mapping_id, profile_id, row_index,
 			idempotency_key, status, error_detail, source_system,
 			file_name, file_hash, raw_row_json
 		) VALUES %s`, placeholders.String())
@@ -131,7 +154,7 @@ func InsertIngestRowsBatch(
 			log.Printf("⚠️ InsertIngestRowsBatch chunk insert failed, falling back to single-row: %v", err)
 			for _, item := range chunk {
 				errSingle := InsertIngestRow(ctx, dbConn,
-					item.BatchID, item.TenantID, item.MappingID, item.ProfileID, item.RowIndex,
+					item.RunID, item.BatchID, item.TenantID, item.MappingID, item.ProfileID, item.RowIndex,
 					item.IdempotencyKey, item.Status, item.ErrorDetail, item.SourceSystem,
 					item.FileName, item.FileHash, item.RawRowJSON,
 				)

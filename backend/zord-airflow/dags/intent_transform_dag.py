@@ -5,8 +5,9 @@ Drives post-canonicalization ETL for zord-intent-engine (Service 2).
 
 What this DAG does:
   1. Checks intent-engine is healthy
-  2. Calls POST /internal/airflow/transform — intent-engine leases its own
-     outbox, scores already-canonical intents, promotes etl_ingest_runs
+  2. Calls POST /internal/airflow/transform — intent-engine fetches outbox
+     events not yet ETL-scored (read-only, independent of zord-relay's
+     delivery lease), scores already-canonical intents, promotes etl_ingest_runs
   3. Quality gates on parse_success_rate
   4. Alerts if below 0.98 threshold
 

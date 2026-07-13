@@ -18,34 +18,49 @@ func NewGenericSourceParser() *GenericSourceParser {
 	return &GenericSourceParser{}
 }
 
-// ParseToCanonicalJSON returns the canonical JSON bytes ready for json.Unmarshal into ParsedIncomingIntent.
+// ParseToCanonicalJSON returns the canonical JSON bytes ready for json.Unmarshal into ParsedIncomingIntent,
+// plus any source columns that profile.ColumnMap did not account for — these are never dropped,
+// only surfaced so the caller can record them in the NIR's unmapped_json for audit/lineage.
 // This is called from intent_service.go Step 4 — after decrypt, before normalizer.
 func (p *GenericSourceParser) ParseToCanonicalJSON(
 	rawJSON []byte,
 	profile *models.MappingProfile,
-) ([]byte, error) {
+) ([]byte, map[string]any, error) {
 	// Unmarshal the raw JSON (keys = tenant's column headers)
 	var raw map[string]any
 	if err := json.Unmarshal(rawJSON, &raw); err != nil {
-		return nil, fmt.Errorf("raw JSON unmarshal: %w", err)
+		return nil, nil, fmt.Errorf("raw JSON unmarshal: %w", err)
 	}
 
 	// Build colIndex: lowercase tenant column name → value in raw
 	lowerRaw := make(map[string]any, len(raw))
+	// Maps the lowercased/trimmed key back to the original raw key, so the
+	// unmapped-fields report preserves the tenant's original column name.
+	lowerToOriginal := make(map[string]string, len(raw))
 	for k, v := range raw {
-		lowerRaw[strings.ToLower(strings.TrimSpace(k))] = v
+		lk := strings.ToLower(strings.TrimSpace(k))
+		lowerRaw[lk] = v
+		lowerToOriginal[lk] = k
 	}
+
+	consumed := make(map[string]bool, len(profile.ColumnMap))
 
 	canonical := make(map[string]any)
 	if sourceRowRef, ok := raw["source_row_ref"]; ok {
 		canonical["source_row_ref"] = sourceRowRef
+		consumed["source_row_ref"] = true
 	}
 
 	// For each entry in profile.ColumnMap: universalField → tenantColumnName
 	// Read the value from lowerRaw using tenantColumnName (lowercased)
 	for universalField, tenantCol := range profile.ColumnMap {
-		val, ok := lowerRaw[strings.ToLower(strings.TrimSpace(tenantCol))]
-		if !ok || val == nil || val == "" {
+		lk := strings.ToLower(strings.TrimSpace(tenantCol))
+		val, ok := lowerRaw[lk]
+		if !ok {
+			continue
+		}
+		consumed[lk] = true
+		if val == nil || val == "" {
 			continue
 		}
 		// Apply type normalization per field
@@ -56,7 +71,19 @@ func (p *GenericSourceParser) ParseToCanonicalJSON(
 	// Apply defaults from profile
 	ensureProfileDefaults(canonical, profile)
 
-	return json.Marshal(canonical)
+	unmapped := make(map[string]any)
+	for lk, v := range lowerRaw {
+		if consumed[lk] {
+			continue
+		}
+		unmapped[lowerToOriginal[lk]] = v
+	}
+
+	canonicalBytes, err := json.Marshal(canonical)
+	if err != nil {
+		return nil, nil, err
+	}
+	return canonicalBytes, unmapped, nil
 }
 
 func applyFieldNormalization(field string, rawVal string, profile *models.MappingProfile) any {

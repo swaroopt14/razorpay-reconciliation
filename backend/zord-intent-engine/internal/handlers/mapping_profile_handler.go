@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"zord-intent-engine/internal/models"
 	"zord-intent-engine/internal/services"
 )
@@ -121,6 +122,10 @@ func (h *MappingProfileHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if req.Status == "" {
 		req.Status = "active"
 	}
+	if req.ValidationMode == "" {
+		req.ValidationMode = models.ValidationModeStrict
+	}
+	req.ProfileHash = req.ComputeProfileHash()
 
 	q := `INSERT INTO mapping_profiles (
 		profile_id, profile_version, tenant_id, tenant_name,
@@ -129,8 +134,9 @@ func (h *MappingProfileHandler) Create(w http.ResponseWriter, r *http.Request) {
 		column_map, amount_format, date_format, default_currency, source_timezone,
 		strict_required_fields_json, soft_inferable_fields_json,
 		field_kind_policy_json, sensitive_field_policy_json,
+		profile_hash, validation_mode,
 		output_entity_family, status, notes, created_at, updated_at, created_by
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, now(), now(), $24)`
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, now(), now(), $26)`
 
 	_, err = h.db.ExecContext(r.Context(), q,
 		req.ProfileID, req.ProfileVersion, req.TenantID, req.TenantName,
@@ -139,9 +145,14 @@ func (h *MappingProfileHandler) Create(w http.ResponseWriter, r *http.Request) {
 		colMapBytes, req.AmountFormat, req.DateFormat, req.DefaultCurrency, req.SourceTimezone,
 		req.StrictRequiredFieldsJSON, req.SoftInferableFieldsJSON,
 		req.FieldKindPolicyJSON, req.SensitiveFieldPolicyJSON,
+		req.ProfileHash, req.ValidationMode,
 		req.OutputEntityFamily, req.Status, req.Notes, req.CreatedBy,
 	)
 	if err != nil {
+		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" {
+			http.Error(w, "a mapping profile with this tenant/source_system/artifact_family/version already exists", http.StatusConflict)
+			return
+		}
 		http.Error(w, "database insert failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -171,6 +182,7 @@ func (h *MappingProfileHandler) List(w http.ResponseWriter, r *http.Request) {
 	             column_map, amount_format, date_format, default_currency, source_timezone,
 	             strict_required_fields_json, soft_inferable_fields_json,
 	             field_kind_policy_json, sensitive_field_policy_json,
+	             profile_hash, validation_mode,
 	             output_entity_family, status, notes, created_at, updated_at, created_by
 	      FROM mapping_profiles`
 
@@ -207,6 +219,7 @@ func (h *MappingProfileHandler) List(w http.ResponseWriter, r *http.Request) {
 			&p.DefaultCurrency, &p.SourceTimezone,
 			&p.StrictRequiredFieldsJSON, &p.SoftInferableFieldsJSON,
 			&p.FieldKindPolicyJSON, &p.SensitiveFieldPolicyJSON,
+			&p.ProfileHash, &p.ValidationMode,
 			&p.OutputEntityFamily, &p.Status, &p.Notes,
 			&p.CreatedAt, &p.UpdatedAt, &p.CreatedBy,
 		)
@@ -230,6 +243,7 @@ func (h *MappingProfileHandler) Get(w http.ResponseWriter, r *http.Request, prof
 	             column_map, amount_format, date_format, default_currency, source_timezone,
 	             strict_required_fields_json, soft_inferable_fields_json,
 	             field_kind_policy_json, sensitive_field_policy_json,
+	             profile_hash, validation_mode,
 	             output_entity_family, status, notes, created_at, updated_at, created_by
 	      FROM mapping_profiles
 	      WHERE profile_id = $1`
@@ -247,6 +261,7 @@ func (h *MappingProfileHandler) Get(w http.ResponseWriter, r *http.Request, prof
 		&p.DefaultCurrency, &p.SourceTimezone,
 		&p.StrictRequiredFieldsJSON, &p.SoftInferableFieldsJSON,
 		&p.FieldKindPolicyJSON, &p.SensitiveFieldPolicyJSON,
+		&p.ProfileHash, &p.ValidationMode,
 		&p.OutputEntityFamily, &p.Status, &p.Notes,
 		&p.CreatedAt, &p.UpdatedAt, &p.CreatedBy,
 	)
@@ -296,6 +311,11 @@ func (h *MappingProfileHandler) Update(w http.ResponseWriter, r *http.Request, p
 		req.SensitiveFieldPolicyJSON = []byte("{}")
 	}
 
+	if req.ValidationMode == "" {
+		req.ValidationMode = models.ValidationModeStrict
+	}
+	req.ProfileHash = req.ComputeProfileHash()
+
 	q := `UPDATE mapping_profiles SET
 		profile_version = $1, tenant_id = $2, tenant_name = $3,
 		source_vendor = $4, source_system = $5, artifact_family = $6, file_format = $7,
@@ -303,9 +323,10 @@ func (h *MappingProfileHandler) Update(w http.ResponseWriter, r *http.Request, p
 		column_map = $11, amount_format = $12, date_format = $13, default_currency = $14, source_timezone = $15,
 		strict_required_fields_json = $16, soft_inferable_fields_json = $17,
 		field_kind_policy_json = $18, sensitive_field_policy_json = $19,
-		output_entity_family = $20, status = $21, notes = $22,
-		updated_at = now(), created_by = $23
-	WHERE profile_id = $24`
+		profile_hash = $20, validation_mode = $21,
+		output_entity_family = $22, status = $23, notes = $24,
+		updated_at = now(), created_by = $25
+	WHERE profile_id = $26`
 
 	_, err = h.db.ExecContext(r.Context(), q,
 		req.ProfileVersion, req.TenantID, req.TenantName,
@@ -314,10 +335,15 @@ func (h *MappingProfileHandler) Update(w http.ResponseWriter, r *http.Request, p
 		colMapBytes, req.AmountFormat, req.DateFormat, req.DefaultCurrency, req.SourceTimezone,
 		req.StrictRequiredFieldsJSON, req.SoftInferableFieldsJSON,
 		req.FieldKindPolicyJSON, req.SensitiveFieldPolicyJSON,
+		req.ProfileHash, req.ValidationMode,
 		req.OutputEntityFamily, req.Status, req.Notes, req.CreatedBy,
 		profileID,
 	)
 	if err != nil {
+		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" {
+			http.Error(w, "a mapping profile with this tenant/source_system/artifact_family/version already exists", http.StatusConflict)
+			return
+		}
 		http.Error(w, "database update failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

@@ -1,10 +1,18 @@
 package models
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
+)
+
+const (
+	ValidationModeStrict  = "STRICT"
+	ValidationModeReview  = "REVIEW"
+	ValidationModeObserve = "OBSERVE"
 )
 
 type AmountFormat string
@@ -73,6 +81,17 @@ type MappingProfile struct {
 	FieldKindPolicyJSON       json.RawMessage `json:"field_kind_policy"        db:"field_kind_policy_json"`
 	SensitiveFieldPolicyJSON  json.RawMessage `json:"sensitive_field_policy"   db:"sensitive_field_policy_json"`
 
+	// ProfileHash is a deterministic hash of the profile's policy content
+	// (column_map + field policy JSON). It lets a payment_intent/NIR row prove
+	// exactly which profile content produced it, independent of profile_id/
+	// version. Computed by ComputeProfileHash, not client-supplied.
+	ProfileHash string `json:"profile_hash" db:"profile_hash"`
+
+	// ValidationMode controls how a profile-required field being missing
+	// affects the intent: STRICT/REVIEW flag for review (governance_state =
+	// FLAGGED); OBSERVE records the field for visibility only, never flags.
+	ValidationMode string `json:"validation_mode" db:"validation_mode"`
+
 	OutputEntityFamily string `json:"output_entity_family" db:"output_entity_family"`
 
 	Status    string    `json:"status"     db:"status"`     // "active" / "inactive" / "draft"
@@ -80,4 +99,47 @@ type MappingProfile struct {
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 	CreatedBy string    `json:"created_by" db:"created_by"`
+}
+
+// ComputeProfileHash returns a deterministic sha256 hex hash of the profile's
+// policy content (column mapping + field policy JSON + validation mode),
+// independent of profile_id/version/status/timestamps. Two profiles with
+// identical policy content hash identically even under different IDs/versions.
+func (p *MappingProfile) ComputeProfileHash() string {
+	payload := struct {
+		ColumnMap                map[string]string `json:"column_map"`
+		StrictRequiredFieldsJSON json.RawMessage    `json:"strict_required_fields_json"`
+		SoftInferableFieldsJSON  json.RawMessage    `json:"soft_inferable_fields_json"`
+		FieldKindPolicyJSON      json.RawMessage    `json:"field_kind_policy_json"`
+		SensitiveFieldPolicyJSON json.RawMessage    `json:"sensitive_field_policy_json"`
+		ValidationMode           string             `json:"validation_mode"`
+	}{
+		ColumnMap:                p.ColumnMap,
+		StrictRequiredFieldsJSON: p.StrictRequiredFieldsJSON,
+		SoftInferableFieldsJSON:  p.SoftInferableFieldsJSON,
+		FieldKindPolicyJSON:      p.FieldKindPolicyJSON,
+		SensitiveFieldPolicyJSON: p.SensitiveFieldPolicyJSON,
+		ValidationMode:           p.ValidationMode,
+	}
+	b, _ := json.Marshal(payload)
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+// IsFieldRequired reports whether fieldName appears in the profile's
+// strict-required-fields list.
+func (p *MappingProfile) IsFieldRequired(fieldName string) bool {
+	if len(p.StrictRequiredFieldsJSON) == 0 {
+		return false
+	}
+	var required []string
+	if err := json.Unmarshal(p.StrictRequiredFieldsJSON, &required); err != nil {
+		return false
+	}
+	for _, f := range required {
+		if f == fieldName {
+			return true
+		}
+	}
+	return false
 }

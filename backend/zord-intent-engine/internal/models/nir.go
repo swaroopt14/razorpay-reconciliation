@@ -31,6 +31,7 @@ type NormalizedIngestRecord struct {
 	// NEW
 	RequiredFieldGapCount  int       `json:"required_field_gap_count" db:"required_field_gap_count"`
 	LowConfidenceFieldCount int      `json:"low_confidence_field_count" db:"low_confidence_field_count"`
-	
+	MappingProfileHash     string    `json:"mapping_profile_hash,omitempty" db:"mapping_profile_hash"`
+
 	CreatedAt              time.Time `json:"created_at" db:"created_at"`
 }

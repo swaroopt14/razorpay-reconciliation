@@ -20,15 +20,15 @@ func NewRunRepository(db *sql.DB) *RunRepository {
 func (r *RunRepository) CreateRun(ctx context.Context, run ETLIngestRun) (uuid.UUID, error) {
 	query := `
         INSERT INTO etl_ingest_runs
-        (tenant_id, envelope_id, intent_id, outbox_event_id, artifact_family,
+        (tenant_id, envelope_id, intent_id, outbox_event_id, batch_id, artifact_family,
          source_system, mapping_profile_id, parser_version, run_generation,
          status, is_active, started_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'PROCESSING',false,now())
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'PROCESSING',false,now())
         RETURNING run_id`
 
 	var runID uuid.UUID
 	err := r.db.QueryRowContext(ctx, query,
-		run.TenantID, run.EnvelopeID, run.IntentID, run.OutboxEventID,
+		run.TenantID, run.EnvelopeID, run.IntentID, run.OutboxEventID, run.BatchID,
 		run.ArtifactFamily, run.SourceSystem, run.MappingProfileID,
 		run.ParserVersion, run.RunGeneration,
 	).Scan(&runID)
