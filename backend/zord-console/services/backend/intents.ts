@@ -110,6 +110,69 @@ export async function fetchIntents(params: IntentListParams = {}): Promise<Inten
 }
 
 /**
+ * Fetch the platform-wide total intent count across all tenants.
+ * Internal-only endpoint — not exposed through the API gateway.
+ * Endpoint: GET http://localhost:8083/internal/intents/count
+ */
+export async function fetchIntentsTotalCount(): Promise<number> {
+  const url = buildUrl('INTENT_ENGINE', BACKEND_SERVICES.INTENT_ENGINE.ENDPOINTS.INTENTS_COUNT_ALL)
+
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT)
+
+  try {
+    const response = await fetch(url, {
+      ...DEFAULT_FETCH_OPTIONS,
+      method: 'GET',
+      signal: controller.signal,
+    })
+    clearTimeout(timeoutId)
+
+    if (!response.ok) return 0
+
+    const data = (await response.json()) as { total?: number }
+    return typeof data.total === 'number' ? data.total : 0
+  } catch {
+    clearTimeout(timeoutId)
+    return 0
+  }
+}
+
+/**
+ * Fetch a single intent by envelope_id, searching across all tenants.
+ * Internal-only endpoint — not exposed through the API gateway. Used only as
+ * a fallback when the envelope_id's owning tenant isn't known by the caller.
+ * Endpoint: GET http://localhost:8083/internal/intents/by-envelope
+ */
+export async function fetchIntentByEnvelopeAnyTenant(
+  envelopeId: string
+): Promise<BackendIntent | null> {
+  const url = buildUrl(
+    'INTENT_ENGINE',
+    BACKEND_SERVICES.INTENT_ENGINE.ENDPOINTS.INTENT_BY_ENVELOPE_ANY_TENANT(envelopeId)
+  )
+
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT)
+
+  try {
+    const response = await fetch(url, {
+      ...DEFAULT_FETCH_OPTIONS,
+      method: 'GET',
+      signal: controller.signal,
+    })
+    clearTimeout(timeoutId)
+
+    if (!response.ok) return null
+
+    return (await response.json()) as BackendIntent
+  } catch {
+    clearTimeout(timeoutId)
+    return null
+  }
+}
+
+/**
  * Fetch single intent by ID from zord-intent-engine
  * Endpoint: GET http://localhost:8083/v1/intents/:id
  */

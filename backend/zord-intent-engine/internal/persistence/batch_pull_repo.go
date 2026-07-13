@@ -216,6 +216,7 @@ func (r *BatchPullRepo) AckBatch(ctx context.Context, leaseID string, batchIDs [
 	query := `
 UPDATE canonical_batches
 SET dispatched_at = NOW(),
+    updated_at = NOW(),
     lease_id = NULL,
     leased_by = NULL,
     lease_until = NULL
@@ -230,6 +231,11 @@ WHERE lease_id = $1::uuid
 }
 
 func (r *BatchPullRepo) NackBatch(ctx context.Context, leaseID string, batchIDs []string) (int64, error) {
+	// NOTE: bumping updated_at here also resets the LeaseBatch fallback
+	// quiet-wait heuristic (cb.updated_at < NOW() - 5 minutes) for any batch
+	// that still has no intent_ingest_runs row. That's the correct behavior —
+	// a just-nacked batch shouldn't be immediately re-picked — but it does mean
+	// such a batch waits another 5 minutes after every nack before retry.
 	query := `
 UPDATE canonical_batches
 SET retry_count = retry_count + 1,
@@ -239,6 +245,7 @@ SET retry_count = retry_count + 1,
 			LEAST(3600, GREATEST(1, POWER(2, retry_count))) * (0.8 + random() * 0.4)
 		) * INTERVAL '1 second'
     END,
+    updated_at = NOW(),
     lease_id = NULL,
     leased_by = NULL,
     lease_until = NULL

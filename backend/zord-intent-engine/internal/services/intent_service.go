@@ -199,6 +199,26 @@ func NewIntentService(
 
 /* ---------------- Helpers ---------------- */
 
+// sumTenantAmountToday returns the tenant's total accepted intent amount so
+// far today (server-local calendar day), for the daily-limit policy check
+// (ledger item #10). Resolved once per request (not per row) by callers.
+func sumTenantAmountToday(ctx context.Context, sqlDB *sql.DB, tenantID string) (decimal.Decimal, error) {
+	var total sql.NullString
+	err := sqlDB.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(amount), 0)::text
+		FROM payment_intents
+		WHERE tenant_id = $1
+		  AND created_at >= date_trunc('day', now())
+	`, tenantID).Scan(&total)
+	if err != nil {
+		return decimal.Zero, err
+	}
+	if !total.Valid || total.String == "" {
+		return decimal.Zero, nil
+	}
+	return decimal.NewFromString(total.String)
+}
+
 func parseAmount(value string) (decimal.Decimal, error) {
 	v := strings.TrimSpace(value)
 	if v == "" {
@@ -885,6 +905,7 @@ func (s *IntentService) ApplyPolicy(nir *models.NormalizedIngestRecord, req mode
 func (s *IntentService) processIncomingIntentInternal(
 	ctx context.Context,
 	event *models.Event,
+	tenantDailyTotalSoFar decimal.Decimal,
 ) (
 	retIn *models.IncomingIntent,
 	retProfile *models.MappingProfile,
@@ -1883,6 +1904,17 @@ return
 		canonical.Governance.PolicyFlags = append(canonical.Governance.PolicyFlags, "BATCH_SIZE_EXCEEDS_LIMIT")
 	}
 
+	// Tenant daily-amount policy limit (ledger item #10): same posture as the
+	// batch-size limit above — held for review, not blocked outright, since
+	// this has never been enforced before. tenantDailyTotalSoFar is resolved
+	// once per request by the caller (not per row) and reflects the tenant's
+	// accepted amount today prior to this request, so it does not include
+	// other rows still being processed in the same batch.
+	if tenantDailyTotalSoFar.Add(canonical.Amount).GreaterThan(decimal.NewFromInt(guards.TenantDailyLimit)) {
+		canonical.GovernanceState = "REQUIRES_REVIEW"
+		canonical.Governance.PolicyFlags = append(canonical.Governance.PolicyFlags, "TENANT_DAILY_LIMIT_EXCEEDED")
+	}
+
 	canonical.GovernanceReasonCodesJSON = s.aggregateGovernanceReasons(&canonical, nir)
 
 	// 🆕 Status Fields
@@ -2093,8 +2125,14 @@ func (s *IntentService) ProcessIncomingIntent(
 	var policyDecision *models.IntentPolicyDecision
 	var duplicateDecision *models.DuplicateDecision
 
+	dailyTotalSoFar, errDailyTotal := sumTenantAmountToday(ctx, s.db, event.TenantID.String())
+	if errDailyTotal != nil {
+		log.Printf("⚠️ ProcessIncomingIntent: failed to resolve tenant daily total, proceeding as if zero: %v", errDailyTotal)
+		dailyTotalSoFar = decimal.Zero
+	}
+
 	in, resolvedProfile, decryptedPayload, rawAuditPayload, auditProfileID, auditProfileVersion, sourceRowNum,
-		nir, canonical, outbox, registryEntry, retDlq, retErr, policyDecision, duplicateDecision = s.processIncomingIntentInternal(ctx, event)
+		nir, canonical, outbox, registryEntry, retDlq, retErr, policyDecision, duplicateDecision = s.processIncomingIntentInternal(ctx, event, dailyTotalSoFar)
 	if retErr != nil {
 		return nil, nil, retErr
 	}
@@ -2209,9 +2247,17 @@ func (s *IntentService) ProcessIncomingIntentsBatch(
 		}
 	}
 
+	// Tenant daily-amount total (ledger item #10), resolved once upfront for
+	// the whole batch rather than per row — same rationale as batchRunID above.
+	dailyTotalSoFar, errDailyTotal := sumTenantAmountToday(ctx, s.db, events[0].TenantID.String())
+	if errDailyTotal != nil {
+		log.Printf("⚠️ ProcessIncomingIntentsBatch: failed to resolve tenant daily total, proceeding as if zero: %v", errDailyTotal)
+		dailyTotalSoFar = decimal.Zero
+	}
+
 	for _, event := range events {
 		in, resolvedProfile, decryptedPayload, rawAuditPayload, auditProfileID, auditProfileVersion, sourceRowNum,
-			nir, canonical, outbox, registryEntry, dlq, err, policyDecision, duplicateDecision := s.processIncomingIntentInternal(ctx, event)
+			nir, canonical, outbox, registryEntry, dlq, err, policyDecision, duplicateDecision := s.processIncomingIntentInternal(ctx, event, dailyTotalSoFar)
 		if err != nil {
 			log.Printf("⚠️ ProcessIncomingIntentsBatch: system error preparing intent: %v", err)
 			continue

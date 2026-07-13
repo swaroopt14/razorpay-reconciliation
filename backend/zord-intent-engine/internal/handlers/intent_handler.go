@@ -84,10 +84,19 @@ func (h *IntentHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Extract filter parameters
-	tenantID := r.URL.Query().Get("tenant_id")
+	tenantID := strings.TrimSpace(r.URL.Query().Get("tenant_id"))
 	status := r.URL.Query().Get("status")
 	intentType := r.URL.Query().Get("intent_type")
 	batchID := strings.TrimSpace(r.URL.Query().Get("batch_id"))
+
+	// SECURITY: tenant_id is required on this public route — without it the
+	// query returns every tenant's intents. Callers that legitimately need a
+	// cross-tenant aggregate must use the /internal/intents/* routes instead,
+	// which are not exposed through the API gateway.
+	if tenantID == "" {
+		respondError(w, "INVALID_REQUEST", "tenant_id is required", http.StatusBadRequest, nil)
+		return
+	}
 
 	// Call repository
 	intents, total, err := h.queryRepo.ListIntents(ctx, persistence.IntentFilter{
@@ -161,6 +170,53 @@ func (h *IntentHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// FIXED: Send intent directly (not wrapped in { data: ... })
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(intent)
+}
+
+// ENDPOINT: INTERNAL PLATFORM-WIDE COUNT — GET /internal/intents/count
+// Not exposed through Kong (see kubernetes/api-gateway/routes/intent-routes.yaml).
+// Backs the console's ops "resources" dashboard, which has no single tenant
+// to scope to by design.
+func (h *IntentHandler) CountAll(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	total, err := h.queryRepo.CountAllIntents(ctx)
+	if err != nil {
+		respondError(w, "DATABASE_ERROR", "Failed to count intents", http.StatusInternalServerError, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(struct {
+		Total int `json:"total"`
+	}{Total: total})
+}
+
+// ENDPOINT: INTERNAL ENVELOPE LOOKUP (ANY TENANT) — GET /internal/intents/by-envelope?envelope_id=
+// Not exposed through Kong. Backs the console's envelope-detail fallback,
+// which only has an envelope_id to search by and no tenant context.
+func (h *IntentHandler) GetByEnvelopeAnyTenant(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	envelopeID := strings.TrimSpace(r.URL.Query().Get("envelope_id"))
+	if envelopeID == "" {
+		respondError(w, "INVALID_REQUEST", "envelope_id is required", http.StatusBadRequest, nil)
+		return
+	}
+
+	intent, err := h.queryRepo.FindByEnvelopeAnyTenant(ctx, envelopeID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			respondError(w, "NOT_FOUND", "Intent not found", http.StatusNotFound, err)
+			return
+		}
+		respondError(w, "DATABASE_ERROR", "Failed to fetch intent", http.StatusInternalServerError, err)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(intent)
