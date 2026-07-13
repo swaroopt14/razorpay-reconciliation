@@ -37,6 +37,10 @@ const CARD_OVERLAY_CLASS =
   'absolute inset-x-0 top-[44%] z-10 flex w-full items-center justify-center px-3 sm:top-[46%]'
 
 const PILLAR_SHELL_CLASS = 'relative w-full max-w-none overflow-visible pb-[4.5rem]'
+const PILLAR_TITLE_CLASS =
+  'mt-4 flex min-h-[3.3rem] max-w-[22ch] items-start text-xl font-semibold tracking-[-0.03em] text-[#111111] sm:text-[1.35rem] md:min-h-[4rem] lg:min-h-[3.45rem]'
+const PILLAR_DESCRIPTION_CLASS =
+  'mt-3.5 min-h-[4.85rem] max-w-[34ch] text-[15px] leading-relaxed text-[#6B7280] md:min-h-[5.7rem] lg:min-h-[5rem]'
 
 /** Shared content width — hero + pillars align on one grid. */
 const SECTION_SHELL = LANDING_SECTION_SHELL
@@ -540,7 +544,7 @@ function LandingThreePillars() {
         {pillars.map((pillar, index) => (
           <motion.div
             key={pillar.title}
-            className="flex w-full min-w-0 flex-col items-start overflow-visible"
+            className="grid w-full min-w-0 grid-rows-[auto_1fr] items-start overflow-visible"
             variants={shouldReduceMotion ? undefined : pillarColumn}
           >
             <motion.div className="w-full min-w-0">
@@ -552,20 +556,20 @@ function LandingThreePillars() {
               </motion.p>
               <motion.h3
                 variants={shouldReduceMotion ? undefined : pillarText}
-                className="mt-4 max-w-[22ch] text-xl font-semibold tracking-[-0.03em] text-[#111111] sm:text-[1.35rem]"
+                className={PILLAR_TITLE_CLASS}
               >
                 {pillar.title}
               </motion.h3>
               <motion.p
                 variants={shouldReduceMotion ? undefined : pillarText}
-                className="mt-3.5 max-w-[34ch] text-[15px] leading-relaxed text-[#6B7280]"
+                className={PILLAR_DESCRIPTION_CLASS}
               >
                 {pillar.description}
               </motion.p>
             </motion.div>
 
             <motion.div
-              className="mt-6 flex w-full items-start justify-start"
+              className="mt-6 flex w-full items-start justify-start self-start"
               variants={shouldReduceMotion ? undefined : { hidden: { opacity: 0 }, visible: { opacity: 1 } }}
             >
               <PillarVisual index={index} />
