@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { fetchEnvelopeById } from '@/services/backend/envelopes'
-import { fetchIntents } from '@/services/backend/intents'
+import { fetchIntentByEnvelopeAnyTenant } from '@/services/backend/intents'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,8 +26,7 @@ export async function GET(
     if (!envelope) {
       // Fallback for environments where /v1/envelopes/:id is not exposed:
       // infer minimal envelope detail from intents by matching envelope_id.
-      const intents = await fetchIntents({ page: 1, page_size: 200 })
-      const relatedIntent = intents.items.find((i) => i.envelope_id === envelope_id)
+      const relatedIntent = await fetchIntentByEnvelopeAnyTenant(envelope_id)
       if (!relatedIntent) {
         return NextResponse.json({ error: 'Envelope not found' }, { status: 404 })
       }

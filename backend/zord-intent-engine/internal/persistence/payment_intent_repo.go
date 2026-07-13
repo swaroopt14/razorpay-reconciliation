@@ -107,6 +107,7 @@ func (r *PaymentIntentRepo) Save(
     scored_at,
     required_fields_status,
     tokenization_status,
+    tokenization_metadata,
     governance_decision,
     payment_instruction_received,
     canonical_intent_created,
@@ -133,9 +134,9 @@ VALUES (
     $44, $45,
     $46, $47, $48, $49, $50, -- UPDATED
     $51, $52, $53, $54, $55, $56, $57,
-    $58, $59, $60, $61, $62,
-    $63, $64,
-    $65, $66, $67
+    $58, $59, $60, $61, $62, $63,
+    $64, $65,
+    $66, $67, $68
 ) `
 
 	_, err = tx.ExecContext(
@@ -200,14 +201,15 @@ VALUES (
 		intent.ScoredAt,                   // $57
 		intent.RequiredFieldsStatus,       // $58
 		intent.TokenizationStatus,         // $59
-		intent.GovernanceDecision,         // $60
-		intent.PaymentInstructionReceived, // $61
-		intent.CanonicalIntentCreated,     // $62
-		intent.IntentLifecycleState,       // $63
-		intent.MappingProfileHash,         // $64
-		intent.PolicySource,               // $65
-		intent.PolicyVersion,              // $66
-		intent.PolicyHash,                 // $67
+		intent.TokenizationMetadata,       // $60
+		intent.GovernanceDecision,         // $61
+		intent.PaymentInstructionReceived, // $62
+		intent.CanonicalIntentCreated,     // $63
+		intent.IntentLifecycleState,       // $64
+		intent.MappingProfileHash,         // $65
+		intent.PolicySource,               // $66
+		intent.PolicyVersion,              // $67
+		intent.PolicyHash,                 // $68
 	)
 
 	if err != nil {
@@ -279,7 +281,9 @@ INSERT INTO outbox (
     canonical_intent_created,
     intent_lifecycle_state,
     mapping_profile_hash,
-    policy_source, policy_version, policy_hash
+    policy_source, policy_version, policy_hash,
+    reference_quality_score, duplicate_risk_score, score_version,
+    score_validity_status, score_breakdown_json, score_reason_codes_json, scored_at
 ) VALUES (
     $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
     $11,$12,$13,$14,$15,$16,$17,$18,$19,
@@ -288,7 +292,9 @@ INSERT INTO outbox (
     $40,$41,$42,$43,$44,$45,$46,$47,$48,$49,
     $50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,
     $61, $62,
-    $63, $64, $65
+    $63, $64, $65,
+    $66, $67, $68,
+    $69, $70, $71, $72
 )`
 
 	outbox.ContractID = intent.ContractID
@@ -361,6 +367,13 @@ INSERT INTO outbox (
 		outbox.PolicySource,               // $63
 		outbox.PolicyVersion,              // $64
 		outbox.PolicyHash,                 // $65
+		outbox.ReferenceQualityScore,      // $66
+		outbox.DuplicateRiskScore,         // $67
+		outbox.ScoreVersion,               // $68
+		outbox.ScoreValidityStatus,        // $69
+		outbox.ScoreBreakdownJSON,         // $70
+		outbox.ScoreReasonCodesJSON,       // $71
+		outbox.ScoredAt,                   // $72
 	)
 	if err != nil {
 		log.Printf("Repo.Save: INSERT outbox failed: %v", err)
@@ -1309,7 +1322,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 		}
 	}
 	if len(intents) > 0 {
-		const piCols = 67
+		const piCols = 68
 		var placeholders strings.Builder
 		args := make([]interface{}, 0, len(intents)*piCols)
 		for i, intent := range intents {
@@ -1385,14 +1398,15 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 				intent.ScoredAt,                   // $57
 				intent.RequiredFieldsStatus,       // $58
 				intent.TokenizationStatus,         // $59
-				intent.GovernanceDecision,         // $60
-				intent.PaymentInstructionReceived, // $61
-				intent.CanonicalIntentCreated,     // $62
-				intent.IntentLifecycleState,       // $63
-				intent.MappingProfileHash,         // $64
-				intent.PolicySource,               // $65
-				intent.PolicyVersion,              // $66
-				intent.PolicyHash,                 // $67
+				intent.TokenizationMetadata,       // $60
+				intent.GovernanceDecision,         // $61
+				intent.PaymentInstructionReceived, // $62
+				intent.CanonicalIntentCreated,     // $63
+				intent.IntentLifecycleState,       // $64
+				intent.MappingProfileHash,         // $65
+				intent.PolicySource,               // $66
+				intent.PolicyVersion,              // $67
+				intent.PolicyHash,                 // $68
 			)
 		}
 		q := fmt.Sprintf(`INSERT INTO payment_intents (
@@ -1426,6 +1440,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 			scored_at,
 			required_fields_status,
 			tokenization_status,
+			tokenization_metadata,
 			governance_decision,
 			payment_instruction_received,
 			canonical_intent_created,
@@ -1448,7 +1463,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 		}
 	}
 	if len(outboxes) > 0 {
-		const outboxCols = 65
+		const outboxCols = 72
 		var placeholders strings.Builder
 		args := make([]interface{}, 0, len(outboxes)*outboxCols)
 		for i, outbox := range outboxes {
@@ -1530,6 +1545,13 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 				outbox.PolicySource,               // $63
 				outbox.PolicyVersion,              // $64
 				outbox.PolicyHash,                 // $65
+				outbox.ReferenceQualityScore,      // $66
+				outbox.DuplicateRiskScore,         // $67
+				outbox.ScoreVersion,               // $68
+				outbox.ScoreValidityStatus,        // $69
+				outbox.ScoreBreakdownJSON,         // $70
+				outbox.ScoreReasonCodesJSON,       // $71
+				outbox.ScoredAt,                   // $72
 			)
 		}
 		q := fmt.Sprintf(`INSERT INTO outbox (
@@ -1553,7 +1575,9 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 			required_fields_status, tokenization_status, governance_decision,
 			payment_instruction_received, canonical_intent_created,
 			intent_lifecycle_state, mapping_profile_hash,
-			policy_source, policy_version, policy_hash
+			policy_source, policy_version, policy_hash,
+			reference_quality_score, duplicate_risk_score, score_version,
+			score_validity_status, score_breakdown_json, score_reason_codes_json, scored_at
 		) VALUES %s`, placeholders.String())
 		_, err = tx.ExecContext(ctx, q, args...)
 		if err != nil {

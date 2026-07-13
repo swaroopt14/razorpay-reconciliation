@@ -44,6 +44,9 @@ export const BACKEND_SERVICES = {
       HEALTH: '/health',
       INTENTS: '/v1/intents',
       INTENT_BY_ID: (id: string) => `/v1/intents/${id}`,
+      INTENTS_COUNT_ALL: '/internal/intents/count',
+      INTENT_BY_ENVELOPE_ANY_TENANT: (envelopeId: string) =>
+        `/internal/intents/by-envelope?envelope_id=${encodeURIComponent(envelopeId)}`,
       DLQ: '/v1/dlq',
       DLQ_MANUAL_REVIEW: '/v1/dlq/manual-review',
       DLQ_TERMINAL_COUNT: '/v1/dlq/terminal/count',

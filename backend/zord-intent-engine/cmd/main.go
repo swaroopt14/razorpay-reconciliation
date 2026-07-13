@@ -146,6 +146,8 @@ func main() {
 		}
 	})
 	mux.HandleFunc("/v1/intents", intentHandler.List)
+	mux.HandleFunc("/internal/intents/count", intentHandler.CountAll)
+	mux.HandleFunc("/internal/intents/by-envelope", intentHandler.GetByEnvelopeAnyTenant)
 	mux.HandleFunc("/internal/outbox/lease", outboxHandler.Lease)
 	mux.HandleFunc("/internal/outbox/ack", outboxHandler.Ack)
 	mux.HandleFunc("/internal/outbox/nack", outboxHandler.Nack)

@@ -21,6 +21,11 @@ type IntentQueryRepository interface {
 
 	ListPaymentIntentsByBatch(ctx context.Context, tenantID, batchID string, page, pageSize int) ([]models.CanonicalIntent, int, error)
 	ListDLQItemsByBatch(ctx context.Context, tenantID, batchID string, page, pageSize int) ([]models.DLQEntry, int, error)
+
+	// Internal-only, cross-tenant aggregates. Never expose these behind a
+	// tenant-facing route/Kong path — see /internal/intents/* in main.go.
+	CountAllIntents(ctx context.Context) (int, error)
+	FindByEnvelopeAnyTenant(ctx context.Context, envelopeID string) (models.CanonicalIntent, error)
 }
 
 // FILTER STRUCT
@@ -310,6 +315,118 @@ func (r *IntentQueryRepo) GetIntentByID(
 
 	return intent, nil
 }
+// CountAllIntents returns the platform-wide total row count across every
+// tenant. Internal-only: backs the ops "resources" dashboard aggregate, which
+// has no single tenant to scope to by design.
+func (r *IntentQueryRepo) CountAllIntents(ctx context.Context) (int, error) {
+	var total int
+	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM payment_intents").Scan(&total); err != nil {
+		return 0, fmt.Errorf("failed to count all intents: %w", err)
+	}
+	return total, nil
+}
+
+// FindByEnvelopeAnyTenant looks up an intent by envelope_id without a tenant
+// filter. Internal-only: used by the console's envelope-detail fallback,
+// which only has an envelope_id to search by and no tenant context.
+func (r *IntentQueryRepo) FindByEnvelopeAnyTenant(ctx context.Context, envelopeID string) (models.CanonicalIntent, error) {
+	query := `
+	SELECT
+		intent_id, envelope_id, tenant_id, contract_id,
+		intent_type, canonical_version,
+		COALESCE(schema_version, '') as schema_version,
+		amount, currency, intended_execution_at,
+		COALESCE(constraints, '{}'::jsonb) as constraints,
+		COALESCE(beneficiary_type, '') as beneficiary_type,
+		COALESCE(pii_tokens, '{}'::jsonb) as pii_tokens,
+		COALESCE(beneficiary, '{}'::jsonb) as beneficiary,
+		status, confidence_score, created_at,
+		COALESCE(client_payout_ref, '') as client_payout_ref,
+		COALESCE(request_fingerprint, '') as request_fingerprint,
+		COALESCE(routing_hints_json, '{}'::jsonb) as routing_hints_json,
+		COALESCE(governance_state, '') as governance_state,
+		COALESCE(business_state, '') as business_state,
+		COALESCE(duplicate_risk_flag, false) as duplicate_risk_flag,
+		COALESCE(mapping_profile_version, '') as mapping_profile_version,
+		updated_at,
+		canonical_snapshot_ref,
+		COALESCE(nir_snapshot_ref, '') as nir_snapshot_ref,
+		COALESCE(governance_snapshot_ref, '') as governance_snapshot_ref,
+		COALESCE(governance_hash, '') as governance_hash,
+		source_row_num,
+		aggregate_confidence_score,
+		required_fields_status,
+		tokenization_status,
+		governance_decision,
+		payment_instruction_received,
+		canonical_intent_created,
+		COALESCE(intent_lifecycle_state, '') as intent_lifecycle_state,
+		COALESCE(mapping_profile_hash, '') as mapping_profile_hash,
+		COALESCE(policy_source, '') as policy_source,
+		COALESCE(policy_version, '') as policy_version,
+		COALESCE(policy_hash, '') as policy_hash
+	FROM payment_intents
+	WHERE envelope_id = $1
+	ORDER BY created_at DESC
+	LIMIT 1
+`
+
+	var intent models.CanonicalIntent
+
+	err := r.db.QueryRowContext(ctx, query, envelopeID).Scan(
+		&intent.IntentID,
+		&intent.EnvelopeID,
+		&intent.TenantID,
+		&intent.ContractID,
+		&intent.IntentType,
+		&intent.CanonicalVersion,
+		&intent.SchemaVersion,
+		&intent.Amount,
+		&intent.Currency,
+		&intent.IntendedExecutionAt,
+		&intent.Constraints,
+		&intent.BeneficiaryType,
+		&intent.PIITokens,
+		&intent.Beneficiary,
+		&intent.Status,
+		&intent.ConfidenceScore,
+		&intent.CreatedAt,
+		&intent.ClientPayoutRef,
+		&intent.RequestFingerprint,
+		&intent.RoutingHintsJSON,
+		&intent.GovernanceState,
+		&intent.BusinessState,
+		&intent.DuplicateRiskFlag,
+		&intent.MappingProfileVersion,
+		&intent.UpdatedAt,
+		&intent.CanonicalSnapshotRef,
+		&intent.NIRSnapshotRef,
+		&intent.GovernanceSnapshotRef,
+		&intent.GovernanceHash,
+		&intent.SourceRowNum,
+		&intent.AggregateConfidenceScore,
+		&intent.RequiredFieldsStatus,
+		&intent.TokenizationStatus,
+		&intent.GovernanceDecision,
+		&intent.PaymentInstructionReceived,
+		&intent.CanonicalIntentCreated,
+		&intent.IntentLifecycleState,
+		&intent.MappingProfileHash,
+		&intent.PolicySource,
+		&intent.PolicyVersion,
+		&intent.PolicyHash,
+	)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return models.CanonicalIntent{}, errors.New("intent not found")
+		}
+		return models.CanonicalIntent{}, fmt.Errorf("failed to fetch intent by envelope: %w", err)
+	}
+
+	return intent, nil
+}
+
 func (r *IntentQueryRepo) ListBatchesForSidebar(
 	ctx context.Context,
 	tenantID string,

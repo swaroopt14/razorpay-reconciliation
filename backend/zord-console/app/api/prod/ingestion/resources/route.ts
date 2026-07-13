@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { fetchIntents } from '@/services/backend/intents'
+import { fetchIntentsTotalCount } from '@/services/backend/intents'
 import { fetchDLQItems } from '@/services/backend/dlq'
 
 // Force dynamic rendering for API routes
@@ -12,8 +12,7 @@ export async function GET(request: NextRequest) {
     let dlqCount = 0
 
     try {
-      const intentsResponse = await fetchIntents({ page: 1, page_size: 1 })
-      intentsTotal = intentsResponse.pagination.total
+      intentsTotal = await fetchIntentsTotalCount()
     } catch {
       // Service unavailable, use 0
     }

@@ -199,6 +199,26 @@ func NewIntentService(
 
 /* ---------------- Helpers ---------------- */
 
+// sumTenantAmountToday returns the tenant's total accepted intent amount so
+// far today (server-local calendar day), for the daily-limit policy check
+// (ledger item #10). Resolved once per request (not per row) by callers.
+func sumTenantAmountToday(ctx context.Context, sqlDB *sql.DB, tenantID string) (decimal.Decimal, error) {
+	var total sql.NullString
+	err := sqlDB.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(amount), 0)::text
+		FROM payment_intents
+		WHERE tenant_id = $1
+		  AND created_at >= date_trunc('day', now())
+	`, tenantID).Scan(&total)
+	if err != nil {
+		return decimal.Zero, err
+	}
+	if !total.Valid || total.String == "" {
+		return decimal.Zero, nil
+	}
+	return decimal.NewFromString(total.String)
+}
+
 func parseAmount(value string) (decimal.Decimal, error) {
 	v := strings.TrimSpace(value)
 	if v == "" {
@@ -885,6 +905,7 @@ func (s *IntentService) ApplyPolicy(nir *models.NormalizedIngestRecord, req mode
 func (s *IntentService) processIncomingIntentInternal(
 	ctx context.Context,
 	event *models.Event,
+	tenantDailyTotalSoFar decimal.Decimal,
 ) (
 	retIn *models.IncomingIntent,
 	retProfile *models.MappingProfile,
@@ -1624,6 +1645,29 @@ return
 	// Persist full token map in pii_tokens JSONB
 	piiJSON, _ := json.Marshal(tokenMap)
 
+	// Ledger item #18: record which requested PII fields actually came back
+	// tokenized (enclave provenance), not just the pass/fail bool that
+	// tokenization_status already carries. No secret values here — only field
+	// names — since this rides along on every read of the intent.
+	tokenizedFields := make([]string, 0, len(tokenMap))
+	requestedFields := make([]string, 0, len(tokenReq.PII))
+	for field, val := range tokenMap {
+		if val != "" {
+			tokenizedFields = append(tokenizedFields, field)
+		}
+	}
+	for field := range tokenReq.PII {
+		requestedFields = append(requestedFields, field)
+	}
+	sort.Strings(tokenizedFields)
+	sort.Strings(requestedFields)
+	tokenizationMetadataJSON, _ := json.Marshal(map[string]any{
+		"method":           "enclave_sync",
+		"requested_fields": requestedFields,
+		"tokenized_fields": tokenizedFields,
+		"tokenized_at":     time.Now().UTC(),
+	})
+
 	beneficiaryTokenized := map[string]any{
 		"instrument": map[string]any{
 			"kind":       canonicalInput.Beneficiary.Instrument.Kind,
@@ -1810,9 +1854,10 @@ return
 		IntendedExecutionAt: executionAt,
 		Constraints:         constraintsJSON,
 
-		BeneficiaryType: canonicalInput.Beneficiary.Instrument.Kind,
-		PIITokens:       piiJSON,
-		Beneficiary:     beneficiaryJSON,
+		BeneficiaryType:      canonicalInput.Beneficiary.Instrument.Kind,
+		PIITokens:            piiJSON,
+		Beneficiary:          beneficiaryJSON,
+		TokenizationMetadata: tokenizationMetadataJSON,
 
 		Status:                     "CREATED",
 		CreatedAt:                  time.Now().UTC(),
@@ -1881,6 +1926,17 @@ return
 	if in.RowCountEstimate != nil && *in.RowCountEstimate > guards.MaxBatchSize {
 		canonical.GovernanceState = "REQUIRES_REVIEW"
 		canonical.Governance.PolicyFlags = append(canonical.Governance.PolicyFlags, "BATCH_SIZE_EXCEEDS_LIMIT")
+	}
+
+	// Tenant daily-amount policy limit (ledger item #10): same posture as the
+	// batch-size limit above — held for review, not blocked outright, since
+	// this has never been enforced before. tenantDailyTotalSoFar is resolved
+	// once per request by the caller (not per row) and reflects the tenant's
+	// accepted amount today prior to this request, so it does not include
+	// other rows still being processed in the same batch.
+	if tenantDailyTotalSoFar.Add(canonical.Amount).GreaterThan(decimal.NewFromInt(guards.TenantDailyLimit)) {
+		canonical.GovernanceState = "REQUIRES_REVIEW"
+		canonical.Governance.PolicyFlags = append(canonical.Governance.PolicyFlags, "TENANT_DAILY_LIMIT_EXCEEDED")
 	}
 
 	canonical.GovernanceReasonCodesJSON = s.aggregateGovernanceReasons(&canonical, nir)
@@ -2093,8 +2149,14 @@ func (s *IntentService) ProcessIncomingIntent(
 	var policyDecision *models.IntentPolicyDecision
 	var duplicateDecision *models.DuplicateDecision
 
+	dailyTotalSoFar, errDailyTotal := sumTenantAmountToday(ctx, s.db, event.TenantID.String())
+	if errDailyTotal != nil {
+		log.Printf("⚠️ ProcessIncomingIntent: failed to resolve tenant daily total, proceeding as if zero: %v", errDailyTotal)
+		dailyTotalSoFar = decimal.Zero
+	}
+
 	in, resolvedProfile, decryptedPayload, rawAuditPayload, auditProfileID, auditProfileVersion, sourceRowNum,
-		nir, canonical, outbox, registryEntry, retDlq, retErr, policyDecision, duplicateDecision = s.processIncomingIntentInternal(ctx, event)
+		nir, canonical, outbox, registryEntry, retDlq, retErr, policyDecision, duplicateDecision = s.processIncomingIntentInternal(ctx, event, dailyTotalSoFar)
 	if retErr != nil {
 		return nil, nil, retErr
 	}
@@ -2209,9 +2271,17 @@ func (s *IntentService) ProcessIncomingIntentsBatch(
 		}
 	}
 
+	// Tenant daily-amount total (ledger item #10), resolved once upfront for
+	// the whole batch rather than per row — same rationale as batchRunID above.
+	dailyTotalSoFar, errDailyTotal := sumTenantAmountToday(ctx, s.db, events[0].TenantID.String())
+	if errDailyTotal != nil {
+		log.Printf("⚠️ ProcessIncomingIntentsBatch: failed to resolve tenant daily total, proceeding as if zero: %v", errDailyTotal)
+		dailyTotalSoFar = decimal.Zero
+	}
+
 	for _, event := range events {
 		in, resolvedProfile, decryptedPayload, rawAuditPayload, auditProfileID, auditProfileVersion, sourceRowNum,
-			nir, canonical, outbox, registryEntry, dlq, err, policyDecision, duplicateDecision := s.processIncomingIntentInternal(ctx, event)
+			nir, canonical, outbox, registryEntry, dlq, err, policyDecision, duplicateDecision := s.processIncomingIntentInternal(ctx, event, dailyTotalSoFar)
 		if err != nil {
 			log.Printf("⚠️ ProcessIncomingIntentsBatch: system error preparing intent: %v", err)
 			continue
@@ -2430,6 +2500,22 @@ func (s *IntentService) ProcessTokenizeResult(
 	if err != nil {
 		return nil, err
 	}
+
+	// Ledger item #18: same provenance record as the sync enclave path, tagged
+	// with the async method — this result arrived via the Kafka tokenize-queue
+	// fallback, not a live enclave call.
+	tokenizedFields := make([]string, 0, len(tokenMap))
+	for field, val := range tokenMap {
+		if val != "" {
+			tokenizedFields = append(tokenizedFields, field)
+		}
+	}
+	sort.Strings(tokenizedFields)
+	tokenizationMetadataJSON, _ := json.Marshal(map[string]any{
+		"method":           "enclave_async_kafka",
+		"tokenized_fields": tokenizedFields,
+		"tokenized_at":     time.Now().UTC(),
+	})
 
 	beneficiaryTokenized := map[string]any{
 		"instrument": map[string]any{
@@ -2675,9 +2761,10 @@ func (s *IntentService) ProcessTokenizeResult(
 		IntendedExecutionAt: executionAt,
 		Constraints:         constraintsJSON,
 
-		BeneficiaryType: canonicalInput.Beneficiary.Instrument.Kind,
-		PIITokens:       piiJSON,
-		Beneficiary:     beneficiaryJSON,
+		BeneficiaryType:      canonicalInput.Beneficiary.Instrument.Kind,
+		PIITokens:            piiJSON,
+		Beneficiary:          beneficiaryJSON,
+		TokenizationMetadata: tokenizationMetadataJSON,
 
 		Status:                     "CREATED",
 		CreatedAt:                  time.Now().UTC(),
@@ -2894,15 +2981,19 @@ func (s *IntentService) processWebhook(
 		Status:         "CREATED",
 		CreatedAt:      time.Now().UTC(),
 
-		IntendedExecutionAt: nil,
-		Constraints:         json.RawMessage("{}"),
-		PIITokens:           json.RawMessage("{}"),
-		Beneficiary:         json.RawMessage("{}"),
+		IntendedExecutionAt:  nil,
+		Constraints:          json.RawMessage("{}"),
+		PIITokens:            json.RawMessage("{}"),
+		Beneficiary:          json.RawMessage("{}"),
+		TokenizationMetadata: json.RawMessage(`{"method":"none","reason":"webhook path does not tokenize"}`),
 
-		ClientPayoutRef:       in.IdempotencyKey, // Fallback to idempotency key for webhooks if ref is missing
-		RequestFingerprint:    in.IdempotencyKey,
-		RoutingHintsJSON:      json.RawMessage(`{}`),
-		GovernanceState:       "WEBHOOK",
+		ClientPayoutRef:           in.IdempotencyKey, // Fallback to idempotency key for webhooks if ref is missing
+		RequestFingerprint:        in.IdempotencyKey,
+		RoutingHintsJSON:          json.RawMessage(`{}`),
+		GovernanceReasonCodesJSON: json.RawMessage(`{}`),
+		ScoreBreakdownJSON:        json.RawMessage(`{}`),
+		ScoreReasonCodesJSON:      json.RawMessage(`{}`),
+		GovernanceState:           "WEBHOOK",
 		BusinessState:         "NEW",
 		IntentLifecycleState:  "RECEIVED", // webhook path skips mapping/validation/scoring today
 		DuplicateRiskFlag:     false,
@@ -2913,20 +3004,36 @@ func (s *IntentService) processWebhook(
 
 	payload := []byte("{}")
 
-	outbox := models.OutboxEvent{
-		TraceID:       canonical.TraceID,
-		EnvelopeID:    canonical.EnvelopeID,
-		TenantID:      canonical.TenantID,
-		BatchID:       canonical.BatchID,
-		AggregateType: "intent",
-		AggregateID:   uuid.MustParse(canonical.IntentID),
-		EventType:     "WEBHOOK_RECEIVED",
-		Payload:       payload,
-		Status:        "PENDING",
-		CreatedAt:     time.Now(),
+	// Built via the same helper the real intent path uses (instead of a
+	// hand-rolled struct literal) so this can't silently drift out of sync
+	// with payment_intents' NOT-NULL/JSON-typed columns the way it previously
+	// did — this literal used to omit Constraints/PIITokens/Beneficiary/
+	// RoutingHintsJSON/GovernanceReasonCodesJSON entirely, which would have
+	// failed the outbox INSERT on any real webhook.
+	outbox, err := CanonicalIntentToOutboxEvent(canonical, payload, "WEBHOOK_RECEIVED")
+	if err != nil {
+		return nil, nil, err
 	}
 
-	saved, err := s.repo.Save(ctx, nil, canonical, outbox, nil, nil, nil)
+	// Ledger item #19: the webhook path has no source fields to map, but it
+	// must still leave a lineage record rather than silently having none —
+	// this NIR explicitly documents why it's minimal instead of just omitting
+	// it, so a lineage query never has to guess whether a row is missing by
+	// accident or by design.
+	nir := &models.NormalizedIngestRecord{
+		NIRID:                  uuid.New(),
+		EnvelopeID:             in.EnvelopeID,
+		TenantID:               in.TenantID,
+		DetectedFormat:         "WEBHOOK",
+		ProfileID:              "WEBHOOK_PROFILE",
+		ProfileVersion:         "WEBHOOK",
+		FieldsJSON:             json.RawMessage(`{}`),
+		FieldConfidenceSummary: json.RawMessage(`{}`),
+		UnmappedJSON:           json.RawMessage(`{"skip_reason":"webhook path does not run mapping/validation/scoring"}`),
+		CreatedAt:              time.Now().UTC(),
+	}
+
+	saved, err := s.repo.Save(ctx, nir, canonical, outbox, nil, nil, nil)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -9,7 +9,6 @@ import (
 const (
 	MaxBatchSize     = 20000
 	TenantDailyLimit = 6000000000 // ₹60 Cr
-	RemainingLimit   = 1000000000 // example ₹10 Cr
 	NEFTCutoffHour   = 18
 )
 

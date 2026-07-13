@@ -90,4 +90,13 @@ type OutboxEvent struct {
 	RequiredFieldsStatus *bool   `json:"required_fields_status,omitempty" db:"required_fields_status"`
 	TokenizationStatus   *bool   `json:"tokenization_status,omitempty" db:"tokenization_status"`
 	GovernanceDecision   *string `json:"governance_decision,omitempty" db:"governance_decision"`
+
+	// ── Scoring v2 fields (mirrors payment_intents; was missing here) ──────────
+	ReferenceQualityScore float64         `json:"reference_quality_score,omitempty" db:"reference_quality_score"`
+	DuplicateRiskScore    float64         `json:"duplicate_risk_score,omitempty" db:"duplicate_risk_score"`
+	ScoreVersion          string          `json:"score_version,omitempty" db:"score_version"`
+	ScoreValidityStatus   string          `json:"score_validity_status,omitempty" db:"score_validity_status"`
+	ScoreBreakdownJSON    json.RawMessage `json:"score_breakdown_json,omitempty" db:"score_breakdown_json"`
+	ScoreReasonCodesJSON  json.RawMessage `json:"score_reason_codes_json,omitempty" db:"score_reason_codes_json"`
+	ScoredAt              *time.Time      `json:"scored_at,omitempty" db:"scored_at"`
 }
