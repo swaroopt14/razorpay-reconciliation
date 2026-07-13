@@ -36,22 +36,23 @@ services:
       - PORT=8088
       - EVIDENCE_ARCHIVE_PREFIX=evidence-packs
       - REPLAY_COMPARE_STRICT=true
-
-      # --- Secrets (override via .env or secrets manager in prod) ---
-      - EVIDENCE_SIGNING_PRIVATE_KEY_BASE64=
-      - EVIDENCE_ARCHIVE_ENCRYPTION_KEY_BASE64=
-
-      - ENVIRONMENT=production
-      - JAEGER_ENDPOINT=http://host.docker.internal:14268/api/traces
       - SIGNING_KEY_PATH=/run/secrets/signing_key.pem
+
+      # --- Production mode (secrets must be set in .env) ---
+      - APP_ENV=production
+
+      # --- Secrets (set in .env — service will not start without these) ---
+      # EVIDENCE_ARCHIVE_ENCRYPTION_KEY_BASE64=
+
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4317
 
     depends_on:
       postgres:
         condition: service_healthy
-    networks:
-      - zord-network
     volumes:
       - ./signing_key.pem:/run/secrets/signing_key.pem:ro
+    networks:
+      - zord-network
     restart: unless-stopped
     # Container healthcheck intentionally omitted for minimal scratch image.
     # Use platform/orchestrator health probes (/healthz) instead.
