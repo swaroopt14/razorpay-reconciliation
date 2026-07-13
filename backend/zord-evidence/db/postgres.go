@@ -318,7 +318,7 @@ func EnsureTables(ctx context.Context, d *sql.DB) error {
 		// unique index (source_event_id, tenant_id, leaf_type, intent_id, batch_id)
 		// makes WriteReceipt fully idempotent.
 
-		`CREATE TABLE evidence_leaf_receipts (
+		`CREATE TABLE  IF NOT EXISTS evidence_leaf_receipts (
 			receipt_id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
 			tenant_id TEXT NOT NULL,
 			scope_type TEXT NOT NULL,
