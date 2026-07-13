@@ -10,6 +10,20 @@ import (
 
 var DB *sql.DB
 
+// jsonOrNull guards against a Go gotcha: a nil/empty []byte passed as a query
+// arg is NOT the same as SQL NULL — database/sql only converts a bare
+// interface{} nil to NULL, and a nil slice boxed into interface{} still
+// carries its concrete []byte type, so it reaches Postgres as a zero-length
+// value and fails jsonb columns with "invalid input syntax for type json".
+// Rows that were DLQ'd before their payload was ever decrypted (e.g.
+// MISSING_OBJECT_REF, MISSING_TRACE_ID) have no raw_row_json to record.
+func jsonOrNull(b []byte) interface{} {
+	if len(b) == 0 {
+		return nil
+	}
+	return b
+}
+
 // EnsureIngestRun returns the stable run_id for (tenant_id, batch_id),
 // creating the intent_ingest_runs row if it doesn't exist yet. Call this
 // before writing any intent_ingest_rows for a batch so each row can carry a
@@ -90,7 +104,7 @@ func InsertIngestRow(
 	_, err := db.ExecContext(ctx, q,
 		runID, batchID, tenantID, mappingID, profileID, rowIndex,
 		idempotencyKey, status, errorDetail, sourceSystem,
-		fileName, fileHash, rawRowJSON,
+		fileName, fileHash, jsonOrNull(rawRowJSON),
 	)
 	if err != nil {
 		return fmt.Errorf("InsertIngestRow: %w", err)
@@ -139,7 +153,7 @@ func InsertIngestRowsBatch(
 			args = append(args,
 				item.RunID, item.BatchID, item.TenantID, item.MappingID, item.ProfileID, item.RowIndex,
 				item.IdempotencyKey, item.Status, item.ErrorDetail, item.SourceSystem,
-				item.FileName, item.FileHash, item.RawRowJSON,
+				item.FileName, item.FileHash, jsonOrNull(item.RawRowJSON),
 			)
 		}
 
