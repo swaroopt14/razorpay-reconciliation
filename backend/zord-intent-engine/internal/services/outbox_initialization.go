@@ -91,5 +91,13 @@ func CanonicalIntentToOutboxEvent(
 		RequiredFieldsStatus:      intent.RequiredFieldsStatus,
 		TokenizationStatus:        intent.TokenizationStatus,
 		GovernanceDecision:        intent.GovernanceDecision,
+
+		ReferenceQualityScore: intent.ReferenceQualityScore,
+		DuplicateRiskScore:    intent.DuplicateRiskScore,
+		ScoreVersion:          intent.ScoreVersion,
+		ScoreValidityStatus:   intent.ScoreValidityStatus,
+		ScoreBreakdownJSON:    intent.ScoreBreakdownJSON,
+		ScoreReasonCodesJSON:  intent.ScoreReasonCodesJSON,
+		ScoredAt:              intent.ScoredAt,
 	}, nil
 }
