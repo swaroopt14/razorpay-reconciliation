@@ -21,20 +21,19 @@ type Config struct {
 	KafkaEnabled       bool // false when KAFKA_BROKERS is unset or empty
 	KafkaTopic         string
 	KafkaConsumerGroup string
-	OutcomeKafkaTopic string
-	OutcomeKafkaGroup string
-	EdgeKafkaTopic    string
-	EdgeKafkaGroup    string
-	IntentKafkaTopic  string
-	IntentKafkaGroup  string
-	S3Bucket      string
-	S3Region      string
-	ArchivePrefix string
-	ArchiveEncryptKey string
-	SigningPrivateKey  string
+	OutcomeKafkaTopic  string
+	OutcomeKafkaGroup  string
+	EdgeKafkaTopic     string
+	EdgeKafkaGroup     string
+	IntentKafkaTopic   string
+	IntentKafkaGroup   string
+	S3Bucket           string
+	S3Region           string
+	ArchivePrefix      string
+	ArchiveEncryptKey  string
 
 	// WorkerCount controls how many async pack-generation goroutines are started.
-	WorkerCount int
+	WorkerCount         int
 	ReplayCompareStrict bool
 	ReadTimeout         time.Duration
 	WriteTimeout        time.Duration
@@ -111,7 +110,6 @@ func Load() (*Config, error) {
 		S3Region:            getenv("AWS_REGION", ""),
 		ArchivePrefix:       getenv("EVIDENCE_ARCHIVE_PREFIX", "evidence-packs"),
 		ArchiveEncryptKey:   os.Getenv("EVIDENCE_ARCHIVE_ENCRYPTION_KEY_BASE64"),
-		SigningPrivateKey:   os.Getenv("EVIDENCE_SIGNING_PRIVATE_KEY_BASE64"),
 		WorkerCount:         workerCount,
 		ReplayCompareStrict: strict,
 		ReadTimeout:         10 * time.Second,
@@ -143,9 +141,6 @@ func (c *Config) validate() error {
 	}
 	if len(c.KafkaBrokers) == 0 || c.KafkaBrokers[0] == "" {
 		errs = append(errs, "KAFKA_BROKERS is required in production")
-	}
-	if strings.TrimSpace(c.SigningPrivateKey) == "" {
-		errs = append(errs, "EVIDENCE_SIGNING_PRIVATE_KEY_BASE64 is required in production")
 	}
 	if strings.TrimSpace(c.ArchiveEncryptKey) == "" {
 		errs = append(errs, "EVIDENCE_ARCHIVE_ENCRYPTION_KEY_BASE64 is required in production")

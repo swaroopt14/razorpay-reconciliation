@@ -44,7 +44,12 @@ func main() {
 	}
 
 	// Signing and archive keys are required — no ephemeral fallback.
-	signer, err := services.NewSigner(cfg.SigningPrivateKey)
+	signingKeyPath := os.Getenv("SIGNING_KEY_PATH")
+	if signingKeyPath == "" {
+		signingKeyPath = "signing_key.pem"
+	}
+
+	signer, err := services.NewSigner(signingKeyPath)
 	if err != nil {
 		log.Fatalf("signer init failed: %v", err)
 	}

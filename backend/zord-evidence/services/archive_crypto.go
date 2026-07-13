@@ -29,11 +29,12 @@ func NewArchiveCrypto(keyB64 string) (*ArchiveCrypto, error) {
 	if err != nil {
 		return nil, fmt.Errorf("decode archive encryption key base64: %w", err)
 	}
-	switch len(raw) {
-	case 16, 24, 32:
-		// Valid AES-128, AES-192, or AES-256 key lengths.
-	default:
-		return nil, fmt.Errorf("invalid archive encryption key length: got %d bytes, want 16, 24, or 32", len(raw))
+
+	if len(raw) != 32 {
+		return nil, fmt.Errorf(
+			"invalid archive encryption key length: got %d bytes, want 32 (AES-256)",
+			len(raw),
+		)
 	}
 	return &ArchiveCrypto{key: raw}, nil
 }

@@ -36,12 +36,12 @@ services:
       - PORT=8088
       - EVIDENCE_ARCHIVE_PREFIX=evidence-packs
       - REPLAY_COMPARE_STRICT=true
+      - SIGNING_KEY_PATH=/run/secrets/signing_key.pem
 
       # --- Production mode (secrets must be set in .env) ---
       - APP_ENV=production
 
       # --- Secrets (set in .env — service will not start without these) ---
-      # EVIDENCE_SIGNING_PRIVATE_KEY_BASE64=
       # EVIDENCE_ARCHIVE_ENCRYPTION_KEY_BASE64=
 
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4317
@@ -49,6 +49,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    volumes:
+      - ./signing_key.pem:/run/secrets/signing_key.pem:ro
     networks:
       - zord-network
     restart: unless-stopped
