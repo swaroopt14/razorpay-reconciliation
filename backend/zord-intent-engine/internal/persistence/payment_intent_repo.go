@@ -107,6 +107,7 @@ func (r *PaymentIntentRepo) Save(
     scored_at,
     required_fields_status,
     tokenization_status,
+    tokenization_metadata,
     governance_decision,
     payment_instruction_received,
     canonical_intent_created,
@@ -133,9 +134,9 @@ VALUES (
     $44, $45,
     $46, $47, $48, $49, $50, -- UPDATED
     $51, $52, $53, $54, $55, $56, $57,
-    $58, $59, $60, $61, $62,
-    $63, $64,
-    $65, $66, $67
+    $58, $59, $60, $61, $62, $63,
+    $64, $65,
+    $66, $67, $68
 ) `
 
 	_, err = tx.ExecContext(
@@ -200,14 +201,15 @@ VALUES (
 		intent.ScoredAt,                   // $57
 		intent.RequiredFieldsStatus,       // $58
 		intent.TokenizationStatus,         // $59
-		intent.GovernanceDecision,         // $60
-		intent.PaymentInstructionReceived, // $61
-		intent.CanonicalIntentCreated,     // $62
-		intent.IntentLifecycleState,       // $63
-		intent.MappingProfileHash,         // $64
-		intent.PolicySource,               // $65
-		intent.PolicyVersion,              // $66
-		intent.PolicyHash,                 // $67
+		intent.TokenizationMetadata,       // $60
+		intent.GovernanceDecision,         // $61
+		intent.PaymentInstructionReceived, // $62
+		intent.CanonicalIntentCreated,     // $63
+		intent.IntentLifecycleState,       // $64
+		intent.MappingProfileHash,         // $65
+		intent.PolicySource,               // $66
+		intent.PolicyVersion,              // $67
+		intent.PolicyHash,                 // $68
 	)
 
 	if err != nil {
@@ -1309,7 +1311,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 		}
 	}
 	if len(intents) > 0 {
-		const piCols = 67
+		const piCols = 68
 		var placeholders strings.Builder
 		args := make([]interface{}, 0, len(intents)*piCols)
 		for i, intent := range intents {
@@ -1385,14 +1387,15 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 				intent.ScoredAt,                   // $57
 				intent.RequiredFieldsStatus,       // $58
 				intent.TokenizationStatus,         // $59
-				intent.GovernanceDecision,         // $60
-				intent.PaymentInstructionReceived, // $61
-				intent.CanonicalIntentCreated,     // $62
-				intent.IntentLifecycleState,       // $63
-				intent.MappingProfileHash,         // $64
-				intent.PolicySource,               // $65
-				intent.PolicyVersion,              // $66
-				intent.PolicyHash,                 // $67
+				intent.TokenizationMetadata,       // $60
+				intent.GovernanceDecision,         // $61
+				intent.PaymentInstructionReceived, // $62
+				intent.CanonicalIntentCreated,     // $63
+				intent.IntentLifecycleState,       // $64
+				intent.MappingProfileHash,         // $65
+				intent.PolicySource,               // $66
+				intent.PolicyVersion,              // $67
+				intent.PolicyHash,                 // $68
 			)
 		}
 		q := fmt.Sprintf(`INSERT INTO payment_intents (
@@ -1426,6 +1429,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 			scored_at,
 			required_fields_status,
 			tokenization_status,
+			tokenization_metadata,
 			governance_decision,
 			payment_instruction_received,
 			canonical_intent_created,

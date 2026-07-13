@@ -1645,6 +1645,29 @@ return
 	// Persist full token map in pii_tokens JSONB
 	piiJSON, _ := json.Marshal(tokenMap)
 
+	// Ledger item #18: record which requested PII fields actually came back
+	// tokenized (enclave provenance), not just the pass/fail bool that
+	// tokenization_status already carries. No secret values here — only field
+	// names — since this rides along on every read of the intent.
+	tokenizedFields := make([]string, 0, len(tokenMap))
+	requestedFields := make([]string, 0, len(tokenReq.PII))
+	for field, val := range tokenMap {
+		if val != "" {
+			tokenizedFields = append(tokenizedFields, field)
+		}
+	}
+	for field := range tokenReq.PII {
+		requestedFields = append(requestedFields, field)
+	}
+	sort.Strings(tokenizedFields)
+	sort.Strings(requestedFields)
+	tokenizationMetadataJSON, _ := json.Marshal(map[string]any{
+		"method":           "enclave_sync",
+		"requested_fields": requestedFields,
+		"tokenized_fields": tokenizedFields,
+		"tokenized_at":     time.Now().UTC(),
+	})
+
 	beneficiaryTokenized := map[string]any{
 		"instrument": map[string]any{
 			"kind":       canonicalInput.Beneficiary.Instrument.Kind,
@@ -1831,9 +1854,10 @@ return
 		IntendedExecutionAt: executionAt,
 		Constraints:         constraintsJSON,
 
-		BeneficiaryType: canonicalInput.Beneficiary.Instrument.Kind,
-		PIITokens:       piiJSON,
-		Beneficiary:     beneficiaryJSON,
+		BeneficiaryType:      canonicalInput.Beneficiary.Instrument.Kind,
+		PIITokens:            piiJSON,
+		Beneficiary:          beneficiaryJSON,
+		TokenizationMetadata: tokenizationMetadataJSON,
 
 		Status:                     "CREATED",
 		CreatedAt:                  time.Now().UTC(),
@@ -2477,6 +2501,22 @@ func (s *IntentService) ProcessTokenizeResult(
 		return nil, err
 	}
 
+	// Ledger item #18: same provenance record as the sync enclave path, tagged
+	// with the async method — this result arrived via the Kafka tokenize-queue
+	// fallback, not a live enclave call.
+	tokenizedFields := make([]string, 0, len(tokenMap))
+	for field, val := range tokenMap {
+		if val != "" {
+			tokenizedFields = append(tokenizedFields, field)
+		}
+	}
+	sort.Strings(tokenizedFields)
+	tokenizationMetadataJSON, _ := json.Marshal(map[string]any{
+		"method":           "enclave_async_kafka",
+		"tokenized_fields": tokenizedFields,
+		"tokenized_at":     time.Now().UTC(),
+	})
+
 	beneficiaryTokenized := map[string]any{
 		"instrument": map[string]any{
 			"kind":       canonicalInput.Beneficiary.Instrument.Kind,
@@ -2721,9 +2761,10 @@ func (s *IntentService) ProcessTokenizeResult(
 		IntendedExecutionAt: executionAt,
 		Constraints:         constraintsJSON,
 
-		BeneficiaryType: canonicalInput.Beneficiary.Instrument.Kind,
-		PIITokens:       piiJSON,
-		Beneficiary:     beneficiaryJSON,
+		BeneficiaryType:      canonicalInput.Beneficiary.Instrument.Kind,
+		PIITokens:            piiJSON,
+		Beneficiary:          beneficiaryJSON,
+		TokenizationMetadata: tokenizationMetadataJSON,
 
 		Status:                     "CREATED",
 		CreatedAt:                  time.Now().UTC(),
@@ -2940,15 +2981,19 @@ func (s *IntentService) processWebhook(
 		Status:         "CREATED",
 		CreatedAt:      time.Now().UTC(),
 
-		IntendedExecutionAt: nil,
-		Constraints:         json.RawMessage("{}"),
-		PIITokens:           json.RawMessage("{}"),
-		Beneficiary:         json.RawMessage("{}"),
+		IntendedExecutionAt:  nil,
+		Constraints:          json.RawMessage("{}"),
+		PIITokens:            json.RawMessage("{}"),
+		Beneficiary:          json.RawMessage("{}"),
+		TokenizationMetadata: json.RawMessage(`{"method":"none","reason":"webhook path does not tokenize"}`),
 
-		ClientPayoutRef:       in.IdempotencyKey, // Fallback to idempotency key for webhooks if ref is missing
-		RequestFingerprint:    in.IdempotencyKey,
-		RoutingHintsJSON:      json.RawMessage(`{}`),
-		GovernanceState:       "WEBHOOK",
+		ClientPayoutRef:           in.IdempotencyKey, // Fallback to idempotency key for webhooks if ref is missing
+		RequestFingerprint:        in.IdempotencyKey,
+		RoutingHintsJSON:          json.RawMessage(`{}`),
+		GovernanceReasonCodesJSON: json.RawMessage(`{}`),
+		ScoreBreakdownJSON:        json.RawMessage(`{}`),
+		ScoreReasonCodesJSON:      json.RawMessage(`{}`),
+		GovernanceState:           "WEBHOOK",
 		BusinessState:         "NEW",
 		IntentLifecycleState:  "RECEIVED", // webhook path skips mapping/validation/scoring today
 		DuplicateRiskFlag:     false,
@@ -2959,20 +3004,36 @@ func (s *IntentService) processWebhook(
 
 	payload := []byte("{}")
 
-	outbox := models.OutboxEvent{
-		TraceID:       canonical.TraceID,
-		EnvelopeID:    canonical.EnvelopeID,
-		TenantID:      canonical.TenantID,
-		BatchID:       canonical.BatchID,
-		AggregateType: "intent",
-		AggregateID:   uuid.MustParse(canonical.IntentID),
-		EventType:     "WEBHOOK_RECEIVED",
-		Payload:       payload,
-		Status:        "PENDING",
-		CreatedAt:     time.Now(),
+	// Built via the same helper the real intent path uses (instead of a
+	// hand-rolled struct literal) so this can't silently drift out of sync
+	// with payment_intents' NOT-NULL/JSON-typed columns the way it previously
+	// did — this literal used to omit Constraints/PIITokens/Beneficiary/
+	// RoutingHintsJSON/GovernanceReasonCodesJSON entirely, which would have
+	// failed the outbox INSERT on any real webhook.
+	outbox, err := CanonicalIntentToOutboxEvent(canonical, payload, "WEBHOOK_RECEIVED")
+	if err != nil {
+		return nil, nil, err
 	}
 
-	saved, err := s.repo.Save(ctx, nil, canonical, outbox, nil, nil, nil)
+	// Ledger item #19: the webhook path has no source fields to map, but it
+	// must still leave a lineage record rather than silently having none —
+	// this NIR explicitly documents why it's minimal instead of just omitting
+	// it, so a lineage query never has to guess whether a row is missing by
+	// accident or by design.
+	nir := &models.NormalizedIngestRecord{
+		NIRID:                  uuid.New(),
+		EnvelopeID:             in.EnvelopeID,
+		TenantID:               in.TenantID,
+		DetectedFormat:         "WEBHOOK",
+		ProfileID:              "WEBHOOK_PROFILE",
+		ProfileVersion:         "WEBHOOK",
+		FieldsJSON:             json.RawMessage(`{}`),
+		FieldConfidenceSummary: json.RawMessage(`{}`),
+		UnmappedJSON:           json.RawMessage(`{"skip_reason":"webhook path does not run mapping/validation/scoring"}`),
+		CreatedAt:              time.Now().UTC(),
+	}
+
+	saved, err := s.repo.Save(ctx, nir, canonical, outbox, nil, nil, nil)
 	if err != nil {
 		return nil, nil, err
 	}
