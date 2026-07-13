@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"zord-evidence/models"
 )
 
 type ArchiveCrypto struct {
@@ -37,7 +38,6 @@ func NewArchiveCrypto(keyB64 string, allowEphemeral bool) (*ArchiveCrypto, error
 					"or set APP_ENV=development to allow ephemeral keys (not for production use)",
 			)
 		}
-		// Development only: generate a random ephemeral 32-byte key.
 		raw := make([]byte, 32)
 		if _, err := io.ReadFull(rand.Reader, raw); err != nil {
 			return nil, fmt.Errorf("generate ephemeral archive encryption key: %w", err)
@@ -56,6 +56,11 @@ func NewArchiveCrypto(keyB64 string, allowEphemeral bool) (*ArchiveCrypto, error
 		return nil, fmt.Errorf("invalid archive encryption key length: got %d bytes, want 16, 24, or 32", len(raw))
 	}
 	return &ArchiveCrypto{key: raw}, nil
+}
+
+// KeyID returns the stable single encryption_key_id used for all archives.
+func (a *ArchiveCrypto) KeyID() string {
+	return models.SingleArchiveEncryptionKeyID
 }
 
 // Encrypt encrypts plain using AES-GCM with a random nonce.
@@ -78,4 +83,26 @@ func (a *ArchiveCrypto) Encrypt(plain []byte) ([]byte, error) {
 	out = append(out, nonce...)
 	out = append(out, cipherText...)
 	return out, nil
+}
+
+// Decrypt reverses Encrypt. Input must be nonce || ciphertext from Encrypt.
+func (a *ArchiveCrypto) Decrypt(blob []byte) ([]byte, error) {
+	block, err := aes.NewCipher(a.key)
+	if err != nil {
+		return nil, fmt.Errorf("new cipher: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("new gcm: %w", err)
+	}
+	nonceSize := gcm.NonceSize()
+	if len(blob) < nonceSize {
+		return nil, fmt.Errorf("ciphertext too short: got %d bytes, need at least %d", len(blob), nonceSize)
+	}
+	nonce, cipherText := blob[:nonceSize], blob[nonceSize:]
+	plain, err := gcm.Open(nil, nonce, cipherText, nil)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt archive: %w", err)
+	}
+	return plain, nil
 }

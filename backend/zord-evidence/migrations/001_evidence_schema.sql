@@ -101,15 +101,18 @@ CREATE TABLE IF NOT EXISTS evidence_outbox_events (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Evidence Archives (§14.3)
+-- Evidence Archives (§14.3 + P1-02 verification fields)
 CREATE TABLE IF NOT EXISTS evidence_archives (
-    archive_id UUID PRIMARY KEY,
-    evidence_pack_id UUID NOT NULL,
+    archive_id TEXT PRIMARY KEY,
+    evidence_pack_id TEXT NOT NULL,
     tenant_id TEXT NOT NULL,
     object_ref TEXT NOT NULL,
     encryption_key_id TEXT,
-    archive_hash TEXT NOT NULL,
-    archive_version TEXT NOT NULL,
+    archive_ciphertext_hash TEXT NOT NULL DEFAULT '',
+    plaintext_manifest_hash TEXT NOT NULL DEFAULT '',
+    archive_size_bytes BIGINT NOT NULL DEFAULT 0,
+    archive_version TEXT NOT NULL DEFAULT 'v1',
+    archive_verified_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

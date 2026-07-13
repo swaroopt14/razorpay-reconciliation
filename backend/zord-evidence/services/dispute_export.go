@@ -25,6 +25,7 @@ type ExportResult struct {
 }
 
 // BuildDisputeExport compiles the requested export format from the given pack.
+// Mode A (P1-02): archive verification is required before any export proceeds.
 // It enforces masking rules per spec §8 and records the export in the log table.
 func (s *EvidenceService) BuildDisputeExport(
 	ctx context.Context,
@@ -32,6 +33,9 @@ func (s *EvidenceService) BuildDisputeExport(
 	pack *models.EvidencePack,
 	db *sql.DB,
 ) (*ExportResult, error) {
+	if err := s.VerifyArchiveForPack(ctx, pack.EvidencePackID); err != nil {
+		return nil, err
+	}
 
 	var payload []byte
 	var contentType, filename string
