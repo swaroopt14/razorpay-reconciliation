@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
@@ -275,6 +276,13 @@ func (h *ProofHandler) DisputeExport(c *gin.Context) {
 	if err != nil {
 		if strings.Contains(err.Error(), "unsupported export_type") {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if errors.Is(err, services.ErrArchiveVerificationFailed) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"error":            err.Error(),
+				"evidence_pack_id": pack.EvidencePackID,
+			})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

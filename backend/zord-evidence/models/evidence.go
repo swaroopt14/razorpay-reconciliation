@@ -457,14 +457,21 @@ type InclusionProof struct {
 	CreatedAt      time.Time   `json:"created_at"`
 }
 
-// EvidenceArchive is the evidence_archives row.
+// SingleArchiveEncryptionKeyID is the stable label for the one active archive AES key.
+// Multi-key rotation is intentionally not supported yet.
+const SingleArchiveEncryptionKeyID = "archive-aes-v1"
+
+// EvidenceArchive is the evidence_archives row (§14.3 + P1-02 verification fields).
 type EvidenceArchive struct {
-	ArchiveID       string    `json:"archive_id"`
-	EvidencePackID  string    `json:"evidence_pack_id"`
-	TenantID        string    `json:"tenant_id"`
-	ObjectRef       string    `json:"object_ref"`
-	EncryptionKeyID string    `json:"encryption_key_id,omitempty"`
-	ArchiveHash     string    `json:"archive_hash"`
-	ArchiveVersion  string    `json:"archive_version"`
-	CreatedAt       time.Time `json:"created_at"`
+	ArchiveID              string     `json:"archive_id"`
+	EvidencePackID         string     `json:"evidence_pack_id"`
+	TenantID               string     `json:"tenant_id"`
+	ObjectRef              string     `json:"object_ref"`
+	EncryptionKeyID        string     `json:"encryption_key_id,omitempty"`
+	ArchiveCiphertextHash  string     `json:"archive_ciphertext_hash"`
+	PlaintextManifestHash  string     `json:"plaintext_manifest_hash"`
+	ArchiveSizeBytes       int64      `json:"archive_size_bytes"`
+	ArchiveVersion         string     `json:"archive_version"`
+	ArchiveVerifiedAt      *time.Time `json:"archive_verified_at,omitempty"`
+	CreatedAt              time.Time  `json:"created_at"`
 }

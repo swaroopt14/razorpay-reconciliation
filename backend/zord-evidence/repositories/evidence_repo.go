@@ -212,10 +212,10 @@ WHERE evidence_pack_id=$1 AND pack_status=$4`,
 	if archiveHash != "" {
 		_, err = tx.ExecContext(ctx, `
 UPDATE evidence_archives
-SET archive_hash=$2
+SET archive_ciphertext_hash=$2
 WHERE evidence_pack_id=$1`, packID, archiveHash)
 		if err != nil {
-			return fmt.Errorf("finalize archive hash: %w", err)
+			return fmt.Errorf("finalize archive ciphertext hash: %w", err)
 		}
 	}
 
@@ -460,11 +460,14 @@ WHERE evidence_pack_id = $1`, packID, status)
 
 func (r *EvidenceRepository) saveArchiveInTx(ctx context.Context, tx *sql.Tx, a *models.EvidenceArchive) error {
 	_, err := tx.ExecContext(ctx, `
-INSERT INTO evidence_archives(archive_id, evidence_pack_id, tenant_id, object_ref,
-	encryption_key_id, archive_hash, archive_version, created_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+INSERT INTO evidence_archives(
+	archive_id, evidence_pack_id, tenant_id, object_ref,
+	encryption_key_id, archive_ciphertext_hash, plaintext_manifest_hash,
+	archive_size_bytes, archive_version, created_at
+) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
 		a.ArchiveID, a.EvidencePackID, a.TenantID, a.ObjectRef,
-		nullStr(a.EncryptionKeyID), a.ArchiveHash, a.ArchiveVersion, a.CreatedAt,
+		nullStr(a.EncryptionKeyID), a.ArchiveCiphertextHash, a.PlaintextManifestHash,
+		a.ArchiveSizeBytes, a.ArchiveVersion, a.CreatedAt,
 	)
 	return err
 }
@@ -964,13 +967,57 @@ func (r *EvidenceRepository) MarkPackSupersededInTx(ctx context.Context, tx *sql
 // SaveArchive persists §14.3 evidence_archives metadata.
 func (r *EvidenceRepository) SaveArchive(ctx context.Context, a *models.EvidenceArchive) error {
 	_, err := r.db.ExecContext(ctx, `
-INSERT INTO evidence_archives(archive_id, evidence_pack_id, tenant_id, object_ref,
-	encryption_key_id, archive_hash, archive_version, created_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+INSERT INTO evidence_archives(
+	archive_id, evidence_pack_id, tenant_id, object_ref,
+	encryption_key_id, archive_ciphertext_hash, plaintext_manifest_hash,
+	archive_size_bytes, archive_version, created_at
+) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
 		a.ArchiveID, a.EvidencePackID, a.TenantID, a.ObjectRef,
-		nullStr(a.EncryptionKeyID), a.ArchiveHash, a.ArchiveVersion, a.CreatedAt,
+		nullStr(a.EncryptionKeyID), a.ArchiveCiphertextHash, a.PlaintextManifestHash,
+		a.ArchiveSizeBytes, a.ArchiveVersion, a.CreatedAt,
 	)
 	return err
+}
+
+// GetArchiveByPackID returns the archive metadata row for a pack.
+func (r *EvidenceRepository) GetArchiveByPackID(ctx context.Context, packID string) (*models.EvidenceArchive, error) {
+	a := &models.EvidenceArchive{}
+	var verifiedAt sql.NullTime
+	err := r.db.QueryRowContext(ctx, `
+SELECT archive_id, evidence_pack_id, tenant_id, object_ref,
+       COALESCE(encryption_key_id, ''),
+       COALESCE(archive_ciphertext_hash, ''),
+       COALESCE(plaintext_manifest_hash, ''),
+       COALESCE(archive_size_bytes, 0),
+       archive_version, archive_verified_at, created_at
+FROM evidence_archives
+WHERE evidence_pack_id = $1
+ORDER BY created_at DESC
+LIMIT 1`, packID).Scan(
+		&a.ArchiveID, &a.EvidencePackID, &a.TenantID, &a.ObjectRef,
+		&a.EncryptionKeyID, &a.ArchiveCiphertextHash, &a.PlaintextManifestHash,
+		&a.ArchiveSizeBytes, &a.ArchiveVersion, &verifiedAt, &a.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if verifiedAt.Valid {
+		t := verifiedAt.Time
+		a.ArchiveVerifiedAt = &t
+	}
+	return a, nil
+}
+
+// MarkArchiveVerified sets archive_verified_at after a successful Mode A verify.
+func (r *EvidenceRepository) MarkArchiveVerified(ctx context.Context, packID string, verifiedAt time.Time) error {
+	_, err := r.db.ExecContext(ctx, `
+UPDATE evidence_archives
+SET archive_verified_at = $2
+WHERE evidence_pack_id = $1`, packID, verifiedAt)
+	if err != nil {
+		return fmt.Errorf("mark archive verified: %w", err)
+	}
+	return nil
 }
 
 // SaveInclusionProofs persists §14.4 merkle_inclusion_proofs rows (one per leaf).

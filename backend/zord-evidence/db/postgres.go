@@ -204,16 +204,19 @@ func EnsureTables(ctx context.Context, d *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS evidence_pack_signatures_pack_idx
 			ON evidence_pack_signatures(evidence_pack_id)`,
 
-		// §14.3 — immutable archive body metadata
+		// §14.3 — immutable archive body metadata (P1-02 verification fields)
 		`CREATE TABLE IF NOT EXISTS evidence_archives (
-			archive_id        TEXT PRIMARY KEY,
-			evidence_pack_id  TEXT NOT NULL,
-			tenant_id         TEXT NOT NULL,
-			object_ref        TEXT NOT NULL,
-			encryption_key_id TEXT,
-			archive_hash      TEXT NOT NULL,
-			archive_version   TEXT NOT NULL DEFAULT 'v1',
-			created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			archive_id                 TEXT PRIMARY KEY,
+			evidence_pack_id           TEXT NOT NULL,
+			tenant_id                  TEXT NOT NULL,
+			object_ref                 TEXT NOT NULL,
+			encryption_key_id          TEXT,
+			archive_ciphertext_hash    TEXT NOT NULL DEFAULT '',
+			plaintext_manifest_hash    TEXT NOT NULL DEFAULT '',
+			archive_size_bytes         BIGINT NOT NULL DEFAULT 0,
+			archive_version            TEXT NOT NULL DEFAULT 'v1',
+			archive_verified_at        TIMESTAMPTZ,
+			created_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
 
 		`CREATE INDEX IF NOT EXISTS evidence_archives_pack_idx
@@ -401,6 +404,33 @@ func EnsureTables(ctx context.Context, d *sql.DB) error {
 		// Drop old dedup index (if any)
 		`DROP INDEX IF EXISTS idx_leaf_receipts_dedup;`,
 		`DROP INDEX IF EXISTS idx_leaf_receipts_dedup_v2;`,
+
+		// P1-02: Rename/extend archive verification fields.
+		`ALTER TABLE evidence_archives ADD COLUMN IF NOT EXISTS archive_ciphertext_hash TEXT;`,
+		`ALTER TABLE evidence_archives ADD COLUMN IF NOT EXISTS plaintext_manifest_hash TEXT;`,
+		`ALTER TABLE evidence_archives ADD COLUMN IF NOT EXISTS archive_size_bytes BIGINT NOT NULL DEFAULT 0;`,
+		`ALTER TABLE evidence_archives ADD COLUMN IF NOT EXISTS archive_verified_at TIMESTAMPTZ;`,
+		// Backfill ciphertext hash from legacy archive_hash when that column still exists.
+		`DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'evidence_archives'
+      AND column_name = 'archive_hash'
+  ) THEN
+    UPDATE evidence_archives
+    SET archive_ciphertext_hash = archive_hash
+    WHERE (archive_ciphertext_hash IS NULL OR archive_ciphertext_hash = '')
+      AND archive_hash IS NOT NULL
+      AND archive_hash <> '';
+    ALTER TABLE evidence_archives ALTER COLUMN archive_hash DROP NOT NULL;
+  END IF;
+END $$;`,
+		// Stable single encryption key label for rows that never had one.
+		`UPDATE evidence_archives
+		 SET encryption_key_id = 'archive-aes-v1'
+		 WHERE encryption_key_id IS NULL OR encryption_key_id = ''`,
 
 		// P1-01: Backfill evidence_pack_signatures from legacy evidence_signatures rows.
 		`INSERT INTO evidence_pack_signatures (
