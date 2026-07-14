@@ -49,6 +49,8 @@ type OutboxEvent struct {
 	ConfidenceScore     *float64        `json:"confidence_score,omitempty" db:"confidence_score"`
 
 	CanonicalHash         string `json:"canonical_hash,omitempty" db:"canonical_hash"`
+	SourceRowRef          string `json:"source_row_ref,omitempty" db:"source_row_ref"`
+	CanonicalRowHash      string `json:"canonical_row_hash,omitempty" db:"canonical_row_hash"`
 	CanonicalSnapshotRef  string `json:"canonical_snapshot_ref,omitempty" db:"canonical_snapshot_ref"`
 	NIRSnapshotRef        string `json:"nir_snapshot_ref,omitempty" db:"nir_snapshot_ref"`
 	GovernanceSnapshotRef string `json:"governance_snapshot_ref,omitempty" db:"governance_snapshot_ref"`

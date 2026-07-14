@@ -332,6 +332,29 @@ func (s *IntentService) computeRequestFingerprint(beneficiaryName string, amount
 	return hex.EncodeToString(hash[:])
 }
 
+// computeCanonicalRowHash sets intent.CanonicalRowHash =
+// SHA-256(JCS_Canonicalize(interpreted business fields)) using fields already
+// present on intent. PaymentRail is sourced from BeneficiaryType (the
+// normalized beneficiary.instrument.kind rail enum); InvoiceRef has no
+// ingestion pipeline yet, so it hashes as an empty string until one exists.
+func (s *IntentService) computeCanonicalRowHash(intent *models.CanonicalIntent) string {
+	hash, err := canonicalizer.ComputeCanonicalRowHash(canonicalizer.CanonicalRowHashInput{
+		SourceRowRef:           intent.SourceRowRef,
+		ClientPayoutRef:        intent.ClientPayoutRef,
+		BeneficiaryFingerprint: intent.BeneficiaryFingerprint,
+		AmountMinor:            intent.Amount.Mul(decimal.NewFromInt(100)).IntPart(),
+		Currency:               intent.Currency,
+		IntendedExecutionAt:    intent.IntendedExecutionAt,
+		PaymentRail:            intent.BeneficiaryType,
+		InvoiceRef:             "",
+	})
+	if err != nil {
+		log.Printf("⚠️ Failed to compute canonical_row_hash for intent %s: %v", intent.IntentID, err)
+		return ""
+	}
+	return hash
+}
+
 // computeScores calculates all 7 intent-level scores.
 // All scores are in 0–100 space.
 // tempIntent must have BeneficiaryFingerprint, Amount, Currency, ClientPayoutRef,
@@ -1901,8 +1924,11 @@ return
 		UpdatedAt:           func(t time.Time) *time.Time { return &t }(time.Now().UTC()),
 		BatchID:             in.BatchID,
 		SourceRowNum:        sourceRowNum,
+		// SourceRowRef is populated by an upstream service, not derived here — left
+		// blank until that pipeline exists (same treatment as InvoiceRef).
 		ValidationAnomalies: anomalies,
 	}
+	canonical.CanonicalRowHash = s.computeCanonicalRowHash(&canonical)
 
 	// -------- STEP 9.1: AGGREGATE GOVERNANCE REASONS --------
 	canonical.Governance = governance
@@ -2806,8 +2832,11 @@ func (s *IntentService) ProcessTokenizeResult(
 		UpdatedAt:           func(t time.Time) *time.Time { return &t }(time.Now().UTC()),
 		BatchID:             event.BatchID,
 		SourceRowNum:        sourceRowNum,
+		// SourceRowRef is populated by an upstream service, not derived here — left
+		// blank until that pipeline exists (same treatment as InvoiceRef).
 		ValidationAnomalies: anomalies,
 	}
+	intent.CanonicalRowHash = s.computeCanonicalRowHash(&intent)
 
 	// -------- AGGREGATE GOVERNANCE REASONS --------
 	intent.Governance = governance
@@ -3001,6 +3030,7 @@ func (s *IntentService) processWebhook(
 		MappingProfileVersion: "WEBHOOK",
 		UpdatedAt:             func(t time.Time) *time.Time { return &t }(time.Now().UTC()),
 	}
+	canonical.CanonicalRowHash = s.computeCanonicalRowHash(&canonical)
 
 	payload := []byte("{}")
 
