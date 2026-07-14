@@ -288,7 +288,8 @@ INSERT INTO outbox (
     mapping_profile_hash,
     policy_source, policy_version, policy_hash,
     reference_quality_score, duplicate_risk_score, score_version,
-    score_validity_status, score_breakdown_json, score_reason_codes_json, scored_at
+    score_validity_status, score_breakdown_json, score_reason_codes_json, scored_at,
+    source_row_ref, canonical_row_hash
 ) VALUES (
     $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
     $11,$12,$13,$14,$15,$16,$17,$18,$19,
@@ -299,7 +300,8 @@ INSERT INTO outbox (
     $61, $62,
     $63, $64, $65,
     $66, $67, $68,
-    $69, $70, $71, $72
+    $69, $70, $71, $72,
+    $73, $74
 )`
 
 	outbox.ContractID = intent.ContractID
@@ -379,6 +381,8 @@ INSERT INTO outbox (
 		outbox.ScoreBreakdownJSON,         // $70
 		outbox.ScoreReasonCodesJSON,       // $71
 		outbox.ScoredAt,                   // $72
+		outbox.SourceRowRef,               // $73
+		outbox.CanonicalRowHash,           // $74
 	)
 	if err != nil {
 		log.Printf("Repo.Save: INSERT outbox failed: %v", err)
@@ -1521,7 +1525,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 		}
 	}
 	if len(outboxes) > 0 {
-		const outboxCols = 72
+		const outboxCols = 74
 		var placeholders strings.Builder
 		args := make([]interface{}, 0, len(outboxes)*outboxCols)
 		for i, outbox := range outboxes {
@@ -1610,6 +1614,8 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 				outbox.ScoreBreakdownJSON,         // $70
 				outbox.ScoreReasonCodesJSON,       // $71
 				outbox.ScoredAt,                   // $72
+				outbox.SourceRowRef,               // $73
+				outbox.CanonicalRowHash,           // $74
 			)
 		}
 		q := fmt.Sprintf(`INSERT INTO outbox (
@@ -1635,7 +1641,8 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 			intent_lifecycle_state, mapping_profile_hash,
 			policy_source, policy_version, policy_hash,
 			reference_quality_score, duplicate_risk_score, score_version,
-			score_validity_status, score_breakdown_json, score_reason_codes_json, scored_at
+			score_validity_status, score_breakdown_json, score_reason_codes_json, scored_at,
+			source_row_ref, canonical_row_hash
 		) VALUES %s`, placeholders.String())
 		_, err = tx.ExecContext(ctx, q, args...)
 		if err != nil {

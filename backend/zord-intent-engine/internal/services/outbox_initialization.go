@@ -52,6 +52,8 @@ func CanonicalIntentToOutboxEvent(
 		ConfidenceScore:  intent.ConfidenceScore,
 
 		CanonicalHash:         intent.CanonicalHash,
+		SourceRowRef:          intent.SourceRowRef,
+		CanonicalRowHash:      intent.CanonicalRowHash,
 		CanonicalSnapshotRef:  intent.CanonicalSnapshotRef,
 		NIRSnapshotRef:        intent.NIRSnapshotRef,
 		GovernanceSnapshotRef: intent.GovernanceSnapshotRef,
