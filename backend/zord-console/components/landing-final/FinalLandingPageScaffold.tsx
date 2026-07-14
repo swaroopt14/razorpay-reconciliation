@@ -6,7 +6,7 @@ import type { ReactNode } from 'react'
 
 import { FinalLandingAssistantButton } from '@/components/landing-final/FinalLandingAssistantButton'
 import { SolutionsSiteFooter, SolutionsSiteNav } from '@/components/landing-final/SolutionsSiteChrome'
-import type { FinalLandingNavLabel } from '@/components/landing-final/FinalLandingNavbar'
+import type { FinalLandingNavLabel } from '@/components/landing-final/finalLandingNavTypes'
 
 type PageAction = {
   label: string
@@ -132,7 +132,7 @@ export function PageHeroVisual({
 }
 
 export function FinalLandingPageScaffold({
-  active,
+  active: _active,
   eyebrow,
   title,
   description,
@@ -172,7 +172,7 @@ export function FinalLandingPageScaffold({
       </div>
 
       <div className="relative z-10">
-        <SolutionsSiteNav active={active} theme={theme} scrollMorphTone="light" />
+        <SolutionsSiteNav scrollMorphTone="light" />
         <FinalLandingAssistantButton />
 
         <main className="px-2 pb-20 pt-[120px] md:px-3">

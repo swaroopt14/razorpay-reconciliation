@@ -9,7 +9,7 @@ import { SolutionsSiteFooter, SolutionsSiteNav } from '@/components/landing-fina
 export default function ResourcesPageClient() {
   return (
     <div className="min-h-screen overflow-x-hidden bg-white text-[#1A1A1A]">
-      <SolutionsSiteNav active="Resources" />
+      <SolutionsSiteNav />
       <FinalLandingAssistantButton />
 
       <ResourcesVideoHero />

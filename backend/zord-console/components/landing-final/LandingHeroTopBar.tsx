@@ -23,7 +23,7 @@ const mobileLinks = [
 const GLASS_SCROLL_PX = 80
 const SOLID_SCROLL_PX = 300
 
-type NavPhase = 'transparent' | 'glass' | 'solid' | 'overlay' | 'default'
+type NavPhase = 'transparent' | 'glass' | 'solid' | 'default'
 
 type ScrollMorphTone = 'dark' | 'light'
 
@@ -42,7 +42,6 @@ const headerSurfaceByPhase: Record<NavPhase, string> = {
   glass:
     'border-b border-white/55 bg-white/72 shadow-[0_8px_32px_rgba(0,0,0,0.08)] backdrop-blur-xl',
   solid: 'border-b border-black/[0.06] bg-white shadow-[0_4px_24px_rgba(0,0,0,0.06)]',
-  overlay: 'border-b border-white/10 bg-black/15 backdrop-blur-md',
   default: 'border-b border-black/[0.06] bg-[#fdfdfd]/92 backdrop-blur-md',
 }
 
@@ -50,19 +49,14 @@ const mobileMenuSurfaceByPhase: Record<NavPhase, string> = {
   transparent: 'border-white/10 bg-black/80 backdrop-blur-md',
   glass: 'border-black/[0.06] bg-white/95 backdrop-blur-xl',
   solid: 'border-black/[0.06] bg-white',
-  overlay: 'border-white/10 bg-black/80 backdrop-blur-md',
   default: 'border-black/[0.06] bg-[#fdfdfd]',
 }
 
 export function LandingHeroTopBar({
-  overlay = false,
-  frosted = false,
   scrollMorph = false,
   scrollMorphTone = 'dark',
   scrollContainerRef,
 }: {
-  overlay?: boolean
-  frosted?: boolean
   scrollMorph?: boolean
   scrollMorphTone?: ScrollMorphTone
   scrollContainerRef?: RefObject<HTMLElement | null>
@@ -85,13 +79,7 @@ export function LandingHeroTopBar({
     return () => target.removeEventListener('scroll', onScroll)
   }, [scrollMorph, scrollContainerRef])
 
-  const phase: NavPhase = scrollMorph
-    ? getScrollMorphPhase(scrollY, scrollMorphTone)
-    : overlay
-      ? 'overlay'
-      : frosted
-        ? 'solid'
-        : 'default'
+  const phase: NavPhase = scrollMorph ? getScrollMorphPhase(scrollY, scrollMorphTone) : 'default'
 
   const useLightChrome = phase === 'glass' || phase === 'solid' || phase === 'default'
 

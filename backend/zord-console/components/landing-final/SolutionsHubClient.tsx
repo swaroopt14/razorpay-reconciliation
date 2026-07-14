@@ -9,7 +9,7 @@ import { SolutionsVideoHero } from '@/components/landing-final/SolutionsVideoHer
 export default function SolutionsHubClient() {
   return (
     <div className="min-h-screen overflow-x-hidden bg-white text-[#1A1A1A]">
-      <SolutionsSiteNav active="Solutions" />
+      <SolutionsSiteNav />
       <FinalLandingAssistantButton />
 
       <SolutionsVideoHero />

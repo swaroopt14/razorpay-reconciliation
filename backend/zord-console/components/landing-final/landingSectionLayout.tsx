@@ -10,9 +10,6 @@ export const LIGHT_PRODUCT_SECTION = 'relative z-10 bg-[#F8F9FA] text-[#1A1A1A]'
 export const LIGHT_FEATURE_CARD =
   'rounded-[1.5rem] border border-[#E5E7EB] bg-white p-6 shadow-[0_12px_40px_rgba(0,0,0,0.05)]'
 
-export const LIGHT_FEATURE_TAG =
-  'inline-flex rounded-full border border-[#E5E7EB] bg-[#F8F9FA] px-2.5 py-1 text-[11px] font-medium text-[#4B5563]'
-
 const SLOW_EASE = [0.22, 1, 0.36, 1] as const
 
 type LandingSectionTheme = 'light' | 'dark'
