@@ -1191,6 +1191,25 @@ func (s *EvidenceService) GetPack(ctx context.Context, packID string) (*models.E
 	return pack, nil
 }
 
+// ListPackExports returns the audit trail of dispute exports for a pack (P2-02).
+func (s *EvidenceService) ListPackExports(ctx context.Context, packID string) (*models.ListPackExportsResponse, error) {
+	if _, err := s.GetPack(ctx, packID); err != nil {
+		return nil, err
+	}
+	exports, err := s.repo.ListExportLogsByPackID(ctx, packID)
+	if err != nil {
+		return nil, err
+	}
+	if exports == nil {
+		exports = []models.EvidenceExportLogEntry{}
+	}
+	return &models.ListPackExportsResponse{
+		EvidencePackID: packID,
+		Exports:        exports,
+		Count:          len(exports),
+	}, nil
+}
+
 // ListPacksByIntentID returns all packs for a given intent (spec §17).
 func (s *EvidenceService) ListPacksByIntentID(ctx context.Context, tenantID, intentID string) (*models.ListPacksResponse, error) {
 	packs, err := s.repo.ListByIntentID(ctx, tenantID, intentID)

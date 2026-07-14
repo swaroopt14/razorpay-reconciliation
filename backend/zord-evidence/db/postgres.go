@@ -256,9 +256,12 @@ func EnsureTables(ctx context.Context, d *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS evidence_replay_jobs_status_idx
 			ON evidence_replay_jobs(status)`,
 
-		// Spec §6 dispute export audit log
+		// Spec §6 dispute export audit log.
+		// export_id is TEXT (e.g. exp_<uuid>) to match app-generated IDs used in
+		// X-Evidence-Export-ID — not UUID, which rejected the "exp_" prefix and
+		// caused silent write failures when errors were discarded.
 		`CREATE TABLE IF NOT EXISTS evidence_export_log (
-			export_id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+			export_id         TEXT        PRIMARY KEY,
 			evidence_pack_id  TEXT        NOT NULL,
 			tenant_id         TEXT        NOT NULL,
 			intent_id         TEXT,
@@ -431,6 +434,22 @@ END $$;`,
 		`UPDATE evidence_archives
 		 SET encryption_key_id = 'archive-aes-v1'
 		 WHERE encryption_key_id IS NULL OR encryption_key_id = ''`,
+
+		// P2-02: export_id must accept app IDs like "exp_<uuid>" (TEXT), not UUID.
+		`DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'evidence_export_log'
+      AND column_name = 'export_id'
+      AND udt_name = 'uuid'
+  ) THEN
+    ALTER TABLE evidence_export_log
+      ALTER COLUMN export_id DROP DEFAULT,
+      ALTER COLUMN export_id TYPE TEXT USING export_id::TEXT;
+  END IF;
+END $$;`,
 
 		// P1-01: Backfill evidence_pack_signatures from legacy evidence_signatures rows.
 		`INSERT INTO evidence_pack_signatures (
