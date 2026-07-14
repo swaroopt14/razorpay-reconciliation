@@ -33,4 +33,14 @@ type CanonicalBatch struct {
 	RetryCount                   int             `json:"retry_count" db:"retry_count"`
 	NextAttemptAt                *time.Time      `json:"next_attempt_at,omitempty" db:"next_attempt_at"`
 	DispatchedAt                 *time.Time      `json:"dispatched_at,omitempty" db:"dispatched_at"`
+
+	// FileManifestHash = SHA-256(JCS_Canonicalize(canonical ordered manifest))
+	// over this batch's rows. ManifestSchemaVersion/ArtifactID/
+	// ArtifactVersionID/PayloadType are populated by upstream services and are
+	// not derived here — they are hashed as-is, including when empty.
+	FileManifestHash      string `json:"file_manifest_hash,omitempty" db:"file_manifest_hash"`
+	ManifestSchemaVersion string `json:"manifest_schema_version,omitempty" db:"manifest_schema_version"`
+	ArtifactID            string `json:"artifact_id,omitempty" db:"artifact_id"`
+	ArtifactVersionID     string `json:"artifact_version_id,omitempty" db:"artifact_version_id"`
+	PayloadType           string `json:"payload_type,omitempty" db:"payload_type"`
 }

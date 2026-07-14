@@ -10,6 +10,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"zord-intent-engine/internal/canonicalizer"
 	"zord-intent-engine/internal/models"
 
 	"github.com/google/uuid"
@@ -113,7 +114,8 @@ func (r *PaymentIntentRepo) Save(
     canonical_intent_created,
     intent_lifecycle_state,
     mapping_profile_hash,
-    policy_source, policy_version, policy_hash
+    policy_source, policy_version, policy_hash,
+    source_row_ref, canonical_row_hash
 )
 VALUES (
     $1,$2,$3,$4,
@@ -136,7 +138,8 @@ VALUES (
     $51, $52, $53, $54, $55, $56, $57,
     $58, $59, $60, $61, $62, $63,
     $64, $65,
-    $66, $67, $68
+    $66, $67, $68,
+    $69, $70
 ) `
 
 	_, err = tx.ExecContext(
@@ -210,6 +213,8 @@ VALUES (
 		intent.PolicySource,               // $66
 		intent.PolicyVersion,              // $67
 		intent.PolicyHash,                 // $68
+		intent.SourceRowRef,               // $69
+		intent.CanonicalRowHash,           // $70
 	)
 
 	if err != nil {
@@ -966,6 +971,7 @@ func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, 
 	var dupRiskAmount int64
 	var retrievedTenantID sql.NullString
 	var sourceSystem sql.NullString
+	var batchCurrency sql.NullString
 
 	err := r.db.QueryRowContext(ctx, `
         SELECT
@@ -982,7 +988,8 @@ func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, 
             COALESCE(SUM(CASE WHEN duplicate_risk_score >= 31 THEN (amount * 100)::BIGINT ELSE 0 END), 0),
             MAX(tenant_id::TEXT),
             MAX(source_system),
-            COALESCE(SUM(amount), 0)
+            COALESCE(SUM(amount), 0),
+            MAX(currency)
         FROM payment_intents
         WHERE tenant_id = $1 AND
 		batchid=$2
@@ -990,7 +997,7 @@ func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, 
 		&canonicalized,
 		&avgQuality, &avgMatchability, &avgProof, &avgDupRisk, &avgSchema, &avgMapping,
 		&lowMatchCount, &lowProofCount, &dupRiskCount, &dupRiskAmount,
-		&retrievedTenantID, &sourceSystem, &totalAmount,
+		&retrievedTenantID, &sourceSystem, &totalAmount, &batchCurrency,
 	)
 	if err != nil {
 		return 0, err
@@ -1148,6 +1155,53 @@ func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, 
 		return 0, err
 	}
 
+	// Step 6.5: Compute file_manifest_hash over this batch's rows.
+	// manifest_schema_version/artifact_id/artifact_version_id/payload_type are
+	// populated by upstream services, not by this code — whatever value is
+	// already on the row (or empty, if none yet) is read as-is and hashed;
+	// this call never writes those four columns.
+	var manifestSchemaVersion, artifactID, artifactVersionID, payloadType sql.NullString
+	_ = r.db.QueryRowContext(ctx, `
+        SELECT manifest_schema_version, artifact_id, artifact_version_id, payload_type
+        FROM canonical_batches WHERE tenant_id = $1 AND batch_id = $2
+    `, tenantID, batchID).Scan(&manifestSchemaVersion, &artifactID, &artifactVersionID, &payloadType)
+
+	manifestRows := make([]canonicalizer.ManifestRow, 0, canonicalized)
+	rowsRs, errRows := r.db.QueryContext(ctx, `
+        SELECT COALESCE(source_row_ref, ''), COALESCE(canonical_row_hash, ''), amount, COALESCE(client_payout_ref, '')
+        FROM payment_intents
+        WHERE tenant_id = $1 AND batchid = $2
+        ORDER BY source_row_num ASC NULLS LAST, source_row_ref ASC
+    `, tenantID, batchID)
+	if errRows != nil {
+		log.Printf("⚠️ Failed to load rows for file_manifest_hash on batch=%s: %v", batchID, errRows)
+	} else {
+		for rowsRs.Next() {
+			var mr canonicalizer.ManifestRow
+			var rowAmount decimal.Decimal
+			if err := rowsRs.Scan(&mr.SourceRowRef, &mr.CanonicalRowHash, &rowAmount, &mr.ClientPayoutRef); err != nil {
+				log.Printf("⚠️ Failed to scan row for file_manifest_hash on batch=%s: %v", batchID, err)
+				continue
+			}
+			mr.AmountMinor = rowAmount.Mul(decimal.NewFromInt(100)).IntPart()
+			manifestRows = append(manifestRows, mr)
+		}
+		rowsRs.Close()
+	}
+
+	fileManifestHash, errManifest := canonicalizer.ComputeFileManifestHash(canonicalizer.FileManifest{
+		ManifestSchemaVersion: manifestSchemaVersion.String,
+		ArtifactID:            artifactID.String,
+		ArtifactVersionID:     artifactVersionID.String,
+		PayloadType:           payloadType.String,
+		Currency:              batchCurrency.String,
+		RowCount:              len(manifestRows),
+		Rows:                  manifestRows,
+	})
+	if errManifest != nil {
+		log.Printf("⚠️ Failed to compute file_manifest_hash for batch=%s: %v", batchID, errManifest)
+	}
+
 	// Step 7: UPSERT into canonical_batches (New Table)
 	upsertBatchQuery := `
     INSERT INTO canonical_batches (
@@ -1156,13 +1210,13 @@ func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, 
         canonicalization_success_rate, avg_schema_completeness_score,
         avg_mapping_confidence_score, avg_matchability_score, avg_proof_readiness_score,
         avg_intent_quality_score, duplicate_risk_amount_minor, batch_quality_score,
-        score_breakdown_json, total_amount, updated_at
+        score_breakdown_json, total_amount, file_manifest_hash, updated_at
     ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8,
         $9, $10, $11,
         $12, $13, $14, $15, $16,
         $17, $18, $19,
-        $20, $21, now()
+        $20, $21, $22, now()
     ) ON CONFLICT (tenant_id, batch_id) DO UPDATE SET
         tenant_id = EXCLUDED.tenant_id,
         source_system = EXCLUDED.source_system,
@@ -1184,6 +1238,7 @@ func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, 
         batch_quality_score = EXCLUDED.batch_quality_score,
         score_breakdown_json = EXCLUDED.score_breakdown_json,
         total_amount = EXCLUDED.total_amount,
+        file_manifest_hash = EXCLUDED.file_manifest_hash,
         updated_at = now()
     `
 	_, err = r.db.ExecContext(ctx, upsertBatchQuery,
@@ -1192,7 +1247,7 @@ func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, 
 		canonRate, safeFloat(avgSchema),
 		safeFloat(avgMapping), safeFloat(avgMatchability), safeFloat(avgProof),
 		safeFloat(avgQuality), dupRiskAmount, batchScore,
-		breakdownJSON, totalAmount,
+		breakdownJSON, totalAmount, fileManifestHash,
 	)
 	if err != nil {
 		log.Printf("⚠️ Failed to upsert into canonical_batches for batchID=%s: %v", batchID, err)
@@ -1322,7 +1377,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 		}
 	}
 	if len(intents) > 0 {
-		const piCols = 68
+		const piCols = 70
 		var placeholders strings.Builder
 		args := make([]interface{}, 0, len(intents)*piCols)
 		for i, intent := range intents {
@@ -1407,6 +1462,8 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 				intent.PolicySource,               // $66
 				intent.PolicyVersion,              // $67
 				intent.PolicyHash,                 // $68
+				intent.SourceRowRef,               // $69
+				intent.CanonicalRowHash,           // $70
 			)
 		}
 		q := fmt.Sprintf(`INSERT INTO payment_intents (
@@ -1446,7 +1503,8 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 			canonical_intent_created,
 			intent_lifecycle_state,
 			mapping_profile_hash,
-			policy_source, policy_version, policy_hash
+			policy_source, policy_version, policy_hash,
+			source_row_ref, canonical_row_hash
 		) VALUES %s`, placeholders.String())
 		_, err = tx.ExecContext(ctx, q, args...)
 		if err != nil {
