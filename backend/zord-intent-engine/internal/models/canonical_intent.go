@@ -41,9 +41,17 @@ type CanonicalIntent struct {
 	CanonicalSnapshotRef  string `db:"canonical_snapshot_ref" json:"canonical_snapshot_ref,omitempty"`
 	NIRSnapshotRef        string `db:"nir_snapshot_ref" json:"nir_snapshot_ref,omitempty"`
 	GovernanceSnapshotRef string `db:"governance_snapshot_ref" json:"governance_snapshot_ref,omitempty"`
-	GovernanceHash        string `db:"governance_hash" json:"governance_hash,omitempty"`
-	CanonicalHash         string `db:"canonical_hash" json:"canonical_hash,omitempty"`
-	PayloadHash           string
+	// GovernanceHash is governance_decision_hash: SHA-256(JCS_Canonicalize({
+	// tenant_id, canonical_intent_hash, input_facts_hash, decision,
+	// reason_codes, required_approval_level, risk_level})) — policy_id/
+	// policy_version/policy_hash are intentionally excluded, see
+	// computeGovernanceHash.
+	GovernanceHash string `db:"governance_hash" json:"governance_hash,omitempty"`
+	// GovernanceInputFactsHash = SHA-256(JCS_Canonicalize(governance input facts)),
+	// the input_facts_hash fed into GovernanceHash above.
+	GovernanceInputFactsHash string `db:"input_facts_hash" json:"input_facts_hash,omitempty"`
+	CanonicalHash            string `db:"canonical_hash" json:"canonical_hash,omitempty"`
+	PayloadHash              string
 
 	// SourceRowRef is the raw per-row reference from the source file/payload
 	// (e.g. "ROW-001"); populated by an upstream service, not derived by this
@@ -54,27 +62,37 @@ type CanonicalIntent struct {
 	SourceRowRef     string `db:"source_row_ref" json:"source_row_ref,omitempty"`
 	CanonicalRowHash string `db:"canonical_row_hash" json:"canonical_row_hash,omitempty"`
 
+	// TokenizedDataHash = HMAC-SHA256(tenant_scoped_hash_key, JCS_Canonicalize(tokenized beneficiary fields)).
+	TokenizedDataHash string `db:"tokenized_data_hash" json:"tokenized_data_hash,omitempty"`
+
+	// RawRowEvidenceLeafHash / CanonicalRowEvidenceLeafHash bind this row's raw
+	// and canonical hashes to an artifact version. ArtifactID/ArtifactVersionID/
+	// RowIndex are sealed by an upstream artifact service, not derived here —
+	// left blank/zero until that pipeline exists.
+	RawRowEvidenceLeafHash       string `db:"raw_row_evidence_leaf_hash" json:"raw_row_evidence_leaf_hash,omitempty"`
+	CanonicalRowEvidenceLeafHash string `db:"canonical_row_evidence_leaf_hash" json:"canonical_row_evidence_leaf_hash,omitempty"`
+
 	// 🆕 Additional Canonical Schema fields
-	ClientPayoutRef       string          `json:"client_payout_ref,omitempty"`
-	ProviderHint          string          `json:"provider_hint,omitempty" db:"provider_hint"`
-	RequestFingerprint    string          `json:"request_fingerprint,omitempty"`
-	RoutingHintsJSON      json.RawMessage `json:"routing_hints_json,omitempty"`
-	GovernanceState       string          `json:"governance_state,omitempty"`
-	BusinessState         string          `json:"business_state,omitempty"`
+	ClientPayoutRef    string          `json:"client_payout_ref,omitempty"`
+	ProviderHint       string          `json:"provider_hint,omitempty" db:"provider_hint"`
+	RequestFingerprint string          `json:"request_fingerprint,omitempty"`
+	RoutingHintsJSON   json.RawMessage `json:"routing_hints_json,omitempty"`
+	GovernanceState    string          `json:"governance_state,omitempty"`
+	BusinessState      string          `json:"business_state,omitempty"`
 	// IntentLifecycleState is the real per-intent lifecycle tracker that replaces
 	// the dead business_state field (always "NEW" historically). Only a subset of
 	// the full state vocabulary is set today (RECEIVED/ACCEPTED/FLAGGED_FOR_REVIEW);
 	// the remaining states are reserved for policy/duplicate/evidence/dispatch
 	// phases that don't exist yet.
-	IntentLifecycleState string `json:"intent_lifecycle_state,omitempty" db:"intent_lifecycle_state"`
-	DuplicateRiskFlag     bool            `json:"duplicate_risk_flag,omitempty"`
-	MappingProfileID      string          `json:"mapping_profile_used,omitempty" db:"mapping_profile_id"`
-	MappingProfileVersion string          `json:"mapping_profile_version,omitempty" db:"mapping_profile_version"`
-	MappingProfileHash    string          `json:"mapping_profile_hash,omitempty" db:"mapping_profile_hash"`
-	PolicySource          string          `json:"policy_source,omitempty" db:"policy_source"`
-	PolicyVersion         string          `json:"policy_version,omitempty" db:"policy_version"`
-	PolicyHash            string          `json:"policy_hash,omitempty" db:"policy_hash"`
-	SourceSystem          string          `json:"source_system,omitempty" db:"source_system"`
+	IntentLifecycleState  string `json:"intent_lifecycle_state,omitempty" db:"intent_lifecycle_state"`
+	DuplicateRiskFlag     bool   `json:"duplicate_risk_flag,omitempty"`
+	MappingProfileID      string `json:"mapping_profile_used,omitempty" db:"mapping_profile_id"`
+	MappingProfileVersion string `json:"mapping_profile_version,omitempty" db:"mapping_profile_version"`
+	MappingProfileHash    string `json:"mapping_profile_hash,omitempty" db:"mapping_profile_hash"`
+	PolicySource          string `json:"policy_source,omitempty" db:"policy_source"`
+	PolicyVersion         string `json:"policy_version,omitempty" db:"policy_version"`
+	PolicyHash            string `json:"policy_hash,omitempty" db:"policy_hash"`
+	SourceSystem          string `json:"source_system,omitempty" db:"source_system"`
 
 	// 🆕 Traceability Fields
 	PaymentInstructionReceived *time.Time `json:"payment_instruction_received,omitempty" db:"payment_instruction_received"`
@@ -100,10 +118,10 @@ type CanonicalIntent struct {
 	AggregateConfidenceScore *float64   `json:"aggregate_confidence_score,omitempty" db:"aggregate_confidence_score"` // NEW
 
 	// 🆕 Status Fields
-	RequiredFieldsStatus  *bool           `json:"required_fields_status,omitempty" db:"required_fields_status"`
-	TokenizationStatus    *bool           `json:"tokenization_status,omitempty" db:"tokenization_status"`
-	TokenizationMetadata  json.RawMessage `json:"tokenization_metadata,omitempty" db:"tokenization_metadata"`
-	GovernanceDecision    *string         `json:"governance_decision,omitempty" db:"governance_decision"`
+	RequiredFieldsStatus *bool           `json:"required_fields_status,omitempty" db:"required_fields_status"`
+	TokenizationStatus   *bool           `json:"tokenization_status,omitempty" db:"tokenization_status"`
+	TokenizationMetadata json.RawMessage `json:"tokenization_metadata,omitempty" db:"tokenization_metadata"`
+	GovernanceDecision   *string         `json:"governance_decision,omitempty" db:"governance_decision"`
 
 	// ── Scoring v2 fields ──────────────────────────────────────────────────────
 	ReferenceQualityScore float64         `json:"reference_quality_score,omitempty"  db:"reference_quality_score"`
