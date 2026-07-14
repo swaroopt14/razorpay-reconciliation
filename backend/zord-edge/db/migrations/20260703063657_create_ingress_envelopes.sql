@@ -3,6 +3,8 @@ CREATE TABLE IF NOT EXISTS "ingress_envelopes" (
     trace_id UUID NOT NULL,
     envelope_id UUID PRIMARY KEY,
     tenant_id UUID NOT NULL,
+    artifact_id UUID NOT NULL,
+    artifact_version_id TEXT NOT NULL,
     ingress_channel TEXT NOT NULL,
     source_class TEXT NOT NULL,
     source_system TEXT NOT NULL,
@@ -38,6 +40,7 @@ CREATE TABLE IF NOT EXISTS "ingress_envelopes" (
     file_content_hash TEXT,
     row_count_estimate INT,
     file_upload_channel TEXT,
+    source_row_ref TEXT,
     batchid TEXT
 );
 
@@ -48,7 +51,7 @@ CREATE INDEX IF NOT EXISTS idx_raw_env_status
     ON ingress_envelopes (status, received_at);
 
 CREATE INDEX IF NOT EXISTS idx_ingress_envelopes_batchid
-    ON ingress_envelopes (batchid) WHERE batchid IS NOT NULL;
+    ON ingress_envelopes (tenant_id, batchid) WHERE batchid IS NOT NULL;
 
 -- +goose Down
 DROP INDEX IF EXISTS idx_ingress_envelopes_batchid;

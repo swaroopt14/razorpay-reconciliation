@@ -32,5 +32,6 @@ type RawIntentMessage struct {
 	FileContentHash      *string
 	RowCountEstimate     *int
 	FileUploadChannel    *string
+	SourceRowRef         *string
 	BatchID              *string
 }

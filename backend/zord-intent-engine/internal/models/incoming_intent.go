@@ -11,6 +11,8 @@ type IncomingIntent struct {
 	TraceID          uuid.UUID `json:"trace_id" db:"trace_id"`
 	EnvelopeID       uuid.UUID `json:"envelope_id" db:"envelope_id"`
 	TenantID         uuid.UUID `json:"tenant_id" db:"tenant_id"`
+	ArtifactID       uuid.UUID `json:"artifact_id,omitempty" db:"-"`
+	ArtifactVersionID string   `json:"artifact_version_id,omitempty" db:"-"`
 	Source           string    `json:"source" db:"source"`
 	SourceSystem     string    `json:"source_system" db:"source_system"`
 	IdempotencyKey   string    `json:"idempotency_key" db:"idempotency_key"`
@@ -24,6 +26,7 @@ type IncomingIntent struct {
 	Payload          json.RawMessage
 	EncryptedPayload []byte  `json:"encrypted_payload,omitempty" db:"encrypted_payload"`
 	BatchID          *string `json:"batchid,omitempty" db:"batchid"`
+	SourceRowRef     *string `json:"source_row_ref,omitempty" db:"-"`
 	FileName         *string `json:"file_name,omitempty" db:"-"`
 	FileContentHash  *string `json:"file_content_hash,omitempty" db:"-"`
 	RowCountEstimate *int    `json:"row_count_estimate,omitempty" db:"-"`

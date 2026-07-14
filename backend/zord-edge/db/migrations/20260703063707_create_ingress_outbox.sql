@@ -4,6 +4,8 @@ CREATE TABLE IF NOT EXISTS "ingress_outbox" (
     trace_id UUID NOT NULL,
     envelope_id UUID NOT NULL,
     tenant_id UUID NOT NULL,
+     artifact_id UUID NOT NULL,
+    artifact_version_id TEXT NOT NULL,
     object_ref TEXT NOT NULL,
     received_at TIMESTAMPTZ NOT NULL,
     ingress_channel TEXT NOT NULL,
@@ -27,6 +29,7 @@ CREATE TABLE IF NOT EXISTS "ingress_outbox" (
     failure_reason_code TEXT,
     batchid TEXT,
     file_content_hash TEXT,
+    source_row_ref TEXT,
     source_system TEXT NOT NULL DEFAULT ''
 );
 

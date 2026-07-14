@@ -15,6 +15,8 @@ type OutboxEvent struct {
 	EnvelopeID string `json:"envelope_id"` // logical grouping ID
 	TraceID    string `json:"trace_id"`
 	TenantID   string `json:"tenant_id"`
+	ArtifactID string `json:"artifact_id,omitempty"`
+	ArtifactVersionID string `json:"artifact_version_id,omitempty"`
 	ObjectRef  string `json:"object_ref"`
 	Source     string `json:"source"`
 
@@ -57,6 +59,7 @@ type OutboxEvent struct {
 	ClientBatchID *string `json:"batchid,omitempty"`
 
 	FileContentHash *string `json:"file_content_hash,omitempty"`
+	SourceRowRef    *string `json:"source_row_ref,omitempty"`
 
 	DuplicateRiskFlag      bool       `json:"duplicate_risk_flag,omitempty"`
 	IntentQualityScore     float64    `json:"intent_quality_score,omitempty"`

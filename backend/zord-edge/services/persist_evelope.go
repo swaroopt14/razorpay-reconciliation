@@ -22,6 +22,11 @@ func RawIntent(ctx context.Context,
 		log.Printf("Invalid EnvelopeId: %s", storageAck.EnvelopeId)
 		return err
 	}
+	artifactId, err := uuid.Parse(storageAck.ArtifactId)
+	if err != nil {
+		log.Printf("Invalid ArtifactId: %s", storageAck.ArtifactId)
+		return err
+	}
 	traceID, err := uuid.Parse(rawIntent.TraceID)
 	if err != nil {
 		log.Printf("Invalid TraceID: %s", rawIntent.TraceID)
@@ -33,6 +38,7 @@ func RawIntent(ctx context.Context,
 		return err
 	}
 	objectRef := storageAck.ObjectRef
+	artifactVersionId := storageAck.ArtifactVersionId
 
 	envelopeHash := BuildEnvelopeHash(rawIntent, storageAck)
 	envelopeSignature := vault.SignEnvelopeHash(envelopeHash)
@@ -42,6 +48,8 @@ func RawIntent(ctx context.Context,
 	envelope := model.IngressEnvelope{
 		TraceID:                      traceID,
 		EnvelopeID:                   envelopeID,
+		ArtifactID:                   artifactId,
+		ArtifactVersionID:            artifactVersionId,
 		TenantID:                     tenantID,
 		IngressChannel:               rawIntent.SourceType,
 		SourceClass:                  rawIntent.SourceClass,
@@ -81,6 +89,7 @@ func RawIntent(ctx context.Context,
 		FileContentHash:              rawIntent.FileContentHash,
 		RowCountEstimate:             rawIntent.RowCountEstimate,
 		FileUploadChannel:            rawIntent.FileUploadChannel,
+		SourceRowRef:                 rawIntent.SourceRowRef,
 		BatchID:                      rawIntent.BatchID,
 	}
 
@@ -95,13 +104,13 @@ func RawIntent(ctx context.Context,
 	return nil
 }
 
-func CheckBatchIDExists(ctx context.Context, batchID *string) (bool, error) {
+func CheckBatchIDExists(ctx context.Context, tenantID uuid.UUID, batchID *string) (bool, error) {
 	if batchID == nil {
 		return false, nil
 	}
 	var exists bool
-	query := `SELECT EXISTS(SELECT 1 FROM ingress_envelopes WHERE batchid = $1)`
-	err := db.DB.QueryRowContext(ctx, query, *batchID).Scan(&exists)
+	query := `SELECT EXISTS(SELECT 1 FROM ingress_envelopes WHERE tenant_id = $1 AND batchid = $2)`
+	err := db.DB.QueryRowContext(ctx, query, tenantID, *batchID).Scan(&exists)
 	if err != nil {
 		return false, err
 	}
