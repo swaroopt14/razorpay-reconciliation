@@ -21,6 +21,8 @@ func RegisterProofRoutes(r *gin.Engine, ph *handlers.ProofHandler) {
 		v1.GET("/packs/:packID/lineage-graph", ph.GetLineageGraph)
 		// Spec §7: cryptographic verification
 		v1.POST("/packs/:packID/verify", ph.VerifyPack)
+		// P2-02: export audit log (admin/ops)
+		v1.GET("/packs/:packID/exports", ph.ListPackExports)
 	}
 	// Spec §6: dispute export (separate path prefix as per spec)
 	r.POST("/v1/dispute/export", ph.DisputeExport)

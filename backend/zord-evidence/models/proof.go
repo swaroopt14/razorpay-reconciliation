@@ -168,6 +168,27 @@ const (
 	ExportTypeRawJSON        = "RAW_JSON"
 )
 
+// EvidenceExportLogEntry is one row from evidence_export_log (who exported what/when).
+type EvidenceExportLogEntry struct {
+	ExportID         string    `json:"export_id"`
+	EvidencePackID   string    `json:"evidence_pack_id"`
+	TenantID         string    `json:"tenant_id"`
+	IntentID         string    `json:"intent_id,omitempty"`
+	PaymentReference string    `json:"payment_reference,omitempty"`
+	ExportType       string    `json:"export_type"`
+	DisputeReason    string    `json:"dispute_reason,omitempty"`
+	RequestedBy      string    `json:"requested_by,omitempty"`
+	ExportedAt       time.Time `json:"exported_at"`
+	FileHash         string    `json:"file_hash"`
+}
+
+// ListPackExportsResponse is returned by GET /v1/evidence/packs/:packID/exports.
+type ListPackExportsResponse struct {
+	EvidencePackID string                   `json:"evidence_pack_id"`
+	Exports        []EvidenceExportLogEntry `json:"exports"`
+	Count          int                      `json:"count"`
+}
+
 // MaskedEvidenceItem is a field-level masked version of EvidenceItem for
 // business-facing layouts (data masking per spec §8).
 type MaskedEvidenceItem struct {

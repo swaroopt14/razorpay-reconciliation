@@ -212,6 +212,27 @@ func (h *ProofHandler) ExportPreview(c *gin.Context) {
 	c.JSON(http.StatusOK, preview)
 }
 
+// GET /v1/evidence/packs/:packID/exports
+// P2-02 admin/ops: list who exported this pack, when, and with which file hash.
+func (h *ProofHandler) ListPackExports(c *gin.Context) {
+	if c.GetHeader("X-Admin-Token") == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "listing exports requires X-Admin-Token header"})
+		return
+	}
+
+	packID := c.Param("packID")
+	resp, err := h.svc.ListPackExports(c.Request.Context(), packID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || strings.Contains(err.Error(), "not found") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "evidence pack not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
 // POST /v1/dispute/export
 // Spec §6 — multi-tier dispute export engine.
 func (h *ProofHandler) DisputeExport(c *gin.Context) {

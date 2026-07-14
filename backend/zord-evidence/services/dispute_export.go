@@ -74,22 +74,26 @@ func (s *EvidenceService) BuildDisputeExport(
 	payloadHash := fmt.Sprintf("%x", sum[:])
 	exportID := "exp_" + uuid.NewString()
 
-	// Persist export log (spec §6)
+	// Persist export log (spec §6). Fail the export if the audit row cannot be
+	// written — auditors must have a durable record of who exported what.
 	if db != nil {
-		_, _ = db.ExecContext(ctx, `
+		if _, err := db.ExecContext(ctx, `
 INSERT INTO evidence_export_log(
     export_id, evidence_pack_id, tenant_id, intent_id,
     payment_reference, export_type, dispute_reason, requested_by, file_hash
 ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
 			exportID, pack.EvidencePackID, pack.TenantID, pack.IntentID,
 			req.PaymentReference, req.ExportType, req.DisputeReason, req.RequestedBy, payloadHash,
-		)
+		); err != nil {
+			return nil, fmt.Errorf("persist evidence_export_log: %w", err)
+		}
 
-		// Increment export_count on the pack row
-		_, _ = db.ExecContext(ctx,
+		if _, err := db.ExecContext(ctx,
 			`UPDATE evidence_packs SET export_count = export_count + 1, updated_at = NOW() WHERE evidence_pack_id = $1`,
 			pack.EvidencePackID,
-		)
+		); err != nil {
+			return nil, fmt.Errorf("increment export_count: %w", err)
+		}
 	}
 
 	return &ExportResult{

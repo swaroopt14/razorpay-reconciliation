@@ -1110,3 +1110,34 @@ WHERE replay_job_id=$1`,
 	)
 	return err
 }
+
+// ListExportLogsByPackID returns all export audit rows for a pack, newest first.
+func (r *EvidenceRepository) ListExportLogsByPackID(ctx context.Context, packID string) ([]models.EvidenceExportLogEntry, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT export_id, evidence_pack_id, tenant_id,
+       COALESCE(intent_id, ''), COALESCE(payment_reference, ''),
+       export_type, COALESCE(dispute_reason, ''), COALESCE(requested_by, ''),
+       exported_at, COALESCE(file_hash, '')
+FROM evidence_export_log
+WHERE evidence_pack_id = $1
+ORDER BY exported_at DESC`, packID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]models.EvidenceExportLogEntry, 0)
+	for rows.Next() {
+		var e models.EvidenceExportLogEntry
+		if err := rows.Scan(
+			&e.ExportID, &e.EvidencePackID, &e.TenantID,
+			&e.IntentID, &e.PaymentReference,
+			&e.ExportType, &e.DisputeReason, &e.RequestedBy,
+			&e.ExportedAt, &e.FileHash,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
