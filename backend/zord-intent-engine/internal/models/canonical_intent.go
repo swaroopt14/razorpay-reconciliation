@@ -46,7 +46,9 @@ type CanonicalIntent struct {
 	PayloadHash           string
 
 	// SourceRowRef is the raw per-row reference from the source file/payload
-	// (e.g. "ROW-001"); SourceRowNum below is a numeric index derived from it.
+	// (e.g. "ROW-001"); populated by an upstream service, not derived by this
+	// engine — left blank until that pipeline exists. SourceRowNum below is a
+	// separate, already-derived numeric index.
 	// CanonicalRowHash = SHA-256(JCS_Canonicalize(interpreted business fields))
 	// — detects business-content changes independent of formatting-only diffs.
 	SourceRowRef     string `db:"source_row_ref" json:"source_row_ref,omitempty"`

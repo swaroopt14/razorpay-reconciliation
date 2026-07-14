@@ -1924,7 +1924,8 @@ return
 		UpdatedAt:           func(t time.Time) *time.Time { return &t }(time.Now().UTC()),
 		BatchID:             in.BatchID,
 		SourceRowNum:        sourceRowNum,
-		SourceRowRef:        canonicalInput.SourceRowRef,
+		// SourceRowRef is populated by an upstream service, not derived here — left
+		// blank until that pipeline exists (same treatment as InvoiceRef).
 		ValidationAnomalies: anomalies,
 	}
 	canonical.CanonicalRowHash = s.computeCanonicalRowHash(&canonical)
@@ -2831,7 +2832,8 @@ func (s *IntentService) ProcessTokenizeResult(
 		UpdatedAt:           func(t time.Time) *time.Time { return &t }(time.Now().UTC()),
 		BatchID:             event.BatchID,
 		SourceRowNum:        sourceRowNum,
-		SourceRowRef:        canonicalInput.SourceRowRef,
+		// SourceRowRef is populated by an upstream service, not derived here — left
+		// blank until that pipeline exists (same treatment as InvoiceRef).
 		ValidationAnomalies: anomalies,
 	}
 	intent.CanonicalRowHash = s.computeCanonicalRowHash(&intent)
