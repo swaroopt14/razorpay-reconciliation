@@ -425,14 +425,21 @@ func (s *IntentService) computeTokenizedDataHash(tenantID string, tokenMap map[s
 }
 
 // computeEvidenceLeafHashes returns raw_row_leaf_hash and
-// canonical_row_leaf_hash for intent. ArtifactID/ArtifactVersionID/RowIndex
-// are sealed by an upstream artifact service, not derived here — left blank/
-// zero until that pipeline exists. raw_row_hash reuses intent.PayloadHash,
-// the already-verified SHA-256 of the raw pre-canonicalization payload.
+// canonical_row_leaf_hash for intent. ArtifactID/ArtifactVersionID are sealed
+// by an upstream artifact service, not derived here — left blank until that
+// pipeline exists. row_index uses intent.SourceRowNum (defaulting to 0 if
+// unset). raw_row_hash reuses intent.PayloadHash, the already-verified
+// SHA-256 of the raw pre-canonicalization payload.
 func (s *IntentService) computeEvidenceLeafHashes(intent *models.CanonicalIntent) (rawLeafHash string, canonicalLeafHash string) {
+	rowIndex := 0
+	if intent.SourceRowNum != nil {
+		rowIndex = *intent.SourceRowNum
+	}
+
 	rawLeafHash, err := canonicalizer.ComputeRawRowEvidenceLeafHash(canonicalizer.RawRowEvidenceLeafHashInput{
 		TenantID:     intent.TenantID,
 		SourceRowRef: intent.SourceRowRef,
+		RowIndex:     rowIndex,
 		RawRowHash:   intent.PayloadHash,
 	})
 	if err != nil {
@@ -447,6 +454,31 @@ func (s *IntentService) computeEvidenceLeafHashes(intent *models.CanonicalIntent
 		log.Printf("⚠️ Failed to compute canonical_row_evidence_leaf_hash for intent %s: %v", intent.IntentID, err)
 	}
 	return rawLeafHash, canonicalLeafHash
+}
+
+// computeGenericMappingProfileHash builds mapping_profile_hash for requests
+// where no registered MappingProfile matched (ResolveProfileForIntent
+// returned nil — e.g. no source_system header, or no profile registered for
+// it). field_mappings is derived from the NIR field-level source paths this
+// request actually used, so the hash reflects real interpretation rules
+// instead of being left blank whenever there's no formal profile row.
+func (s *IntentService) computeGenericMappingProfileHash(profileID, profileVersion, sourceSystem, detectedFormat string, fieldsMap map[string]models.NIRField) string {
+	fieldMappings := make(map[string]string, len(fieldsMap))
+	for name, f := range fieldsMap {
+		fieldMappings[name] = f.SourcePath
+	}
+	p := &models.MappingProfile{
+		ProfileID:                profileID,
+		ProfileVersion:           profileVersion,
+		SourceSystem:             sourceSystem,
+		FileFormat:               detectedFormat,
+		ColumnMap:                fieldMappings,
+		StrictRequiredFieldsJSON: json.RawMessage("[]"),
+		SoftInferableFieldsJSON:  json.RawMessage("[]"),
+		FieldKindPolicyJSON:      json.RawMessage("{}"),
+		SensitiveFieldPolicyJSON: json.RawMessage("{}"),
+	}
+	return p.ComputeProfileHash()
 }
 
 // computeScores calculates all 7 intent-level scores.
@@ -1440,6 +1472,11 @@ func (s *IntentService) processIncomingIntentInternal(
 	profileHash := ""
 	if resolvedProfile != nil {
 		profileHash = resolvedProfile.ProfileHash
+	} else {
+		// No registered profile matched — still hash the field mappings this
+		// request actually used, so mapping_profile_hash is never blank just
+		// because there's no formal MappingProfile row.
+		profileHash = s.computeGenericMappingProfileHash(profileID, profileVersion, in.SourceSystem, "json", fieldsMap)
 	}
 
 	nir := &models.NormalizedIngestRecord{
@@ -2713,6 +2750,11 @@ func (s *IntentService) ProcessTokenizeResult(
 	lowConfCount := canonicalInput.LowConfidenceFieldCount
 	gapCount := canonicalInput.RequiredFieldGapCount
 
+	// No registered profile is resolved on this async/reconstructed path, so
+	// mapping_profile_hash is derived from the KAFKA_RECONSTRUCTED field
+	// mappings above — never left blank.
+	profileHash := s.computeGenericMappingProfileHash(profileID, profileVersion, event.SourceSystem, "json", fieldsMap)
+
 	nir := &models.NormalizedIngestRecord{
 		NIRID:                   uuid.New(),
 		EnvelopeID:              uuid.MustParse(event.EnvelopeID),
@@ -2723,6 +2765,7 @@ func (s *IntentService) ProcessTokenizeResult(
 		FieldsJSON:              fieldsJSON,
 		FieldConfidenceSummary:  fieldConfSummary,
 		UnmappedJSON:            json.RawMessage(`{}`),
+		MappingProfileHash:      profileHash,
 		MappingUncertainFlag:    false,
 		RequiredFieldGapCount:   gapCount,
 		LowConfidenceFieldCount: lowConfCount,
@@ -2922,6 +2965,7 @@ func (s *IntentService) ProcessTokenizeResult(
 		DuplicateRiskFlag:     dupRisk,
 		MappingProfileID:      nir.ProfileID,
 		MappingProfileVersion: nir.ProfileVersion, // Flowed from async NIR
+		MappingProfileHash:    nir.MappingProfileHash,
 		SourceSystem:          event.SourceSystem,
 		GovernanceHash:        event.Canonical.GovernanceHash,
 		// Service 2 fields
@@ -3150,6 +3194,7 @@ func (s *IntentService) processWebhook(
 		DuplicateRiskFlag:         false,
 		MappingProfileID:          "WEBHOOK_PROFILE",
 		MappingProfileVersion:     "WEBHOOK",
+		MappingProfileHash:        s.computeGenericMappingProfileHash("WEBHOOK_PROFILE", "WEBHOOK", in.SourceSystem, "WEBHOOK", nil),
 		UpdatedAt:                 func(t time.Time) *time.Time { return &t }(time.Now().UTC()),
 	}
 	canonical.CanonicalRowHash = s.computeCanonicalRowHash(&canonical)
