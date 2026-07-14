@@ -45,10 +45,10 @@ type CanonicalIntent struct {
 	CanonicalHash         string `db:"canonical_hash" json:"canonical_hash,omitempty"`
 	PayloadHash           string
 
-	// SourceRowRef is the raw per-row reference from the source file/payload
-	// (e.g. "ROW-001"); populated by an upstream service, not derived by this
-	// engine — left blank until that pipeline exists. SourceRowNum below is a
-	// separate, already-derived numeric index.
+	// SourceRowRef is the actual Excel/CSV row number (as a string, e.g. "3")
+	// relayed by zord-edge from the source file — never computed by this engine.
+	// SourceRowNum is always derived from SourceRowRef by parsing it to int;
+	// it is never independently computed.
 	// CanonicalRowHash = SHA-256(JCS_Canonicalize(interpreted business fields))
 	// — detects business-content changes independent of formatting-only diffs.
 	SourceRowRef     string `db:"source_row_ref" json:"source_row_ref,omitempty"`

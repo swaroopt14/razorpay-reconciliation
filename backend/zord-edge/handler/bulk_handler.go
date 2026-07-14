@@ -465,7 +465,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 			// Construct raw row JSON payloads.
 			for _, row := range allCSVRows {
 				rowNum := row.FileRowNumber
-				sourceRowRef := fmt.Sprintf("row:%d", rowNum)
+				sourceRowRef := strconv.Itoa(rowNum)
 				rawJSON, err := buildRowPayload(headers, row.Values, rowNum)
 				if err != nil {
 					resultsMu.Lock()
@@ -509,7 +509,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 			for _, shape := range shapes {
 				parserRowNum, _ := strconv.Atoi(strings.TrimPrefix(shape.SourceRowRef, "row:"))
 				rowNum := sourceFileRowNumber(rowIndexToFileRow, parserRowNum)
-				sourceRowRef := fmt.Sprintf("row:%d", rowNum)
+				sourceRowRef := strconv.Itoa(rowNum)
 				shape.SourceRowRef = sourceRowRef
 
 				jsonPayload, err := json.Marshal(shape)
@@ -749,7 +749,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 			// Construct raw row JSON payloads.
 			for _, row := range allXLSXRows {
 				rowNum := row.FileRowNumber
-				sourceRowRef := fmt.Sprintf("row:%d", rowNum)
+				sourceRowRef := strconv.Itoa(rowNum)
 				rawJSON, err := buildRowPayload(headers, row.Values, rowNum)
 				if err != nil {
 					resultsMu.Lock()
@@ -793,7 +793,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 			for _, shape := range shapes {
 				parserRowNum, _ := strconv.Atoi(strings.TrimPrefix(shape.SourceRowRef, "row:"))
 				rowNum := sourceFileRowNumber(rowIndexToFileRow, parserRowNum)
-				sourceRowRef := fmt.Sprintf("row:%d", rowNum)
+				sourceRowRef := strconv.Itoa(rowNum)
 				shape.SourceRowRef = sourceRowRef
 
 				jsonPayload, err := json.Marshal(shape)
@@ -926,7 +926,7 @@ func extractIdempotencyKey(payload []byte) string {
 // payload. Logic is identical to the original producer loop.
 func buildRowPayload(headers, row []string, rowNum int) ([]byte, error) {
 	payloadMap := make(map[string]interface{})
-	payloadMap["source_row_ref"] = fmt.Sprintf("row:%d", rowNum)
+	payloadMap["source_row_ref"] = strconv.Itoa(rowNum)
 
 	for j, header := range headers {
 		value := ""

@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -962,6 +963,7 @@ func (s *IntentService) processIncomingIntentInternal(
 		PayloadHash:      event.PayloadHash,
 		ReceivedAt:       event.ReceivedAt,
 		BatchID:          event.BatchID,
+		SourceRowRef:     event.SourceRowRef,
 		FileName:         event.FileName,
 		FileContentHash:  event.FileContentHash,
 		RowCountEstimate: event.RowCountEstimate,
@@ -1109,7 +1111,13 @@ func (s *IntentService) processIncomingIntentInternal(
 	}
 
 	rawAuditPayload = append([]byte(nil), decryptedPayload...)
-	sourceRowNum = extractSourceRowNumFromPayload(rawAuditPayload)
+	sourceRowRef := ""
+	if in.SourceRowRef != nil {
+		sourceRowRef = strings.TrimSpace(*in.SourceRowRef)
+	} else {
+		log.Printf("⚠️ processIncomingIntentInternal: source_row_ref is nil for envelopeID=%s — source_row_num will be nil", in.EnvelopeID)
+	}
+	sourceRowNum = sourceRowNumFromRef(sourceRowRef)
 	auditProfileID = autoGenericProfileID(rawAuditPayload)
 	auditProfileVersion = "v1"
 
@@ -1263,6 +1271,9 @@ func (s *IntentService) processIncomingIntentInternal(
 	return
 	}
 	parsed.SchemaVersion = "v1"
+	if sourceRowRef != "" {
+		parsed.SourceRowRef = sourceRowRef
+	}
 
 	// FIX: Idempotency Key Fallback
 	if in.IdempotencyKey == "" {
@@ -1470,7 +1481,7 @@ func (s *IntentService) processIncomingIntentInternal(
 			DLQStatus:      policyDLQStatus,
 			BatchID:        batchIDStr,
 			ClientBatchRef: batchIDStr,
-			SourceRowNum:   sourceRowNumFromRef(parsed.SourceRowRef),
+			SourceRowNum:   sourceRowNum,
 			IntentContext:  models.BuildIntentContext(policyDLQStatus, parsed),
 			TraceID:        in.TraceID.String(),
 			CreatedAt:      time.Now().UTC(),
@@ -1830,6 +1841,7 @@ return
 		DuplicateReasonCode:        dupReason,
 		BatchID:                    in.BatchID,
 		SourceRowNum:               sourceRowNum,
+		SourceRowRef:               sourceRowRef,
 		ValidationAnomalies:        anomalies,
 	}
 
@@ -1924,8 +1936,7 @@ return
 		UpdatedAt:           func(t time.Time) *time.Time { return &t }(time.Now().UTC()),
 		BatchID:             in.BatchID,
 		SourceRowNum:        sourceRowNum,
-		// SourceRowRef is populated by an upstream service, not derived here — left
-		// blank until that pipeline exists (same treatment as InvoiceRef).
+		SourceRowRef:        sourceRowRef,
 		ValidationAnomalies: anomalies,
 	}
 	canonical.CanonicalRowHash = s.computeCanonicalRowHash(&canonical)
@@ -2093,8 +2104,6 @@ func (s *IntentService) ProcessIncomingIntent(
 		rowIndex := 0
 		if sourceRowNum != nil {
 			rowIndex = *sourceRowNum
-		} else if extracted := extractSourceRowNumFromPayload(auditPayload); extracted != nil {
-			rowIndex = *extracted
 		}
 
 		fileName := ""
@@ -2356,8 +2365,6 @@ func (s *IntentService) ProcessIncomingIntentsBatch(
 		rowIndex := 0
 		if sourceRowNum != nil {
 			rowIndex = *sourceRowNum
-		} else if extracted := extractSourceRowNumFromPayload(auditPayload); extracted != nil {
-			rowIndex = *extracted
 		}
 
 		fileName := ""
@@ -2746,6 +2753,7 @@ func (s *IntentService) ProcessTokenizeResult(
 		DuplicateReasonCode:        dupReason,
 		BatchID:                    event.BatchID,
 		SourceRowNum:               sourceRowNum,
+		SourceRowRef:               canonicalInput.SourceRowRef,
 		ValidationAnomalies:        anomalies,
 	}
 
@@ -2832,8 +2840,7 @@ func (s *IntentService) ProcessTokenizeResult(
 		UpdatedAt:           func(t time.Time) *time.Time { return &t }(time.Now().UTC()),
 		BatchID:             event.BatchID,
 		SourceRowNum:        sourceRowNum,
-		// SourceRowRef is populated by an upstream service, not derived here — left
-		// blank until that pipeline exists (same treatment as InvoiceRef).
+		SourceRowRef:        canonicalInput.SourceRowRef,
 		ValidationAnomalies: anomalies,
 	}
 	intent.CanonicalRowHash = s.computeCanonicalRowHash(&intent)
@@ -3106,30 +3113,19 @@ func canonicalPathToFieldName(path string) string {
 	}
 }
 
-func extractSourceRowNumFromPayload(payload []byte) *int {
-	if len(payload) == 0 {
-		return nil
-	}
-
-	var m map[string]any
-	if err := json.Unmarshal(payload, &m); err != nil {
-		return nil
-	}
-
-	ref, ok := m["source_row_ref"].(string)
-	if !ok {
-		return nil
-	}
-	return sourceRowNumFromRef(ref)
-}
-
+// sourceRowNumFromRef converts the source_row_ref string (a plain integer relayed
+by zord-edge from the actual Excel/CSV file row number) into *int for storage.
+// Returns nil only when the string is empty or not a valid integer.
 func sourceRowNumFromRef(ref string) *int {
 	ref = strings.TrimSpace(ref)
-	var idx int
-	if _, err := fmt.Sscanf(ref, "row:%d", &idx); err != nil || idx <= 0 {
-		return nil
-	}
-	return &idx
+	if ref == " {
+ return nil
+ }
+ idx, err := strconv.Atoi(ref)
+ if err != nil {
+ return nil
+ }
+ return &idx
 }
 
 func autoGenericProfileID(rawJSON []byte) string {
