@@ -55,6 +55,15 @@ func main() {
 	}
 
 	ctx := context.Background()
+
+	// Seed built-in mapping profiles (TALLY, SAP, etc.) from global_profiles.json
+	// into mapping_profiles so they resolve with a real, persisted profile_hash
+	// instead of only existing as an in-memory fallback. Non-fatal: the
+	// in-memory fallback still works if this fails.
+	if err := services.SeedGlobalMappingProfilesFromFile(ctx, db.DB); err != nil {
+		log.Printf("⚠️ Failed to seed global mapping profiles: %v", err)
+	}
+
 	brokers := strings.Split(os.Getenv("KAFKA_BROKERS"), ",")
 	topic := os.Getenv("KAFKA_TOPIC")
 	groupID := "intent-engine-group"

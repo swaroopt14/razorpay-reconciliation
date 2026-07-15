@@ -1,33 +1,16 @@
 package canonicalizer
 
 import (
-	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"strings"
 	"time"
+
+	"zord-intent-engine/internal/jcs"
 )
 
-// jcsCanonicalize serializes v into a deterministic JSON byte sequence:
-// object keys sorted (Go's encoding/json sorts map[string]any keys
-// lexicographically), no insignificant whitespace, and no HTML-escaping.
-// This matches RFC 8785 (JCS) output for the flat, ASCII-keyed objects
-// hashed in this package.
-func jcsCanonicalize(v any) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
-		return nil, err
-	}
-	return bytes.TrimRight(buf.Bytes(), "\n"), nil
-}
-
-func sha256Hex(data []byte) string {
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
-}
+// CanonicalizationVersion identifies the version of the canonicalization
+// rules (amount -> minor units, currency -> uppercase, strings -> trim) used
+// to interpret a source row. Bump this whenever those rules change.
+const CanonicalizationVersion = "1"
 
 // CanonicalRowHashInput holds the interpreted business fields of a single
 // row. Formatting-only differences upstream (whitespace, header casing,
@@ -46,7 +29,8 @@ type CanonicalRowHashInput struct {
 }
 
 // ComputeCanonicalRowHash returns
-// SHA-256(JCS_Canonicalize(interpreted business fields)) for a single row.
+// canonical_row_hash = SHA-256(JCS_Canonicalize({hash_type, hash_version, ...interpreted business fields}))
+// for a single row.
 func ComputeCanonicalRowHash(in CanonicalRowHashInput) (string, error) {
 	execAt := ""
 	if in.IntendedExecutionAt != nil {
@@ -54,73 +38,75 @@ func ComputeCanonicalRowHash(in CanonicalRowHashInput) (string, error) {
 	}
 
 	fields := map[string]any{
+		"hash_type":               "CANONICAL_ROW",
+		"hash_version":            "1",
 		"source_row_ref":          strings.TrimSpace(in.SourceRowRef),
 		"client_payout_ref":       strings.TrimSpace(in.ClientPayoutRef),
 		"beneficiary_fingerprint": in.BeneficiaryFingerprint,
-		"amount":                  in.AmountMinor,
+		"amount_minor":            in.AmountMinor,
 		"currency":                strings.ToUpper(strings.TrimSpace(in.Currency)),
 		"intended_execution_at":   execAt,
 		"payment_rail":            strings.ToUpper(strings.TrimSpace(in.PaymentRail)),
 		"invoice_ref":             strings.TrimSpace(in.InvoiceRef),
 	}
 
-	canonicalBytes, err := jcsCanonicalize(fields)
-	if err != nil {
-		return "", err
-	}
-	return sha256Hex(canonicalBytes), nil
+	return jcs.CanonicalizeAndSHA256(fields)
 }
 
 // ManifestRow is a single row entry inside a FileManifest.
 type ManifestRow struct {
-	SourceRowRef     string
-	CanonicalRowHash string
-	AmountMinor      int64
-	ClientPayoutRef  string
+	SourceRowRef      string
+	CanonicalRowHash  string
+	AmountMinor       int64
+	Currency          string
+	BusinessReference string
 }
 
 // FileManifest describes the batch-level artifact whose hash is stored as
-// canonical_batches.file_manifest_hash. ManifestSchemaVersion, ArtifactID,
-// ArtifactVersionID and PayloadType are populated by upstream services; they
-// are hashed as-is (including when empty) and are not derived here.
+// canonical_batches.file_manifest_hash (canonical_payload_manifest_hash in
+// the hash spec). ManifestSchemaVersion/ArtifactID/ArtifactVersionID/
+// PayloadType are populated by upstream services and are not derived here —
+// they are hashed as-is, including when empty.
 type FileManifest struct {
-	ManifestSchemaVersion string
-	ArtifactID            string
-	ArtifactVersionID     string
-	PayloadType           string
-	Currency              string
-	RowCount              int
-	Rows                  []ManifestRow
+	ManifestSchemaVersion   string
+	ArtifactID              string
+	ArtifactVersionID       string
+	PayloadType             string
+	CanonicalizationVersion string
+	MappingProfileHash      string
+	RowCount                int
+	Rows                    []ManifestRow
 }
 
 // ComputeFileManifestHash returns
-// SHA-256(JCS_Canonicalize(canonical ordered manifest)) for a batch. Row
-// order within m.Rows is preserved as given (the "ordered manifest") —
-// callers are responsible for passing rows in a stable, deterministic order.
+// canonical_payload_manifest_hash = SHA-256(JCS_Canonicalize({hash_type, hash_version, ...manifest identity, rows}))
+// for a batch. Row order within m.Rows is preserved as given — callers are
+// responsible for sorting rows deterministically (source_row_ref, then
+// business_reference, then canonical_row_hash) before calling this.
 func ComputeFileManifestHash(m FileManifest) (string, error) {
 	rows := make([]any, len(m.Rows))
 	for i, r := range m.Rows {
 		rows[i] = map[string]any{
 			"source_row_ref":     r.SourceRowRef,
 			"canonical_row_hash": r.CanonicalRowHash,
-			"amount":             r.AmountMinor,
-			"client_payout_ref":  r.ClientPayoutRef,
+			"amount_minor":       r.AmountMinor,
+			"currency":           strings.ToUpper(strings.TrimSpace(r.Currency)),
+			"business_reference": r.BusinessReference,
 		}
 	}
 
 	manifest := map[string]any{
-		"manifest_schema_version": m.ManifestSchemaVersion,
-		"artifact_id":             m.ArtifactID,
-		"artifact_version_id":     m.ArtifactVersionID,
-		"payload_type":            m.PayloadType,
-		"currency":                m.Currency,
-		"row_count":               m.RowCount,
-		"rows":                    rows,
+		"hash_type":                "CANONICAL_PAYLOAD_MANIFEST",
+		"hash_version":             "1",
+		"manifest_schema_version":  m.ManifestSchemaVersion,
+		"artifact_id":              m.ArtifactID,
+		"artifact_version_id":      m.ArtifactVersionID,
+		"payload_type":             m.PayloadType,
+		"canonicalization_version": m.CanonicalizationVersion,
+		"mapping_profile_hash":     m.MappingProfileHash,
+		"row_count":                m.RowCount,
+		"rows":                     rows,
 	}
 
-	canonicalBytes, err := jcsCanonicalize(manifest)
-	if err != nil {
-		return "", err
-	}
-	return sha256Hex(canonicalBytes), nil
+	return jcs.CanonicalizeAndSHA256(manifest)
 }

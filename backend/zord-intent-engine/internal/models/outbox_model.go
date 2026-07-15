@@ -48,13 +48,17 @@ type OutboxEvent struct {
 	IntentStatus        string          `json:"intent_status,omitempty" db:"intent_status"`
 	ConfidenceScore     *float64        `json:"confidence_score,omitempty" db:"confidence_score"`
 
-	CanonicalHash         string `json:"canonical_hash,omitempty" db:"canonical_hash"`
-	SourceRowRef          string `json:"source_row_ref,omitempty" db:"source_row_ref"`
-	CanonicalRowHash      string `json:"canonical_row_hash,omitempty" db:"canonical_row_hash"`
-	CanonicalSnapshotRef  string `json:"canonical_snapshot_ref,omitempty" db:"canonical_snapshot_ref"`
-	NIRSnapshotRef        string `json:"nir_snapshot_ref,omitempty" db:"nir_snapshot_ref"`
-	GovernanceSnapshotRef string `json:"governance_snapshot_ref,omitempty" db:"governance_snapshot_ref"`
-	GovernanceHash        string `json:"governance_hash,omitempty" db:"governance_hash"`
+	CanonicalHash                string `json:"canonical_hash,omitempty" db:"canonical_hash"`
+	SourceRowRef                 string `json:"source_row_ref,omitempty" db:"source_row_ref"`
+	CanonicalRowHash             string `json:"canonical_row_hash,omitempty" db:"canonical_row_hash"`
+	TokenizedDataHash            string `json:"tokenized_data_hash,omitempty" db:"tokenized_data_hash"`
+	RawRowEvidenceLeafHash       string `json:"raw_row_evidence_leaf_hash,omitempty" db:"raw_row_evidence_leaf_hash"`
+	CanonicalRowEvidenceLeafHash string `json:"canonical_row_evidence_leaf_hash,omitempty" db:"canonical_row_evidence_leaf_hash"`
+	CanonicalSnapshotRef         string `json:"canonical_snapshot_ref,omitempty" db:"canonical_snapshot_ref"`
+	NIRSnapshotRef               string `json:"nir_snapshot_ref,omitempty" db:"nir_snapshot_ref"`
+	GovernanceSnapshotRef        string `json:"governance_snapshot_ref,omitempty" db:"governance_snapshot_ref"`
+	GovernanceHash               string `json:"governance_hash,omitempty" db:"governance_hash"`
+	GovernanceInputFactsHash     string `json:"input_facts_hash,omitempty" db:"input_facts_hash"`
 
 	ClientPayoutRef       string          `json:"client_payout_ref,omitempty" db:"client_payout_ref"`
 	ProviderHint          string          `json:"provider_hint,omitempty" db:"provider_hint"`
