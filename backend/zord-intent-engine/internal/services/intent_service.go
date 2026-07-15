@@ -1648,6 +1648,13 @@ func (s *IntentService) processIncomingIntentInternal(
 			retDlq = &dlqEntry
 			return
 		}
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
 		retDlq = &savedDLQ
 		return
 	}
@@ -1726,6 +1733,13 @@ func (s *IntentService) processIncomingIntentInternal(
 	}
 
 	if dlq != nil {
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
 		retDlq = dlq
 		return
 	}
@@ -1752,6 +1766,13 @@ func (s *IntentService) processIncomingIntentInternal(
 	if dlq := guards.RunPreGuards(in, canonicalInput); dlq != nil {
 		dlq.TraceID = in.TraceID.String()
 		dlq.IntentContext = models.BuildIntentContext(dlq.DLQStatus, *intent)
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
 		retDlq = dlq
 		return
 	}
@@ -1832,6 +1853,13 @@ func (s *IntentService) processIncomingIntentInternal(
 		log.Printf("Tokenization request queued in Kafka for EnvelopeID=%s", in.EnvelopeID)
 
 		// Stop pipeline for now
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
 		return
 	}
 
