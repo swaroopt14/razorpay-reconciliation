@@ -37,6 +37,7 @@ func CanonicalIntentToOutboxEvent(
 		Status:        "PENDING",
 		CreatedAt:     time.Now().UTC(),
 		PayloadHash:   intent.PayloadHash,
+		RawRowHash:    intent.RawRowHash,
 		BatchID:       intent.BatchID,
 
 		IdempotencyKey:      intent.IdempotencyKey,
