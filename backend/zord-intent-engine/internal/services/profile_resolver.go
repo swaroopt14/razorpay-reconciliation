@@ -224,6 +224,107 @@ func loadBuiltInMappingProfile(sourceSystem, artifactFamily string) *models.Mapp
 	return p
 }
 
+// SeedGlobalMappingProfilesFromFile upserts every global_profiles.json entry
+// into mapping_profiles as a global (tenant_id IS NULL) row, so these
+// built-in profiles resolve at priority 3 (loadMappingProfile) with a real,
+// persisted profile_hash instead of only ever existing as the in-memory
+// priority-4 fallback (loadBuiltInMappingProfile).
+//
+// global_profiles.json is the source of truth for these system-* rows: this
+// is safe to call on every service startup, and each run re-syncs the DB from
+// the file (ON CONFLICT (profile_id) DO UPDATE). It never touches a tenant's
+// own profile — those have a different profile_id and a non-NULL tenant_id.
+func SeedGlobalMappingProfilesFromFile(ctx context.Context, db *sql.DB) error {
+	loadDetectorProfiles()
+
+	seen := make(map[string]bool, len(detectorProfiles))
+	for sourceSystem, def := range detectorProfiles {
+		if len(def.ColumnMap) == 0 {
+			continue
+		}
+		p := loadBuiltInMappingProfile(sourceSystem, "")
+		if p == nil || seen[p.ProfileID] {
+			continue
+		}
+		seen[p.ProfileID] = true
+
+		if err := upsertGlobalMappingProfile(ctx, db, p); err != nil {
+			return fmt.Errorf("seed mapping profile %s: %w", p.ProfileID, err)
+		}
+	}
+	return nil
+}
+
+// upsertGlobalMappingProfile writes a single global-scope MappingProfile
+// (tenant_id IS NULL) using the same column set the admin CRUD handlers use.
+func upsertGlobalMappingProfile(ctx context.Context, db *sql.DB, p *models.MappingProfile) error {
+	colMapBytes, err := json.Marshal(p.ColumnMap)
+	if err != nil {
+		return err
+	}
+
+	q := `
+	INSERT INTO mapping_profiles (
+		profile_id, profile_version, tenant_id, tenant_name,
+		source_vendor, source_system, artifact_family, file_format,
+		delimiter, header_row_index, mapping_strategy,
+		column_map, amount_format, date_format, default_currency, default_intent_type, source_timezone,
+		strict_required_fields_json, soft_inferable_fields_json,
+		field_kind_policy_json, sensitive_field_policy_json,
+		profile_hash, validation_mode,
+		output_entity_family, status, notes, created_at, updated_at, created_by
+	) VALUES (
+		$1, $2, NULL, $3,
+		$4, $5, $6, $7,
+		$8, $9, $10,
+		$11, $12, $13, $14, $15, $16,
+		$17, $18,
+		$19, $20,
+		$21, $22,
+		$23, $24, $25, now(), now(), $26
+	)
+	ON CONFLICT (profile_id) DO UPDATE SET
+		profile_version = EXCLUDED.profile_version,
+		tenant_name = EXCLUDED.tenant_name,
+		source_vendor = EXCLUDED.source_vendor,
+		source_system = EXCLUDED.source_system,
+		artifact_family = EXCLUDED.artifact_family,
+		file_format = EXCLUDED.file_format,
+		delimiter = EXCLUDED.delimiter,
+		header_row_index = EXCLUDED.header_row_index,
+		mapping_strategy = EXCLUDED.mapping_strategy,
+		column_map = EXCLUDED.column_map,
+		amount_format = EXCLUDED.amount_format,
+		date_format = EXCLUDED.date_format,
+		default_currency = EXCLUDED.default_currency,
+		default_intent_type = EXCLUDED.default_intent_type,
+		source_timezone = EXCLUDED.source_timezone,
+		strict_required_fields_json = EXCLUDED.strict_required_fields_json,
+		soft_inferable_fields_json = EXCLUDED.soft_inferable_fields_json,
+		field_kind_policy_json = EXCLUDED.field_kind_policy_json,
+		sensitive_field_policy_json = EXCLUDED.sensitive_field_policy_json,
+		profile_hash = EXCLUDED.profile_hash,
+		validation_mode = EXCLUDED.validation_mode,
+		output_entity_family = EXCLUDED.output_entity_family,
+		status = EXCLUDED.status,
+		notes = EXCLUDED.notes,
+		updated_at = now(),
+		created_by = EXCLUDED.created_by
+	`
+
+	_, err = db.ExecContext(ctx, q,
+		p.ProfileID, p.ProfileVersion, p.TenantName,
+		p.SourceVendor, p.SourceSystem, p.ArtifactFamily, p.FileFormat,
+		p.Delimiter, p.HeaderRowIndex, p.MappingStrategy,
+		colMapBytes, p.AmountFormat, p.DateFormat, p.DefaultCurrency, p.DefaultIntentType, p.SourceTimezone,
+		p.StrictRequiredFieldsJSON, p.SoftInferableFieldsJSON,
+		p.FieldKindPolicyJSON, p.SensitiveFieldPolicyJSON,
+		p.ProfileHash, p.ValidationMode,
+		p.OutputEntityFamily, p.Status, p.Notes, p.CreatedBy,
+	)
+	return err
+}
+
 func loadMappingProfile(
 	ctx context.Context,
 	db *sql.DB,
