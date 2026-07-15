@@ -117,7 +117,8 @@ func (r *PaymentIntentRepo) Save(
     policy_source, policy_version, policy_hash,
     source_row_ref, canonical_row_hash,
     input_facts_hash, tokenized_data_hash,
-    raw_row_evidence_leaf_hash, canonical_row_evidence_leaf_hash
+    raw_row_evidence_leaf_hash, canonical_row_evidence_leaf_hash,
+    raw_row_hash
 )
 VALUES (
     $1,$2,$3,$4,
@@ -143,7 +144,8 @@ VALUES (
     $66, $67, $68,
     $69, $70,
     $71, $72,
-    $73, $74
+    $73, $74,
+    $75
 ) `
 
 	_, err = tx.ExecContext(
@@ -223,6 +225,7 @@ VALUES (
 		intent.TokenizedDataHash,            // $72
 		intent.RawRowEvidenceLeafHash,       // $73
 		intent.CanonicalRowEvidenceLeafHash, // $74
+		intent.RawRowHash,                   // $75
 	)
 
 	if err != nil {
@@ -299,7 +302,8 @@ INSERT INTO outbox (
     score_validity_status, score_breakdown_json, score_reason_codes_json, scored_at,
     source_row_ref, canonical_row_hash,
     input_facts_hash, tokenized_data_hash,
-    raw_row_evidence_leaf_hash, canonical_row_evidence_leaf_hash
+    raw_row_evidence_leaf_hash, canonical_row_evidence_leaf_hash,
+    raw_row_hash
 ) VALUES (
     $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
     $11,$12,$13,$14,$15,$16,$17,$18,$19,
@@ -313,7 +317,8 @@ INSERT INTO outbox (
     $69, $70, $71, $72,
     $73, $74,
     $75, $76,
-    $77, $78
+    $77, $78,
+    $79
 )`
 
 	outbox.ContractID = intent.ContractID
@@ -399,6 +404,7 @@ INSERT INTO outbox (
 		outbox.TokenizedDataHash,            // $76
 		outbox.RawRowEvidenceLeafHash,       // $77
 		outbox.CanonicalRowEvidenceLeafHash, // $78
+		outbox.RawRowHash,                   // $79
 	)
 	if err != nil {
 		log.Printf("Repo.Save: INSERT outbox failed: %v", err)
@@ -1406,7 +1412,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 		}
 	}
 	if len(intents) > 0 {
-		const piCols = 74
+		const piCols = 75
 		var placeholders strings.Builder
 		args := make([]interface{}, 0, len(intents)*piCols)
 		for i, intent := range intents {
@@ -1497,6 +1503,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 				intent.TokenizedDataHash,            // $72
 				intent.RawRowEvidenceLeafHash,       // $73
 				intent.CanonicalRowEvidenceLeafHash, // $74
+				intent.RawRowHash,                   // $75
 			)
 		}
 		q := fmt.Sprintf(`INSERT INTO payment_intents (
@@ -1539,7 +1546,8 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 			policy_source, policy_version, policy_hash,
 			source_row_ref, canonical_row_hash,
 			input_facts_hash, tokenized_data_hash,
-			raw_row_evidence_leaf_hash, canonical_row_evidence_leaf_hash
+			raw_row_evidence_leaf_hash, canonical_row_evidence_leaf_hash,
+			raw_row_hash
 		) VALUES %s`, placeholders.String())
 		_, err = tx.ExecContext(ctx, q, args...)
 		if err != nil {
@@ -1556,7 +1564,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 		}
 	}
 	if len(outboxes) > 0 {
-		const outboxCols = 78
+		const outboxCols = 79
 		var placeholders strings.Builder
 		args := make([]interface{}, 0, len(outboxes)*outboxCols)
 		for i, outbox := range outboxes {
@@ -1651,6 +1659,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 				outbox.TokenizedDataHash,            // $76
 				outbox.RawRowEvidenceLeafHash,       // $77
 				outbox.CanonicalRowEvidenceLeafHash, // $78
+				outbox.RawRowHash,                   // $79
 			)
 		}
 		q := fmt.Sprintf(`INSERT INTO outbox (
@@ -1679,7 +1688,8 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 			score_validity_status, score_breakdown_json, score_reason_codes_json, scored_at,
 			source_row_ref, canonical_row_hash,
 			input_facts_hash, tokenized_data_hash,
-			raw_row_evidence_leaf_hash, canonical_row_evidence_leaf_hash
+			raw_row_evidence_leaf_hash, canonical_row_evidence_leaf_hash,
+			raw_row_hash
 		) VALUES %s`, placeholders.String())
 		_, err = tx.ExecContext(ctx, q, args...)
 		if err != nil {

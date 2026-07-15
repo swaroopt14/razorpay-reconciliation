@@ -52,6 +52,10 @@ type CanonicalIntent struct {
 	GovernanceInputFactsHash string `db:"input_facts_hash" json:"input_facts_hash,omitempty"`
 	CanonicalHash            string `db:"canonical_hash" json:"canonical_hash,omitempty"`
 	PayloadHash              string
+	// RawRowHash = SHA-256(JCS_Canonicalize({hash_type, hash_version,
+	// raw_row_base64})), computed by zord-edge over the exact original row
+	// bytes and relayed here — never computed by this engine.
+	RawRowHash string `db:"raw_row_hash" json:"raw_row_hash,omitempty"`
 
 	// SourceRowRef is the actual Excel/CSV row number (as a string, e.g. "3")
 	// relayed by zord-edge from the source file — never computed by this engine.

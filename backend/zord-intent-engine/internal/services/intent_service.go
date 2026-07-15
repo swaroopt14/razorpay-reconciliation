@@ -429,19 +429,26 @@ func (s *IntentService) computeTokenizedDataHash(tenantID string, tokenMap map[s
 // canonical_row_leaf_hash for intent. ArtifactID/ArtifactVersionID are sealed
 // by an upstream artifact service, not derived here — left blank until that
 // pipeline exists. row_index uses intent.SourceRowNum (defaulting to 0 if
-// unset). raw_row_hash reuses intent.PayloadHash, the already-verified
-// SHA-256 of the raw pre-canonicalization payload.
+// unset). raw_row_hash uses intent.RawRowHash, relayed from zord-edge
+// (JCS-canonicalized hash of the exact original row bytes); falls back to
+// intent.PayloadHash (plain SHA-256 of the raw payload) for older paths that
+// never set RawRowHash.
 func (s *IntentService) computeEvidenceLeafHashes(intent *models.CanonicalIntent) (rawLeafHash string, canonicalLeafHash string) {
 	rowIndex := 0
 	if intent.SourceRowNum != nil {
 		rowIndex = *intent.SourceRowNum
 	}
 
+	rawRowHash := intent.RawRowHash
+	if rawRowHash == "" {
+		rawRowHash = intent.PayloadHash
+	}
+
 	rawLeafHash, err := canonicalizer.ComputeRawRowEvidenceLeafHash(canonicalizer.RawRowEvidenceLeafHashInput{
 		TenantID:     intent.TenantID,
 		SourceRowRef: intent.SourceRowRef,
 		RowIndex:     rowIndex,
-		RawRowHash:   intent.PayloadHash,
+		RawRowHash:   rawRowHash,
 	})
 	if err != nil {
 		log.Printf("⚠️ Failed to compute raw_row_evidence_leaf_hash for intent %s: %v", intent.IntentID, err)
@@ -1087,6 +1094,7 @@ func (s *IntentService) processIncomingIntentInternal(
 		IdempotencyKey:   event.IdempotencyKey,
 		EncryptedPayload: event.Payload,
 		PayloadHash:      event.PayloadHash,
+		RawRowHash:       event.RawRowHash,
 		ReceivedAt:       event.ReceivedAt,
 		BatchID:          event.BatchID,
 		SourceRowRef:     event.SourceRowRef,
@@ -1240,6 +1248,10 @@ func (s *IntentService) processIncomingIntentInternal(
 		sourceRowRef = strings.TrimSpace(*in.SourceRowRef)
 	} else {
 		log.Printf("⚠️ processIncomingIntentInternal: source_row_ref is nil for envelopeID=%s — source_row_num will be nil", in.EnvelopeID)
+	}
+	rawRowHash := ""
+	if in.RawRowHash != nil {
+		rawRowHash = strings.TrimSpace(*in.RawRowHash)
 	}
 	sourceRowNum = sourceRowNumFromRef(sourceRowRef)
 	auditProfileID = autoGenericProfileID(rawAuditPayload)
@@ -1643,6 +1655,9 @@ func (s *IntentService) processIncomingIntentInternal(
 	governanceHash := s.computeGovernanceHashInternal("VALID", string(governanceJSON), "v1", intentID)
 
 	parsed.PayloadHash = in.PayloadHash
+	if rawRowHash != "" {
+		parsed.RawRowHash = rawRowHash
+	}
 	parsed.FieldConfidenceSummary = nir.FieldConfidenceSummary
 	parsed.LowConfidenceFieldCount = nir.LowConfidenceFieldCount
 	parsed.RequiredFieldGapCount = nir.RequiredFieldGapCount
@@ -1736,6 +1751,7 @@ func (s *IntentService) processIncomingIntentInternal(
 	canonicalInput.GovernanceHash = governanceHash
 	canonicalInput.IntentID = intentID // Ensure intent_id is passed to Kafka if needed
 	canonicalInput.PayloadHash = in.PayloadHash
+	canonicalInput.RawRowHash = rawRowHash
 	canonicalInput.FieldConfidenceSummary = nir.FieldConfidenceSummary
 	canonicalInput.LowConfidenceFieldCount = nir.LowConfidenceFieldCount
 	canonicalInput.RequiredFieldGapCount = nir.RequiredFieldGapCount
@@ -1946,6 +1962,7 @@ func (s *IntentService) processIncomingIntentInternal(
 		IdempotencyKey:             in.IdempotencyKey,
 		SalientHash:                reqFingerprint,
 		PayloadHash:                in.PayloadHash,
+		RawRowHash:                 rawRowHash,
 		IntentType:                 canonicalInput.IntentType,
 		CanonicalVersion:           "v1",
 		SchemaVersion:              canonicalInput.SchemaVersion,
@@ -2014,6 +2031,7 @@ func (s *IntentService) processIncomingIntentInternal(
 		IdempotencyKey: in.IdempotencyKey,
 		SalientHash:    reqFingerprint,
 		PayloadHash:    in.PayloadHash,
+		RawRowHash:     rawRowHash,
 
 		IntentType:       canonicalInput.IntentType,
 		CanonicalVersion: "v1",
@@ -2880,6 +2898,7 @@ func (s *IntentService) ProcessTokenizeResult(
 		IdempotencyKey:             idempotencyKey,
 		SalientHash:                reqFingerprint,
 		PayloadHash:                canonicalInput.PayloadHash,
+		RawRowHash:                 canonicalInput.RawRowHash,
 		IntentType:                 canonicalInput.IntentType,
 		CanonicalVersion:           "v1",
 		SchemaVersion:              canonicalInput.SchemaVersion,

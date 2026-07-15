@@ -21,6 +21,7 @@ type Event struct {
 	IdempotencyKey   string    `json:"idempotency_key"`
 	Payload          []byte    `json:"payload"`
 	PayloadHash      string    `json:"payload_hash"`
+	RawRowHash       *string   `json:"raw_row_hash,omitempty"`
 	BatchID          *string   `json:"batchid,omitempty"`
 	SourceRowRef     *string   `json:"source_row_ref,omitempty"`
 	FileName         *string   `json:"file_name,omitempty"`

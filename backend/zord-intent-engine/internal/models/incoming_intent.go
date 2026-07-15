@@ -17,6 +17,7 @@ type IncomingIntent struct {
 	SourceSystem     string    `json:"source_system" db:"source_system"`
 	IdempotencyKey   string    `json:"idempotency_key" db:"idempotency_key"`
 	PayloadHash      string    `json:"payload_hash" db:"payload_hash"`
+	RawRowHash       *string   `json:"raw_row_hash,omitempty" db:"-"`
 	ObjectRef        string    `json:"object_ref" db:"object_ref"`
 	ParseStatus      string    `json:"parse_status" db:"parse_status"`
 	SignatureStatus  *string   `json:"signature_status,omitempty" db:"signature_status"`
@@ -51,6 +52,7 @@ type ParsedIncomingIntent struct {
 	GovernanceHash          string          `json:"governance_hash,omitempty"`
 	IntentID                string          `json:"intent_id,omitempty"`
 	PayloadHash             string          `json:"payload_hash,omitempty"`
+	RawRowHash              string          `json:"raw_row_hash,omitempty"`
 	FieldConfidenceSummary  json.RawMessage `json:"field_confidence_summary,omitempty"`
 	LowConfidenceFieldCount int             `json:"low_confidence_field_count,omitempty"`
 	RequiredFieldGapCount   int             `json:"required_field_gap_count,omitempty"`
