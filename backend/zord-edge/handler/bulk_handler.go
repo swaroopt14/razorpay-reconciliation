@@ -1078,6 +1078,13 @@ func (h *Handler) processBulkIntentRow(
 	payloadHashSum := sha256.Sum256(rawPayload)
 	rawIntent.PayloadHash = payloadHashSum[:]
 
+	rawRowHash, err := services.ComputeRawRowHash(rawPayload)
+	if err != nil {
+		log.Printf("Error computing raw_row_hash for bulk row, trace_id=%s: %v", traceID, err)
+		return nil, uuid.Nil, err
+	}
+	rawIntent.RawRowHash = rawRowHash
+
 	if err := services.RawIntent(ctx, rawIntent, storageAck); err != nil {
 		log.Printf("Error persisting raw intent for bulk row, trace_id=%s: %v", traceID, err)
 		return nil, uuid.Nil, err

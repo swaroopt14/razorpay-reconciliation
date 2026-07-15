@@ -31,6 +31,7 @@ type IngressEnvelope struct {
 	IdempotencyKey               string     `json:"idempotency_key" db:"idempotency_key"`
 	PayloadSize                  int        `json:"payload_size" db:"payload_size"`
 	PayloadHash                  string     `json:"payload_hash" db:"payload_hash"`
+	RawRowHash                   string     `json:"raw_row_hash" db:"raw_row_hash"`
 	EnvelopeHash                 string     `json:"envelope_hash" db:"envelope_hash"`
 	EnvelopeSignature            string     `json:"envelope_signature" db:"envelope_signature"`
 	RequestHeadersHash           string     `json:"request_headers_hash" db:"request_headers_hash"`

@@ -165,6 +165,19 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 
 	rawIntent.PayloadHash = payloadHash
 
+	rawRowHash, err := services.ComputeRawRowHash(rawPayload)
+	if err != nil {
+		log.Printf("Error computing raw_row_hash for trace_id=%s: %v", rawIntent.TraceID, err)
+		context.JSON(http.StatusInternalServerError, gin.H{
+			"TraceID":    rawIntent.TraceID,
+			"ErrorCode":  "INTERNAL_SERVER_ERROR",
+			"ErrorMsg":   "Failed to compute raw_row_hash.",
+			"HttpStatus": http.StatusInternalServerError,
+		})
+		return
+	}
+	rawIntent.RawRowHash = rawRowHash
+
 	if err := services.RawIntent(reqCtx, rawIntent, storageAck); err != nil {
 		log.Printf("Error persisting raw intent: %v", err)
 		context.JSON(http.StatusInternalServerError, gin.H{

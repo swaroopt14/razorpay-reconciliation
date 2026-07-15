@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS "ingress_outbox" (
     batchid TEXT,
     file_content_hash TEXT,
     source_row_ref TEXT,
-    source_system TEXT NOT NULL DEFAULT ''
+    source_system TEXT NOT NULL DEFAULT '',
+    raw_row_hash TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_outbox_pending_lease

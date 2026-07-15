@@ -19,6 +19,7 @@ type OutboxEvent struct {
 	IdempotencyKey    string     `json:"idempotency_key" db:"idempotency_key"`
 	EncryptedPayload  []byte     `json:"payload" db:"encrypted_payload"`
 	PayloadHash       string     `json:"payload_hash" db:"payload_hash"`
+	RawRowHash        *string    `json:"raw_row_hash,omitempty" db:"raw_row_hash"`
 	EnvelopeHash      string     `json:"envelope_hash" db:"envelope_hash"`
 	EnvelopeSignature string     `json:"envelope_signature" db:"envelope_signature"`
 	Topic             string     `json:"topic" db:"topic"`

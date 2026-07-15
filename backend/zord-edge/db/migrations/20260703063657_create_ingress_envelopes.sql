@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS "ingress_envelopes" (
     row_count_estimate INT,
     file_upload_channel TEXT,
     source_row_ref TEXT,
-    batchid TEXT
+    batchid TEXT,
+    raw_row_hash TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_raw_env_tenant_time
