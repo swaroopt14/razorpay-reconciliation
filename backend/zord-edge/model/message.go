@@ -4,6 +4,7 @@ type RawIntentMessage struct {
 	TenantID             string `json:"tenant_id"`
 	TraceID              string `json:"trace_id"`
 	PayloadHash          []byte `json:"payload_hash"`
+	RawRowHash           string `json:"raw_row_hash"`
 	IdempotencyKey       string `json:"idempotency_key"`
 	PayloadSize          int    `json:"payload_size"`
 	Payload              []byte `json:"raw_payload"`
@@ -32,5 +33,6 @@ type RawIntentMessage struct {
 	FileContentHash      *string
 	RowCountEstimate     *int
 	FileUploadChannel    *string
+	SourceRowRef         *string
 	BatchID              *string
 }

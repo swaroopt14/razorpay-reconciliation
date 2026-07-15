@@ -102,6 +102,10 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 
 	envelopeID := uuid.Must(uuid.NewV7()).String()
 	receivedAt := time.Now().UTC()
+	// A single-intent submission has no separate "file" artifact — it is its
+	// own artifact, so we mint one id per request (mirrors bulk file-level ingest).
+	artifactID := uuid.Must(uuid.NewV7()).String()
+	artifactVersionID := "ART_V1"
 
 	headersBytes, _ := json.Marshal(context.Request.Header)
 	headersHashSum := sha256.Sum256(headersBytes)
@@ -152,12 +156,27 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 		})
 		return
 	}
+	storageAck.ArtifactId = artifactID
+	storageAck.ArtifactVersionId = artifactVersionID
 
 	//Hash Payload Using SHA256
 	payloadHashSum := sha256.Sum256(rawPayload)
 	payloadHash := payloadHashSum[:]
 
 	rawIntent.PayloadHash = payloadHash
+
+	rawRowHash, err := services.ComputeRawRowHash(rawPayload)
+	if err != nil {
+		log.Printf("Error computing raw_row_hash for trace_id=%s: %v", rawIntent.TraceID, err)
+		context.JSON(http.StatusInternalServerError, gin.H{
+			"TraceID":    rawIntent.TraceID,
+			"ErrorCode":  "INTERNAL_SERVER_ERROR",
+			"ErrorMsg":   "Failed to compute raw_row_hash.",
+			"HttpStatus": http.StatusInternalServerError,
+		})
+		return
+	}
+	rawIntent.RawRowHash = rawRowHash
 
 	if err := services.RawIntent(reqCtx, rawIntent, storageAck); err != nil {
 		log.Printf("Error persisting raw intent: %v", err)

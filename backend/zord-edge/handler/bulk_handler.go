@@ -65,6 +65,12 @@ type BulkJob struct {
 	Row            int
 	Payload        []byte
 	IdempotencyKey string // client-provided (from CSV/xlsx column) or server-assigned deterministic hash
+	SourceRowRef   string
+}
+
+type bulkSourceRow struct {
+	FileRowNumber int
+	Values        []string
 }
 
 // BulkIntentHandler ingests a CSV/XLSX into per-row envelopes.
@@ -137,25 +143,27 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 	tenantID := c.MustGet("tenant_id").(uuid.UUID)
 	tenantName := c.MustGet("tenant_name").(string)
+	PayloadSize := c.MustGet("PayloadSize").(int64)
 	fileTraceID := uuid.Must(uuid.NewV7()).String()
 
 	batchIDHeader := c.GetHeader("Batch-ID")
 	originalBatchID := batchIDHeader
-	if batchIDHeader == "" {
-		batchIDHeader = uuid.Must(uuid.NewV7()).String()
-	}
-	fileEnvelopeID := batchIDHeader
+	// if batchIDHeader == "" {
+	// 	batchIDHeader = uuid.Must(uuid.NewV7()).String()
+	// }
+	artifactID := uuid.Must(uuid.NewV7()).String()
+	artifactVersionId := "ART_V1"
 	finalBatchID := &batchIDHeader
 
 	if originalBatchID != "" {
-		exists, err := services.CheckBatchIDExists(c.Request.Context(), finalBatchID)
+		exists, err := services.CheckBatchIDExists(c.Request.Context(), tenantID, finalBatchID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify batch_id uniqueness"})
 			return
 		}
 		if exists {
 			c.JSON(http.StatusConflict, gin.H{
-				"error": "batch_id must be strictly unique for each file ingest",
+				"error": "batch_id must be unique for each tenant",
 			})
 			return
 		}
@@ -187,7 +195,9 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 	// in the file-level RawEnvelope on S3 before any row is processed.
 	filePayload := map[string]interface{}{
 		"file_name":           file.Filename,
-		"file_size_bytes":     fileSizeBytes,
+		"artifact_id":         artifactID,
+		"artifact_version_id": artifactVersionId,
+		"file_size":           PayloadSize,
 		"file_content_hash":   fileHash,
 		"row_count_estimate":  rowCountEstimate,
 		"file_upload_channel": "CSV",
@@ -207,7 +217,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		TraceID:              fileTraceID,
 		TenantName:           tenantName,
 		IdempotencyKey:       uuid.Must(uuid.NewV7()).String(),
-		PayloadSize:          len(payloadBytes),
+		PayloadSize:          int(PayloadSize),
 		Payload:              payloadBytes,
 		ContentType:          "application/json",
 		SourceType:           "BULK_FILE",
@@ -218,21 +228,23 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		IngressAPIVersion:    "v1",
 		RetentionPolicyClass: "STANDARD",
 		EventType:            "Envelope.Created",
-		FileName:             &file.Filename,
-		FileSizeBytes:        &fileSizeBytes,
-		FileContentHash:      &fileHash,
-		RowCountEstimate:     &rowCountEstimate,
-		FileUploadChannel:    func(s string) *string { return &s }("CSV"),
-		BatchID:              finalBatchID,
+		//FileName:             &file.Filename,
+		//FileSizeBytes:        &fileSizeBytes,
+		//FileContentHash:      &fileHash,
+		//RowCountEstimate:     &rowCountEstimate,
+		//FileUploadChannel:    func(s string) *string { return &s }("CSV"),
+		BatchID: finalBatchID,
 	}
 
-	_, err = services.ProcessRawIntent(context.Background(), fileMsg, h.S3store, fileEnvelopeID, time.Now().UTC())
+	data, err := services.ProcessRawIntent(context.Background(), fileMsg, h.S3store, artifactID, time.Now().UTC())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "failed to store bulk file envelope",
 		})
 		return
 	}
+	data.ArtifactVersionId = artifactVersionId
+	data.ArtifactId = artifactID
 
 	// File envelope is now durably stored on S3. Release the buffer — row
 	// processing from this point forward uses only the reset src reader.
@@ -361,7 +373,10 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 						&fileHash,
 						&rowCountEstimate,
 						func(s string) *string { return &s }("CSV"),
+						&job.SourceRowRef,
 						&profileIDForAudit, // Use profileIDForAudit as the audit hint
+						artifactID,
+						artifactVersionId,
 					)
 
 					resultsMu.Lock()
@@ -422,12 +437,14 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		}
 
 		// ── Collect all non-empty rows for batch parse ──────────────────────
-		var allCSVRows [][]string
+		var allCSVRows []bulkSourceRow
+		fileRowNumber := 1
 		for {
 			row, err := reader.Read()
 			if err == io.EOF {
 				break
 			}
+			fileRowNumber++
 			if err != nil {
 				log.Printf("CSV read error (skipping row): %v", err)
 				continue
@@ -440,7 +457,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 				}
 			}
 			if !isEmpty {
-				allCSVRows = append(allCSVRows, row)
+				allCSVRows = append(allCSVRows, bulkSourceRow{FileRowNumber: fileRowNumber, Values: row})
 			}
 		}
 
@@ -448,9 +465,10 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		if parser == nil {
 			// Profile-driven path: Bypass static parser.
 			// Construct raw row JSON payloads.
-			for idx, row := range allCSVRows {
-				rowNum := idx + 1
-				rawJSON, err := buildRowPayload(headers, row, rowNum)
+			for _, row := range allCSVRows {
+				rowNum := row.FileRowNumber
+				sourceRowRef := strconv.Itoa(rowNum)
+				rawJSON, err := buildRowPayload(headers, row.Values, rowNum)
 				if err != nil {
 					resultsMu.Lock()
 					resultsMap[rowNum] = BulkResult{Row: rowNum, Status: "FAILED", Error: "failed to build raw row payload"}
@@ -470,17 +488,19 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 					rowIdempotencyKey = hex.EncodeToString(sum[:])
 				}
 
-				jobsToSend = append(jobsToSend, BulkJob{Row: rowNum, Payload: rawJSON, IdempotencyKey: rowIdempotencyKey})
+				jobsToSend = append(jobsToSend, BulkJob{Row: rowNum, Payload: rawJSON, IdempotencyKey: rowIdempotencyKey, SourceRowRef: sourceRowRef})
 			}
 		} else {
 			// Type-based static parser path: Parse into UniversalIntentShape.
-			shapes, parseErrors := parser.Parse(allCSVRows, headers)
+			parseRows, rowIndexToFileRow := flattenSourceRows(allCSVRows)
+			shapes, parseErrors := parser.Parse(parseRows, headers)
 
 			// Record parse failures directly in resultsMap
 			for _, pe := range parseErrors {
+				rowNum := sourceFileRowNumber(rowIndexToFileRow, pe.RowIndex)
 				resultsMu.Lock()
-				resultsMap[pe.RowIndex] = BulkResult{
-					Row:    pe.RowIndex,
+				resultsMap[rowNum] = BulkResult{
+					Row:    rowNum,
 					Status: "FAILED",
 					Error:  fmt.Sprintf("parse error on field %q: %s", pe.Field, pe.Message),
 				}
@@ -489,7 +509,10 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 			// Fan out clean shapes
 			for _, shape := range shapes {
-				rowNum, _ := strconv.Atoi(strings.TrimPrefix(shape.SourceRowRef, "row:"))
+				parserRowNum, _ := strconv.Atoi(strings.TrimPrefix(shape.SourceRowRef, "row:"))
+				rowNum := sourceFileRowNumber(rowIndexToFileRow, parserRowNum)
+				sourceRowRef := strconv.Itoa(rowNum)
+				shape.SourceRowRef = sourceRowRef
 
 				jsonPayload, err := json.Marshal(shape)
 				if err != nil {
@@ -511,7 +534,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 					rowIdempotencyKey = hex.EncodeToString(sum[:])
 				}
 
-				jobsToSend = append(jobsToSend, BulkJob{Row: rowNum, Payload: jsonPayload, IdempotencyKey: rowIdempotencyKey})
+				jobsToSend = append(jobsToSend, BulkJob{Row: rowNum, Payload: jsonPayload, IdempotencyKey: rowIdempotencyKey, SourceRowRef: sourceRowRef})
 			}
 		}
 
@@ -626,7 +649,10 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 						&fileHash,
 						&xlsxRowCount,
 						func(s string) *string { return &s }("XLSX"),
+						&job.SourceRowRef,
 						&profileIDForAudit, // Use profileIDForAudit as the audit hint
+						artifactID,
+						artifactVersionId,
 					)
 
 					resultsMu.Lock()
@@ -700,8 +726,10 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		}
 
 		// ── Collect all non-empty XLSX rows for batch parse ─────────────────
-		var allXLSXRows [][]string
+		var allXLSXRows []bulkSourceRow
+		fileRowNumber := 1
 		for dataRows.Next() {
+			fileRowNumber++
 			row, err := dataRows.Columns()
 			if err != nil {
 				log.Printf("XLSX read error (skipping row): %v", err)
@@ -715,7 +743,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 				}
 			}
 			if !isEmpty {
-				allXLSXRows = append(allXLSXRows, row)
+				allXLSXRows = append(allXLSXRows, bulkSourceRow{FileRowNumber: fileRowNumber, Values: row})
 			}
 		}
 
@@ -723,9 +751,10 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		if parser == nil {
 			// Profile-driven path: Bypass static parser.
 			// Construct raw row JSON payloads.
-			for idx, row := range allXLSXRows {
-				rowNum := idx + 1
-				rawJSON, err := buildRowPayload(headers, row, rowNum)
+			for _, row := range allXLSXRows {
+				rowNum := row.FileRowNumber
+				sourceRowRef := strconv.Itoa(rowNum)
+				rawJSON, err := buildRowPayload(headers, row.Values, rowNum)
 				if err != nil {
 					resultsMu.Lock()
 					resultsMap[rowNum] = BulkResult{Row: rowNum, Status: "FAILED", Error: "failed to build raw row payload"}
@@ -745,17 +774,19 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 					rowIdempotencyKey = hex.EncodeToString(sum[:])
 				}
 
-				jobsToSend = append(jobsToSend, BulkJob{Row: rowNum, Payload: rawJSON, IdempotencyKey: rowIdempotencyKey})
+				jobsToSend = append(jobsToSend, BulkJob{Row: rowNum, Payload: rawJSON, IdempotencyKey: rowIdempotencyKey, SourceRowRef: sourceRowRef})
 			}
 		} else {
 			// Type-based static parser path: Parse into UniversalIntentShape.
-			shapes, parseErrors := parser.Parse(allXLSXRows, headers)
+			parseRows, rowIndexToFileRow := flattenSourceRows(allXLSXRows)
+			shapes, parseErrors := parser.Parse(parseRows, headers)
 
 			// Record parse failures directly in resultsMap
 			for _, pe := range parseErrors {
+				rowNum := sourceFileRowNumber(rowIndexToFileRow, pe.RowIndex)
 				resultsMu.Lock()
-				resultsMap[pe.RowIndex] = BulkResult{
-					Row:    pe.RowIndex,
+				resultsMap[rowNum] = BulkResult{
+					Row:    rowNum,
 					Status: "FAILED",
 					Error:  fmt.Sprintf("parse error on field %q: %s", pe.Field, pe.Message),
 				}
@@ -764,7 +795,10 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 			// Fan out clean shapes
 			for _, shape := range shapes {
-				rowNum, _ := strconv.Atoi(strings.TrimPrefix(shape.SourceRowRef, "row:"))
+				parserRowNum, _ := strconv.Atoi(strings.TrimPrefix(shape.SourceRowRef, "row:"))
+				rowNum := sourceFileRowNumber(rowIndexToFileRow, parserRowNum)
+				sourceRowRef := strconv.Itoa(rowNum)
+				shape.SourceRowRef = sourceRowRef
 
 				jsonPayload, err := json.Marshal(shape)
 				if err != nil {
@@ -786,7 +820,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 					rowIdempotencyKey = hex.EncodeToString(sum[:])
 				}
 
-				jobsToSend = append(jobsToSend, BulkJob{Row: rowNum, Payload: jsonPayload, IdempotencyKey: rowIdempotencyKey})
+				jobsToSend = append(jobsToSend, BulkJob{Row: rowNum, Payload: jsonPayload, IdempotencyKey: rowIdempotencyKey, SourceRowRef: sourceRowRef})
 			}
 		}
 
@@ -896,7 +930,7 @@ func extractIdempotencyKey(payload []byte) string {
 // payload. Logic is identical to the original producer loop.
 func buildRowPayload(headers, row []string, rowNum int) ([]byte, error) {
 	payloadMap := make(map[string]interface{})
-	payloadMap["source_row_ref"] = fmt.Sprintf("row:%d", rowNum)
+	payloadMap["source_row_ref"] = strconv.Itoa(rowNum)
 
 	for j, header := range headers {
 		value := ""
@@ -924,6 +958,24 @@ func buildRowPayload(headers, row []string, rowNum int) ([]byte, error) {
 	return json.Marshal(payloadMap)
 }
 
+func flattenSourceRows(rows []bulkSourceRow) ([][]string, map[int]int) {
+	parseRows := make([][]string, 0, len(rows))
+	rowIndexToFileRow := make(map[int]int, len(rows))
+	for i, row := range rows {
+		parserRowIndex := i + 1
+		parseRows = append(parseRows, row.Values)
+		rowIndexToFileRow[parserRowIndex] = row.FileRowNumber
+	}
+	return parseRows, rowIndexToFileRow
+}
+
+func sourceFileRowNumber(rowIndexToFileRow map[int]int, parserRowIndex int) int {
+	if fileRow, ok := rowIndexToFileRow[parserRowIndex]; ok {
+		return fileRow
+	}
+	return parserRowIndex
+}
+
 // processBulkIntentRow persists one canonical row envelope through the
 // S3 → idempotency → ingress pipeline. profileID is stamped on every
 // envelope as a permanent audit trail of which profile parsed the row.
@@ -948,7 +1000,10 @@ func (h *Handler) processBulkIntentRow(
 	fileContentHash *string,
 	rowCountEstimate *int,
 	fileUploadChannel *string,
+	sourceRowRef *string,
 	profileID *string, // audit: which mapping profile parsed this row
+	artifactID string, // shared file-level artifact id, stamped on every row envelope
+	artifactVersionID string,
 ) (*model.AckMessage, uuid.UUID, error) {
 
 	encryptedPayload, err := vault.Encrypt(rawPayload)
@@ -989,6 +1044,7 @@ func (h *Handler) processBulkIntentRow(
 		FileContentHash:      fileContentHash,
 		RowCountEstimate:     rowCountEstimate,
 		FileUploadChannel:    fileUploadChannel,
+		SourceRowRef:         sourceRowRef,
 	}
 
 	id, err := services.PersistIdempotency(ctx, rawIntent, db.DB)
@@ -1016,9 +1072,18 @@ func (h *Handler) processBulkIntentRow(
 		log.Printf("S3 data is nil for bulk row, trace_id=%s", traceID)
 		return nil, uuid.Nil, fmt.Errorf("S3 store returned nil ack for trace_id=%s", traceID)
 	}
+	storageAck.ArtifactId = artifactID
+	storageAck.ArtifactVersionId = artifactVersionID
 
 	payloadHashSum := sha256.Sum256(rawPayload)
 	rawIntent.PayloadHash = payloadHashSum[:]
+
+	rawRowHash, err := services.ComputeRawRowHash(rawPayload)
+	if err != nil {
+		log.Printf("Error computing raw_row_hash for bulk row, trace_id=%s: %v", traceID, err)
+		return nil, uuid.Nil, err
+	}
+	rawIntent.RawRowHash = rawRowHash
 
 	if err := services.RawIntent(ctx, rawIntent, storageAck); err != nil {
 		log.Printf("Error persisting raw intent for bulk row, trace_id=%s: %v", traceID, err)

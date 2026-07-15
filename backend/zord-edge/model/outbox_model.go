@@ -11,12 +11,15 @@ type OutboxEvent struct {
 	TraceID           uuid.UUID  `json:"trace_id" db:"trace_id"`
 	EnvelopeID        uuid.UUID  `json:"envelope_id" db:"envelope_id"`
 	TenantID          uuid.UUID  `json:"tenant_id" db:"tenant_id"`
+	ArtifactID        uuid.UUID  `json:"artifact_id" db:"artifact_id"`
+	ArtifactVersionID string     `json:"artifact_version_id" db:"artifact_version_id"`
 	ObjectRef         string     `json:"object_ref" db:"object_ref"`
 	ReceivedAt        time.Time  `json:"received_at" db:"received_at"`
 	Source            string     `json:"source" db:"source"`
 	IdempotencyKey    string     `json:"idempotency_key" db:"idempotency_key"`
 	EncryptedPayload  []byte     `json:"payload" db:"encrypted_payload"`
 	PayloadHash       string     `json:"payload_hash" db:"payload_hash"`
+	RawRowHash        *string    `json:"raw_row_hash,omitempty" db:"raw_row_hash"`
 	EnvelopeHash      string     `json:"envelope_hash" db:"envelope_hash"`
 	EnvelopeSignature string     `json:"envelope_signature" db:"envelope_signature"`
 	Topic             string     `json:"topic" db:"topic"`
@@ -33,5 +36,6 @@ type OutboxEvent struct {
 	FailureReasonCode *string    `json:"failure_reason_code" db:"failure_reason_code"`
 	BatchID           *string    `json:"batchid,omitempty" db:"batchid"`
 	FileContentHash   *string    `json:"file_content_hash,omitempty" db:"file_content_hash"`
+	SourceRowRef      *string    `json:"source_row_ref,omitempty" db:"source_row_ref"`
 	SourceSystem      string     `json:"source_system" db:"source_system"`
 }

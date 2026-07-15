@@ -3,7 +3,9 @@ package model
 import "time"
 
 type AckMessage struct {
-	EnvelopeId string
-	ReceivedAt time.Time
-	ObjectRef  string
+	ArtifactId        string
+	ArtifactVersionId string
+	EnvelopeId        string
+	ReceivedAt        time.Time
+	ObjectRef         string
 }
