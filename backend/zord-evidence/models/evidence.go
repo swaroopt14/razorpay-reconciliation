@@ -22,15 +22,23 @@ const (
 	LeafTypeBatchVarianceSummary   = "BATCH_VARIANCE_SUMMARY"
 	LeafTypeCanonicalBatch         = "CANONICAL_BATCH"
 	LeafTypeFileContentHash        = "FILE_CONTENT_HASH"
+
+	// zord-intent-engine evidence-leaf hashes (added alongside the original
+	// CANONICAL_INTENT_HASH / GOVERNANCE_DECISION_AT_CANONICAL pair).
+	LeafTypeRawRowEvidenceLeafHash       = "RAW_ROW_EVIDENCE_LEAF_HASH"
+	LeafTypeCanonicalRowEvidenceLeafHash = "CANONICAL_ROW_EVIDENCE_LEAF_HASH"
+	LeafTypeMappingProfileHash           = "MAPPING_PROFILE_HASH"
+	LeafTypeBusinessIdempotencyHash      = "BUSINESS_IDEMPOTENCY_HASH"
+	LeafTypeTokenizedDataHash            = "TOKENIZED_DATA_HASH"
 )
 
 const (
-	PackStatusDraft = "DRAFT"
+	PackStatusDraft  = "DRAFT"
 	PackStatusActive = "ACTIVE"
 )
 
-// RequiredLeafTypes lists the 8 externally-supplied leaves that must be present
-// before a per-intent pack is generated. Leaf 9 (FINAL_EVIDENCE_VIEW) is
+// RequiredLeafTypes lists the 13 externally-supplied leaves that must be present
+// before a per-intent pack is generated. Leaf 14 (FINAL_EVIDENCE_VIEW) is
 // synthesised automatically by the service and is not externally supplied.
 var RequiredLeafTypes = []string{
 	LeafTypeRawSettlementLine,
@@ -41,12 +49,17 @@ var RequiredLeafTypes = []string{
 	LeafTypeCanonicalIntentHash,
 	LeafTypeGovernanceDecision,
 	LeafTypeRawSettlementFile,
+	LeafTypeRawRowEvidenceLeafHash,
+	LeafTypeCanonicalRowEvidenceLeafHash,
+	LeafTypeMappingProfileHash,
+	LeafTypeBusinessIdempotencyHash,
+	LeafTypeTokenizedDataHash,
 }
 
 // RequiredIntentLeafCount is the authoritative required count for per-intent packs.
-// The pack starts with 8 external leaves; GeneratePackInTx appends FINAL_EVIDENCE_VIEW
-// as the 9th leaf, so the sealed pack always has exactly 9 leaves when complete.
-const RequiredIntentLeafCount = 9
+// The pack starts with 13 external leaves; GeneratePackInTx appends FINAL_EVIDENCE_VIEW
+// as the 14th leaf, so the sealed pack always has exactly 14 leaves when complete.
+const RequiredIntentLeafCount = 14
 
 // RequiredBatchLeafTypes lists the 5 externally-supplied leaves for a batch pack.
 const RequiredBatchLeafCount = 5
@@ -110,26 +123,33 @@ type PendingLeafCandidate struct {
 // RelayEvent is a compatible subset of the normalised outbox event published by
 // zord-relay to Kafka. Field names must match the Kafka JSON schema exactly.
 type RelayEvent struct {
-	EventID              string          `json:"event_id"`
-	TraceID              string          `json:"trace_id"`
-	EnvelopeID           string          `json:"envelope_id"`
-	TenantID             string          `json:"tenant_id"`
-	AggregateType        string          `json:"aggregate_type"`
-	AggregateID          string          `json:"aggregate_id"`
-	ContractID           string          `json:"contract_id,omitempty"`
-	EventType            string          `json:"event_type"`
-	Payload              json.RawMessage `json:"payload"`
-	EnvelopeHash         string          `json:"envelope_hash,omitempty"`
-	CanonicalHash        string          `json:"canonical_hash,omitempty"`
-	GovernanceState      string          `json:"governance_state,omitempty"`
-	GovernanceHash       string          `json:"governance_hash,omitempty"`
-	PayloadHash          string          `json:"payload_hash,omitempty"`
-	FileContentHash      string          `json:"file_content_hash,omitempty"`
-	ClientBatchID        string          `json:"batchid,omitempty"`
-	MappingProfileID     *string         `json:"mapping_profile_used,omitempty"`
-	RequiredFieldsStatus *bool           `json:"required_fields_status,omitempty"`
-	TokenizationStatus   *bool           `json:"tokenization_status,omitempty"`
-	GovernanceDecision   *string         `json:"governance_decision,omitempty"`
+	EventID         string          `json:"event_id"`
+	TraceID         string          `json:"trace_id"`
+	EnvelopeID      string          `json:"envelope_id"`
+	TenantID        string          `json:"tenant_id"`
+	AggregateType   string          `json:"aggregate_type"`
+	AggregateID     string          `json:"aggregate_id"`
+	ContractID      string          `json:"contract_id,omitempty"`
+	EventType       string          `json:"event_type"`
+	Payload         json.RawMessage `json:"payload"`
+	EnvelopeHash    string          `json:"envelope_hash,omitempty"`
+	CanonicalHash   string          `json:"canonical_hash,omitempty"`
+	GovernanceState string          `json:"governance_state,omitempty"`
+	GovernanceHash  string          `json:"governance_hash,omitempty"`
+	PayloadHash     string          `json:"payload_hash,omitempty"`
+	FileContentHash string          `json:"file_content_hash,omitempty"`
+
+	// Evidence leaf hashes (Service 2 / zord-intent-engine).
+	RawRowEvidenceLeafHash       string  `json:"raw_row_evidence_leaf_hash,omitempty"`
+	CanonicalRowEvidenceLeafHash string  `json:"canonical_row_evidence_leaf_hash,omitempty"`
+	MappingProfileHash           string  `json:"mapping_profile_hash,omitempty"`
+	BusinessIdempotencyKey       string  `json:"business_idempotency_key,omitempty"`
+	TokenizedDataHash            string  `json:"tokenized_data_hash,omitempty"`
+	ClientBatchID                string  `json:"batchid,omitempty"`
+	MappingProfileID             *string `json:"mapping_profile_used,omitempty"`
+	RequiredFieldsStatus         *bool   `json:"required_fields_status,omitempty"`
+	TokenizationStatus           *bool   `json:"tokenization_status,omitempty"`
+	GovernanceDecision           *string `json:"governance_decision,omitempty"`
 
 	PaymentInstructionReceived *time.Time `json:"payment_instruction_received,omitempty"`
 	CanonicalIntentCreated     *time.Time `json:"canonical_intent_created,omitempty"`
@@ -248,13 +268,13 @@ type EvidencePack struct {
 // RequiredIntentLeafCount (9) and RequiredBatchLeafCount (5) so this method and
 // GeneratePackInTx always agree on the denominator.
 func (p *EvidencePack) ComputeCompletenessMetadata() {
-	hasRawSettlementFile      := false
-	hasRawSettlementLine      := false
+	hasRawSettlementFile := false
+	hasRawSettlementLine := false
 	hasCanonicalSettlementObs := false
-	hasAttachmentDecision     := false
-	hasVarianceDecision       := false
+	hasAttachmentDecision := false
+	hasVarianceDecision := false
 	hasBatchAttachmentSummary := false
-	hasBatchVarianceSummary   := false
+	hasBatchVarianceSummary := false
 
 	for _, item := range p.Items {
 		switch item.Type {
@@ -463,15 +483,15 @@ const SingleArchiveEncryptionKeyID = "archive-aes-v1"
 
 // EvidenceArchive is the evidence_archives row (§14.3 + P1-02 verification fields).
 type EvidenceArchive struct {
-	ArchiveID              string     `json:"archive_id"`
-	EvidencePackID         string     `json:"evidence_pack_id"`
-	TenantID               string     `json:"tenant_id"`
-	ObjectRef              string     `json:"object_ref"`
-	EncryptionKeyID        string     `json:"encryption_key_id,omitempty"`
-	ArchiveCiphertextHash  string     `json:"archive_ciphertext_hash"`
-	PlaintextManifestHash  string     `json:"plaintext_manifest_hash"`
-	ArchiveSizeBytes       int64      `json:"archive_size_bytes"`
-	ArchiveVersion         string     `json:"archive_version"`
-	ArchiveVerifiedAt      *time.Time `json:"archive_verified_at,omitempty"`
-	CreatedAt              time.Time  `json:"created_at"`
+	ArchiveID             string     `json:"archive_id"`
+	EvidencePackID        string     `json:"evidence_pack_id"`
+	TenantID              string     `json:"tenant_id"`
+	ObjectRef             string     `json:"object_ref"`
+	EncryptionKeyID       string     `json:"encryption_key_id,omitempty"`
+	ArchiveCiphertextHash string     `json:"archive_ciphertext_hash"`
+	PlaintextManifestHash string     `json:"plaintext_manifest_hash"`
+	ArchiveSizeBytes      int64      `json:"archive_size_bytes"`
+	ArchiveVersion        string     `json:"archive_version"`
+	ArchiveVerifiedAt     *time.Time `json:"archive_verified_at,omitempty"`
+	CreatedAt             time.Time  `json:"created_at"`
 }

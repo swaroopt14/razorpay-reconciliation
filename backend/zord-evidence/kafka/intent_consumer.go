@@ -56,11 +56,11 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 
 			// Traceability & Status Fields
 			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
-			CanonicalIntentCreated:    relayEvt.CanonicalIntentCreated,
-			MappingProfileUsed:        relayEvt.MappingProfileID,
-			RequiredFieldsStatus:      relayEvt.RequiredFieldsStatus,
-			TokenizationStatus:        relayEvt.TokenizationStatus,
-			GovernanceDecision:        relayEvt.GovernanceDecision,
+			CanonicalIntentCreated:     relayEvt.CanonicalIntentCreated,
+			MappingProfileUsed:         relayEvt.MappingProfileID,
+			RequiredFieldsStatus:       relayEvt.RequiredFieldsStatus,
+			TokenizationStatus:         relayEvt.TokenizationStatus,
+			GovernanceDecision:         relayEvt.GovernanceDecision,
 
 			// Intent financial identity
 			ClientPayoutRef: relayEvt.ClientPayoutRef,
@@ -83,11 +83,11 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 
 			// Traceability & Status Fields
 			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
-			CanonicalIntentCreated:    relayEvt.CanonicalIntentCreated,
-			MappingProfileUsed:        relayEvt.MappingProfileID,
-			RequiredFieldsStatus:      relayEvt.RequiredFieldsStatus,
-			TokenizationStatus:        relayEvt.TokenizationStatus,
-			GovernanceDecision:        relayEvt.GovernanceDecision,
+			CanonicalIntentCreated:     relayEvt.CanonicalIntentCreated,
+			MappingProfileUsed:         relayEvt.MappingProfileID,
+			RequiredFieldsStatus:       relayEvt.RequiredFieldsStatus,
+			TokenizationStatus:         relayEvt.TokenizationStatus,
+			GovernanceDecision:         relayEvt.GovernanceDecision,
 
 			// Intent financial identity
 			ClientPayoutRef: relayEvt.ClientPayoutRef,
@@ -95,7 +95,142 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			Currency:        relayEvt.Currency,
 		}
 
-		pendingLeaves := []models.PendingLeafCandidate{l6, l7}
+		// Leaf 9: Raw Row Evidence Leaf Hash
+		l9 := models.PendingLeafCandidate{
+			TenantID:      relayEvt.TenantID,
+			IntentID:      &relayEvt.AggregateID,
+			ContractID:    &relayEvt.ContractID,
+			ClientBatchID: batchIDPtr,
+			LeafType:      models.LeafTypeRawRowEvidenceLeafHash,
+			ItemRef:       relayEvt.AggregateID,
+			Hash:          relayEvt.RawRowEvidenceLeafHash,
+			SchemaVersion: "v1",
+			SourceTopic:   "payments.intent.events.v1",
+			SourceEventID: relayEvt.EventID,
+
+			// Traceability & Status Fields
+			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
+			CanonicalIntentCreated:     relayEvt.CanonicalIntentCreated,
+			MappingProfileUsed:         relayEvt.MappingProfileID,
+			RequiredFieldsStatus:       relayEvt.RequiredFieldsStatus,
+			TokenizationStatus:         relayEvt.TokenizationStatus,
+			GovernanceDecision:         relayEvt.GovernanceDecision,
+
+			// Intent financial identity
+			ClientPayoutRef: relayEvt.ClientPayoutRef,
+			Amount:          relayEvt.Amount,
+			Currency:        relayEvt.Currency,
+		}
+
+		// Leaf 10: Canonical Row Evidence Leaf Hash
+		l10 := models.PendingLeafCandidate{
+			TenantID:      relayEvt.TenantID,
+			IntentID:      &relayEvt.AggregateID,
+			ContractID:    &relayEvt.ContractID,
+			ClientBatchID: batchIDPtr,
+			LeafType:      models.LeafTypeCanonicalRowEvidenceLeafHash,
+			ItemRef:       relayEvt.AggregateID,
+			Hash:          relayEvt.CanonicalRowEvidenceLeafHash,
+			SchemaVersion: "v1",
+			SourceTopic:   "payments.intent.events.v1",
+			SourceEventID: relayEvt.EventID,
+
+			// Traceability & Status Fields
+			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
+			CanonicalIntentCreated:     relayEvt.CanonicalIntentCreated,
+			MappingProfileUsed:         relayEvt.MappingProfileID,
+			RequiredFieldsStatus:       relayEvt.RequiredFieldsStatus,
+			TokenizationStatus:         relayEvt.TokenizationStatus,
+			GovernanceDecision:         relayEvt.GovernanceDecision,
+
+			// Intent financial identity
+			ClientPayoutRef: relayEvt.ClientPayoutRef,
+			Amount:          relayEvt.Amount,
+			Currency:        relayEvt.Currency,
+		}
+
+		// Leaf 11: Mapping Profile Hash
+		l11 := models.PendingLeafCandidate{
+			TenantID:      relayEvt.TenantID,
+			IntentID:      &relayEvt.AggregateID,
+			ContractID:    &relayEvt.ContractID,
+			ClientBatchID: batchIDPtr,
+			LeafType:      models.LeafTypeMappingProfileHash,
+			ItemRef:       relayEvt.AggregateID,
+			Hash:          relayEvt.MappingProfileHash,
+			SchemaVersion: "v1",
+			SourceTopic:   "payments.intent.events.v1",
+			SourceEventID: relayEvt.EventID,
+
+			// Traceability & Status Fields
+			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
+			CanonicalIntentCreated:     relayEvt.CanonicalIntentCreated,
+			MappingProfileUsed:         relayEvt.MappingProfileID,
+			RequiredFieldsStatus:       relayEvt.RequiredFieldsStatus,
+			TokenizationStatus:         relayEvt.TokenizationStatus,
+			GovernanceDecision:         relayEvt.GovernanceDecision,
+
+			// Intent financial identity
+			ClientPayoutRef: relayEvt.ClientPayoutRef,
+			Amount:          relayEvt.Amount,
+			Currency:        relayEvt.Currency,
+		}
+
+		// Leaf 12: Business Idempotency Hash
+		l12 := models.PendingLeafCandidate{
+			TenantID:      relayEvt.TenantID,
+			IntentID:      &relayEvt.AggregateID,
+			ContractID:    &relayEvt.ContractID,
+			ClientBatchID: batchIDPtr,
+			LeafType:      models.LeafTypeBusinessIdempotencyHash,
+			ItemRef:       relayEvt.AggregateID,
+			Hash:          relayEvt.BusinessIdempotencyKey,
+			SchemaVersion: "v1",
+			SourceTopic:   "payments.intent.events.v1",
+			SourceEventID: relayEvt.EventID,
+
+			// Traceability & Status Fields
+			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
+			CanonicalIntentCreated:     relayEvt.CanonicalIntentCreated,
+			MappingProfileUsed:         relayEvt.MappingProfileID,
+			RequiredFieldsStatus:       relayEvt.RequiredFieldsStatus,
+			TokenizationStatus:         relayEvt.TokenizationStatus,
+			GovernanceDecision:         relayEvt.GovernanceDecision,
+
+			// Intent financial identity
+			ClientPayoutRef: relayEvt.ClientPayoutRef,
+			Amount:          relayEvt.Amount,
+			Currency:        relayEvt.Currency,
+		}
+
+		// Leaf 13: Tokenized Data Hash
+		l13 := models.PendingLeafCandidate{
+			TenantID:      relayEvt.TenantID,
+			IntentID:      &relayEvt.AggregateID,
+			ContractID:    &relayEvt.ContractID,
+			ClientBatchID: batchIDPtr,
+			LeafType:      models.LeafTypeTokenizedDataHash,
+			ItemRef:       relayEvt.AggregateID,
+			Hash:          relayEvt.TokenizedDataHash,
+			SchemaVersion: "v1",
+			SourceTopic:   "payments.intent.events.v1",
+			SourceEventID: relayEvt.EventID,
+
+			// Traceability & Status Fields
+			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
+			CanonicalIntentCreated:     relayEvt.CanonicalIntentCreated,
+			MappingProfileUsed:         relayEvt.MappingProfileID,
+			RequiredFieldsStatus:       relayEvt.RequiredFieldsStatus,
+			TokenizationStatus:         relayEvt.TokenizationStatus,
+			GovernanceDecision:         relayEvt.GovernanceDecision,
+
+			// Intent financial identity
+			ClientPayoutRef: relayEvt.ClientPayoutRef,
+			Amount:          relayEvt.Amount,
+			Currency:        relayEvt.Currency,
+		}
+
+		pendingLeaves := []models.PendingLeafCandidate{l6, l7, l9, l10, l11, l12, l13}
 
 		// Pass intent_id, envelope_id and contract_id to link any buffered edge leaves
 		return pg.HandleLeafUpdate(ctx, relayEvt.TenantID, relayEvt.EnvelopeID, relayEvt.AggregateID, relayEvt.ContractID, relayEvt.TraceID, pendingLeaves)

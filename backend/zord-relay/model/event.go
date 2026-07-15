@@ -42,6 +42,13 @@ type OutboxEvent struct {
 	GovernanceState string          `json:"governance_state,omitempty"`
 	GovernanceHash  string          `json:"governance_hash,omitempty"`
 
+	// --- Evidence leaf hashes (Service 2 / zord-intent-engine) ---
+	RawRowEvidenceLeafHash       string `json:"raw_row_evidence_leaf_hash,omitempty"`
+	CanonicalRowEvidenceLeafHash string `json:"canonical_row_evidence_leaf_hash,omitempty"`
+	MappingProfileHash           string `json:"mapping_profile_hash,omitempty"`
+	BusinessIdempotencyKey       string `json:"business_idempotency_key,omitempty"`
+	TokenizedDataHash            string `json:"tokenized_data_hash,omitempty"`
+
 	// --- Lease ---
 	LeaseID    string     `json:"lease_id"`
 	LeasedBy   string     `json:"leased_by"`
