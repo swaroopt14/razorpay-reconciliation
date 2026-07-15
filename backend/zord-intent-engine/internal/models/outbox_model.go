@@ -9,15 +9,17 @@ import (
 )
 
 type OutboxEvent struct {
-	EventID       string    `json:"event_id" db:"event_id"`
-	EnvelopeID    string    `json:"envelope_id" db:"envelope_id"`
-	TraceID       string    `json:"trace_id" db:"trace_id"`
-	TenantID      string    `json:"tenant_id" db:"tenant_id"`
-	ContractID    string    `json:"contract_id,omitempty" db:"contract_id"`
-	AggregateType string    `json:"aggregate_type" db:"aggregate_type"`
-	AggregateID   uuid.UUID `json:"aggregate_id" db:"aggregate_id"`
-	IntentID      string    `json:"intent_id"`
-	EventType     string    `json:"event_type" db:"event_type"`
+	EventID           string    `json:"event_id" db:"event_id"`
+	EnvelopeID        string    `json:"envelope_id" db:"envelope_id"`
+	TraceID           string    `json:"trace_id" db:"trace_id"`
+	TenantID          string    `json:"tenant_id" db:"tenant_id"`
+	ContractID        string    `json:"contract_id,omitempty" db:"contract_id"`
+	ArtifactID        string    `json:"artifact_id,omitempty" db:"artifact_id"`
+	ArtifactVersionID string    `json:"artifact_version_id,omitempty" db:"artifact_version_id"`
+	AggregateType     string    `json:"aggregate_type" db:"aggregate_type"`
+	AggregateID       uuid.UUID `json:"aggregate_id" db:"aggregate_id"`
+	IntentID          string    `json:"intent_id"`
+	EventType         string    `json:"event_type" db:"event_type"`
 
 	SchemaVersion string          `json:"schema_version" db:"schema_version"`
 	Amount        decimal.Decimal `json:"amount" db:"amount"`

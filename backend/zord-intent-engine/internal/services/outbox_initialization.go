@@ -22,13 +22,15 @@ func CanonicalIntentToOutboxEvent(
 	}
 
 	return models.OutboxEvent{
-		TraceID:       intent.TraceID,
-		EnvelopeID:    intent.EnvelopeID,
-		TenantID:      intent.TenantID,
-		AggregateType: "intent",
-		AggregateID:   intId,
-		IntentID:      intent.IntentID,
-		EventType:     eventType,
+		TraceID:           intent.TraceID,
+		EnvelopeID:        intent.EnvelopeID,
+		TenantID:          intent.TenantID,
+		ArtifactID:        intent.ArtifactID,
+		ArtifactVersionID: intent.ArtifactVersionID,
+		AggregateType:     "intent",
+		AggregateID:       intId,
+		IntentID:          intent.IntentID,
+		EventType:         eventType,
 
 		SchemaVersion: "v1",
 		Amount:        intent.Amount,

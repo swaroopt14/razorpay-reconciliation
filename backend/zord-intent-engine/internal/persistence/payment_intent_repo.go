@@ -118,7 +118,8 @@ func (r *PaymentIntentRepo) Save(
     source_row_ref, canonical_row_hash,
     input_facts_hash, tokenized_data_hash,
     raw_row_evidence_leaf_hash, canonical_row_evidence_leaf_hash,
-    raw_row_hash
+    raw_row_hash,
+    artifact_id, artifact_version_id
 )
 VALUES (
     $1,$2,$3,$4,
@@ -145,7 +146,8 @@ VALUES (
     $69, $70,
     $71, $72,
     $73, $74,
-    $75
+    $75,
+    $76, $77
 ) `
 
 	_, err = tx.ExecContext(
@@ -226,6 +228,8 @@ VALUES (
 		intent.RawRowEvidenceLeafHash,       // $73
 		intent.CanonicalRowEvidenceLeafHash, // $74
 		intent.RawRowHash,                   // $75
+		intent.ArtifactID,                   // $76
+		intent.ArtifactVersionID,            // $77
 	)
 
 	if err != nil {
@@ -303,7 +307,8 @@ INSERT INTO outbox (
     source_row_ref, canonical_row_hash,
     input_facts_hash, tokenized_data_hash,
     raw_row_evidence_leaf_hash, canonical_row_evidence_leaf_hash,
-    raw_row_hash
+    raw_row_hash,
+    artifact_id, artifact_version_id
 ) VALUES (
     $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
     $11,$12,$13,$14,$15,$16,$17,$18,$19,
@@ -318,7 +323,8 @@ INSERT INTO outbox (
     $73, $74,
     $75, $76,
     $77, $78,
-    $79
+    $79,
+    $80, $81
 )`
 
 	outbox.ContractID = intent.ContractID
@@ -405,6 +411,8 @@ INSERT INTO outbox (
 		outbox.RawRowEvidenceLeafHash,       // $77
 		outbox.CanonicalRowEvidenceLeafHash, // $78
 		outbox.RawRowHash,                   // $79
+		outbox.ArtifactID,                   // $80
+		outbox.ArtifactVersionID,            // $81
 	)
 	if err != nil {
 		log.Printf("Repo.Save: INSERT outbox failed: %v", err)
@@ -1412,7 +1420,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 		}
 	}
 	if len(intents) > 0 {
-		const piCols = 75
+		const piCols = 77
 		var placeholders strings.Builder
 		args := make([]interface{}, 0, len(intents)*piCols)
 		for i, intent := range intents {
@@ -1504,6 +1512,8 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 				intent.RawRowEvidenceLeafHash,       // $73
 				intent.CanonicalRowEvidenceLeafHash, // $74
 				intent.RawRowHash,                   // $75
+				intent.ArtifactID,                   // $76
+				intent.ArtifactVersionID,            // $77
 			)
 		}
 		q := fmt.Sprintf(`INSERT INTO payment_intents (
@@ -1547,7 +1557,8 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 			source_row_ref, canonical_row_hash,
 			input_facts_hash, tokenized_data_hash,
 			raw_row_evidence_leaf_hash, canonical_row_evidence_leaf_hash,
-			raw_row_hash
+			raw_row_hash,
+			artifact_id, artifact_version_id
 		) VALUES %s`, placeholders.String())
 		_, err = tx.ExecContext(ctx, q, args...)
 		if err != nil {
@@ -1564,7 +1575,7 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 		}
 	}
 	if len(outboxes) > 0 {
-		const outboxCols = 79
+		const outboxCols = 81
 		var placeholders strings.Builder
 		args := make([]interface{}, 0, len(outboxes)*outboxCols)
 		for i, outbox := range outboxes {
@@ -1660,6 +1671,8 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 				outbox.RawRowEvidenceLeafHash,       // $77
 				outbox.CanonicalRowEvidenceLeafHash, // $78
 				outbox.RawRowHash,                   // $79
+				outbox.ArtifactID,                   // $80
+				outbox.ArtifactVersionID,            // $81
 			)
 		}
 		q := fmt.Sprintf(`INSERT INTO outbox (
@@ -1689,7 +1702,8 @@ func (r *PaymentIntentRepo) execSaveBatchChunk(ctx context.Context, chunk []mode
 			source_row_ref, canonical_row_hash,
 			input_facts_hash, tokenized_data_hash,
 			raw_row_evidence_leaf_hash, canonical_row_evidence_leaf_hash,
-			raw_row_hash
+			raw_row_hash,
+			artifact_id, artifact_version_id
 		) VALUES %s`, placeholders.String())
 		_, err = tx.ExecContext(ctx, q, args...)
 		if err != nil {
