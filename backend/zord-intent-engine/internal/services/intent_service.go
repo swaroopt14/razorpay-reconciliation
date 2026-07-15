@@ -3345,18 +3345,18 @@ func canonicalPathToFieldName(path string) string {
 }
 
 // sourceRowNumFromRef converts the source_row_ref string (a plain integer relayed
-by zord-edge from the actual Excel/CSV file row number) into *int for storage.
+// by zord-edge from the actual Excel/CSV file row number) into *int for storage.
 // Returns nil only when the string is empty or not a valid integer.
 func sourceRowNumFromRef(ref string) *int {
 	ref = strings.TrimSpace(ref)
-	if ref == " {
- return nil
- }
- idx, err := strconv.Atoi(ref)
- if err != nil {
- return nil
- }
- return &idx
+	if ref == "" {
+		return nil
+	}
+	idx, err := strconv.Atoi(ref)
+	if err != nil {
+		return nil
+	}
+	return &idx
 }
 
 func autoGenericProfileID(rawJSON []byte) string {

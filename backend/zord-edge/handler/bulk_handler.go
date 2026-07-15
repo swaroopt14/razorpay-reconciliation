@@ -375,6 +375,8 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 						func(s string) *string { return &s }("CSV"),
 						&job.SourceRowRef,
 						&profileIDForAudit, // Use profileIDForAudit as the audit hint
+						artifactID,
+						artifactVersionId,
 					)
 
 					resultsMu.Lock()
@@ -649,6 +651,8 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 						func(s string) *string { return &s }("XLSX"),
 						&job.SourceRowRef,
 						&profileIDForAudit, // Use profileIDForAudit as the audit hint
+						artifactID,
+						artifactVersionId,
 					)
 
 					resultsMu.Lock()
@@ -998,6 +1002,8 @@ func (h *Handler) processBulkIntentRow(
 	fileUploadChannel *string,
 	sourceRowRef *string,
 	profileID *string, // audit: which mapping profile parsed this row
+	artifactID string, // shared file-level artifact id, stamped on every row envelope
+	artifactVersionID string,
 ) (*model.AckMessage, uuid.UUID, error) {
 
 	encryptedPayload, err := vault.Encrypt(rawPayload)
@@ -1066,6 +1072,8 @@ func (h *Handler) processBulkIntentRow(
 		log.Printf("S3 data is nil for bulk row, trace_id=%s", traceID)
 		return nil, uuid.Nil, fmt.Errorf("S3 store returned nil ack for trace_id=%s", traceID)
 	}
+	storageAck.ArtifactId = artifactID
+	storageAck.ArtifactVersionId = artifactVersionID
 
 	payloadHashSum := sha256.Sum256(rawPayload)
 	rawIntent.PayloadHash = payloadHashSum[:]
