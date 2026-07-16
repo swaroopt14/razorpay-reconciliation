@@ -135,19 +135,55 @@ func (h *ProofHandler) VerifyPack(c *gin.Context) {
 		}
 	}
 
-	resp := models.VerifyResponse{
-		EvidencePackID:     packID,
-		CheckedAt:          checkedAt,
-		StoredRoot:         stored,
-		ComputedRoot:       computed,
-		DBMerkleStatus:     statusLabel(merklePassed),
-		ArchiveStatus:      archiveStatus,
-		ArchiveExplanation: archiveExplanation,
+	// -------- Level 2: signature verification --------
+	// Independently re-verifies the ed25519 signature against this
+	// deployment's trusted key — not the key_id recorded on the row being
+	// checked (see Signer.PublicKey doc comment for why that distinction
+	// matters). Previously there was no verify counterpart to signing at all.
+	signatureStatus := "PASSED"
+	signatureExplanation := ""
+	if sigErr := h.svc.VerifyPackSignature(pack); sigErr != nil {
+		signatureExplanation = sigErr.Error()
+		if errors.Is(sigErr, services.ErrSignatureNotAvailable) {
+			signatureStatus = "NOT_AVAILABLE"
+		} else {
+			signatureStatus = "FAILED"
+		}
 	}
 
-	// Overall status is only VERIFIED when both independent layers pass —
-	// this is the actual point of adding Level 3: a pack that's internally
-	// self-consistent but whose archive is corrupted must not read as VERIFIED.
+	resp := models.VerifyResponse{
+		EvidencePackID:       packID,
+		CheckedAt:            checkedAt,
+		StoredRoot:           stored,
+		ComputedRoot:         computed,
+		DBMerkleStatus:       statusLabel(merklePassed),
+		ArchiveStatus:        archiveStatus,
+		ArchiveExplanation:   archiveExplanation,
+		SignatureStatus:      signatureStatus,
+		SignatureExplanation: signatureExplanation,
+	}
+
+	// Overall status composition:
+	//   CORRUPTED             — DB/Merkle self-check failed (foundational, checked first).
+	//   COMPROMISED           — DB/Merkle passed, but an independent source (archive
+	//                           and/or signature) positively disagrees with it.
+	//   INTERNALLY_CONSISTENT — DB/Merkle passed, and every layer that DID run
+	//                           agreed, but at least one layer couldn't be checked.
+	//   VERIFIED              — every layer that exists for this pack independently agrees.
+	var failedLayers, unavailableLayers []string
+	if archiveStatus == "FAILED" {
+		failedLayers = append(failedLayers, "archive: "+archiveExplanation)
+	}
+	if archiveStatus == "NOT_AVAILABLE" {
+		unavailableLayers = append(unavailableLayers, "archive: "+archiveExplanation)
+	}
+	if signatureStatus == "FAILED" {
+		failedLayers = append(failedLayers, "signature: "+signatureExplanation)
+	}
+	if signatureStatus == "NOT_AVAILABLE" {
+		unavailableLayers = append(unavailableLayers, "signature: "+signatureExplanation)
+	}
+
 	httpStatus := http.StatusOK
 	switch {
 	case !merklePassed:
@@ -157,20 +193,20 @@ func (h *ProofHandler) VerifyPack(c *gin.Context) {
 		resp.Explanation = "ALERT: live database leaf hashes do not reproduce the original Merkle root. Evidence pack has decoupled from its anchor root. Immediate investigation required."
 		httpStatus = http.StatusUnprocessableEntity
 
-	case archiveStatus == "FAILED":
-		log.Printf("[ALERT] proof.verify ARCHIVE_UNVERIFIED pack=%s err=%v — archive has decoupled from its sealed manifest",
-			packID, archiveExplanation)
-		resp.Status = "ARCHIVE_UNVERIFIED"
-		resp.Explanation = "ALERT: database and Merkle root are internally consistent, but the independently stored encrypted archive failed verification: " + archiveExplanation
+	case len(failedLayers) > 0:
+		log.Printf("[ALERT] proof.verify COMPROMISED pack=%s failed_layers=%v — an independent source disagrees with the database",
+			packID, failedLayers)
+		resp.Status = "COMPROMISED"
+		resp.Explanation = "ALERT: database and Merkle root are internally consistent, but independent verification failed — " + strings.Join(failedLayers, "; ")
 		httpStatus = http.StatusUnprocessableEntity
 
-	case archiveStatus == "NOT_AVAILABLE":
+	case len(unavailableLayers) > 0:
 		resp.Status = "INTERNALLY_CONSISTENT"
-		resp.Explanation = "Database and Merkle root are internally consistent. Archive verification was not available for this pack (" + archiveExplanation + "), so this is not full dispute-ready proof."
+		resp.Explanation = "Database and Merkle root are internally consistent. Not all independent layers could be checked — " + strings.Join(unavailableLayers, "; ") + ". This is not full dispute-ready proof."
 
 	default:
 		resp.Status = "VERIFIED"
-		resp.Explanation = "Merkle root reproduced from live database entries, and the independently stored encrypted archive verified successfully (ciphertext, decryption, and plaintext manifest all match)."
+		resp.Explanation = "Merkle root reproduced from live database entries, and every independent source (encrypted archive, signature) verified successfully."
 	}
 
 	// Overall correctness — never mark verified=true unless every layer we

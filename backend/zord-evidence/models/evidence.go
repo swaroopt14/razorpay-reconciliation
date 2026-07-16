@@ -190,6 +190,7 @@ const (
 
 	SignatureVerificationNotVerified = "NOT_VERIFIED"
 	SignatureVerificationVerified    = "VERIFIED"
+	SignatureVerificationFailed      = "FAILED"
 )
 
 // Signature is one cryptographic commitment over a pack. Persisted in
@@ -204,6 +205,16 @@ type Signature struct {
 	SignedPayloadHash       string    `json:"signed_payload_hash,omitempty"`
 	CanonicalizationVersion string    `json:"canonicalization_version,omitempty"`
 	VerificationStatus      string    `json:"verification_status,omitempty"`
+
+	// SignedPayload is the exact byte-for-byte string that was signed —
+	// required for independent re-verification. SignedPayloadHash alone is
+	// not enough: ed25519.Verify needs the original message, not its hash,
+	// and the payload embeds a nanosecond-precision timestamp that cannot be
+	// reconstructed from evidence_packs.created_at/signed_at after a
+	// TIMESTAMPTZ round-trip (Postgres truncates to microseconds). Empty for
+	// packs signed before this field existed — those can't be independently
+	// re-verified and must report NOT_AVAILABLE, not FAILED.
+	SignedPayload string `json:"signed_payload,omitempty"`
 }
 
 // EvidencePack is the canonical committed proof bundle for one payment lifecycle.

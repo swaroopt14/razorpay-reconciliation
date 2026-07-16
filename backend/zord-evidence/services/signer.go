@@ -48,8 +48,16 @@ func NewSigner(privateKeyPath string) (*Signer, error) {
 
 // KeyID returns a stable identifier for the active signing public key.
 func (s *Signer) KeyID() string {
-	pub := s.private.Public().(ed25519.PublicKey)
-	return "ed25519:" + hex.EncodeToString(pub)
+	return "ed25519:" + hex.EncodeToString(s.PublicKey())
+}
+
+// PublicKey returns the active signing key's public half — the trusted
+// verification key. Independent signature re-verification must use this
+// (the deployment's own configured key), not a key_id read back from the
+// row being verified, otherwise a compromised DB could swap both the
+// payload and key_id together and still "verify".
+func (s *Signer) PublicKey() ed25519.PublicKey {
+	return s.private.Public().(ed25519.PublicKey)
 }
 
 // Sign produces a base64-encoded ed25519 signature over payload, prefixed with "ZORD".

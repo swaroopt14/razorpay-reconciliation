@@ -492,6 +492,15 @@ END $$;`,
 			WHERE eps.evidence_pack_id = ep.evidence_pack_id
 		  )
 		ON CONFLICT (evidence_pack_id, signer_id, alg, key_id) DO NOTHING`,
+
+		// Level 2 verification: independent signature re-verification needs the
+		// exact byte-for-byte signed payload, not just its hash — ed25519.Verify
+		// requires the original message, and the payload embeds a
+		// nanosecond-precision timestamp that cannot be reconstructed from
+		// evidence_packs.created_at after a TIMESTAMPTZ round-trip (Postgres
+		// truncates to microseconds). Packs signed before this column existed
+		// have it NULL/empty and report NOT_AVAILABLE rather than FAILED.
+		`ALTER TABLE evidence_pack_signatures ADD COLUMN IF NOT EXISTS signed_payload TEXT;`,
 	}
 	for _, m := range migrations {
 		if _, err := d.ExecContext(ctx, m); err != nil {

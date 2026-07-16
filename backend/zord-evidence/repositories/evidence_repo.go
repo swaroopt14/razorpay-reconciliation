@@ -364,8 +364,8 @@ func (r *EvidenceRepository) savePackSignatureInTx(ctx context.Context, tx *sql.
 	_, err := tx.ExecContext(ctx, `
 INSERT INTO evidence_pack_signatures(
 	evidence_pack_id, signer_id, alg, key_id, signature_value,
-	signed_payload_hash, canonicalization_version, signed_at, verification_status
-) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+	signed_payload_hash, signed_payload, canonicalization_version, signed_at, verification_status
+) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 ON CONFLICT (evidence_pack_id, signer_id, alg, key_id) DO NOTHING`,
 		packID,
 		sig.Signer,
@@ -373,6 +373,7 @@ ON CONFLICT (evidence_pack_id, signer_id, alg, key_id) DO NOTHING`,
 		keyID,
 		sig.Sig,
 		signedPayloadHash,
+		nullStr(sig.SignedPayload),
 		canonicalVersion,
 		sig.SignedAt,
 		verificationStatus,
@@ -393,7 +394,7 @@ func (r *EvidenceRepository) loadPackSignatures(
 ) ([]models.Signature, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT signer_id, alg, key_id, signature_value, signed_payload_hash,
-       canonicalization_version, signed_at, verification_status
+       COALESCE(signed_payload, ''), canonicalization_version, signed_at, verification_status
 FROM evidence_pack_signatures
 WHERE evidence_pack_id = $1
 ORDER BY signed_at ASC`, packID)
@@ -411,6 +412,7 @@ ORDER BY signed_at ASC`, packID)
 			&sig.KeyID,
 			&sig.Sig,
 			&sig.SignedPayloadHash,
+			&sig.SignedPayload,
 			&sig.CanonicalizationVersion,
 			&sig.SignedAt,
 			&sig.VerificationStatus,

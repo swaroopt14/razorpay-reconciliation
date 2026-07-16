@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS evidence_pack_signatures (
     key_id TEXT NOT NULL,
     signature_value TEXT NOT NULL,
     signed_payload_hash TEXT NOT NULL,
+    signed_payload TEXT,
     canonicalization_version TEXT NOT NULL,
     signed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     verification_status TEXT NOT NULL DEFAULT 'NOT_VERIFIED',

@@ -142,21 +142,25 @@ type LineageEdge struct {
 
 // VerifyResponse is the payload for POST /v1/evidence/{id}/verify.
 //
-// Status combines two independent layers — it is only VERIFIED when both
-// pass. This is intentionally not the full 5-level verification model from
-// the evidence refactor spec (signature, source-artifact, and business-replay
-// layers aren't wired in yet) — it's Level 1 (DB/Merkle self-consistency)
-// plus Level 3 (encrypted archive verification), which previously existed
-// but was only invoked during dispute export, never during /verify.
+// Status combines three independent layers — it is only VERIFIED when all
+// that exist for this pack pass. This is intentionally not the full 5-level
+// verification model from the evidence refactor spec (source-artifact and
+// business-replay layers need Service 2 API support that doesn't exist yet)
+// — it's Level 1 (DB/Merkle self-consistency), Level 2 (signature), and
+// Level 3 (encrypted archive), the last two of which previously existed but
+// were never invoked from /verify (signature had no verify counterpart at
+// all; archive was only checked during dispute export).
 //
-//	VERIFIED               — DB/Merkle AND archive both verified independently.
+//	VERIFIED               — DB/Merkle, archive, and signature all verified independently.
 //	CORRUPTED               — DB/Merkle recomputation does not match the stored root.
-//	ARCHIVE_UNVERIFIED      — DB/Merkle passed, but the independently stored
-//	                          archive failed ciphertext/decrypt/manifest checks.
-//	INTERNALLY_CONSISTENT   — DB/Merkle passed, but no archive exists to check
-//	                          against (e.g. archiving wasn't enabled when this
-//	                          pack was created, or archive storage isn't
-//	                          configured on this deployment). Not full proof.
+//	COMPROMISED             — DB/Merkle passed, but the archive and/or signature
+//	                          positively failed independent verification.
+//	INTERNALLY_CONSISTENT   — DB/Merkle passed, and every layer that DID run
+//	                          agreed, but at least one layer (archive and/or
+//	                          signature) could not be checked for this pack
+//	                          (e.g. it predates that feature, or the relevant
+//	                          key/storage isn't configured on this deployment).
+//	                          Not full proof.
 type VerifyResponse struct {
 	Status         string    `json:"status"`
 	EvidencePackID string    `json:"evidence_pack_id"`
@@ -171,6 +175,10 @@ type VerifyResponse struct {
 	// ArchiveStatus is Level 3: PASSED | FAILED | NOT_AVAILABLE.
 	ArchiveStatus      string `json:"archive_status"`
 	ArchiveExplanation string `json:"archive_explanation,omitempty"`
+
+	// SignatureStatus is Level 2: PASSED | FAILED | NOT_AVAILABLE.
+	SignatureStatus      string `json:"signature_status"`
+	SignatureExplanation string `json:"signature_explanation,omitempty"`
 }
 
 // DisputeExportRequest is the payload for POST /v1/dispute/export.

@@ -15,6 +15,7 @@ func buildPackSignature(signer *Signer, canonicalVersion, payload string, signed
 		SignedAt:                signedAt,
 		KeyID:                   signer.KeyID(),
 		SignedPayloadHash:       utils.SHA256Hex(payload),
+		SignedPayload:           payload,
 		CanonicalizationVersion: canonicalVersion,
 		VerificationStatus:      models.SignatureVerificationNotVerified,
 	}
