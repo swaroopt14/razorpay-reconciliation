@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
         - name: postgres-exporter
-          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/postgres-exporter:v0.15.0
+          image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/postgres-exporter:v0.15.0
           ports:
             - containerPort: 9187
               name: metrics

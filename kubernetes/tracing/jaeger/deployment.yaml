@@ -28,7 +28,7 @@ spec:
       containers:
         # ── Jaeger All-in-One ──
         - name: jaeger
-          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/jaeger:1.55
+          image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/jaeger:1.55
           ports:
             - containerPort: 16686
               name: ui

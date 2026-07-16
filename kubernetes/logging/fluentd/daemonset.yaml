@@ -17,7 +17,7 @@ spec:
         - operator: Exists
       containers:
         - name: fluentd
-          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/fluentd:v1.16-debian-elasticsearch8-1
+          image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/fluentd:v1.16-debian-elasticsearch8-1
           env:
             - name: FLUENT_ELASTICSEARCH_HOST
               value: elasticsearch.logging.svc.cluster.local

@@ -44,7 +44,7 @@ You need these installed on your laptop or admin machine:
 
 - `aws` CLI
 - `kubectl`
-- Access to AWS account `522189039032`
+- Access to AWS account `673698305621`
 - Access to the EKS cluster
 
 You also need these already completed:
@@ -69,7 +69,7 @@ kubectl config current-context
 Expected:
 
 ```text
-arn:aws:eks:ap-south-1:522189039032:cluster/<cluster-name>
+arn:aws:eks:ap-south-1:673698305621:cluster/<cluster-name>
 ```
 
 Bad result:
@@ -229,7 +229,7 @@ kubectl describe serviceaccount zord-aws-access -n zord
 Expected annotation:
 
 ```text
-eks.amazonaws.com/role-arn: arn:aws:iam::522189039032:role/ZordAppS3AccessRole
+eks.amazonaws.com/role-arn: arn:aws:iam::673698305621:role/ZordAppS3AccessRole
 ```
 
 If missing, S3 operations will fail.
