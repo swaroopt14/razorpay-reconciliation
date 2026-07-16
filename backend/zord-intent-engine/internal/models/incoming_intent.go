@@ -8,29 +8,29 @@ import (
 )
 
 type IncomingIntent struct {
-	TraceID          uuid.UUID `json:"trace_id" db:"trace_id"`
-	EnvelopeID       uuid.UUID `json:"envelope_id" db:"envelope_id"`
-	TenantID         uuid.UUID `json:"tenant_id" db:"tenant_id"`
-	ArtifactID       uuid.UUID `json:"artifact_id,omitempty" db:"-"`
-	ArtifactVersionID string   `json:"artifact_version_id,omitempty" db:"-"`
-	Source           string    `json:"source" db:"source"`
-	SourceSystem     string    `json:"source_system" db:"source_system"`
-	IdempotencyKey   string    `json:"idempotency_key" db:"idempotency_key"`
-	PayloadHash      string    `json:"payload_hash" db:"payload_hash"`
-	RawRowHash       *string   `json:"raw_row_hash,omitempty" db:"-"`
-	ObjectRef        string    `json:"object_ref" db:"object_ref"`
-	ParseStatus      string    `json:"parse_status" db:"parse_status"`
-	SignatureStatus  *string   `json:"signature_status,omitempty" db:"signature_status"`
-	AmountValue      string    `json:"amount_value" db:"amount_value"`
-	AmountCurrency   string    `json:"amount_currency" db:"amount_currency"`
-	ReceivedAt       time.Time `json:"received_at" db:"received_at"`
-	Payload          json.RawMessage
-	EncryptedPayload []byte  `json:"encrypted_payload,omitempty" db:"encrypted_payload"`
-	BatchID          *string `json:"batchid,omitempty" db:"batchid"`
-	SourceRowRef     *string `json:"source_row_ref,omitempty" db:"-"`
-	FileName         *string `json:"file_name,omitempty" db:"-"`
-	FileContentHash  *string `json:"file_content_hash,omitempty" db:"-"`
-	RowCountEstimate *int    `json:"row_count_estimate,omitempty" db:"-"`
+	TraceID           uuid.UUID `json:"trace_id" db:"trace_id"`
+	EnvelopeID        uuid.UUID `json:"envelope_id" db:"envelope_id"`
+	TenantID          uuid.UUID `json:"tenant_id" db:"tenant_id"`
+	ArtifactID        uuid.UUID `json:"artifact_id,omitempty" db:"-"`
+	ArtifactVersionID string    `json:"artifact_version_id,omitempty" db:"-"`
+	Source            string    `json:"source" db:"source"`
+	SourceSystem      string    `json:"source_system" db:"source_system"`
+	IdempotencyKey    string    `json:"idempotency_key" db:"idempotency_key"`
+	PayloadHash       string    `json:"payload_hash" db:"payload_hash"`
+	RawRowHash        *string   `json:"raw_row_hash,omitempty" db:"-"`
+	ObjectRef         string    `json:"object_ref" db:"object_ref"`
+	ParseStatus       string    `json:"parse_status" db:"parse_status"`
+	SignatureStatus   *string   `json:"signature_status,omitempty" db:"signature_status"`
+	AmountValue       string    `json:"amount_value" db:"amount_value"`
+	AmountCurrency    string    `json:"amount_currency" db:"amount_currency"`
+	ReceivedAt        time.Time `json:"received_at" db:"received_at"`
+	Payload           json.RawMessage
+	EncryptedPayload  []byte  `json:"encrypted_payload,omitempty" db:"encrypted_payload"`
+	BatchID           *string `json:"batchid,omitempty" db:"batchid"`
+	SourceRowRef      *string `json:"source_row_ref,omitempty" db:"-"`
+	FileName          *string `json:"file_name,omitempty" db:"-"`
+	FileContentHash   *string `json:"file_content_hash,omitempty" db:"-"`
+	RowCountEstimate  *int    `json:"row_count_estimate,omitempty" db:"-"`
 }
 
 type ParsedIncomingIntent struct {
@@ -53,6 +53,8 @@ type ParsedIncomingIntent struct {
 	IntentID                string          `json:"intent_id,omitempty"`
 	PayloadHash             string          `json:"payload_hash,omitempty"`
 	RawRowHash              string          `json:"raw_row_hash,omitempty"`
+	ArtifactID              string          `json:"artifact_id,omitempty"`
+	ArtifactVersionID       string          `json:"artifact_version_id,omitempty"`
 	FieldConfidenceSummary  json.RawMessage `json:"field_confidence_summary,omitempty"`
 	LowConfidenceFieldCount int             `json:"low_confidence_field_count,omitempty"`
 	RequiredFieldGapCount   int             `json:"required_field_gap_count,omitempty"`
@@ -107,4 +109,3 @@ type SaveBatchItem struct {
 	PolicyDecision    *IntentPolicyDecision
 	DuplicateDecision *DuplicateDecision
 }
-

@@ -1085,22 +1085,24 @@ func (s *IntentService) processIncomingIntentInternal(
 	var in *models.IncomingIntent
 
 	in = &models.IncomingIntent{
-		TenantID:         event.TenantID,
-		EnvelopeID:       event.EnvelopeID,
-		TraceID:          event.TraceID,
-		Source:           event.Source,
-		SourceSystem:     event.SourceSystem,
-		ObjectRef:        event.ObjectRef,
-		IdempotencyKey:   event.IdempotencyKey,
-		EncryptedPayload: event.Payload,
-		PayloadHash:      event.PayloadHash,
-		RawRowHash:       event.RawRowHash,
-		ReceivedAt:       event.ReceivedAt,
-		BatchID:          event.BatchID,
-		SourceRowRef:     event.SourceRowRef,
-		FileName:         event.FileName,
-		FileContentHash:  event.FileContentHash,
-		RowCountEstimate: event.RowCountEstimate,
+		TenantID:          event.TenantID,
+		EnvelopeID:        event.EnvelopeID,
+		TraceID:           event.TraceID,
+		Source:            event.Source,
+		SourceSystem:      event.SourceSystem,
+		ObjectRef:         event.ObjectRef,
+		IdempotencyKey:    event.IdempotencyKey,
+		EncryptedPayload:  event.Payload,
+		PayloadHash:       event.PayloadHash,
+		RawRowHash:        event.RawRowHash,
+		ArtifactID:        event.ArtifactID,
+		ArtifactVersionID: event.ArtifactVersionID,
+		ReceivedAt:        event.ReceivedAt,
+		BatchID:           event.BatchID,
+		SourceRowRef:      event.SourceRowRef,
+		FileName:          event.FileName,
+		FileContentHash:   event.FileContentHash,
+		RowCountEstimate:  event.RowCountEstimate,
 	}
 
 	var resolvedProfile *models.MappingProfile
@@ -1253,6 +1255,11 @@ func (s *IntentService) processIncomingIntentInternal(
 	if in.RawRowHash != nil {
 		rawRowHash = strings.TrimSpace(*in.RawRowHash)
 	}
+	artifactID := ""
+	if in.ArtifactID != uuid.Nil {
+		artifactID = in.ArtifactID.String()
+	}
+	artifactVersionID := strings.TrimSpace(in.ArtifactVersionID)
 	sourceRowNum = sourceRowNumFromRef(sourceRowRef)
 	auditProfileID = autoGenericProfileID(rawAuditPayload)
 	auditProfileVersion = "v1"
@@ -1641,6 +1648,13 @@ func (s *IntentService) processIncomingIntentInternal(
 			retDlq = &dlqEntry
 			return
 		}
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
 		retDlq = &savedDLQ
 		return
 	}
@@ -1658,6 +1672,8 @@ func (s *IntentService) processIncomingIntentInternal(
 	if rawRowHash != "" {
 		parsed.RawRowHash = rawRowHash
 	}
+	parsed.ArtifactID = artifactID
+	parsed.ArtifactVersionID = artifactVersionID
 	parsed.FieldConfidenceSummary = nir.FieldConfidenceSummary
 	parsed.LowConfidenceFieldCount = nir.LowConfidenceFieldCount
 	parsed.RequiredFieldGapCount = nir.RequiredFieldGapCount
@@ -1717,6 +1733,13 @@ func (s *IntentService) processIncomingIntentInternal(
 	}
 
 	if dlq != nil {
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
 		retDlq = dlq
 		return
 	}
@@ -1743,6 +1766,13 @@ func (s *IntentService) processIncomingIntentInternal(
 	if dlq := guards.RunPreGuards(in, canonicalInput); dlq != nil {
 		dlq.TraceID = in.TraceID.String()
 		dlq.IntentContext = models.BuildIntentContext(dlq.DLQStatus, *intent)
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
 		retDlq = dlq
 		return
 	}
@@ -1752,6 +1782,8 @@ func (s *IntentService) processIncomingIntentInternal(
 	canonicalInput.IntentID = intentID // Ensure intent_id is passed to Kafka if needed
 	canonicalInput.PayloadHash = in.PayloadHash
 	canonicalInput.RawRowHash = rawRowHash
+	canonicalInput.ArtifactID = artifactID
+	canonicalInput.ArtifactVersionID = artifactVersionID
 	canonicalInput.FieldConfidenceSummary = nir.FieldConfidenceSummary
 	canonicalInput.LowConfidenceFieldCount = nir.LowConfidenceFieldCount
 	canonicalInput.RequiredFieldGapCount = nir.RequiredFieldGapCount
@@ -1821,6 +1853,13 @@ func (s *IntentService) processIncomingIntentInternal(
 		log.Printf("Tokenization request queued in Kafka for EnvelopeID=%s", in.EnvelopeID)
 
 		// Stop pipeline for now
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
 		return
 	}
 
@@ -1963,6 +2002,8 @@ func (s *IntentService) processIncomingIntentInternal(
 		SalientHash:                reqFingerprint,
 		PayloadHash:                in.PayloadHash,
 		RawRowHash:                 rawRowHash,
+		ArtifactID:                 artifactID,
+		ArtifactVersionID:          artifactVersionID,
 		IntentType:                 canonicalInput.IntentType,
 		CanonicalVersion:           "v1",
 		SchemaVersion:              canonicalInput.SchemaVersion,
@@ -2024,14 +2065,16 @@ func (s *IntentService) processIncomingIntentInternal(
 	}
 
 	canonical := models.CanonicalIntent{
-		TraceID:        in.TraceID.String(),
-		IntentID:       intentID,
-		EnvelopeID:     in.EnvelopeID.String(),
-		TenantID:       in.TenantID.String(),
-		IdempotencyKey: in.IdempotencyKey,
-		SalientHash:    reqFingerprint,
-		PayloadHash:    in.PayloadHash,
-		RawRowHash:     rawRowHash,
+		TraceID:           in.TraceID.String(),
+		IntentID:          intentID,
+		EnvelopeID:        in.EnvelopeID.String(),
+		TenantID:          in.TenantID.String(),
+		IdempotencyKey:    in.IdempotencyKey,
+		SalientHash:       reqFingerprint,
+		PayloadHash:       in.PayloadHash,
+		RawRowHash:        rawRowHash,
+		ArtifactID:        artifactID,
+		ArtifactVersionID: artifactVersionID,
 
 		IntentType:       canonicalInput.IntentType,
 		CanonicalVersion: "v1",
@@ -2899,6 +2942,8 @@ func (s *IntentService) ProcessTokenizeResult(
 		SalientHash:                reqFingerprint,
 		PayloadHash:                canonicalInput.PayloadHash,
 		RawRowHash:                 canonicalInput.RawRowHash,
+		ArtifactID:                 canonicalInput.ArtifactID,
+		ArtifactVersionID:          canonicalInput.ArtifactVersionID,
 		IntentType:                 canonicalInput.IntentType,
 		CanonicalVersion:           "v1",
 		SchemaVersion:              canonicalInput.SchemaVersion,

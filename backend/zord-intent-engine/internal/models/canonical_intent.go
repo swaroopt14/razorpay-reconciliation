@@ -13,6 +13,12 @@ type CanonicalIntent struct {
 	TenantID   string `json:"tenant_id"`
 	ContractID string `json:"contract_id,omitempty" db:"contract_id"`
 
+	// ArtifactID/ArtifactVersionID are relayed from zord-edge (via the Kafka
+	// event), not derived here — identify the exact ingested file/request
+	// this intent's row came from.
+	ArtifactID        string `json:"artifact_id,omitempty" db:"artifact_id"`
+	ArtifactVersionID string `json:"artifact_version_id,omitempty" db:"artifact_version_id"`
+
 	// ✅ ADD THESE
 	TraceID        string `json:"trace_id" db:"trace_id"`
 	IdempotencyKey string `json:"idempotency_key" db:"idempotency_key"`
