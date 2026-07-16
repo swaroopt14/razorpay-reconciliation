@@ -21,27 +21,27 @@ type ProofStatus string
 
 const (
 	// Informational / in-progress states.
-	ProofStatusDraft                   ProofStatus = "DRAFT"
-	ProofStatusPartialProof            ProofStatus = "PARTIAL_PROOF"
-	ProofStatusNeedsReview             ProofStatus = "NEEDS_REVIEW"
+	ProofStatusDraft        ProofStatus = "DRAFT"
+	ProofStatusPartialProof ProofStatus = "PARTIAL_PROOF"
+	ProofStatusNeedsReview  ProofStatus = "NEEDS_REVIEW"
 
 	// Missing-component states (one per required proof component).
-	ProofStatusMissingIntent           ProofStatus = "MISSING_INTENT"
-	ProofStatusMissingSettlement       ProofStatus = "MISSING_SETTLEMENT"
-	ProofStatusMissingMatchDecision    ProofStatus = "MISSING_MATCH_DECISION"
-	ProofStatusMissingGovernance       ProofStatus = "MISSING_GOVERNANCE"
+	ProofStatusMissingIntent        ProofStatus = "MISSING_INTENT"
+	ProofStatusMissingSettlement    ProofStatus = "MISSING_SETTLEMENT"
+	ProofStatusMissingMatchDecision ProofStatus = "MISSING_MATCH_DECISION"
+	ProofStatusMissingGovernance    ProofStatus = "MISSING_GOVERNANCE"
 	// FIX-09: Replaces MISSING_REPLAY_CHECK. The 5th scoring component is
 	// variance-and-decision evidence, not replay/duplicate-spend detection.
 	ProofStatusMissingVarianceEvidence ProofStatus = "MISSING_VARIANCE_EVIDENCE"
 
 	// Terminal / sealed states.
-	ProofStatusProofReady              ProofStatus = "PROOF_READY"
+	ProofStatusProofReady ProofStatus = "PROOF_READY"
 	// FIX-09: Replaces CERTIFIED. Means all leaves are present and the Merkle
 	// root has been sealed and signed — no external certification required.
-	ProofStatusProofAssembled          ProofStatus = "PROOF_ASSEMBLED"
-	ProofStatusVerified                ProofStatus = "VERIFIED"
-	ProofStatusExported                ProofStatus = "EXPORTED"
-	ProofStatusRevokedSuperseded       ProofStatus = "REVOKED_SUPERSEDED"
+	ProofStatusProofAssembled    ProofStatus = "PROOF_ASSEMBLED"
+	ProofStatusVerified          ProofStatus = "VERIFIED"
+	ProofStatusExported          ProofStatus = "EXPORTED"
+	ProofStatusRevokedSuperseded ProofStatus = "REVOKED_SUPERSEDED"
 )
 
 // ProofScoreComponent holds a weighted check result and explains any deduction.
@@ -141,13 +141,36 @@ type LineageEdge struct {
 }
 
 // VerifyResponse is the payload for POST /v1/evidence/{id}/verify.
+//
+// Status combines two independent layers — it is only VERIFIED when both
+// pass. This is intentionally not the full 5-level verification model from
+// the evidence refactor spec (signature, source-artifact, and business-replay
+// layers aren't wired in yet) — it's Level 1 (DB/Merkle self-consistency)
+// plus Level 3 (encrypted archive verification), which previously existed
+// but was only invoked during dispute export, never during /verify.
+//
+//	VERIFIED               — DB/Merkle AND archive both verified independently.
+//	CORRUPTED               — DB/Merkle recomputation does not match the stored root.
+//	ARCHIVE_UNVERIFIED      — DB/Merkle passed, but the independently stored
+//	                          archive failed ciphertext/decrypt/manifest checks.
+//	INTERNALLY_CONSISTENT   — DB/Merkle passed, but no archive exists to check
+//	                          against (e.g. archiving wasn't enabled when this
+//	                          pack was created, or archive storage isn't
+//	                          configured on this deployment). Not full proof.
 type VerifyResponse struct {
-	Status         string    `json:"status"` // VERIFIED | CORRUPTED
+	Status         string    `json:"status"`
 	EvidencePackID string    `json:"evidence_pack_id"`
 	CheckedAt      time.Time `json:"checked_at"`
 	StoredRoot     string    `json:"stored_root"`
 	ComputedRoot   string    `json:"computed_root,omitempty"`
 	Explanation    string    `json:"explanation"`
+
+	// DBMerkleStatus is Level 1: PASSED | FAILED.
+	DBMerkleStatus string `json:"db_merkle_status"`
+
+	// ArchiveStatus is Level 3: PASSED | FAILED | NOT_AVAILABLE.
+	ArchiveStatus      string `json:"archive_status"`
+	ArchiveExplanation string `json:"archive_explanation,omitempty"`
 }
 
 // DisputeExportRequest is the payload for POST /v1/dispute/export.
