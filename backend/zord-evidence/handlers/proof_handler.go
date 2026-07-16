@@ -110,37 +110,84 @@ func (h *ProofHandler) VerifyPack(c *gin.Context) {
 	}
 
 	checkedAt := time.Now().UTC()
+
+	// -------- Level 1: DB / Merkle self-consistency --------
+	// Proves the current database rows reproduce the root currently stored in
+	// the database. On its own this does NOT prove the archive is intact, the
+	// signature is valid, or that Service 2/5 haven't replaced a stored hash —
+	// see Level 3 below for an independent check.
 	computed := services.RecomputeMerkleRoot(pack)
 	stored := pack.MerkleRoot
+	merklePassed := computed == stored
 
-	if computed == stored {
-		if markErr := h.enrichRepo.MarkVerified(c.Request.Context(), packID, true, checkedAt); markErr != nil {
-			log.Printf("proof.verify: mark_verified failed pack=%s err=%v", packID, markErr)
+	// -------- Level 3: encrypted archive verification --------
+	// Previously only invoked during dispute export (P1-02) — a pack could
+	// show VERIFIED here even if its archived object was modified, undecryptable,
+	// or diverged from the sealed manifest. Wiring it into /verify closes that gap.
+	archiveStatus := "PASSED"
+	archiveExplanation := ""
+	if archiveErr := h.svc.VerifyArchiveForPack(c.Request.Context(), packID); archiveErr != nil {
+		archiveExplanation = archiveErr.Error()
+		if errors.Is(archiveErr, services.ErrArchiveNotAvailable) {
+			archiveStatus = "NOT_AVAILABLE"
+		} else {
+			archiveStatus = "FAILED"
 		}
-		c.JSON(http.StatusOK, models.VerifyResponse{
-			Status:         "VERIFIED",
-			EvidencePackID: packID,
-			CheckedAt:      checkedAt,
-			StoredRoot:     stored,
-			ComputedRoot:   computed,
-			Explanation:    "Merkle root reproduced exactly from live database entries. Evidence pack is cryptographically intact.",
-		})
-		return
 	}
 
-	// Corrupted — emit high-priority alert log per spec §7
-	log.Printf("[ALERT] proof.verify CORRUPTED pack=%s stored_root=%s computed_root=%s — evidence pack has decoupled from its original anchor root",
-		packID, stored, computed)
-	_ = h.enrichRepo.MarkVerified(c.Request.Context(), packID, false, checkedAt)
+	resp := models.VerifyResponse{
+		EvidencePackID:     packID,
+		CheckedAt:          checkedAt,
+		StoredRoot:         stored,
+		ComputedRoot:       computed,
+		DBMerkleStatus:     statusLabel(merklePassed),
+		ArchiveStatus:      archiveStatus,
+		ArchiveExplanation: archiveExplanation,
+	}
 
-	c.JSON(http.StatusUnprocessableEntity, models.VerifyResponse{
-		Status:         "CORRUPTED",
-		EvidencePackID: packID,
-		CheckedAt:      checkedAt,
-		StoredRoot:     stored,
-		ComputedRoot:   computed,
-		Explanation:    "ALERT: live database leaf hashes do not reproduce the original Merkle root. Evidence pack has decoupled from its anchor root. Immediate investigation required.",
-	})
+	// Overall status is only VERIFIED when both independent layers pass —
+	// this is the actual point of adding Level 3: a pack that's internally
+	// self-consistent but whose archive is corrupted must not read as VERIFIED.
+	httpStatus := http.StatusOK
+	switch {
+	case !merklePassed:
+		log.Printf("[ALERT] proof.verify CORRUPTED pack=%s stored_root=%s computed_root=%s — evidence pack has decoupled from its original anchor root",
+			packID, stored, computed)
+		resp.Status = "CORRUPTED"
+		resp.Explanation = "ALERT: live database leaf hashes do not reproduce the original Merkle root. Evidence pack has decoupled from its anchor root. Immediate investigation required."
+		httpStatus = http.StatusUnprocessableEntity
+
+	case archiveStatus == "FAILED":
+		log.Printf("[ALERT] proof.verify ARCHIVE_UNVERIFIED pack=%s err=%v — archive has decoupled from its sealed manifest",
+			packID, archiveExplanation)
+		resp.Status = "ARCHIVE_UNVERIFIED"
+		resp.Explanation = "ALERT: database and Merkle root are internally consistent, but the independently stored encrypted archive failed verification: " + archiveExplanation
+		httpStatus = http.StatusUnprocessableEntity
+
+	case archiveStatus == "NOT_AVAILABLE":
+		resp.Status = "INTERNALLY_CONSISTENT"
+		resp.Explanation = "Database and Merkle root are internally consistent. Archive verification was not available for this pack (" + archiveExplanation + "), so this is not full dispute-ready proof."
+
+	default:
+		resp.Status = "VERIFIED"
+		resp.Explanation = "Merkle root reproduced from live database entries, and the independently stored encrypted archive verified successfully (ciphertext, decryption, and plaintext manifest all match)."
+	}
+
+	// Overall correctness — never mark verified=true unless every layer we
+	// actually checked passed.
+	overallOK := resp.Status == "VERIFIED"
+	if markErr := h.enrichRepo.MarkVerified(c.Request.Context(), packID, overallOK, checkedAt); markErr != nil {
+		log.Printf("proof.verify: mark_verified failed pack=%s err=%v", packID, markErr)
+	}
+
+	c.JSON(httpStatus, resp)
+}
+
+func statusLabel(passed bool) string {
+	if passed {
+		return "PASSED"
+	}
+	return "FAILED"
 }
 
 // GET /v1/dispute/export/preview

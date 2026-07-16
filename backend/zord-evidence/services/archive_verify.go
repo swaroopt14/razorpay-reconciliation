@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"time"
@@ -12,15 +13,27 @@ import (
 // Dispute export must not proceed when this error is returned.
 var ErrArchiveVerificationFailed = errors.New("archive verification failed")
 
+// ErrArchiveNotAvailable is returned when there is nothing to verify — archive
+// storage/crypto isn't configured on this deployment, or this specific pack
+// has no archive row (e.g. it predates archiving being enabled). Every error
+// returned by VerifyArchiveForPack still also satisfies
+// errors.Is(err, ErrArchiveVerificationFailed) for existing callers (Mode A
+// export must block either way); ErrArchiveNotAvailable lets callers that
+// care distinguish "nothing to check" from "checked and it's corrupted".
+var ErrArchiveNotAvailable = errors.New("archive not available for verification")
+
 // VerifyArchiveForPack fetches the S3 archive, verifies ciphertext and plaintext
 // hashes, and marks the archive as verified. Mode A requires this before export.
 func (s *EvidenceService) VerifyArchiveForPack(ctx context.Context, packID string) error {
 	if s.s3 == nil || s.archiveCrypto == nil {
-		return fmt.Errorf("%w: archive store/crypto not configured", ErrArchiveVerificationFailed)
+		return fmt.Errorf("%w: %w: archive store/crypto not configured", ErrArchiveVerificationFailed, ErrArchiveNotAvailable)
 	}
 
 	meta, err := s.repo.GetArchiveByPackID(ctx, packID)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: %w: no archive recorded for pack %s", ErrArchiveVerificationFailed, ErrArchiveNotAvailable, packID)
+		}
 		return fmt.Errorf("%w: load archive metadata: %v", ErrArchiveVerificationFailed, err)
 	}
 
