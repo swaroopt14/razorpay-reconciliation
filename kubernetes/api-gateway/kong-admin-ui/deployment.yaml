@@ -20,7 +20,7 @@ spec:
       containers:
         - name: kong-admin-ui
           # Kong Admin API viewer — lightweight Node.js dashboard
-          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/konga:0.14.9
+          image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/konga:0.14.9
           imagePullPolicy: IfNotPresent
           env:
             - name: NODE_ENV

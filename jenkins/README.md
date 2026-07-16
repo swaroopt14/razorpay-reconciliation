@@ -420,7 +420,7 @@ Check:
 
 For your current setup, these values are a good starting point:
 
-- `AWS_ACCOUNT_ID=522189039032`
+- `AWS_ACCOUNT_ID=673698305621`
 - `AWS_REGION=ap-south-1`
 - `ECR_REPOSITORY_PREFIX=zord`
 - `GIT_BRANCH=main`
