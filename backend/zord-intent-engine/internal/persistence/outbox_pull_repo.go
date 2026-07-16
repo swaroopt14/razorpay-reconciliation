@@ -102,7 +102,9 @@ leased AS (
 		COALESCE(o.raw_row_evidence_leaf_hash, '') as raw_row_evidence_leaf_hash,
 		COALESCE(o.canonical_row_evidence_leaf_hash, '') as canonical_row_evidence_leaf_hash,
 		COALESCE(o.business_idempotency_key, '') as business_idempotency_key,
-		COALESCE(o.tokenized_data_hash, '') as tokenized_data_hash
+		COALESCE(o.tokenized_data_hash, '') as tokenized_data_hash,
+		COALESCE(o.artifact_id, '') as artifact_id,
+		COALESCE(o.artifact_version_id, '') as artifact_version_id
 )
 SELECT
 	event_id,
@@ -144,7 +146,9 @@ SELECT
 	raw_row_evidence_leaf_hash,
 	canonical_row_evidence_leaf_hash,
 	business_idempotency_key,
-	tokenized_data_hash
+	tokenized_data_hash,
+	artifact_id,
+	artifact_version_id
 FROM leased
 ORDER BY created_at ASC;
 `
@@ -208,6 +212,8 @@ ORDER BY created_at ASC;
 			&evt.CanonicalRowEvidenceLeafHash,
 			&evt.BusinessIdempotencyKey,
 			&evt.TokenizedDataHash,
+			&evt.ArtifactID,
+			&evt.ArtifactVersionID,
 		); err != nil {
 			return "", nil, nil, err
 		}

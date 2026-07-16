@@ -41,18 +41,34 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			batchIDPtr = &b
 		}
 
+		// Carry artifact identity (relayed from zord-edge via zord-intent-engine)
+		// onto every buffered intent leaf so the sealed pack can record exactly
+		// which source artifact/version it was built from. Nil-guarded so empty
+		// values stay NULL in DB rather than storing empty-string placeholders.
+		var artifactIDPtr, artifactVersionIDPtr *string
+		if relayEvt.ArtifactID != "" {
+			a := relayEvt.ArtifactID
+			artifactIDPtr = &a
+		}
+		if relayEvt.ArtifactVersionID != "" {
+			v := relayEvt.ArtifactVersionID
+			artifactVersionIDPtr = &v
+		}
+
 		// Leaf 6: Canonical Intent Hash
 		l6 := models.PendingLeafCandidate{
-			TenantID:      relayEvt.TenantID,
-			IntentID:      &relayEvt.AggregateID,
-			ContractID:    &relayEvt.ContractID,
-			ClientBatchID: batchIDPtr,
-			LeafType:      models.LeafTypeCanonicalIntentHash,
-			ItemRef:       relayEvt.AggregateID,
-			Hash:          relayEvt.CanonicalHash,
-			SchemaVersion: "v1",
-			SourceTopic:   "payments.intent.events.v1",
-			SourceEventID: relayEvt.EventID,
+			TenantID:          relayEvt.TenantID,
+			IntentID:          &relayEvt.AggregateID,
+			ContractID:        &relayEvt.ContractID,
+			ClientBatchID:     batchIDPtr,
+			ArtifactID:        artifactIDPtr,
+			ArtifactVersionID: artifactVersionIDPtr,
+			LeafType:          models.LeafTypeCanonicalIntentHash,
+			ItemRef:           relayEvt.AggregateID,
+			Hash:              relayEvt.CanonicalHash,
+			SchemaVersion:     "v1",
+			SourceTopic:       "payments.intent.events.v1",
+			SourceEventID:     relayEvt.EventID,
 
 			// Traceability & Status Fields
 			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
@@ -70,16 +86,18 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 
 		// Leaf 7: Governance Decision (Directly from Outbox GovernanceHash)
 		l7 := models.PendingLeafCandidate{
-			TenantID:      relayEvt.TenantID,
-			IntentID:      &relayEvt.AggregateID,
-			ContractID:    &relayEvt.ContractID,
-			ClientBatchID: batchIDPtr,
-			LeafType:      models.LeafTypeGovernanceDecision,
-			ItemRef:       relayEvt.AggregateID,
-			Hash:          relayEvt.GovernanceHash,
-			SchemaVersion: "v1",
-			SourceTopic:   "payments.intent.events.v1",
-			SourceEventID: relayEvt.EventID,
+			TenantID:          relayEvt.TenantID,
+			IntentID:          &relayEvt.AggregateID,
+			ContractID:        &relayEvt.ContractID,
+			ClientBatchID:     batchIDPtr,
+			ArtifactID:        artifactIDPtr,
+			ArtifactVersionID: artifactVersionIDPtr,
+			LeafType:          models.LeafTypeGovernanceDecision,
+			ItemRef:           relayEvt.AggregateID,
+			Hash:              relayEvt.GovernanceHash,
+			SchemaVersion:     "v1",
+			SourceTopic:       "payments.intent.events.v1",
+			SourceEventID:     relayEvt.EventID,
 
 			// Traceability & Status Fields
 			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
@@ -97,16 +115,18 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 
 		// Leaf 9: Raw Row Evidence Leaf Hash
 		l9 := models.PendingLeafCandidate{
-			TenantID:      relayEvt.TenantID,
-			IntentID:      &relayEvt.AggregateID,
-			ContractID:    &relayEvt.ContractID,
-			ClientBatchID: batchIDPtr,
-			LeafType:      models.LeafTypeRawRowEvidenceLeafHash,
-			ItemRef:       relayEvt.AggregateID,
-			Hash:          relayEvt.RawRowEvidenceLeafHash,
-			SchemaVersion: "v1",
-			SourceTopic:   "payments.intent.events.v1",
-			SourceEventID: relayEvt.EventID,
+			TenantID:          relayEvt.TenantID,
+			IntentID:          &relayEvt.AggregateID,
+			ContractID:        &relayEvt.ContractID,
+			ClientBatchID:     batchIDPtr,
+			ArtifactID:        artifactIDPtr,
+			ArtifactVersionID: artifactVersionIDPtr,
+			LeafType:          models.LeafTypeRawRowEvidenceLeafHash,
+			ItemRef:           relayEvt.AggregateID,
+			Hash:              relayEvt.RawRowEvidenceLeafHash,
+			SchemaVersion:     "v1",
+			SourceTopic:       "payments.intent.events.v1",
+			SourceEventID:     relayEvt.EventID,
 
 			// Traceability & Status Fields
 			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
@@ -124,16 +144,18 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 
 		// Leaf 10: Canonical Row Evidence Leaf Hash
 		l10 := models.PendingLeafCandidate{
-			TenantID:      relayEvt.TenantID,
-			IntentID:      &relayEvt.AggregateID,
-			ContractID:    &relayEvt.ContractID,
-			ClientBatchID: batchIDPtr,
-			LeafType:      models.LeafTypeCanonicalRowEvidenceLeafHash,
-			ItemRef:       relayEvt.AggregateID,
-			Hash:          relayEvt.CanonicalRowEvidenceLeafHash,
-			SchemaVersion: "v1",
-			SourceTopic:   "payments.intent.events.v1",
-			SourceEventID: relayEvt.EventID,
+			TenantID:          relayEvt.TenantID,
+			IntentID:          &relayEvt.AggregateID,
+			ContractID:        &relayEvt.ContractID,
+			ClientBatchID:     batchIDPtr,
+			ArtifactID:        artifactIDPtr,
+			ArtifactVersionID: artifactVersionIDPtr,
+			LeafType:          models.LeafTypeCanonicalRowEvidenceLeafHash,
+			ItemRef:           relayEvt.AggregateID,
+			Hash:              relayEvt.CanonicalRowEvidenceLeafHash,
+			SchemaVersion:     "v1",
+			SourceTopic:       "payments.intent.events.v1",
+			SourceEventID:     relayEvt.EventID,
 
 			// Traceability & Status Fields
 			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
@@ -151,16 +173,18 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 
 		// Leaf 11: Mapping Profile Hash
 		l11 := models.PendingLeafCandidate{
-			TenantID:      relayEvt.TenantID,
-			IntentID:      &relayEvt.AggregateID,
-			ContractID:    &relayEvt.ContractID,
-			ClientBatchID: batchIDPtr,
-			LeafType:      models.LeafTypeMappingProfileHash,
-			ItemRef:       relayEvt.AggregateID,
-			Hash:          relayEvt.MappingProfileHash,
-			SchemaVersion: "v1",
-			SourceTopic:   "payments.intent.events.v1",
-			SourceEventID: relayEvt.EventID,
+			TenantID:          relayEvt.TenantID,
+			IntentID:          &relayEvt.AggregateID,
+			ContractID:        &relayEvt.ContractID,
+			ClientBatchID:     batchIDPtr,
+			ArtifactID:        artifactIDPtr,
+			ArtifactVersionID: artifactVersionIDPtr,
+			LeafType:          models.LeafTypeMappingProfileHash,
+			ItemRef:           relayEvt.AggregateID,
+			Hash:              relayEvt.MappingProfileHash,
+			SchemaVersion:     "v1",
+			SourceTopic:       "payments.intent.events.v1",
+			SourceEventID:     relayEvt.EventID,
 
 			// Traceability & Status Fields
 			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
@@ -178,16 +202,18 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 
 		// Leaf 12: Business Idempotency Hash
 		l12 := models.PendingLeafCandidate{
-			TenantID:      relayEvt.TenantID,
-			IntentID:      &relayEvt.AggregateID,
-			ContractID:    &relayEvt.ContractID,
-			ClientBatchID: batchIDPtr,
-			LeafType:      models.LeafTypeBusinessIdempotencyHash,
-			ItemRef:       relayEvt.AggregateID,
-			Hash:          relayEvt.BusinessIdempotencyKey,
-			SchemaVersion: "v1",
-			SourceTopic:   "payments.intent.events.v1",
-			SourceEventID: relayEvt.EventID,
+			TenantID:          relayEvt.TenantID,
+			IntentID:          &relayEvt.AggregateID,
+			ContractID:        &relayEvt.ContractID,
+			ClientBatchID:     batchIDPtr,
+			ArtifactID:        artifactIDPtr,
+			ArtifactVersionID: artifactVersionIDPtr,
+			LeafType:          models.LeafTypeBusinessIdempotencyHash,
+			ItemRef:           relayEvt.AggregateID,
+			Hash:              relayEvt.BusinessIdempotencyKey,
+			SchemaVersion:     "v1",
+			SourceTopic:       "payments.intent.events.v1",
+			SourceEventID:     relayEvt.EventID,
 
 			// Traceability & Status Fields
 			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
@@ -205,16 +231,18 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 
 		// Leaf 13: Tokenized Data Hash
 		l13 := models.PendingLeafCandidate{
-			TenantID:      relayEvt.TenantID,
-			IntentID:      &relayEvt.AggregateID,
-			ContractID:    &relayEvt.ContractID,
-			ClientBatchID: batchIDPtr,
-			LeafType:      models.LeafTypeTokenizedDataHash,
-			ItemRef:       relayEvt.AggregateID,
-			Hash:          relayEvt.TokenizedDataHash,
-			SchemaVersion: "v1",
-			SourceTopic:   "payments.intent.events.v1",
-			SourceEventID: relayEvt.EventID,
+			TenantID:          relayEvt.TenantID,
+			IntentID:          &relayEvt.AggregateID,
+			ContractID:        &relayEvt.ContractID,
+			ClientBatchID:     batchIDPtr,
+			ArtifactID:        artifactIDPtr,
+			ArtifactVersionID: artifactVersionIDPtr,
+			LeafType:          models.LeafTypeTokenizedDataHash,
+			ItemRef:           relayEvt.AggregateID,
+			Hash:              relayEvt.TokenizedDataHash,
+			SchemaVersion:     "v1",
+			SourceTopic:       "payments.intent.events.v1",
+			SourceEventID:     relayEvt.EventID,
 
 			// Traceability & Status Fields
 			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
