@@ -496,11 +496,18 @@ func (s *EvidenceService) processIntentJob(ctx context.Context, job IntentJob, l
 	var amount decimal.Decimal
 	var currency string
 	var batchID string
+	var artifactID, artifactVersionID string
 	contractID := resolveContractIDFromLeaves(leaves, job.ContractID)
 
 	for _, l := range leaves {
 		if l.ClientBatchID != nil && *l.ClientBatchID != "" {
 			batchID = *l.ClientBatchID
+		}
+		if l.ArtifactID != nil && *l.ArtifactID != "" {
+			artifactID = *l.ArtifactID
+		}
+		if l.ArtifactVersionID != nil && *l.ArtifactVersionID != "" {
+			artifactVersionID = *l.ArtifactVersionID
 		}
 		if l.ClientPayoutRef != nil {
 			clientPayoutRef = l.ClientPayoutRef
@@ -534,6 +541,8 @@ func (s *EvidenceService) processIntentJob(ctx context.Context, job IntentJob, l
 		EnvelopeID:                 job.EnvelopeID,
 		TraceID:                    job.TraceID,
 		ContractID:                 contractID,
+		ArtifactID:                 artifactID,
+		ArtifactVersionID:          artifactVersionID,
 		Mode:                       "INTELLIGENCE_ATTACH",
 		RulesetVersion:             "v1",
 		SchemaVersions:             map[string]string{"intent_schema": "v1", "outcome_schema": "v1", "contract_schema": "v1", "attachment_schema": "v1"},
@@ -554,9 +563,9 @@ func (s *EvidenceService) processIntentJob(ctx context.Context, job IntentJob, l
 		ValueDateCheck:             vdc,
 		AmountMatch:                am,
 
-		ClientPayoutRef:            clientPayoutRef,
-		Amount:                     amount,
-		Currency:                   currency,
+		ClientPayoutRef: clientPayoutRef,
+		Amount:          amount,
+		Currency:        currency,
 	}
 
 	pack, err := s.GeneratePackInTx(ctx, lockTx, req)
@@ -705,9 +714,9 @@ func (s *EvidenceService) processBatchJob(ctx context.Context, job BatchJob) err
 		ValueDateCheck:             vdc,
 		AmountMatch:                am,
 
-		ClientPayoutRef:            clientPayoutRef,
-		Amount:                     amount,
-		Currency:                   currency,
+		ClientPayoutRef: clientPayoutRef,
+		Amount:          amount,
+		Currency:        currency,
 	}
 
 	pack, err := s.GenerateBatchPackInTx(ctx, lockTx, req)
@@ -802,19 +811,21 @@ func (s *EvidenceService) GeneratePackInTx(ctx context.Context, packTx *sql.Tx, 
 	packSig := buildPackSignature(s.signer, models.CanonicalIntentPackCommitmentV1, signPayload, now)
 
 	pack := &models.EvidencePack{
-		EvidencePackID:   packID,
-		TenantID:         req.TenantID,
-		IntentID:         req.IntentID,
-		ContractID:       req.ContractID,
-		ClientBatchID:    req.ClientBatchID,
-		Mode:             req.Mode,
-		PackStatus:       models.PackStatusDraft,
-		Items:            items,
-		MerkleRoot:       merkleRoot,
-		RulesetVersion:   req.RulesetVersion,
-		SchemaVersions:   req.SchemaVersions,
-		SupersedesPackID: req.SupersedesPackID,
-		Signatures:       []models.Signature{packSig},
+		EvidencePackID:             packID,
+		TenantID:                   req.TenantID,
+		IntentID:                   req.IntentID,
+		ContractID:                 req.ContractID,
+		ClientBatchID:              req.ClientBatchID,
+		ArtifactID:                 req.ArtifactID,
+		ArtifactVersionID:          req.ArtifactVersionID,
+		Mode:                       req.Mode,
+		PackStatus:                 models.PackStatusDraft,
+		Items:                      items,
+		MerkleRoot:                 merkleRoot,
+		RulesetVersion:             req.RulesetVersion,
+		SchemaVersions:             req.SchemaVersions,
+		SupersedesPackID:           req.SupersedesPackID,
+		Signatures:                 []models.Signature{packSig},
 		ZordSignature:              packSig.Sig,
 		PaymentInstructionReceived: req.PaymentInstructionReceived,
 		CanonicalIntentCreated:     req.CanonicalIntentCreated,
@@ -832,9 +843,9 @@ func (s *EvidenceService) GeneratePackInTx(ctx context.Context, packTx *sql.Tx, 
 		ValueDateCheck:             req.ValueDateCheck,
 		AmountMatch:                req.AmountMatch,
 
-		ClientPayoutRef:            req.ClientPayoutRef,
-		Amount:                     req.Amount,
-		Currency:                   req.Currency,
+		ClientPayoutRef: req.ClientPayoutRef,
+		Amount:          req.Amount,
+		Currency:        req.Currency,
 
 		CreatedAt: now,
 	}
@@ -1054,7 +1065,6 @@ func (s *EvidenceService) persistPackDBFirst(
 	return nil
 }
 
-
 // GenerateBatchPack generates an evidence pack bound to a batch.
 func (s *EvidenceService) GenerateBatchPack(ctx context.Context, req models.GenerateEvidenceRequest) (*models.EvidencePack, error) {
 	return s.GenerateBatchPackInTx(ctx, nil, req)
@@ -1107,16 +1117,16 @@ func (s *EvidenceService) GenerateBatchPackInTx(ctx context.Context, packTx *sql
 	packSig := buildPackSignature(s.signer, models.CanonicalBatchPackCommitmentV1, signPayload, now)
 
 	pack := &models.EvidencePack{
-		EvidencePackID: packID,
-		TenantID:       req.TenantID,
-		ClientBatchID:  req.ClientBatchID,
-		Mode:           req.Mode,
-		PackStatus:     models.PackStatusDraft,
-		Items:          items,
-		MerkleRoot:     merkleRoot,
-		RulesetVersion: req.RulesetVersion,
-		SchemaVersions: req.SchemaVersions,
-		Signatures:     []models.Signature{packSig},
+		EvidencePackID:  packID,
+		TenantID:        req.TenantID,
+		ClientBatchID:   req.ClientBatchID,
+		Mode:            req.Mode,
+		PackStatus:      models.PackStatusDraft,
+		Items:           items,
+		MerkleRoot:      merkleRoot,
+		RulesetVersion:  req.RulesetVersion,
+		SchemaVersions:  req.SchemaVersions,
+		Signatures:      []models.Signature{packSig},
 		ZordSignature:   packSig.Sig,
 		ClientPayoutRef: req.ClientPayoutRef,
 		Amount:          req.Amount,
@@ -1279,15 +1289,19 @@ func (s *EvidenceService) ReplayPack(ctx context.Context, req models.ReplayReque
 	}
 
 	newPack, err := s.GeneratePack(ctx, models.GenerateEvidenceRequest{
-		TenantID:       req.TenantID,
-		IntentID:       req.IntentID,
-		ContractID:     req.ContractID,
+		TenantID:   req.TenantID,
+		IntentID:   req.IntentID,
+		ContractID: req.ContractID,
 		// Preserve the original pack's batch lineage on the replay so the new
 		// pack remains queryable via GET /v1/evidence/packs?batch_id=.
-		ClientBatchID:  oldPack.ClientBatchID,
-		Mode:           req.Mode,
-		RulesetVersion: req.RulesetVersion,
-		SchemaVersions: req.SchemaVersions,
+		ClientBatchID: oldPack.ClientBatchID,
+		// Preserve artifact identity too — a replay rebuilds the pack from the
+		// same inputs, not a new source artifact.
+		ArtifactID:        oldPack.ArtifactID,
+		ArtifactVersionID: oldPack.ArtifactVersionID,
+		Mode:              req.Mode,
+		RulesetVersion:    req.RulesetVersion,
+		SchemaVersions:    req.SchemaVersions,
 		// FIX-16: Set SupersedesPackID so GeneratePack marks the original pack
 		// as REVOKED_SUPERSEDED inside the same DB transaction. Without this, every
 		// ReplayPack call created a new ACTIVE pack for the same intent, making it

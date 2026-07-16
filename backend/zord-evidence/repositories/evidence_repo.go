@@ -262,8 +262,9 @@ INSERT INTO evidence_packs(
 	client_reference, attachment_decision, match_confidence,
 	value_date_check, amount_match, zord_signature,
 	merkle_scheme_version,
+	artifact_id, artifact_version_id,
 	created_at, updated_at
-) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40)
+) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42)
 ON CONFLICT DO NOTHING`,
 		pack.EvidencePackID,
 		pack.TenantID,
@@ -303,6 +304,8 @@ ON CONFLICT DO NOTHING`,
 		pack.AmountMatch,
 		nullStr(pack.ZordSignature),
 		utils.MerkleSchemeV2, // FIX P1-08: all new packs use domain-separated V2
+		nullStr(pack.ArtifactID),
+		nullStr(pack.ArtifactVersionID),
 		pack.CreatedAt,
 		pack.CreatedAt,
 	)
@@ -537,6 +540,7 @@ func (r *EvidenceRepository) GetPackByID(ctx context.Context, packID string) (*m
 	var signature string
 	var sigAlg string
 	var intentID, contractID, batchID, supersedesPackID sql.NullString
+	var artifactID, artifactVersionID sql.NullString
 	var schemaVersionsJSON []byte
 
 	var srr, csc sql.NullTime
@@ -558,6 +562,7 @@ func (r *EvidenceRepository) GetPackByID(ctx context.Context, packID string) (*m
 	             client_reference, attachment_decision, match_confidence,
 	             value_date_check, amount_match, zord_signature,
 	             COALESCE(merkle_scheme_version, 'merkle_v1'),
+	             artifact_id, artifact_version_id,
 	             created_at
 	      FROM evidence_packs WHERE evidence_pack_id=$1`
 	err := r.db.QueryRowContext(ctx, q, packID).Scan(
@@ -570,6 +575,7 @@ func (r *EvidenceRepository) GetPackByID(ctx context.Context, packID string) (*m
 		&pack.RequiredFieldsStatus, &pack.TokenizationStatus, &pack.GovernanceDecision,
 		&srr, &csc, &br, &cr, &ad, &mc, &vdc, &am, &pack.ZordSignature,
 		&pack.MerkleSchemeVersion,
+		&artifactID, &artifactVersionID,
 		&createdAt,
 	)
 	if err != nil {
@@ -586,6 +592,12 @@ func (r *EvidenceRepository) GetPackByID(ctx context.Context, packID string) (*m
 	}
 	if supersedesPackID.Valid {
 		pack.SupersedesPackID = supersedesPackID.String
+	}
+	if artifactID.Valid {
+		pack.ArtifactID = artifactID.String
+	}
+	if artifactVersionID.Valid {
+		pack.ArtifactVersionID = artifactVersionID.String
 	}
 	if srr.Valid {
 		pack.SettlementRecordReceived = &srr.Time
@@ -665,6 +677,7 @@ func (r *EvidenceRepository) ListByIntentID(ctx context.Context, tenantID, inten
 		       settlement_record_received, canonical_settlement_created, bank_reference,
 		       client_reference, attachment_decision, match_confidence,
 		       value_date_check, amount_match,
+		       artifact_id, artifact_version_id,
 		       created_at
 		FROM evidence_packs
 		WHERE tenant_id=$1 AND intent_id=$2
@@ -678,6 +691,7 @@ func (r *EvidenceRepository) ListByIntentID(ctx context.Context, tenantID, inten
 	for rows.Next() {
 		var s models.EvidencePackSummary
 		var iid, cid, bid, spid sql.NullString
+		var aid, avid sql.NullString
 		var srr, csc sql.NullTime
 		var br, cr, ad sql.NullString
 		var mc sql.NullFloat64
@@ -693,6 +707,7 @@ func (r *EvidenceRepository) ListByIntentID(ctx context.Context, tenantID, inten
 			&s.PaymentInstructionReceived, &s.CanonicalIntentCreated, &s.MappingProfileUsed,
 			&s.RequiredFieldsStatus, &s.TokenizationStatus, &s.GovernanceDecision,
 			&srr, &csc, &br, &cr, &ad, &mc, &vdc, &am,
+			&aid, &avid,
 			&s.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -708,6 +723,12 @@ func (r *EvidenceRepository) ListByIntentID(ctx context.Context, tenantID, inten
 		}
 		if spid.Valid {
 			s.SupersedesPackID = spid.String
+		}
+		if aid.Valid {
+			s.ArtifactID = aid.String
+		}
+		if avid.Valid {
+			s.ArtifactVersionID = avid.String
 		}
 		if srr.Valid {
 			s.SettlementRecordReceived = &srr.Time
@@ -758,6 +779,7 @@ func (r *EvidenceRepository) ListByBatchID(ctx context.Context, tenantID, batchI
 		       settlement_record_received, canonical_settlement_created, bank_reference,
 		       client_reference, attachment_decision, match_confidence,
 		       value_date_check, amount_match,
+		       artifact_id, artifact_version_id,
 		       created_at
 		FROM evidence_packs
 		WHERE tenant_id=$1 AND batch_id=$2
@@ -771,6 +793,7 @@ func (r *EvidenceRepository) ListByBatchID(ctx context.Context, tenantID, batchI
 	for rows.Next() {
 		var s models.EvidencePackSummary
 		var iid, cid, bid, spid sql.NullString
+		var aid, avid sql.NullString
 		var srr, csc sql.NullTime
 		var br, cr, ad sql.NullString
 		var mc sql.NullFloat64
@@ -786,6 +809,7 @@ func (r *EvidenceRepository) ListByBatchID(ctx context.Context, tenantID, batchI
 			&s.PaymentInstructionReceived, &s.CanonicalIntentCreated, &s.MappingProfileUsed,
 			&s.RequiredFieldsStatus, &s.TokenizationStatus, &s.GovernanceDecision,
 			&srr, &csc, &br, &cr, &ad, &mc, &vdc, &am,
+			&aid, &avid,
 			&s.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -801,6 +825,12 @@ func (r *EvidenceRepository) ListByBatchID(ctx context.Context, tenantID, batchI
 		}
 		if spid.Valid {
 			s.SupersedesPackID = spid.String
+		}
+		if aid.Valid {
+			s.ArtifactID = aid.String
+		}
+		if avid.Valid {
+			s.ArtifactVersionID = avid.String
 		}
 		if srr.Valid {
 			s.SettlementRecordReceived = &srr.Time
@@ -851,6 +881,7 @@ func (r *EvidenceRepository) ListIntentPacksByBatchID(ctx context.Context, tenan
 		       settlement_record_received, canonical_settlement_created, bank_reference,
 		       client_reference, attachment_decision, match_confidence,
 		       value_date_check, amount_match,
+		       artifact_id, artifact_version_id,
 		       created_at
 		FROM evidence_packs
 		WHERE tenant_id=$1 AND batch_id=$2 AND intent_id IS NOT NULL
@@ -864,6 +895,7 @@ func (r *EvidenceRepository) ListIntentPacksByBatchID(ctx context.Context, tenan
 	for rows.Next() {
 		var s models.EvidencePackSummary
 		var iid, cid, bid, spid sql.NullString
+		var aid, avid sql.NullString
 		var srr, csc sql.NullTime
 		var br, cr, ad sql.NullString
 		var mc sql.NullFloat64
@@ -879,6 +911,7 @@ func (r *EvidenceRepository) ListIntentPacksByBatchID(ctx context.Context, tenan
 			&s.PaymentInstructionReceived, &s.CanonicalIntentCreated, &s.MappingProfileUsed,
 			&s.RequiredFieldsStatus, &s.TokenizationStatus, &s.GovernanceDecision,
 			&srr, &csc, &br, &cr, &ad, &mc, &vdc, &am,
+			&aid, &avid,
 			&s.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -894,6 +927,12 @@ func (r *EvidenceRepository) ListIntentPacksByBatchID(ctx context.Context, tenan
 		}
 		if spid.Valid {
 			s.SupersedesPackID = spid.String
+		}
+		if aid.Valid {
+			s.ArtifactID = aid.String
+		}
+		if avid.Valid {
+			s.ArtifactVersionID = avid.String
 		}
 		if srr.Valid {
 			s.SettlementRecordReceived = &srr.Time

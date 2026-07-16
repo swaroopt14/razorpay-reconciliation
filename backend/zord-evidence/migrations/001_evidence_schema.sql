@@ -5,6 +5,8 @@ CREATE TABLE IF NOT EXISTS evidence_packs (
     intent_id TEXT,
     contract_id TEXT,
     batch_id TEXT,
+    artifact_id TEXT,
+    artifact_version_id TEXT,
     client_payout_ref TEXT,
     amount NUMERIC(20,2),
     currency TEXT,

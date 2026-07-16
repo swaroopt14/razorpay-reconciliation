@@ -75,17 +75,19 @@ var RequiredBatchLeafTypes = []string{
 
 // PendingLeafCandidate represents a buffered leaf waiting for the full set.
 type PendingLeafCandidate struct {
-	ID            string  `json:"id" db:"id"`
-	TenantID      string  `json:"tenant_id" db:"tenant_id"`
-	IntentID      *string `json:"intent_id" db:"intent_id"`     // null for edge events
-	EnvelopeID    *string `json:"envelope_id" db:"envelope_id"` // used to correlate edge
-	ContractID    *string `json:"contract_id" db:"contract_id"`
-	ClientBatchID *string `json:"batch_id" db:"batch_id"`
-	LeafType      string  `json:"leaf_type" db:"leaf_type"`
-	ItemRef       string  `json:"item_ref" db:"item_ref"`
-	Hash          string  `json:"hash" db:"hash"`
-	SchemaVersion string  `json:"schema_version" db:"schema_version"`
-	SourceTopic   string  `json:"source_topic" db:"source_topic"`
+	ID                string  `json:"id" db:"id"`
+	TenantID          string  `json:"tenant_id" db:"tenant_id"`
+	IntentID          *string `json:"intent_id" db:"intent_id"`     // null for edge events
+	EnvelopeID        *string `json:"envelope_id" db:"envelope_id"` // used to correlate edge
+	ContractID        *string `json:"contract_id" db:"contract_id"`
+	ClientBatchID     *string `json:"batch_id" db:"batch_id"`
+	ArtifactID        *string `json:"artifact_id,omitempty" db:"artifact_id"`
+	ArtifactVersionID *string `json:"artifact_version_id,omitempty" db:"artifact_version_id"`
+	LeafType          string  `json:"leaf_type" db:"leaf_type"`
+	ItemRef           string  `json:"item_ref" db:"item_ref"`
+	Hash              string  `json:"hash" db:"hash"`
+	SchemaVersion     string  `json:"schema_version" db:"schema_version"`
+	SourceTopic       string  `json:"source_topic" db:"source_topic"`
 
 	// SourceEventID is the event_id from the upstream RelayEvent that produced
 	// this leaf. It is the idempotency key for evidence_leaf_receipts: two Kafka
@@ -123,21 +125,23 @@ type PendingLeafCandidate struct {
 // RelayEvent is a compatible subset of the normalised outbox event published by
 // zord-relay to Kafka. Field names must match the Kafka JSON schema exactly.
 type RelayEvent struct {
-	EventID         string          `json:"event_id"`
-	TraceID         string          `json:"trace_id"`
-	EnvelopeID      string          `json:"envelope_id"`
-	TenantID        string          `json:"tenant_id"`
-	AggregateType   string          `json:"aggregate_type"`
-	AggregateID     string          `json:"aggregate_id"`
-	ContractID      string          `json:"contract_id,omitempty"`
-	EventType       string          `json:"event_type"`
-	Payload         json.RawMessage `json:"payload"`
-	EnvelopeHash    string          `json:"envelope_hash,omitempty"`
-	CanonicalHash   string          `json:"canonical_hash,omitempty"`
-	GovernanceState string          `json:"governance_state,omitempty"`
-	GovernanceHash  string          `json:"governance_hash,omitempty"`
-	PayloadHash     string          `json:"payload_hash,omitempty"`
-	FileContentHash string          `json:"file_content_hash,omitempty"`
+	EventID           string          `json:"event_id"`
+	TraceID           string          `json:"trace_id"`
+	EnvelopeID        string          `json:"envelope_id"`
+	TenantID          string          `json:"tenant_id"`
+	AggregateType     string          `json:"aggregate_type"`
+	AggregateID       string          `json:"aggregate_id"`
+	ContractID        string          `json:"contract_id,omitempty"`
+	ArtifactID        string          `json:"artifact_id,omitempty"`
+	ArtifactVersionID string          `json:"artifact_version_id,omitempty"`
+	EventType         string          `json:"event_type"`
+	Payload           json.RawMessage `json:"payload"`
+	EnvelopeHash      string          `json:"envelope_hash,omitempty"`
+	CanonicalHash     string          `json:"canonical_hash,omitempty"`
+	GovernanceState   string          `json:"governance_state,omitempty"`
+	GovernanceHash    string          `json:"governance_hash,omitempty"`
+	PayloadHash       string          `json:"payload_hash,omitempty"`
+	FileContentHash   string          `json:"file_content_hash,omitempty"`
 
 	// Evidence leaf hashes (Service 2 / zord-intent-engine).
 	RawRowEvidenceLeafHash       string  `json:"raw_row_evidence_leaf_hash,omitempty"`
@@ -225,6 +229,8 @@ type EvidencePack struct {
 	IntentID                          string            `json:"intent_id"`
 	ContractID                        string            `json:"contract_id"`
 	ClientBatchID                     string            `json:"batch_id"`
+	ArtifactID                        string            `json:"artifact_id,omitempty"`
+	ArtifactVersionID                 string            `json:"artifact_version_id,omitempty"`
 	Mode                              string            `json:"mode"`
 	PackStatus                        string            `json:"pack_status"`
 	Items                             []EvidenceItem    `json:"items"`
@@ -329,16 +335,18 @@ func (p *EvidencePack) ComputeCompletenessMetadata() {
 // GenerateEvidenceRequest: upstream services supply all proof artifact items.
 // evidence_pack_id is generated exclusively inside Service 6.
 type GenerateEvidenceRequest struct {
-	TenantID         string            `json:"tenant_id" binding:"required"`
-	IntentID         string            `json:"intent_id"` // required for intent mode
-	ClientBatchID    string            `json:"batch_id"`  // required for batch mode
-	EnvelopeID       string            `json:"envelope_id"`
-	TraceID          string            `json:"trace_id"`
-	ContractID       string            `json:"contract_id"`
-	Mode             string            `json:"mode" binding:"required"`
-	RulesetVersion   string            `json:"ruleset_version" binding:"required"`
-	SchemaVersions   map[string]string `json:"schema_versions" binding:"required"`
-	SupersedesPackID string            `json:"supersedes_pack_id"`
+	TenantID          string            `json:"tenant_id" binding:"required"`
+	IntentID          string            `json:"intent_id"` // required for intent mode
+	ClientBatchID     string            `json:"batch_id"`  // required for batch mode
+	EnvelopeID        string            `json:"envelope_id"`
+	TraceID           string            `json:"trace_id"`
+	ContractID        string            `json:"contract_id"`
+	ArtifactID        string            `json:"artifact_id,omitempty"`
+	ArtifactVersionID string            `json:"artifact_version_id,omitempty"`
+	Mode              string            `json:"mode" binding:"required"`
+	RulesetVersion    string            `json:"ruleset_version" binding:"required"`
+	SchemaVersions    map[string]string `json:"schema_versions" binding:"required"`
+	SupersedesPackID  string            `json:"supersedes_pack_id"`
 
 	// Traceability & governance fields.
 	PaymentInstructionReceived *time.Time `json:"payment_instruction_received,omitempty"`
@@ -418,6 +426,8 @@ type EvidencePackSummary struct {
 	IntentID                          string  `json:"intent_id"`
 	ContractID                        string  `json:"contract_id"`
 	ClientBatchID                     string  `json:"batch_id,omitempty"`
+	ArtifactID                        string  `json:"artifact_id,omitempty"`
+	ArtifactVersionID                 string  `json:"artifact_version_id,omitempty"`
 	Mode                              string  `json:"mode"`
 	PackStatus                        string  `json:"pack_status"`
 	MerkleRoot                        string  `json:"merkle_root"`

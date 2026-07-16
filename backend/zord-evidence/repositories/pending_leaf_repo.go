@@ -35,8 +35,9 @@ INSERT INTO pending_leaf_candidates (
 	settlement_record_received, canonical_settlement_created, bank_reference,
 	client_reference, attachment_decision, match_confidence,
 	value_date_check, amount_match, client_payout_ref, amount, currency,
+	artifact_id, artifact_version_id,
 	created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, NOW(), NOW())
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, NOW(), NOW())
 ON CONFLICT (tenant_id, intent_id, leaf_type) WHERE intent_id IS NOT NULL 
 DO UPDATE SET 
 	item_ref = EXCLUDED.item_ref,
@@ -62,12 +63,14 @@ DO UPDATE SET
 	client_payout_ref = COALESCE(EXCLUDED.client_payout_ref, pending_leaf_candidates.client_payout_ref),
 	amount = COALESCE(EXCLUDED.amount, pending_leaf_candidates.amount),
 	currency = COALESCE(EXCLUDED.currency, pending_leaf_candidates.currency),
+	artifact_id = COALESCE(EXCLUDED.artifact_id, pending_leaf_candidates.artifact_id),
+	artifact_version_id = COALESCE(EXCLUDED.artifact_version_id, pending_leaf_candidates.artifact_version_id),
 	updated_at = NOW()
 `
 	// Handle the envelope-only conflict separately because PostgreSQL doesn't support multiple partial unique indexes in a single ON CONFLICT easily if they differ in the WHERE clause significantly.
 	// Actually, I can use two separate statements or a more complex one.
 	// For simplicity and correctness with the specific indexes I created:
-	
+
 	if leaf.IntentID == nil && leaf.ClientBatchID != nil {
 		query = `
 INSERT INTO pending_leaf_candidates (
@@ -78,8 +81,9 @@ INSERT INTO pending_leaf_candidates (
 	settlement_record_received, canonical_settlement_created, bank_reference,
 	client_reference, attachment_decision, match_confidence,
 	value_date_check, amount_match, client_payout_ref, amount, currency,
+	artifact_id, artifact_version_id,
 	created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, NOW(), NOW())
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, NOW(), NOW())
 ON CONFLICT (tenant_id, batch_id, leaf_type) WHERE batch_id IS NOT NULL AND intent_id IS NULL
 DO UPDATE SET 
 	item_ref = EXCLUDED.item_ref,
@@ -105,6 +109,8 @@ DO UPDATE SET
 	client_payout_ref = COALESCE(EXCLUDED.client_payout_ref, pending_leaf_candidates.client_payout_ref),
 	amount = COALESCE(EXCLUDED.amount, pending_leaf_candidates.amount),
 	currency = COALESCE(EXCLUDED.currency, pending_leaf_candidates.currency),
+	artifact_id = COALESCE(EXCLUDED.artifact_id, pending_leaf_candidates.artifact_id),
+	artifact_version_id = COALESCE(EXCLUDED.artifact_version_id, pending_leaf_candidates.artifact_version_id),
 	updated_at = NOW()
 `
 	} else if leaf.IntentID == nil && leaf.EnvelopeID != nil {
@@ -117,8 +123,9 @@ INSERT INTO pending_leaf_candidates (
 	settlement_record_received, canonical_settlement_created, bank_reference,
 	client_reference, attachment_decision, match_confidence,
 	value_date_check, amount_match, client_payout_ref, amount, currency,
+	artifact_id, artifact_version_id,
 	created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, NOW(), NOW())
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, NOW(), NOW())
 ON CONFLICT (tenant_id, envelope_id, leaf_type) WHERE intent_id IS NULL AND batch_id IS NULL
 DO UPDATE SET 
 	item_ref = EXCLUDED.item_ref,
@@ -144,6 +151,8 @@ DO UPDATE SET
 	client_payout_ref = COALESCE(EXCLUDED.client_payout_ref, pending_leaf_candidates.client_payout_ref),
 	amount = COALESCE(EXCLUDED.amount, pending_leaf_candidates.amount),
 	currency = COALESCE(EXCLUDED.currency, pending_leaf_candidates.currency),
+	artifact_id = COALESCE(EXCLUDED.artifact_id, pending_leaf_candidates.artifact_id),
+	artifact_version_id = COALESCE(EXCLUDED.artifact_version_id, pending_leaf_candidates.artifact_version_id),
 	updated_at = NOW()
 `
 	}
@@ -177,6 +186,8 @@ DO UPDATE SET
 		leaf.ClientPayoutRef,
 		leaf.Amount,
 		leaf.Currency,
+		leaf.ArtifactID,
+		leaf.ArtifactVersionID,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert leaf candidate: %w", err)
@@ -206,6 +217,7 @@ SELECT id, tenant_id, intent_id, envelope_id, contract_id, batch_id, leaf_type, 
        settlement_record_received, canonical_settlement_created, bank_reference,
        client_reference, attachment_decision, match_confidence,
        value_date_check, amount_match, client_payout_ref, amount, currency,
+       artifact_id, artifact_version_id,
        created_at, updated_at
 FROM pending_leaf_candidates
 WHERE tenant_id = $1 AND intent_id = $2
@@ -227,6 +239,7 @@ WHERE tenant_id = $1 AND intent_id = $2
 			&l.ClientReference, &l.AttachmentDecision, &l.MatchConfidence,
 			&l.ValueDateCheck, &l.AmountMatch,
 			&l.ClientPayoutRef, &l.Amount, &l.Currency,
+			&l.ArtifactID, &l.ArtifactVersionID,
 			&l.CreatedAt, &l.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -244,6 +257,7 @@ SELECT id, tenant_id, intent_id, envelope_id, contract_id, batch_id, leaf_type, 
        settlement_record_received, canonical_settlement_created, bank_reference,
        client_reference, attachment_decision, match_confidence,
        value_date_check, amount_match, client_payout_ref, amount, currency,
+       artifact_id, artifact_version_id,
        created_at, updated_at
 FROM pending_leaf_candidates
 WHERE tenant_id = $1 AND batch_id = $2 AND intent_id IS NULL
@@ -265,6 +279,7 @@ WHERE tenant_id = $1 AND batch_id = $2 AND intent_id IS NULL
 			&l.ClientReference, &l.AttachmentDecision, &l.MatchConfidence,
 			&l.ValueDateCheck, &l.AmountMatch,
 			&l.ClientPayoutRef, &l.Amount, &l.Currency,
+			&l.ArtifactID, &l.ArtifactVersionID,
 			&l.CreatedAt, &l.UpdatedAt,
 		); err != nil {
 			return nil, err
