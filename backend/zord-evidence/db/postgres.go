@@ -361,6 +361,53 @@ func EnsureTables(ctx context.Context, d *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_leaf_receipts_conflicts
 			ON evidence_leaf_receipts(tenant_id, scope_type, scope_ref, receipt_status)
 			WHERE receipt_status = 'CONFLICT';`,
+
+		// Evidence refactor spec §5.6/§8: immutable audit trail of every
+		// /verify call, one row per run, so a pack's verification history is
+		// provable rather than only reflected in the single mutable
+		// evidence_packs.verification_status/last_verified_at fields.
+		// overall_status ∈ { VERIFIED, CORRUPTED, COMPROMISED, INTERNALLY_CONSISTENT }
+		// {db_merkle,archive,signature}_status carry the per-layer summary
+		// inline for cheap reads; evidence_verification_failures below holds
+		// the normalized per-layer detail and is designed to extend to future
+		// layers (source-artifact, business-replay) without schema changes.
+		`CREATE TABLE IF NOT EXISTS evidence_verification_runs (
+			verification_run_id TEXT PRIMARY KEY,
+			evidence_pack_id TEXT NOT NULL REFERENCES evidence_packs(evidence_pack_id),
+			tenant_id TEXT NOT NULL,
+			overall_status TEXT NOT NULL,
+			db_merkle_status TEXT NOT NULL,
+			archive_status TEXT NOT NULL,
+			signature_status TEXT NOT NULL,
+			stored_root TEXT,
+			computed_root TEXT,
+			explanation TEXT,
+			checked_at TIMESTAMPTZ NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`,
+
+		`CREATE INDEX IF NOT EXISTS idx_verification_runs_pack
+			ON evidence_verification_runs(evidence_pack_id, checked_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_verification_runs_tenant
+			ON evidence_verification_runs(tenant_id, checked_at DESC);`,
+
+		// One row per layer that did NOT pass (FAILED or NOT_AVAILABLE) on a
+		// given run. A fully VERIFIED run has zero rows here — presence of a
+		// row is itself the signal, no separate "outcome" bookkeeping needed.
+		`CREATE TABLE IF NOT EXISTS evidence_verification_failures (
+			verification_failure_id TEXT PRIMARY KEY,
+			verification_run_id TEXT NOT NULL REFERENCES evidence_verification_runs(verification_run_id),
+			evidence_pack_id TEXT NOT NULL,
+			layer TEXT NOT NULL,
+			status TEXT NOT NULL,
+			reason TEXT,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);`,
+
+		`CREATE INDEX IF NOT EXISTS idx_verification_failures_run
+			ON evidence_verification_failures(verification_run_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_verification_failures_pack
+			ON evidence_verification_failures(evidence_pack_id, created_at DESC);`,
 	}
 
 	for _, s := range stmts {
