@@ -20,6 +20,7 @@ import (
 	"zord-evidence/tracing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pressly/goose/v3"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
@@ -39,8 +40,12 @@ func main() {
 	defer database.Close()
 
 	bootstrapCtx := context.Background()
-	if err := db.EnsureTables(bootstrapCtx, database); err != nil {
-		log.Fatalf("ensure tables failed: %v", err)
+	goose.SetBaseFS(nil)
+	if err := goose.SetDialect("postgres"); err != nil {
+		log.Fatal("goose dialect error:", err)
+	}
+	if err := goose.Up(database, "db/migrations"); err != nil {
+		log.Fatal("migrations failed:", err)
 	}
 
 	// Signing and archive keys are required — no ephemeral fallback.
