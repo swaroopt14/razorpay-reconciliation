@@ -94,6 +94,7 @@ func main() {
 	outboxPullRepo := repositories.NewOutboxPullRepo(database)
 	enrichRepo := repositories.NewEnrichmentRepository(database)
 	leafReceiptRepo := repositories.NewLeafReceiptRepository(database)
+	verificationRepo := repositories.NewVerificationRepository(database)
 
 	evidenceSvc := services.NewEvidenceService(
 		repo,
@@ -111,7 +112,7 @@ func main() {
 	h := handlers.NewEvidenceHandler(evidenceSvc)
 	outboxHandler := handlers.NewOutboxHandler(outboxPullRepo)
 	// FIX-05e: Pass AdminToken from config — handler validates token value, not just presence.
-	proofHandler := handlers.NewProofHandler(evidenceSvc, enrichRepo, database)
+	proofHandler := handlers.NewProofHandler(evidenceSvc, enrichRepo, verificationRepo, database)
 
 	// FIX-05f: Worker count from config, not hardcoded.
 	evidenceSvc.StartWorkers(cfg.WorkerCount)

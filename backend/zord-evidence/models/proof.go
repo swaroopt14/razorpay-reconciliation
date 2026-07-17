@@ -162,12 +162,13 @@ type LineageEdge struct {
 //	                          key/storage isn't configured on this deployment).
 //	                          Not full proof.
 type VerifyResponse struct {
-	Status         string    `json:"status"`
-	EvidencePackID string    `json:"evidence_pack_id"`
-	CheckedAt      time.Time `json:"checked_at"`
-	StoredRoot     string    `json:"stored_root"`
-	ComputedRoot   string    `json:"computed_root,omitempty"`
-	Explanation    string    `json:"explanation"`
+	Status            string    `json:"status"`
+	EvidencePackID    string    `json:"evidence_pack_id"`
+	VerificationRunID string    `json:"verification_run_id,omitempty"`
+	CheckedAt         time.Time `json:"checked_at"`
+	StoredRoot        string    `json:"stored_root"`
+	ComputedRoot      string    `json:"computed_root,omitempty"`
+	Explanation       string    `json:"explanation"`
 
 	// DBMerkleStatus is Level 1: PASSED | FAILED.
 	DBMerkleStatus string `json:"db_merkle_status"`
