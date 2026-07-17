@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE evidence_packs (
 	evidence_pack_id TEXT PRIMARY KEY,
 	tenant_id TEXT NOT NULL,

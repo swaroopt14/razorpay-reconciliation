@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE evidence_signatures (
 	evidence_pack_id TEXT NOT NULL,
 	signer TEXT NOT NULL,

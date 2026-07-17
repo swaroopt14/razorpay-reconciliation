@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE evidence_verification_failures (
 	verification_failure_id TEXT PRIMARY KEY,
 	verification_run_id TEXT NOT NULL REFERENCES evidence_verification_runs(verification_run_id),

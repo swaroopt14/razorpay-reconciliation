@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE evidence_replay_jobs (
 	replay_job_id TEXT PRIMARY KEY,
 	tenant_id TEXT NOT NULL,

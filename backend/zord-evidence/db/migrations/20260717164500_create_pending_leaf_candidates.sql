@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE pending_leaf_candidates (
 	id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 	tenant_id TEXT NOT NULL,

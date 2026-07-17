@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE evidence_items (
 	evidence_pack_id TEXT NOT NULL,
 	position_index INT NOT NULL,

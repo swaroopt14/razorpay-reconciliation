@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE merkle_inclusion_proofs (
 	evidence_pack_id TEXT NOT NULL,
 	leaf_index INT NOT NULL,

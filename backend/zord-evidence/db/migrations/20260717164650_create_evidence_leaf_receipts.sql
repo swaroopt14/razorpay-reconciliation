@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE evidence_leaf_receipts (
 	receipt_id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
 	tenant_id TEXT NOT NULL,

@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE evidence_verification_runs (
 	verification_run_id TEXT PRIMARY KEY,
 	evidence_pack_id TEXT NOT NULL REFERENCES evidence_packs(evidence_pack_id),

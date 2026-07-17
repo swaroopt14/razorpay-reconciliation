@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE evidence_export_log (
 	export_id TEXT PRIMARY KEY,
 	evidence_pack_id TEXT NOT NULL,

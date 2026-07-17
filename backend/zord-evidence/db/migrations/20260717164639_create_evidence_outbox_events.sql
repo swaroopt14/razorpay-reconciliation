@@ -1,4 +1,4 @@
-﻿-- +goose Up
+-- +goose Up
 CREATE TABLE evidence_outbox_events (
 	event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 	trace_id TEXT,
