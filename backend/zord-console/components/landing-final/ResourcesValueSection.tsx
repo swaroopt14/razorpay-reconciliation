@@ -57,7 +57,7 @@ export function ResourcesValueSection() {
               One operating model across ops, finance, and engineering.
             </h2>
             <p className="mx-auto mt-4 max-w-lg text-[14px] leading-relaxed text-white/70 sm:text-[15px]">
-              Move from high-level understanding to rollout confidence — then go deeper into security, pricing, and
+              Move from high-level understanding to rollout confidence, then go deeper into security, pricing, and
               implementation when your team is ready.
             </p>
 

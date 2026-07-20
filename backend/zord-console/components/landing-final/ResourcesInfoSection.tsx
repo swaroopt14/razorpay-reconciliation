@@ -19,7 +19,7 @@ export function ResourcesInfoSection() {
           <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#34D399]/15 text-[#059669]">
             <BookOpen className="h-3.5 w-3.5" strokeWidth={2.25} />
           </span>
-          <p>From high-level understanding to rollout confidence — without scattered documents.</p>
+          <p>From high-level understanding to rollout confidence, without scattered documents.</p>
         </motion.div>
 
         <motion.h2

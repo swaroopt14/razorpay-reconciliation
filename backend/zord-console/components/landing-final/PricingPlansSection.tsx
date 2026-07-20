@@ -40,7 +40,7 @@ export function PricingPlansSection() {
             transition={{ duration: 0.5, delay: 0.1 }}
             className="mt-4 text-[15px] leading-relaxed text-[#6B7280] sm:text-base"
           >
-            Three enterprise-ready paths. No public rate card — pricing follows workspace depth and rollout needs.
+            Three enterprise-ready paths. No public rate card, pricing follows workspace depth and rollout needs.
           </motion.p>
         </div>
 

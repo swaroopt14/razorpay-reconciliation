@@ -58,7 +58,7 @@ function RailOverviewMock() {
       </ul>
       <div className="mt-5 flex items-end justify-between gap-4">
         <p className="max-w-[10rem] text-[11px] leading-relaxed text-[#9CA3AF]">
-          Rail posture your ops team can act on — not a static integration map.
+          Rail posture your ops team can act on, not a static integration map.
         </p>
         <div className="relative h-20 w-20 shrink-0">
           <svg viewBox="0 0 80 80" className="h-full w-full -rotate-90" aria-hidden="true">
@@ -168,7 +168,7 @@ export function SolutionsInstitutionalSection() {
             <BentoCard delay={0.15} className="flex-1">
               <h3 className="text-xl font-semibold tracking-[-0.03em] text-[#111111]">Scalability &amp; reliability</h3>
               <p className="mt-3 max-w-md text-[14px] leading-relaxed text-[#6B7280]">
-                Multi-rail payout operations with connector posture you can act on — built for 24/7 money movement.
+                Multi-rail payout operations with connector posture you can act on, built for 24/7 money movement.
               </p>
               <RailOverviewMock />
             </BentoCard>
@@ -190,7 +190,7 @@ export function SolutionsInstitutionalSection() {
               </span>
               <h3 className="mt-5 text-xl font-semibold tracking-[-0.03em] text-[#111111]">Institutional-grade precision</h3>
               <p className="mt-3 max-w-sm text-[14px] leading-relaxed text-[#6B7280]">
-                Layers of risk management, proof paths, and compliance controls — so ops, finance, and audit share one
+                Layers of risk management, proof paths, and compliance controls, so ops, finance, and audit share one
                 defensible truth.
               </p>
               <div className="mt-5 inline-flex items-center gap-2 rounded-full border border-[#34D399]/25 bg-[#E8F8F5] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#059669]">
@@ -209,7 +209,7 @@ export function SolutionsInstitutionalSection() {
           className="mt-14 flex flex-col items-center text-center"
         >
           <p className="max-w-xl text-[15px] leading-relaxed text-[#6B7280]">
-            Deploy ZORD with your team. Book a demo for rollout depth — or keep exploring the catalog above.
+            Deploy ZORD with your team. Book a demo for rollout depth, or keep exploring the catalog above.
           </p>
           <Link
             href="/"

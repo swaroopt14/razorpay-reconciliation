@@ -1,4 +1,4 @@
-/** Mock fixtures for landing hero payout-command preview — illustrative only. */
+/** Mock fixtures for landing hero payout-command preview, illustrative only. */
 
 import type { PortfolioLeakageViewModel } from '@/features/payout-command/leakage-portfolio/normalizeLeakagePayload'
 import type { EvidenceKpiCard } from '@/features/payout-command/evidence/types/evidenceViewModels'
@@ -168,7 +168,7 @@ export const PREVIEW_NEXT_ACTIONS: NextActionItem[] = [
   },
   {
     title: 'Close BATCH-1042 evidence pack',
-    description: 'Proof readiness is 91% — 3 intents still incomplete.',
+    description: 'Proof readiness is 91%, 3 intents still incomplete.',
     href: '#',
   },
   {

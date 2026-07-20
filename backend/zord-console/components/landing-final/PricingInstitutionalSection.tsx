@@ -74,7 +74,7 @@ export function PricingInstitutionalSection() {
             transition={{ duration: 0.5, delay: 0.1 }}
             className="mt-4 text-base leading-relaxed text-[#6B7280] sm:text-lg"
           >
-            Ops, finance, engineering, and risk evaluate the same workspace — then commercials follow coverage and
+            Ops, finance, engineering, and risk evaluate the same workspace, then commercials follow coverage and
             rollout depth.
           </motion.p>
         </div>
@@ -87,7 +87,7 @@ export function PricingInstitutionalSection() {
               </span>
               <h3 className="mt-5 text-xl font-semibold tracking-[-0.03em] text-[#111111]">Security review ready</h3>
               <p className="mt-3 max-w-sm text-[14px] leading-relaxed text-[#6B7280]">
-                Guided responses for Growth; dedicated review help on Enterprise — so procurement doesn&apos;t stall
+                Guided responses for Growth; dedicated review help on Enterprise, so procurement doesn&apos;t stall
                 the operating decision.
               </p>
             </BentoCard>
@@ -138,7 +138,7 @@ export function PricingInstitutionalSection() {
               <div className="mt-6 space-y-3">
                 {[
                   { role: 'Operations', body: 'Queue connector drift and confirmation delays in one workspace.' },
-                  { role: 'Finance', body: 'Evidence Packs ready for close — not screenshot hunts.' },
+                  { role: 'Finance', body: 'Evidence Packs ready for close, not screenshot hunts.' },
                   { role: 'Engineering', body: 'One shared payout record across providers and banks.' },
                 ].map((item) => (
                   <div key={item.role} className="rounded-[1rem] border border-black/[0.05] bg-white px-4 py-3">
@@ -155,7 +155,7 @@ export function PricingInstitutionalSection() {
               </span>
               <h3 className="mt-5 text-xl font-semibold tracking-[-0.03em] text-[#111111]">Account coverage that scales</h3>
               <p className="mt-3 max-w-sm text-[14px] leading-relaxed text-[#6B7280]">
-                From commercial review cadence on Growth to dedicated coverage on Enterprise — when multi-team rollout
+                From commercial review cadence on Growth to dedicated coverage on Enterprise, when multi-team rollout
                 and regulated partners need a human spine.
               </p>
               <div className="mt-5 inline-flex items-center gap-2 rounded-full border border-[#34D399]/25 bg-[#E8F8F5] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#059669]">

@@ -19,7 +19,7 @@ export function PricingInfoSection() {
           <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#34D399]/15 text-[#059669]">
             <Layers className="h-3.5 w-3.5" strokeWidth={2.25} />
           </span>
-          <p>Enterprise commercials for payout intelligence — not payments, payroll, or banking SKUs.</p>
+          <p>Enterprise commercials for payout intelligence, not payments, payroll, or banking SKUs.</p>
         </motion.div>
 
         <motion.h2
@@ -43,7 +43,7 @@ export function PricingInfoSection() {
           transition={{ duration: 0.55, delay: 0.12 }}
           className="mt-8 max-w-2xl text-base leading-relaxed text-[#6B7280] sm:text-lg sm:leading-8"
         >
-          Commercials follow workspace depth, connector coverage, Evidence Pack workflows, and rollout support —
+          Commercials follow workspace depth, connector coverage, Evidence Pack workflows, and rollout support,
           shaped after your team validates fit in sandbox.
         </motion.p>
       </div>

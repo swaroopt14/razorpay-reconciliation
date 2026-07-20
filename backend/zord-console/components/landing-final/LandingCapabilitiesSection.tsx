@@ -41,7 +41,7 @@ export function LandingCapabilitiesSection() {
             Not legacy systems.
           </h2>
           <p className="mt-6 max-w-2xl text-[15px] sm:text-base font-medium leading-relaxed text-white/70">
-            Connect exchanges, custodians, on-chain wallets, and data providers — all synchronized in one unified system for real-time visibility and control.
+            Connect exchanges, custodians, on-chain wallets, and data providers, all synchronized in one unified system for real-time visibility and control.
           </p>
         </LandingReveal>
 

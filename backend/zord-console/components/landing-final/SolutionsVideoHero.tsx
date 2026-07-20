@@ -63,7 +63,7 @@ export function SolutionsVideoHero() {
               <span className="block text-white">rooted in nature.</span>
             </h1>
             <p className="mt-6 max-w-2xl text-base leading-relaxed text-white sm:text-lg">
-              Every payout, identity, and data workflow your team needs — scan the catalog below, book a demo for rollout depth.
+              Every payout, identity, and data workflow your team needs, scan the catalog below, book a demo for rollout depth.
             </p>
 
             <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">

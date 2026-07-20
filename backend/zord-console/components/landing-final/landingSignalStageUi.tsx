@@ -27,7 +27,7 @@ function GlassDivider({ delay = 0, animate }: { delay?: number; animate: boolean
   )
 }
 
-/** Premium glassmorphism intelligence card — floats above the branch stage. */
+/** Premium glassmorphism intelligence card, floats above the branch stage. */
 export function RiskIntelligenceCard({ animate }: { animate: boolean }) {
   const shouldReduceMotion = useReducedMotion()
   const show = shouldReduceMotion || animate

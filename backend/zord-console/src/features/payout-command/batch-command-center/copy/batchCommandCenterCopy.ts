@@ -9,7 +9,7 @@ export const BATCH_REVIEW_COPY = {
   pageSubtitle:
     'Upload payment files, verify bank confirmations, and review issues before closing a batch.',
 
-  sandboxBanner: 'Sandbox mode — testing only. No real payments will be sent.',
+  sandboxBanner: 'Sandbox mode, testing only. No real payments will be sent.',
 
   workspace: {
     title: 'Workspace',

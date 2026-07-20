@@ -16,10 +16,13 @@ import { Glyph } from '../shared'
 export function ModeTogglePill({
   onActivateClick,
   compact,
+  lockModeSwitch = false,
 }: {
   onActivateClick: () => void
   /** Slim control for thin top nav (Ledger-style). */
   compact?: boolean
+  /** Show the pill, but do not navigate between /sandbox and live routes. */
+  lockModeSwitch?: boolean
 }) {
   const { mode, canSwitchToLive, liveActivationStatus } = useEnvironment()
   const pathname = usePathname()
@@ -93,7 +96,7 @@ export function ModeTogglePill({
           <button
             type="button"
             onClick={() => {
-              router.push('/sandbox')
+              if (!lockModeSwitch) router.push('/sandbox')
               setOpen(false)
             }}
             className={`flex w-full items-start gap-2.5 rounded-[8px] px-2.5 py-2 text-left transition ${
@@ -123,7 +126,7 @@ export function ModeTogglePill({
             <button
               type="button"
               onClick={() => {
-                router.push('/payout-command-view/today')
+                if (!lockModeSwitch) router.push('/payout-command-view/today')
                 setOpen(false)
               }}
               className={`mt-1 flex w-full items-start gap-2.5 rounded-[8px] px-2.5 py-2 text-left transition ${

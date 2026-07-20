@@ -29,7 +29,7 @@ export function SolutionsDemoCta() {
         </h2>
 
         <p className="mt-5 max-w-lg text-[15px] leading-relaxed text-[#6B7280] sm:text-base">
-          That conversation happens on a demo — not buried in documentation.
+          That conversation happens on a demo, not buried in documentation.
         </p>
 
         <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">

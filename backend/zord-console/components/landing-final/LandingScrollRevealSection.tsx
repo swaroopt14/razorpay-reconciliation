@@ -24,7 +24,7 @@ const PILLAR_FRAME_CLASS = 'relative aspect-[4/4.65] w-full overflow-hidden roun
 const GLASS_CARD_BASE =
   'relative z-10 flex h-[296px] min-h-[296px] w-full flex-col overflow-hidden rounded-t-[1.125rem] rounded-b-[2.125rem] border p-4 text-white shadow-[0_28px_64px_rgba(0,0,0,0.28),inset_0_1px_0_rgba(255,255,255,0.28)] backdrop-blur-2xl transition-[box-shadow,transform] duration-300 sm:p-[1.125rem]'
 
-/** Per-pillar glass material — each card picks up its photo's hue (blue / near-black / warm sand). */
+/** Per-pillar glass material, each card picks up its photo's hue (blue / near-black / warm sand). */
 const GLASS_TONES = {
   frost: 'border-white/30 bg-[rgba(42,64,102,0.68)]',
   dark: 'border-white/18 bg-[rgba(13,19,13,0.76)]',
@@ -42,7 +42,7 @@ const PILLAR_TITLE_CLASS =
 const PILLAR_DESCRIPTION_CLASS =
   'mt-3.5 min-h-[4.85rem] max-w-[34ch] text-[15px] leading-relaxed text-[#6B7280] md:min-h-[5.7rem] lg:min-h-[5rem]'
 
-/** Shared content width — hero + pillars align on one grid. */
+/** Shared content width, hero + pillars align on one grid. */
 const SECTION_SHELL = LANDING_SECTION_SHELL
 
 const LABEL = 'text-[9px] font-medium uppercase tracking-[0.1em] text-white/50'

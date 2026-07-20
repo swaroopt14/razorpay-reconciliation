@@ -22,7 +22,7 @@ export default function CustomersPageClient() {
     <FinalLandingPageScaffold
       active="Customers"
       eyebrow="Buyers"
-      title="Who brings ZORD into payout environments — and what problem they are solving."
+      title="Who brings ZORD into payout environments, and what problem they are solving."
       description="This page describes buyer lenses, not customer logos or outcome statistics. Teams adopt ZORD when payout accountability spans operations, finance, engineering, and risk at the same time."
       primaryAction={{ label: 'Book demo', href: '/signup' }}
       secondaryAction={{ label: 'Back to product', href: '/' }}

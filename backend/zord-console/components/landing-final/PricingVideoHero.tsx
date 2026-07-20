@@ -64,7 +64,7 @@ export function PricingVideoHero() {
             </h1>
             <p className="mt-6 max-w-2xl text-base leading-relaxed text-white sm:text-lg">
               Evaluate the payout workspace, then shape production pricing around connectors, evidence depth, and
-              rollout support — not a public rate card.
+              rollout support, not a public rate card.
             </p>
 
             <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">

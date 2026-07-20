@@ -46,7 +46,7 @@ export function SolutionsInfoSection() {
           className="mt-8 max-w-2xl text-base leading-relaxed text-[#6B7280] sm:text-lg sm:leading-8"
         >
           Handles payouts at scale. Observable through one workspace. Deployed across banks, PSPs, and treasury
-          teams — built for proof, not guesswork.
+          teams, built for proof, not guesswork.
         </motion.p>
       </div>
     </section>

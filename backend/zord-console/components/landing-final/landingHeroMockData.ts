@@ -1,4 +1,4 @@
-/** Illustrative data for landing hero dashboard preview only — not live payout APIs. */
+/** Illustrative data for landing hero dashboard preview only, not live payout APIs. */
 
 import type { PaymentTrendChartPoint } from '@/features/payout-command/command-center/PaymentValueTrendChart'
 

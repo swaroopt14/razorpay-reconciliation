@@ -522,7 +522,7 @@ const PREVIEW_BATCH_FAILURES: JournalFailureRow[] = [
   },
 ]
 
-/** Landing-only Batch Command Center — same product view as /batch-command-center with mock data. */
+/** Landing-only Batch Command Center, same product view as /batch-command-center with mock data. */
 export function BatchCommandCenterPreviewSurface({ onBack }: { onBack?: () => void }) {
   const summary = PREVIEW_BATCH_SUMMARY
   const pieSlices = useMemo(() => mapPaymentStatusBreakdown(summary), [])

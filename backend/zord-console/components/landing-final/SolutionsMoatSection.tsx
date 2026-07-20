@@ -6,11 +6,11 @@ import { motion, useReducedMotion } from 'framer-motion'
 const moatItems = [
   {
     title: 'Data moat',
-    body: 'Connected financial data grows with every rail and institution — powering one normalized access layer operators trust.',
+    body: 'Connected financial data grows with every rail and institution, powering one normalized access layer operators trust.',
   },
   {
     title: 'Technology moat',
-    body: 'Payout-native architecture with proof attached to every state transition — not stitched dashboards and exports.',
+    body: 'Payout-native architecture with proof attached to every state transition, not stitched dashboards and exports.',
   },
   {
     title: 'Deployment moat',
@@ -27,7 +27,7 @@ function MoatAtmosphere() {
         style={{ backgroundImage: "url('/final-landing/solutions/solutions-card-buyer-story-bg.png')" }}
       />
 
-      {/* Soft color lifts — bloom instead of a flat wash */}
+      {/* Soft color lifts, bloom instead of a flat wash */}
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_90%_70%_at_50%_42%,rgba(16,185,129,0.28)_0%,transparent_62%)]" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_38%,rgba(110,231,183,0.34)_0%,transparent_36%)]" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_82%_48%,rgba(52,211,153,0.3)_0%,transparent_38%)]" />

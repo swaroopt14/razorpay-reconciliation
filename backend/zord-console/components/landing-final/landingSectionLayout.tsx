@@ -42,7 +42,7 @@ type LandingSectionHeaderProps = {
   inView?: boolean
 }
 
-/** Shared hero block — black badge, large title left, supporting copy right. */
+/** Shared hero block, black badge, large title left, supporting copy right. */
 export function LandingSectionHeader({
   badge,
   title,

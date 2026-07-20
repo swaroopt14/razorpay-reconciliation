@@ -39,7 +39,13 @@ import {
 } from '@/services/payout-command/model'
 import type { DisbursementTrendRange } from '@/services/payout-command/prod-api/disbursementTrendTypes'
 
+/** Landing hero mirrors sandbox dock rail: Today, Intent Journal, Settlement Journal. */
+const LANDING_SANDBOX_DOCK_IDS = ['home', 'grid', 'settlement'] as const satisfies readonly DockId[]
+
 const homeDock = dockItems.find((item) => item.id === 'home')!
+const previewDockItems = LANDING_SANDBOX_DOCK_IDS.map((id) => dockItems.find((item) => item.id === id)).filter(
+  (item): item is (typeof dockItems)[number] => Boolean(item),
+)
 const liveDockItems = dockItems.filter(
   (item) =>
     item.id !== 'sandbox' &&
@@ -225,6 +231,12 @@ function resolvePreviewHref(href: string): { dock?: DockId; panel?: Exclude<Prev
   if (dock && liveDockItems.some((item) => item.id === dock)) {
     return { dock }
   }
+  if (path.includes('/sandbox') && path.includes('intent')) {
+    return { dock: 'grid' }
+  }
+  if (path.includes('/sandbox') && path.includes('settlement')) {
+    return { dock: 'settlement' }
+  }
   if (path.startsWith('/payout-command-view') || path.startsWith('/sandbox')) {
     return { batchCenter: true }
   }
@@ -239,7 +251,7 @@ export function LandingHeroDashboardPreview() {
   const [period, setPeriod] = useState<DisbursementTrendRange>(M.chartPeriod)
   const [activePanel, setActivePanel] = useState<PreviewPanel>(null)
   const [refreshSeed, setRefreshSeed] = useState(0)
-  const activeDock = liveDockItems.find((item) => item.id === activeDockId) ?? homeDock
+  const activeDock = previewDockItems.find((item) => item.id === activeDockId) ?? homeDock
   const pageProfile = M.pageProfiles[activeDockId as keyof typeof M.pageProfiles] ?? M.pageProfiles.home
   const selectedMetric = pageProfile.metrics[metric].values[year]
   const chartSeries = useMemo(
@@ -261,7 +273,7 @@ export function LandingHeroDashboardPreview() {
     setActivePanel('integrations')
   }, [])
 
-  /** Keep landing mockups on-page — never navigate to live payout routes (404 when logged out). */
+  /** Keep landing mockups on-page, never navigate to live payout routes (404 when logged out). */
   const handlePreviewNavigation = useCallback((event: MouseEvent<HTMLElement>) => {
     const target = event.target as HTMLElement | null
     const anchor = target?.closest('a')
@@ -281,28 +293,30 @@ export function LandingHeroDashboardPreview() {
       return
     }
     setShowBatchCommandCenter(false)
-    // Landing preview stays on Today — dock links (Ask, Leakage, etc.) do not switch pages.
-    if (mapped.dock && mapped.dock !== 'home') return
+    // Only sandbox-style docks (Today / Intent / Settlement) switch in the landing preview.
+    if (mapped.dock && !(LANDING_SANDBOX_DOCK_IDS as readonly string[]).includes(mapped.dock)) return
     if (mapped.dock) setActiveDockId(mapped.dock)
     if (mapped.panel) setActivePanel(mapped.panel)
     else if (mapped.dock) setActivePanel(null)
   }, [])
 
   return (
-    <EnvironmentProvider routeMode="live">
+    <EnvironmentProvider routeMode="sandbox">
       <section
         className={`payout-command-console relative ${PAYOUT_PAGE_BG_CLASS}`}
         style={{ fontFamily: DASHBOARD_FONT_STACK }}
-        aria-label="Product preview of Zord Payment Command Center with illustrative data"
+        aria-label="Product preview of Zord sandbox payout console with illustrative data"
         onClickCapture={handlePreviewNavigation}
       >
-        <div className={`${PAYOUT_CONSOLE_CARD_CLASS} overflow-hidden rounded-[1.15rem]`}>
+        <div className={`${PAYOUT_CONSOLE_CARD_CLASS} overflow-hidden rounded-[1.15rem] border-0 shadow-[0_24px_64px_rgba(0,0,0,0.18)]`}>
           <PayoutConsoleNavStack
-            activeDock={showBatchCommandCenter ? 'grid' : 'home'}
-            onDockChange={() => {
-              // Keep the dock visible for product preview, but do not navigate away from Today.
+            activeDock={showBatchCommandCenter ? 'grid' : activeDockId}
+            dockIds={LANDING_SANDBOX_DOCK_IDS}
+            lockModeSwitch
+            onDockChange={(dock) => {
+              if (!(LANDING_SANDBOX_DOCK_IDS as readonly string[]).includes(dock)) return
               setShowBatchCommandCenter(false)
-              setActiveDockId('home')
+              setActiveDockId(dock)
               setActivePanel(null)
             }}
             onActivateClick={() => setActivePanel('export')}

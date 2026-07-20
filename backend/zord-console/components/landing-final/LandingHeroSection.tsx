@@ -100,7 +100,7 @@ export function LandingHeroSection() {
             sizes="100vw"
           />
         )}
-        {/* Transparent black scrim — video visible underneath, text stays readable */}
+        {/* Transparent black scrim, video visible underneath, text stays readable */}
         <div className="absolute inset-0 bg-black/50" />
         <div className="absolute inset-0 bg-gradient-to-b from-black/55 via-black/40 to-black/55" />
         <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/25 to-black/35" />

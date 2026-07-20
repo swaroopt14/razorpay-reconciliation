@@ -10,7 +10,7 @@ import TiltedCard from '@/components/landing-final/TiltedCard'
 
 const STAGE_EASE = [0.22, 1, 0.36, 1] as const
 
-/** Branch + card fade — tilt starts after reveal completes. */
+/** Branch + card fade, tilt starts after reveal completes. */
 const CARD_REVEAL_MS = 2200
 const ASSETS_DELAY_MS = 450
 
@@ -34,7 +34,7 @@ function RiskIntelligenceStageCard({ animate }: { animate: boolean }) {
   )
 }
 
-/** Branch with the live Risk Intelligence card resting on top — magnetic moss on the branch. */
+/** Branch with the live Risk Intelligence card resting on top, magnetic moss on the branch. */
 export function LandingBranchCardStage() {
   const stageRef = useRef<HTMLDivElement>(null)
   const inView = useInView(stageRef, { once: true, amount: 0.1 })
@@ -71,7 +71,7 @@ export function LandingBranchCardStage() {
           badge="Live signals"
           title="Signals surface before"
           titleAccent="money leaks"
-          description="Live payment health, routing quality, and settlement behavior — scored continuously and acted on before finance feels the impact."
+          description="Live payment health, routing quality, and settlement behavior, scored continuously and acted on before finance feels the impact."
           animated
           inView={inView}
         />

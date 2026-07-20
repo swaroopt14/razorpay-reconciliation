@@ -1,9 +1,9 @@
-/** V1-honest marketing copy for `/` home — aligned with PAYOUT_COMMAND_BLUE_COPY_INVENTORY_v2. */
+/** V1-honest marketing copy for `/` home, aligned with PAYOUT_COMMAND_BLUE_COPY_INVENTORY_v2. */
 
 import { PAYOUT_COMMAND_HOLY_GRAIL as H } from '@/components/landing-final/copy/landingHolyGrailCopy'
 
 export const landingHomeCopy = {
-  productPreviewLabel: 'Product preview — illustrative data',
+  productPreviewLabel: 'Product preview, illustrative data',
   hero: {
     slides: [
       {
@@ -15,7 +15,7 @@ export const landingHomeCopy = {
   },
   featuresSection: {
     subcopy:
-      'One operating layer for payment instructions, connector posture, and evidence readiness — from command center through finance close.',
+      'One operating layer for payment instructions, connector posture, and evidence readiness, from command center through finance close.',
   },
   howItWorks: {
     stages: [
@@ -28,7 +28,7 @@ export const landingHomeCopy = {
       {
         step: '02',
         label: 'Provider observation',
-        detail: 'Observe PSP outcomes, parse confidence, and connector performance — Zord does not dispatch payouts in V1.',
+        detail: 'Observe PSP outcomes, parse confidence, and connector performance, Zord does not dispatch payouts in V1.',
         footnote: 'Connector performance',
       },
       {
@@ -56,7 +56,7 @@ export const landingHomeCopy = {
     },
     {
       title: 'Evidence & finance',
-      description: 'Close with Evidence Packs — not screenshots and scattered exports.',
+      description: 'Close with Evidence Packs, not screenshots and scattered exports.',
     },
   ],
   finalCta: {

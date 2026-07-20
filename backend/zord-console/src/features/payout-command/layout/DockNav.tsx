@@ -26,27 +26,42 @@ type DockNavProps = {
   onDockChange: (id: DockId) => void
   alerts?: readonly OpsInsightAlert[]
   onActivateClick: () => void
+  /** Optional dock list override (e.g. landing preview sandbox subset). */
+  dockIds?: readonly DockId[]
+  /** Keep Sandbox/Live pill visual without routing away from the current page. */
+  lockModeSwitch?: boolean
 }
 
-export function DockNav({ activeDock, onDockChange, alerts, onActivateClick }: DockNavProps) {
+export function DockNav({
+  activeDock,
+  onDockChange,
+  alerts,
+  onActivateClick,
+  dockIds,
+  lockModeSwitch = false,
+}: DockNavProps) {
   const { mode } = useEnvironment()
   const searchRef = useRef<HTMLInputElement>(null)
   const searchContainerRef = useRef<HTMLDivElement>(null)
 
   const visibleDockItems = useMemo(() => {
-    if (mode === 'sandbox') {
-      return SANDBOX_DOCK_IDS.map((id) => dockItems.find((d) => d.id === id)).filter(
-        (d): d is (typeof dockItems)[number] => Boolean(d),
-      )
-    }
-    // Live: full rail minus sandbox-only + billing (plan page); connectors temporarily hidden.
-    return dockItems.filter(
-      (d) =>
-        d.id !== 'sandbox' &&
-        d.id !== 'billing' &&
-        !(CONNECTORS_DOCK_TEMPORARILY_HIDDEN && d.id === 'connectors'),
-    )
-  }, [mode])
+    const ids =
+      dockIds ??
+      (mode === 'sandbox'
+        ? SANDBOX_DOCK_IDS
+        : dockItems
+            .filter(
+              (d) =>
+                d.id !== 'sandbox' &&
+                d.id !== 'billing' &&
+                !(CONNECTORS_DOCK_TEMPORARILY_HIDDEN && d.id === 'connectors'),
+            )
+            .map((d) => d.id))
+
+    return ids
+      .map((id) => dockItems.find((d) => d.id === id))
+      .filter((d): d is (typeof dockItems)[number] => Boolean(d))
+  }, [dockIds, mode])
 
   const [search, setSearch] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
@@ -106,7 +121,7 @@ export function DockNav({ activeDock, onDockChange, alerts, onActivateClick }: D
           >
             <ZordLogo size="sm" variant="light" fitToHeight className="!w-auto max-w-[12rem] sm:max-w-[13rem]" />
           </Link>
-          <ModeTogglePill onActivateClick={onActivateClick} compact />
+          <ModeTogglePill onActivateClick={onActivateClick} compact lockModeSwitch={lockModeSwitch} />
         </div>
 
         {/* Column 2 — dock scrolls horizontally; never overlaps column 3 */}

@@ -74,7 +74,7 @@ export function ResourcesInstitutionalSection() {
             transition={{ duration: 0.5, delay: 0.1 }}
             className="mt-4 text-base leading-relaxed text-[#6B7280] sm:text-lg"
           >
-            Operators, finance, engineering, and risk can start from the same model — then branch into the depth
+            Operators, finance, engineering, and risk can start from the same model, then branch into the depth
             each team needs.
           </motion.p>
         </div>
@@ -132,7 +132,7 @@ export function ResourcesInstitutionalSection() {
                 From understanding to adoption
               </h3>
               <p className="mt-3 text-[14px] leading-relaxed text-[#6B7280]">
-                The resource layer is designed for qualification — not self-serve deep dives. When teams are ready,
+                The resource layer is designed for qualification, not self-serve deep dives. When teams are ready,
                 Arealis walks through rollout, integration, and commercial fit on a demo call.
               </p>
             </div>
