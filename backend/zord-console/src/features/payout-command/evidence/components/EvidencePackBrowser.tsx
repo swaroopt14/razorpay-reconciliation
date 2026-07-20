@@ -71,9 +71,6 @@ function BatchProofRow({ row }: { row: PackTableRowVm }) {
           <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-800">
             Batch proof
           </span>
-          <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600">
-            {row.modeLabel}
-          </span>
         </div>
       </td>
       <td className="px-4 py-4 text-[13px] font-semibold text-slate-700">Batch-wide</td>
@@ -100,7 +97,7 @@ function BatchProofRow({ row }: { row: PackTableRowVm }) {
       <td className="px-5 py-4 text-right">
         <Link
           href={href}
-          className="inline-flex items-center gap-1.5 rounded-[0.65rem] border border-slate-200 bg-white px-3 py-1.5 text-[13px] font-semibold text-slate-900 transition group-hover:border-slate-900 group-hover:text-white"
+          className="inline-flex items-center gap-1.5 rounded-[0.65rem] border border-slate-200 bg-white px-3 py-1.5 text-[13px] font-semibold text-slate-900 transition hover:border-slate-900 hover:bg-slate-900 hover:text-white"
         >
           {evidenceCopy.browser.viewBatchProof}
           <Glyph name="arrow-up-right" className="h-3 w-3" />
