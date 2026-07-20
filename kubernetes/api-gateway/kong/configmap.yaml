@@ -18,8 +18,8 @@ data:
       - name: zord-console
         url: http://zord-console.zord.svc.cluster.local:3000
         connect_timeout: 10000
-        write_timeout: 60000
-        read_timeout: 60000
+        write_timeout: 120000
+        read_timeout: 120000
         retries: 3
         routes:
           - name: console-root

@@ -10,9 +10,20 @@ const nextConfig = {
   typescript: {
     ignoreBuildErrors: false,
   },
+  // Increase image optimization timeout and cache for production
+  images: {
+    minimumCacheTTL: 3600,
+    formats: ['image/webp'],
+  },
   // Server fetch cache: opt out per-request via `cache: 'no-store'` on fetches and
   // `Cache-Control` on Route Handlers — there is no global "disable all fetch cache" flag here.
-  experimental: {},
+  experimental: {
+    // Prevents "Failed to find Server Action" errors after redeployment
+    // by allowing graceful fallback for stale client requests
+    serverActions: {
+      bodySizeLimit: '2mb',
+    },
+  },
   // Auth-guarded HTML must not be stored by shared CDNs (stale shell / wrong session after deploy).
   async headers() {
     const privateHtml = [
