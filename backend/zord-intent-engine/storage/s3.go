@@ -23,6 +23,10 @@ func (s *S3Store) StoreSnapshot(
 	jsonData []byte,
 	prevHash string,
 ) (string, string, error) {
+	bucketName, err := s.bucketNameForFolder(folder)
+	if err != nil {
+		return "", "", err
+	}
 
 	// Build hash chain:
 	h := sha256.New()
@@ -48,8 +52,8 @@ func (s *S3Store) StoreSnapshot(
 		version,
 	)
 
-	_, err := s.Client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket:      aws.String(s.BucketName),
+	_, err = s.Client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:      aws.String(bucketName),
 		Key:         aws.String(objectKey),
 		Body:        bytes.NewReader(jsonData),
 		ContentType: aws.String("application/json"),
@@ -58,6 +62,19 @@ func (s *S3Store) StoreSnapshot(
 		return "", "", err
 	}
 
-	objectRef := fmt.Sprintf("s3://%s/%s", s.BucketName, objectKey)
+	objectRef := fmt.Sprintf("s3://%s/%s", bucketName, objectKey)
 	return objectRef, hash, nil
+}
+
+func (s *S3Store) bucketNameForFolder(folder string) (string, error) {
+	switch folder {
+	case "canonical":
+		return s.CanonicalBucketName, nil
+	case "nir":
+		return s.NIRBucketName, nil
+	case "governance":
+		return s.GovernanceBucketName, nil
+	default:
+		return "", fmt.Errorf("unsupported snapshot folder %q", folder)
+	}
 }

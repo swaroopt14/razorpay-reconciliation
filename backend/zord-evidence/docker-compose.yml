@@ -30,7 +30,7 @@ services:
       # --- AWS / S3 archive store ---
       - AWS_REGION=ap-south-1
       - AWS_EC2_METADATA_DISABLED=true
-      - S3_BUCKET=swaroop-vault2
+      - S3_BUCKET=zord-evidence-vault
 
       # --- Evidence service config ---
       - PORT=8088
