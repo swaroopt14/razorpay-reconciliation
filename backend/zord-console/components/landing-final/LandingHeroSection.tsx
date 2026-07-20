@@ -157,7 +157,7 @@ export function LandingHeroSection() {
         >
           <LandingHeroRocks />
 
-          <div className="dashboard-card relative z-[5] w-full max-w-[1200px] shadow-[0_20px_40px_rgba(0,0,0,0.04)]">
+          <div className="dashboard-card relative z-[5] w-full max-w-[1200px] overflow-hidden rounded-[2rem] shadow-[0_20px_40px_rgba(0,0,0,0.04)]">
             <LandingHeroDashboardPreview />
           </div>
         </motion.div>

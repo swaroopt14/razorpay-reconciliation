@@ -303,16 +303,17 @@ export function LandingHeroDashboardPreview() {
   return (
     <EnvironmentProvider routeMode="sandbox">
       <section
-        className={`payout-command-console relative ${PAYOUT_PAGE_BG_CLASS}`}
+        className={`payout-command-console relative overflow-hidden rounded-[2rem] ${PAYOUT_PAGE_BG_CLASS}`}
         style={{ fontFamily: DASHBOARD_FONT_STACK }}
         aria-label="Product preview of Zord sandbox payout console with illustrative data"
         onClickCapture={handlePreviewNavigation}
       >
-        <div className={`${PAYOUT_CONSOLE_CARD_CLASS} overflow-hidden rounded-[1.15rem] border-0 shadow-[0_24px_64px_rgba(0,0,0,0.18)]`}>
+        <div className={`${PAYOUT_CONSOLE_CARD_CLASS} isolate overflow-hidden rounded-[2rem] border-0 shadow-[0_24px_64px_rgba(0,0,0,0.18)]`}>
           <PayoutConsoleNavStack
             activeDock={showBatchCommandCenter ? 'grid' : activeDockId}
             dockIds={LANDING_SANDBOX_DOCK_IDS}
             lockModeSwitch
+            navClassName="rounded-t-[2rem]"
             onDockChange={(dock) => {
               if (!(LANDING_SANDBOX_DOCK_IDS as readonly string[]).includes(dock)) return
               setShowBatchCommandCenter(false)
@@ -375,7 +376,7 @@ export function LandingHeroDashboardPreview() {
             </PayoutPageActionsProvider>
           </section>
 
-          <div className="border-t border-[#ecece9] bg-[#f4f4f1] px-3 py-2 text-center">
+          <div className="rounded-b-[2rem] border-t border-[#ecece9] bg-[#f4f4f1] px-3 py-2 text-center">
             <p className="text-[9px] font-medium uppercase tracking-[0.14em] text-[#9CA3AF]">
               {landingHomeCopy.productPreviewLabel}
             </p>

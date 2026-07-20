@@ -16,6 +16,10 @@ type PayoutConsoleNavStackProps = {
   dockIds?: readonly DockId[]
   /** Keep Sandbox/Live pill visual without leaving the page. */
   lockModeSwitch?: boolean
+  /** Extra classes for the sticky chrome (e.g. rounded top on landing). */
+  className?: string
+  /** Extra classes for DockNav header. */
+  navClassName?: string
 }
 
 /** Shared sticky strip + DockNav — used on Home, Sandbox, and Batch Command Center. */
@@ -27,9 +31,11 @@ export function PayoutConsoleNavStack({
   alerts,
   dockIds,
   lockModeSwitch = false,
+  className = '',
+  navClassName = '',
 }: PayoutConsoleNavStackProps) {
   return (
-    <div className="sticky top-0 z-40">
+    <div className={`sticky top-0 z-40 ${className}`.trim()}>
       {showSandboxStrip ? <SandboxStripeBanner onVerify={onActivateClick} /> : null}
       <DockNav
         activeDock={activeDock}
@@ -38,6 +44,7 @@ export function PayoutConsoleNavStack({
         alerts={alerts}
         dockIds={dockIds}
         lockModeSwitch={lockModeSwitch}
+        className={navClassName}
       />
     </div>
   )

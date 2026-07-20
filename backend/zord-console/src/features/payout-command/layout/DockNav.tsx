@@ -30,6 +30,8 @@ type DockNavProps = {
   dockIds?: readonly DockId[]
   /** Keep Sandbox/Live pill visual without routing away from the current page. */
   lockModeSwitch?: boolean
+  /** Extra classes for the header chrome (e.g. rounded top on landing). */
+  className?: string
 }
 
 export function DockNav({
@@ -39,6 +41,7 @@ export function DockNav({
   onActivateClick,
   dockIds,
   lockModeSwitch = false,
+  className = '',
 }: DockNavProps) {
   const { mode } = useEnvironment()
   const searchRef = useRef<HTMLInputElement>(null)
@@ -110,7 +113,7 @@ export function DockNav({
   }, [searchOpen])
 
   return (
-    <header className="payout-command-nav relative z-40 !bg-white">
+    <header className={`payout-command-nav relative z-40 !bg-white ${className}`.trim()}>
       <div className="mx-auto grid w-full max-w-[1920px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-2 px-3 py-2.5 sm:gap-x-3 sm:px-5 sm:py-3 lg:gap-x-4 lg:px-8">
         {/* Column 1 — brand + mode (never shrinks) */}
         <div className="flex min-w-0 shrink-0 items-center gap-2 sm:gap-2.5">
