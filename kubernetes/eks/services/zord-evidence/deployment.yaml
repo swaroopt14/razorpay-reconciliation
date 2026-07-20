@@ -120,11 +120,6 @@ spec:
               value: evidence-packs
             - name: REPLAY_COMPARE_STRICT
               value: "true"
-            - name: EVIDENCE_SIGNING_PRIVATE_KEY_BASE64
-              valueFrom:
-                secretKeyRef:
-                  name: zord-app-secrets
-                  key: EVIDENCE_SIGNING_PRIVATE_KEY_BASE64
             - name: EVIDENCE_ARCHIVE_ENCRYPTION_KEY_BASE64
               valueFrom:
                 secretKeyRef:
