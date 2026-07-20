@@ -32,7 +32,9 @@ services:
 
       - AWS_REGION=ap-south-1
       - AWS_EC2_METADATA_DISABLED=true
-      - S3_BUCKET=swaroop-vault
+      - CANNONICALS3_BUCKET=zord-intent-engine-canonical
+      - NIRS3_BUCKET=zord-intent-engine-nir
+      - GOVERNANCES3_BUCKET=zord-intent-engine-governance
     depends_on:
       - postgres
     networks:

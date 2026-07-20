@@ -27,7 +27,7 @@ services:
       - JAEGER_ENDPOINT=http://host.docker.internal:14268/api/traces # Jaeger tracing endpoint
       - AWS_REGION=ap-south-1
       - AWS_EC2_METADATA_DISABLED=true
-      - S3_BUCKET=swaroop-vault
+      - S3_BUCKET=zord-edge-ingress
       - SIGNING_KEY_PATH=/run/secrets/ed25519_private.pem
       - VAULT_KEY_ID=key-1234567890
       - OBJECT_STORE_VERSION=v1

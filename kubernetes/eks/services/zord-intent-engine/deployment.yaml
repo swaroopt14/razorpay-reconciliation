@@ -104,11 +104,21 @@ spec:
                 configMapKeyRef:
                   name: zord-aws-config
                   key: AWS_EC2_METADATA_DISABLED
-            - name: S3_BUCKET
+            - name: CANNONICALS3_BUCKET
               valueFrom:
                 secretKeyRef:
                   name: zord-app-secrets
-                  key: INTENT_S3_BUCKET
+                  key: CANNONICALS3_BUCKET
+            - name: NIRS3_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: zord-app-secrets
+                  key: NIRS3_BUCKET
+            - name: GOVERNANCES3_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: zord-app-secrets
+                  key: GOVERNANCES3_BUCKET
             - name: ZORD_VAULT_KEY
               valueFrom:
                 secretKeyRef:
