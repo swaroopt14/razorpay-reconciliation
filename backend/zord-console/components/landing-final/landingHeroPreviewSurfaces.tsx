@@ -7,12 +7,10 @@ import {
   PREVIEW_AMBIGUITY_KPI,
   PREVIEW_BATCHES,
   PREVIEW_EVIDENCE_KPI_CARDS,
-  PREVIEW_HEALTH_CARDS,
   PREVIEW_JOURNAL_ROWS,
   PREVIEW_LEAKAGE_KPI,
   PREVIEW_LEAKAGE_PCT_CACHE,
   PREVIEW_LEAKAGE_VM,
-  PREVIEW_NEXT_ACTIONS,
   PREVIEW_SETTLEMENT_ROWS,
   PREVIEW_SUPPORT_TICKETS,
 } from '@/components/landing-final/landingHeroPreviewFixtures'
@@ -20,7 +18,6 @@ import { buildMockTrendSeries } from '@/components/landing-final/landingHeroMock
 import { MatchingConfidenceKpiStrip } from '@/features/payout-command/ambiguity/components/MatchingConfidenceKpiStrip'
 import { BatchesNeedingReviewTable } from '@/features/payout-command/ambiguity/components/BatchesNeedingReviewTable'
 import { SignalClarityBar } from '@/features/payout-command/ambiguity/components/SignalClarityBar'
-import { PaymentCommandCenterBand } from '@/features/payout-command/command-center/PaymentCommandCenterBand'
 import { PAYMENT_COMMAND_CENTER } from '@/features/payout-command/command-center/paymentCommandCopy'
 import { PaymentTrendPanel } from '@/features/payout-command/command-center/PaymentTrendPanel'
 import { JournalIntelligenceKpiHero } from '@/features/payout-command/command-center/JournalIntelligenceKpiHero'
@@ -29,7 +26,6 @@ import {
   HOME_BODY_IMPERIAL_CENTERED,
   HOME_TITLE_BLACK,
 } from '@/features/payout-command/command-center/homeCommandCenterTokens'
-import type { CarouselInsightPeriod } from '@/features/payout-command/command-center/commandCenterPeriod'
 import { EvidenceHeroBanner } from '@/features/payout-command/evidence/components/EvidenceHeroBanner'
 import { EvidenceKpiStrip } from '@/features/payout-command/evidence/components/EvidenceKpiStrip'
 import { LeakageKpiStrip } from '@/features/payout-command/leakage/components/LeakageKpiStrip'
@@ -131,8 +127,6 @@ export function HomePreviewSurface(props: {
   setYear: (year: PreviewYear) => void
   chartSeries: ReturnType<typeof buildMockTrendSeries>
 }) {
-  const [carouselPeriod, setCarouselPeriod] = useState<CarouselInsightPeriod>('weekly')
-
   return (
     <div className="mt-0 w-full min-w-0">
       <div className="px-2 pt-2 text-center sm:px-4">
@@ -207,15 +201,6 @@ export function HomePreviewSurface(props: {
           </div>
         </div>
       </div>
-
-      <section className="mt-5 space-y-3 bg-[#f4f4f1] px-2 pb-3 pt-1.5 sm:px-3" aria-labelledby="landing-home-command-center-title">
-        <PaymentCommandCenterBand
-          carouselPeriod={carouselPeriod}
-          onCarouselPeriodChange={setCarouselPeriod}
-          {...PREVIEW_HEALTH_CARDS}
-          nextActions={{ actions: PREVIEW_NEXT_ACTIONS }}
-        />
-      </section>
     </div>
   )
 }

@@ -2,8 +2,6 @@
 
 import type { PortfolioLeakageViewModel } from '@/features/payout-command/leakage-portfolio/normalizeLeakagePayload'
 import type { EvidenceKpiCard } from '@/features/payout-command/evidence/types/evidenceViewModels'
-import type { NextActionItem } from '@/features/payout-command/command-center/NextActionsPanel'
-import type { PaymentHealthCardsProps } from '@/features/payout-command/command-center/PaymentHealthCards'
 import type {
   AmbiguityKpiResolved,
   IntelligenceBatchRow,
@@ -129,54 +127,6 @@ export const PREVIEW_AMBIGUITY_KPI: AmbiguityKpiResolved = {
   ],
   signal_clarity_subtitle: 'Payment signal clarity across intended vs settlement outcomes.',
 }
-
-export const PREVIEW_HEALTH_CARDS: PaymentHealthCardsProps = {
-  fullyMatchedValue: '₹2.41 Cr',
-  fullyMatchedSub: 'Settlement value confirmed by bank or PSP',
-  fullyMatchedFooter:
-    'Includes partial matches and linked outcomes. This is not the same as total intended payment value for the batch.',
-  awaitingConfirmation: false,
-  reviewValue: '₹18.2 L',
-  reviewSub: 'Payments without a confirmed settlement outcome',
-  reviewFooter:
-    'Covers payments with no confirmed settlement link. Short-settled, over-settled, unlinked, and reversal amounts are broken out below.',
-  shortSettledDisplay: '₹4.2 L',
-  overSettledDisplay: '₹1.1 L',
-  unlinkedDisplay: '₹1.8 L',
-  reversalDisplay: '₹0.95 L',
-  reviewHref: '#',
-  matchConfidencePct: '94.2%',
-  matchConfidenceSub: 'Average match confidence',
-  paymentsNeedingReview: '86',
-  missingRefRate: '4.2%',
-  refCompleteness: '95.8%',
-  multiMatchRate: '1.4%',
-  proofCoverageDisplay: '87.5%',
-  proofSub: 'Evidence coverage for audit or export',
-  proofFooter: 'Proof-ready payments have enough linked evidence to support audit or dispute export.',
-  proofReadyRow: '1,092 ready',
-  incompleteProofRow: '156 incomplete',
-  proofHref: '#',
-}
-
-export const PREVIEW_NEXT_ACTIONS: NextActionItem[] = [
-  {
-    title: 'Review unmatched Cashfree value',
-    description: '₹12.4 L needs settlement confirmation before close.',
-    href: '#',
-    emphasis: true,
-  },
-  {
-    title: 'Close BATCH-1042 evidence pack',
-    description: 'Proof readiness is 91%, 3 intents still incomplete.',
-    href: '#',
-  },
-  {
-    title: 'Resolve missing bank references',
-    description: '18 payment instructions missing UTR or PSP refs.',
-    href: '#',
-  },
-]
 
 export const PREVIEW_EVIDENCE_KPI_CARDS: EvidenceKpiCard[] = [
   {
