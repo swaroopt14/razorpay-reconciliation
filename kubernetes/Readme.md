@@ -11,7 +11,7 @@ Before starting, you need:
 - AWS CLI installed and configured
 - kubectl installed
 - Docker installed (for building images)
-- Access to AWS account `522189039032`
+- Access to AWS account `673698305621`
 - Access to the infrastructure repo: `Zord-Infrastructure-aws`
 - Access to this app repo: `Arealis-Zord-intent`
 - ACM certificate for `*.zordnet.com` (wildcard) — covers all subdomains
@@ -222,51 +222,51 @@ kubectl patch storageclass gp2 -p '{"metadata":{"annotations":{"storageclass.kub
 ### 5.1 Login to ECR
 
 ```bash
-aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 522189039032.dkr.ecr.ap-south-1.amazonaws.com
+aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 673698305621.dkr.ecr.ap-south-1.amazonaws.com
 ```
 
 ### 5.2 Build and Push Each Service
 
 ```bash
 # zord-edge
-docker build -t 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-edge:v2 ./backend/zord-edge
-docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-edge:v2
+docker build -t 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-edge:v2 ./backend/zord-edge
+docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-edge:v2
 
 # zord-intent-engine
-docker build -t 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-intent-engine:v2 ./backend/zord-intent-engine
-docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-intent-engine:v2
+docker build -t 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-intent-engine:v2 ./backend/zord-intent-engine
+docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-intent-engine:v2
 
 # zord-token-enclave
-docker build -t 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-token-enclave:v2 ./backend/zord-token-enclave
-docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-token-enclave:v2
+docker build -t 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-token-enclave:v2 ./backend/zord-token-enclave
+docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-token-enclave:v2
 
 # zord-relay
-docker build -t 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-relay:v2 ./backend/zord-relay
-docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-relay:v2
+docker build -t 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-relay:v2 ./backend/zord-relay
+docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-relay:v2
 
 # zord-outcome-engine
-docker build -t 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-outcome-engine:v2 ./backend/zord-outcome-engine
-docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-outcome-engine:v2
+docker build -t 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-outcome-engine:v2 ./backend/zord-outcome-engine
+docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-outcome-engine:v2
 
 # zord-evidence
-docker build -t 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-evidence:v2 ./backend/zord-evidence
-docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-evidence:v2
+docker build -t 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-evidence:v2 ./backend/zord-evidence
+docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-evidence:v2
 
 # zord-intelligence
-docker build -t 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-intelligence:v2 ./backend/zord-intelligence
-docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-intelligence:v2
+docker build -t 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-intelligence:v2 ./backend/zord-intelligence
+docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-intelligence:v2
 
 # zord-prompt-layer
-docker build -t 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-prompt-layer:v2 ./backend/zord-prompt-layer
-docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-prompt-layer:v2
+docker build -t 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-prompt-layer:v2 ./backend/zord-prompt-layer
+docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-prompt-layer:v2
 
 # zord-console
-docker build -t 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-console:v3 ./backend/zord-console
-docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-console:v3
+docker build -t 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-console:v3 ./backend/zord-console
+docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-console:v3
 
 # ml-service (Python ML inference)
-docker build -t 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/ml-service:v1 ./backend/ml-service
-docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/ml-service:v1
+docker build -t 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/ml-service:v1 ./backend/ml-service
+docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/ml-service:v1
 ```
 
 Note: Jenkins automates this step in CI/CD.
@@ -282,13 +282,13 @@ for img in kong konga cp-kafka fluentd; do
 done
 
 # Pull from Docker Hub → Push to your ECR
-docker pull kong:3.9 && docker tag kong:3.9 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/kong:3.9 && docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/kong:3.9
+docker pull kong:3.9 && docker tag kong:3.9 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/kong:3.9 && docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/kong:3.9
 
-docker pull pantsel/konga:0.14.9 && docker tag pantsel/konga:0.14.9 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/konga:0.14.9 && docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/konga:0.14.9
+docker pull pantsel/konga:0.14.9 && docker tag pantsel/konga:0.14.9 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/konga:0.14.9 && docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/konga:0.14.9
 
-docker pull confluentinc/cp-kafka:7.6.0 && docker tag confluentinc/cp-kafka:7.6.0 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/cp-kafka:7.6.0 && docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/cp-kafka:7.6.0
+docker pull confluentinc/cp-kafka:7.6.0 && docker tag confluentinc/cp-kafka:7.6.0 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/cp-kafka:7.6.0 && docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/cp-kafka:7.6.0
 
-docker pull fluent/fluentd-kubernetes-daemonset:v1.16-debian-elasticsearch8-1 && docker tag fluent/fluentd-kubernetes-daemonset:v1.16-debian-elasticsearch8-1 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/fluentd:v1.16-debian-elasticsearch8-1 && docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/fluentd:v1.16-debian-elasticsearch8-1
+docker pull fluent/fluentd-kubernetes-daemonset:v1.16-debian-elasticsearch8-1 && docker tag fluent/fluentd-kubernetes-daemonset:v1.16-debian-elasticsearch8-1 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/fluentd:v1.16-debian-elasticsearch8-1 && docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/fluentd:v1.16-debian-elasticsearch8-1
 ```
 
 > **NOTE:** Manifest files already point to these ECR mirrors. You only need to run this if the mirror repos are empty (first time or after deleting ECR repos). See `kubernetes/docker to ecr.md` for full details.
@@ -307,7 +307,7 @@ File : 'kubernetes\api-gateway\kong\serviceaccount.yaml'
 
 ```yaml
 annotations:
-  eks.amazonaws.com/role-arn: arn:aws:iam::522189039032:role/ZordAppS3AccessRole
+  eks.amazonaws.com/role-arn: arn:aws:iam::673698305621:role/ZordAppS3AccessRole
 ```
 
 Replace with your actual IAM role ARN.
@@ -451,7 +451,7 @@ Example with real values:
     {
       "Effect": "Allow",
       "Principal": {
-        "Federated": "arn:aws:iam::522189039032:oidc-provider/oidc.eks.ap-south-1.amazonaws.com/id/09562C64F0660D8AD0F20E6745688055"
+        "Federated": "arn:aws:iam::673698305621:oidc-provider/oidc.eks.ap-south-1.amazonaws.com/id/09562C64F0660D8AD0F20E6745688055"
       },
       "Action": "sts:AssumeRoleWithWebIdentity",
       "Condition": {
@@ -500,7 +500,7 @@ IAM -> Roles -> ZordAppS3AccessRole
 Copy the ARN. It looks like:
 
 ```
-arn:aws:iam::522189039032:role/ZordAppS3AccessRole
+arn:aws:iam::673698305621:role/ZordAppS3AccessRole
 ```
 
 **Step F: Add the role ARN to the Kubernetes service account**
@@ -513,7 +513,7 @@ kind: ServiceAccount
 metadata:
   name: zord-aws-access
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::522189039032:role/ZordAppS3AccessRole
+    eks.amazonaws.com/role-arn: arn:aws:iam::673698305621:role/ZordAppS3AccessRole
 ```
 
 Replace the ARN with your real role ARN from Step E.
@@ -541,9 +541,9 @@ Paste this policy:
         "secretsmanager:DescribeSecret"
       ],
       "Resource": [
-        "arn:aws:secretsmanager:ap-south-1:522189039032:secret:production/zord/app-secrets-*",
-        "arn:aws:secretsmanager:ap-south-1:522189039032:secret:production/zord/edge-signing-key-*",
-        "arn:aws:secretsmanager:ap-south-1:522189039032:secret:production/zord/evidence-signing-key-*"
+        "arn:aws:secretsmanager:ap-south-1:673698305621:secret:production/zord/app-secrets-*",
+        "arn:aws:secretsmanager:ap-south-1:673698305621:secret:production/zord/edge-signing-key-*",
+        "arn:aws:secretsmanager:ap-south-1:673698305621:secret:production/zord/evidence-signing-key-*"
       ]
     }
   ]
@@ -565,7 +565,7 @@ Click `Create policy`.
 File: `kubernetes/api-gateway/ingress/alb-ingress.yaml`
 
 ```yaml
-alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:522189039032:certificate/6dc91f57-59fd-4e76-b6ae-8cc53ffc6564
+alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:673698305621:certificate/6dc91f57-59fd-4e76-b6ae-8cc53ffc6564
 ```
 
 Replace with your actual ACM certificate ARN. Must be a wildcard cert (`*.zordnet.com`) to cover all subdomains.

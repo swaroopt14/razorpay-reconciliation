@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: otel-collector
-          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/otel-collector:0.96.0
+          image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/otel-collector:0.96.0
           args:
             - --config=/etc/otel/otel-collector-config.yaml
           ports:

@@ -46,7 +46,7 @@ You never touch kubectl again.
 
 Before you begin, make sure you have:
 
-- AWS CLI installed and configured with access to account `522189039032`
+- AWS CLI installed and configured with access to account `673698305621`
 - `kubectl` installed and connected to your EKS cluster
 - Access to the GitHub repo: `Arealis-network/Arealis-Zord-intent`
 - A GitHub account that can create Personal Access Tokens

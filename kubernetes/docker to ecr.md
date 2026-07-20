@@ -8,7 +8,7 @@ Run these commands **once** from the Bastion EC2 instance. After that, images ar
 ## Step 1: Login to ECR
 
 ```bash
-aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 522189039032.dkr.ecr.ap-south-1.amazonaws.com
+aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 673698305621.dkr.ecr.ap-south-1.amazonaws.com
 ```
 
 ---
@@ -38,96 +38,96 @@ aws ecr create-repository --repository-name mirror/otel-collector --region ap-so
 
 ```bash
 docker pull kong:3.9
-docker tag kong:3.9 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/kong:3.9
-docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/kong:3.9
+docker tag kong:3.9 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/kong:3.9
+docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/kong:3.9
 ```
 
 ### 2. Kong Admin UI (Konga)
 
 ```bash
 docker pull pantsel/konga:0.14.9
-docker tag pantsel/konga:0.14.9 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/konga:0.14.9
-docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/konga:0.14.9
+docker tag pantsel/konga:0.14.9 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/konga:0.14.9
+docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/konga:0.14.9
 ```
 
 ### 3. Confluent Kafka
 
 ```bash
 docker pull confluentinc/cp-kafka:7.6.0
-docker tag confluentinc/cp-kafka:7.6.0 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/cp-kafka:7.6.0
-docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/cp-kafka:7.6.0
+docker tag confluentinc/cp-kafka:7.6.0 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/cp-kafka:7.6.0
+docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/cp-kafka:7.6.0
 ```
 
 ### 4. Fluentd
 
 ```bash
 docker pull fluent/fluentd-kubernetes-daemonset:v1.16-debian-elasticsearch8-1
-docker tag fluent/fluentd-kubernetes-daemonset:v1.16-debian-elasticsearch8-1 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/fluentd:v1.16-debian-elasticsearch8-1
-docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/fluentd:v1.16-debian-elasticsearch8-1
+docker tag fluent/fluentd-kubernetes-daemonset:v1.16-debian-elasticsearch8-1 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/fluentd:v1.16-debian-elasticsearch8-1
+docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/fluentd:v1.16-debian-elasticsearch8-1
 ```
 
 ### 5. Curl (Kibana Init Job)
 
 ```bash
 docker pull curlimages/curl:8.7.1
-docker tag curlimages/curl:8.7.1 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/curl:8.7.1
-docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/curl:8.7.1
+docker tag curlimages/curl:8.7.1 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/curl:8.7.1
+docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/curl:8.7.1
 ```
 
 ### 6. Grafana
 
 ```bash
 docker pull grafana/grafana:10.4.0
-docker tag grafana/grafana:10.4.0 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/grafana:10.4.0
-docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/grafana:10.4.0
+docker tag grafana/grafana:10.4.0 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/grafana:10.4.0
+docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/grafana:10.4.0
 ```
 
 ### 7. Prometheus
 
 ```bash
 docker pull prom/prometheus:v2.51.0
-docker tag prom/prometheus:v2.51.0 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/prometheus:v2.51.0
-docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/prometheus:v2.51.0
+docker tag prom/prometheus:v2.51.0 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/prometheus:v2.51.0
+docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/prometheus:v2.51.0
 ```
 
 ### 8. Node Exporter
 
 ```bash
 docker pull prom/node-exporter:v1.7.0
-docker tag prom/node-exporter:v1.7.0 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/node-exporter:v1.7.0
-docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/node-exporter:v1.7.0
+docker tag prom/node-exporter:v1.7.0 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/node-exporter:v1.7.0
+docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/node-exporter:v1.7.0
 ```
 
 ### 9. Postgres Exporter
 
 ```bash
 docker pull prometheuscommunity/postgres-exporter:v0.15.0
-docker tag prometheuscommunity/postgres-exporter:v0.15.0 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/postgres-exporter:v0.15.0
-docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/postgres-exporter:v0.15.0
+docker tag prometheuscommunity/postgres-exporter:v0.15.0 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/postgres-exporter:v0.15.0
+docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/postgres-exporter:v0.15.0
 ```
 
 ### 10. Kafka Exporter
 
 ```bash
 docker pull danielqsj/kafka-exporter:v1.7.0
-docker tag danielqsj/kafka-exporter:v1.7.0 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/kafka-exporter:v1.7.0
-docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/kafka-exporter:v1.7.0
+docker tag danielqsj/kafka-exporter:v1.7.0 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/kafka-exporter:v1.7.0
+docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/kafka-exporter:v1.7.0
 ```
 
 ### 11. Jaeger
 
 ```bash
 docker pull jaegertracing/all-in-one:1.55
-docker tag jaegertracing/all-in-one:1.55 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/jaeger:1.55
-docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/jaeger:1.55
+docker tag jaegertracing/all-in-one:1.55 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/jaeger:1.55
+docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/jaeger:1.55
 ```
 
 ### 12. OTel Collector
 
 ```bash
 docker pull otel/opentelemetry-collector-contrib:0.96.0
-docker tag otel/opentelemetry-collector-contrib:0.96.0 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/otel-collector:0.96.0
-docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/otel-collector:0.96.0
+docker tag otel/opentelemetry-collector-contrib:0.96.0 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/otel-collector:0.96.0
+docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/otel-collector:0.96.0
 ```
 
 ---
@@ -144,7 +144,7 @@ After pushing images to ECR, update these files to use your ECR mirror:
 # Change:
 image: kong:3.9
 # To:
-image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/kong:3.9
+image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/kong:3.9
 ```
 
 ### 2. Kong Admin UI (Konga)
@@ -155,7 +155,7 @@ image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/kong:3.9
 # Change:
 image: pantsel/konga:0.14.9
 # To:
-image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/konga:0.14.9
+image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/konga:0.14.9
 ```
 
 ### 3. Kafka (StatefulSet + Topics Job)
@@ -167,7 +167,7 @@ image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/konga:0.14.9
 # Change:
 image: confluentinc/cp-kafka:7.6.0
 # To:
-image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/cp-kafka:7.6.0
+image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/cp-kafka:7.6.0
 ```
 
 ### 4. Fluentd
@@ -178,7 +178,7 @@ image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/cp-kafka:7.6.0
 # Change:
 image: fluent/fluentd-kubernetes-daemonset:v1.16-debian-elasticsearch8-1
 # To:
-image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/fluentd:v1.16-debian-elasticsearch8-1
+image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/fluentd:v1.16-debian-elasticsearch8-1
 ```
 
 ### 5. Curl (Kibana Init Job)
@@ -189,7 +189,7 @@ image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/fluentd:v1.16-debian
 # Change:
 image: curlimages/curl:8.7.1
 # To:
-image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/curl:8.7.1
+image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/curl:8.7.1
 ```
 
 ### 6. Grafana
@@ -200,7 +200,7 @@ image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/curl:8.7.1
 # Change:
 image: grafana/grafana:10.4.0
 # To:
-image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/grafana:10.4.0
+image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/grafana:10.4.0
 ```
 
 ### 7. Prometheus
@@ -211,7 +211,7 @@ image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/grafana:10.4.0
 # Change:
 image: prom/prometheus:v2.51.0
 # To:
-image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/prometheus:v2.51.0
+image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/prometheus:v2.51.0
 ```
 
 ### 8. Node Exporter
@@ -222,7 +222,7 @@ image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/prometheus:v2.51.0
 # Change:
 image: prom/node-exporter:v1.7.0
 # To:
-image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/node-exporter:v1.7.0
+image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/node-exporter:v1.7.0
 ```
 
 ### 9. Postgres Exporter
@@ -233,7 +233,7 @@ image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/node-exporter:v1.7.0
 # Change:
 image: prometheuscommunity/postgres-exporter:v0.15.0
 # To:
-image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/postgres-exporter:v0.15.0
+image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/postgres-exporter:v0.15.0
 ```
 
 ### 10. Kafka Exporter
@@ -244,7 +244,7 @@ image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/postgres-exporter:v0
 # Change:
 image: danielqsj/kafka-exporter:v1.7.0
 # To:
-image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/kafka-exporter:v1.7.0
+image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/kafka-exporter:v1.7.0
 ```
 
 ### 11. Jaeger
@@ -255,7 +255,7 @@ image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/kafka-exporter:v1.7.
 # Change:
 image: jaegertracing/all-in-one:1.55
 # To:
-image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/jaeger:1.55
+image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/jaeger:1.55
 ```
 
 ### 12. OTel Collector
@@ -266,7 +266,7 @@ image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/jaeger:1.55
 # Change:
 image: otel/opentelemetry-collector-contrib:0.96.0
 # To:
-image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/otel-collector:0.96.0
+image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/otel-collector:0.96.0
 ```
 
 ---
@@ -303,43 +303,43 @@ These images are from registries that have no rate limits:
 
 ```bash
 # Login
-aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 522189039032.dkr.ecr.ap-south-1.amazonaws.com
+aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 673698305621.dkr.ecr.ap-south-1.amazonaws.com
 
 # Kong
-docker pull kong:3.9 && docker tag kong:3.9 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/kong:3.9 && docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/kong:3.9
+docker pull kong:3.9 && docker tag kong:3.9 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/kong:3.9 && docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/kong:3.9
 
 # Konga
-docker pull pantsel/konga:0.14.9 && docker tag pantsel/konga:0.14.9 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/konga:0.14.9 && docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/konga:0.14.9
+docker pull pantsel/konga:0.14.9 && docker tag pantsel/konga:0.14.9 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/konga:0.14.9 && docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/konga:0.14.9
 
 # Kafka
-docker pull confluentinc/cp-kafka:7.6.0 && docker tag confluentinc/cp-kafka:7.6.0 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/cp-kafka:7.6.0 && docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/cp-kafka:7.6.0
+docker pull confluentinc/cp-kafka:7.6.0 && docker tag confluentinc/cp-kafka:7.6.0 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/cp-kafka:7.6.0 && docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/cp-kafka:7.6.0
 
 # Fluentd
-docker pull fluent/fluentd-kubernetes-daemonset:v1.16-debian-elasticsearch8-1 && docker tag fluent/fluentd-kubernetes-daemonset:v1.16-debian-elasticsearch8-1 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/fluentd:v1.16-debian-elasticsearch8-1 && docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/fluentd:v1.16-debian-elasticsearch8-1
+docker pull fluent/fluentd-kubernetes-daemonset:v1.16-debian-elasticsearch8-1 && docker tag fluent/fluentd-kubernetes-daemonset:v1.16-debian-elasticsearch8-1 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/fluentd:v1.16-debian-elasticsearch8-1 && docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/fluentd:v1.16-debian-elasticsearch8-1
 
 # Curl
-docker pull curlimages/curl:8.7.1 && docker tag curlimages/curl:8.7.1 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/curl:8.7.1 && docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/curl:8.7.1
+docker pull curlimages/curl:8.7.1 && docker tag curlimages/curl:8.7.1 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/curl:8.7.1 && docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/curl:8.7.1
 
 # Grafana
-docker pull grafana/grafana:10.4.0 && docker tag grafana/grafana:10.4.0 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/grafana:10.4.0 && docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/grafana:10.4.0
+docker pull grafana/grafana:10.4.0 && docker tag grafana/grafana:10.4.0 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/grafana:10.4.0 && docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/grafana:10.4.0
 
 # Prometheus
-docker pull prom/prometheus:v2.51.0 && docker tag prom/prometheus:v2.51.0 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/prometheus:v2.51.0 && docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/prometheus:v2.51.0
+docker pull prom/prometheus:v2.51.0 && docker tag prom/prometheus:v2.51.0 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/prometheus:v2.51.0 && docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/prometheus:v2.51.0
 
 # Node Exporter
-docker pull prom/node-exporter:v1.7.0 && docker tag prom/node-exporter:v1.7.0 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/node-exporter:v1.7.0 && docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/node-exporter:v1.7.0
+docker pull prom/node-exporter:v1.7.0 && docker tag prom/node-exporter:v1.7.0 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/node-exporter:v1.7.0 && docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/node-exporter:v1.7.0
 
 # Postgres Exporter
-docker pull prometheuscommunity/postgres-exporter:v0.15.0 && docker tag prometheuscommunity/postgres-exporter:v0.15.0 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/postgres-exporter:v0.15.0 && docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/postgres-exporter:v0.15.0
+docker pull prometheuscommunity/postgres-exporter:v0.15.0 && docker tag prometheuscommunity/postgres-exporter:v0.15.0 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/postgres-exporter:v0.15.0 && docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/postgres-exporter:v0.15.0
 
 # Kafka Exporter
-docker pull danielqsj/kafka-exporter:v1.7.0 && docker tag danielqsj/kafka-exporter:v1.7.0 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/kafka-exporter:v1.7.0 && docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/kafka-exporter:v1.7.0
+docker pull danielqsj/kafka-exporter:v1.7.0 && docker tag danielqsj/kafka-exporter:v1.7.0 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/kafka-exporter:v1.7.0 && docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/kafka-exporter:v1.7.0
 
 # Jaeger
-docker pull jaegertracing/all-in-one:1.55 && docker tag jaegertracing/all-in-one:1.55 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/jaeger:1.55 && docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/jaeger:1.55
+docker pull jaegertracing/all-in-one:1.55 && docker tag jaegertracing/all-in-one:1.55 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/jaeger:1.55 && docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/jaeger:1.55
 
 # OTel Collector
-docker pull otel/opentelemetry-collector-contrib:0.96.0 && docker tag otel/opentelemetry-collector-contrib:0.96.0 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/otel-collector:0.96.0 && docker push 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/otel-collector:0.96.0
+docker pull otel/opentelemetry-collector-contrib:0.96.0 && docker tag otel/opentelemetry-collector-contrib:0.96.0 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/otel-collector:0.96.0 && docker push 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/otel-collector:0.96.0
 ```
 
 ---

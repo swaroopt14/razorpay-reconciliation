@@ -23,7 +23,7 @@ pipeline {
       ],
       description: 'Service to build and deploy'
     )
-    string(name: 'AWS_ACCOUNT_ID', defaultValue: '522189039032', description: 'AWS account that owns the ECR repositories')
+    string(name: 'AWS_ACCOUNT_ID', defaultValue: '673698305621', description: 'AWS account that owns the ECR repositories')
     string(name: 'AWS_REGION', defaultValue: 'ap-south-1', description: 'AWS region for ECR')
     string(name: 'IMAGE_TAG', defaultValue: '', description: 'Optional image tag. Leave empty to auto-generate in vN format.')
     string(name: 'GIT_BRANCH', defaultValue: 'main', description: 'Git branch to update')

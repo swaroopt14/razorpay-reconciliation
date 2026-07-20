@@ -22,7 +22,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: zord-ml-service
-          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/ml-service:v12
+          image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/ml-service:v12
           imagePullPolicy: IfNotPresent
           env:
             - name: KAFKA_BROKERS
