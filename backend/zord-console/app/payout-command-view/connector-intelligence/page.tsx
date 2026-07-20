@@ -1,6 +1,5 @@
 import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
-// import { ConnectorIntelligencePageClient } from './_components/ConnectorIntelligencePageClient'
 
 export const metadata: Metadata = {
   title: 'Connector Performance & Leakage | Zord',
@@ -8,8 +7,7 @@ export const metadata: Metadata = {
     'Connector performance, leakage exposure, and recommended actions across connected PSPs, banks, and rails.',
 }
 
-/** Connectors route temporarily disabled — code kept under ./_components. */
+/** Connectors route temporarily disabled — redirects to Today. */
 export default function ConnectorIntelligencePage() {
   redirect('/payout-command-view/today')
-  // return <ConnectorIntelligencePageClient />
 }
