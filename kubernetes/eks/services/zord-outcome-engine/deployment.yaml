@@ -46,7 +46,7 @@ spec:
               app.kubernetes.io/name: zord-outcome-engine
       containers:
         - name: zord-outcome-engine
-          image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-outcome-engine:v12
+          image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-outcome-engine:v2
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8081
