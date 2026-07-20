@@ -19,7 +19,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: grafana
-          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/grafana:10.4.0
+          image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/grafana:10.4.0
           ports:
             - containerPort: 3000
           env:

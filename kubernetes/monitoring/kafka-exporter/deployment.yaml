@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
         - name: kafka-exporter
-          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/kafka-exporter:v1.7.0
+          image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/kafka-exporter:v1.7.0
           args:
             - --kafka.server=zord-kafka.zord.svc.cluster.local:9092
             - --topic.filter=.*

@@ -20,7 +20,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: prometheus
-          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/prometheus:v2.51.0
+          image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/prometheus:v2.51.0
           args:
             - "--config.file=/etc/prometheus/prometheus.yml"
             - "--storage.tsdb.path=/prometheus"

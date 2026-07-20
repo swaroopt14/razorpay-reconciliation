@@ -25,7 +25,7 @@ spec:
         workload: stateful
       containers:
         - name: kafka
-          image: 522189039032.dkr.ecr.ap-south-1.amazonaws.com/mirror/cp-kafka:7.6.0
+          image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/cp-kafka:7.6.0
           ports:
             - containerPort: 9092
               name: kafka
