@@ -38,10 +38,7 @@ import type { AskZordState } from '@/features/payout-command/hooks/useAskZordSta
 import { AskZordWorkspaceLayout } from '@/features/payout-command/workspace/AskZordWorkspaceLayout'
 import { BatchProgressPanel } from '@/features/payout-command/batch-command-center/_components/BatchProgressPanel'
 import { BatchWorkspaceBar } from '@/features/payout-command/batch-command-center/_components/BatchWorkspaceBar'
-import { PaymentStatusBreakdown } from '@/features/payout-command/batch-command-center/_components/PaymentStatusBreakdown'
-import { ReviewItemsTable } from '@/features/payout-command/batch-command-center/_components/ReviewItemsTable'
 import { BATCH_REVIEW_COPY } from '@/features/payout-command/batch-command-center/copy/batchCommandCenterCopy'
-import { mapPaymentStatusBreakdown } from '@/features/payout-command/batch-command-center/mappers/mapBatchReviewKpis'
 import { PORTAL_CARD } from '@/features/payout-command/batch-command-center/_components/portal/batchPortalTokens'
 import {
   derivePaymentProofTimeline,
@@ -50,7 +47,6 @@ import {
 } from '@/services/payout-command/batch-model'
 import type { DisbursementTrendRange } from '@/services/payout-command/prod-api/disbursementTrendTypes'
 import type { FinalityStatus } from '@/services/payout-command/prod-api/intelligenceTypes'
-import type { JournalFailureRow, JournalIntentRow } from '@/services/payout-command/prod-api/mapIntentEngineBatch'
 
 type PreviewMetric = 'intended' | 'confirmed'
 type PreviewYear = '2026' | '2027' | '2028'
@@ -447,70 +443,9 @@ const PREVIEW_BATCH_SUMMARY: BatchSummary = {
   pending: 40,
 }
 
-const PREVIEW_BATCH_INTENTS: JournalIntentRow[] = [
-  {
-    batchId: 'BATCH-1042',
-    zordId: 'ZRD-1042-01',
-    requestId: 'REQ-8801',
-    reference: 'INV-22091',
-    amount: 245_000,
-    method: 'Bank Transfer',
-    status: 'Needs Review',
-    match: 'Mismatch',
-    lastUpdated: '2 min ago',
-    paymentPartner: 'Cashfree',
-    bank: 'HDFC',
-    paymentMethodDetail: 'NEFT',
-    tenantId: 'preview',
-    intendedExecutionAt: '2026-07-13',
-    provider: 'Cashfree',
-    confidenceScore: 0.62,
-    confidenceLabel: '62%',
-    infoSummary: 'Needs match review',
-  },
-  {
-    batchId: 'BATCH-1042',
-    zordId: 'ZRD-1042-02',
-    requestId: 'REQ-8804',
-    reference: 'INV-22108',
-    amount: 98_500,
-    method: 'NACH',
-    status: 'Pending',
-    match: 'Awaiting',
-    lastUpdated: '8 min ago',
-    paymentPartner: 'Razorpay',
-    bank: 'ICICI',
-    paymentMethodDetail: 'NACH',
-    tenantId: 'preview',
-    intendedExecutionAt: '2026-07-13',
-    provider: 'Razorpay',
-    confidenceScore: 0.71,
-    confidenceLabel: '71%',
-    infoSummary: 'Awaiting bank confirmation',
-  },
-]
-
-const PREVIEW_BATCH_FAILURES: JournalFailureRow[] = [
-  {
-    batchId: 'BATCH-1042',
-    zordId: 'ZRD-1042-09',
-    requestId: 'REQ-8812',
-    reference: 'INV-22140',
-    amount: 56_000,
-    method: 'Bank Transfer',
-    paymentPartner: 'PayU',
-    connectorSubtitle: 'PayU · NEFT',
-    failureReason: 'Missing UTR on settlement file',
-    failureStage: 'Settlement',
-    lastUpdated: '14 min ago',
-    action: 'Investigate',
-  },
-]
-
 /** Landing-only Batch Command Center, same product view as /batch-command-center with mock data. */
 export function BatchCommandCenterPreviewSurface({ onBack }: { onBack?: () => void }) {
   const summary = PREVIEW_BATCH_SUMMARY
-  const pieSlices = useMemo(() => mapPaymentStatusBreakdown(summary), [])
   const pipelineSteps = useMemo(
     () =>
       derivePaymentProofTimeline(summary, {
@@ -575,6 +510,7 @@ export function BatchCommandCenterPreviewSurface({ onBack }: { onBack?: () => vo
           tenantId="preview-workspace"
           tenantReady
           isSandbox={false}
+          companyName="Jacme Company"
           activeBatchId="BATCH-1042"
           onSelectBatch={() => undefined}
           onRefresh={() => undefined}
@@ -598,16 +534,6 @@ export function BatchCommandCenterPreviewSurface({ onBack }: { onBack?: () => vo
         </section>
 
         <BatchProgressPanel steps={pipelineSteps} progressPct={progressPct} busy />
-        <PaymentStatusBreakdown slices={pieSlices} hasBatch />
-        <ReviewItemsTable
-          failures={PREVIEW_BATCH_FAILURES}
-          intents={PREVIEW_BATCH_INTENTS}
-          settlementRows={[]}
-          intentFileRows={[]}
-          settlementFileRows={[]}
-          failuresTabHref="#"
-          loading={false}
-        />
       </div>
     </div>
   )
