@@ -281,6 +281,8 @@ export function LandingHeroDashboardPreview() {
       return
     }
     setShowBatchCommandCenter(false)
+    // Landing preview stays on Today — dock links (Ask, Leakage, etc.) do not switch pages.
+    if (mapped.dock && mapped.dock !== 'home') return
     if (mapped.dock) setActiveDockId(mapped.dock)
     if (mapped.panel) setActivePanel(mapped.panel)
     else if (mapped.dock) setActivePanel(null)
@@ -296,10 +298,11 @@ export function LandingHeroDashboardPreview() {
       >
         <div className={`${PAYOUT_CONSOLE_CARD_CLASS} overflow-hidden rounded-[1.15rem]`}>
           <PayoutConsoleNavStack
-            activeDock={showBatchCommandCenter ? 'grid' : activeDockId}
-            onDockChange={(dock) => {
+            activeDock={showBatchCommandCenter ? 'grid' : 'home'}
+            onDockChange={() => {
+              // Keep the dock visible for product preview, but do not navigate away from Today.
               setShowBatchCommandCenter(false)
-              setActiveDockId(dock)
+              setActiveDockId('home')
               setActivePanel(null)
             }}
             onActivateClick={() => setActivePanel('export')}
