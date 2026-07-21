@@ -49,6 +49,8 @@ func (r *OutboxRepo) Insert(ctx context.Context, e models.ActuationOutbox) error
 	_, err := r.pool.Exec(ctx, insertOutboxSQL,
 		e.EventID, e.ActionID, e.EventType, e.Payload,
 		string(e.Status), e.Attempts, e.NextRetryAt, e.CreatedAt,
+		nilIfEmpty(e.TenantID), nilIfEmpty(e.ScopeType), nilIfEmpty(e.ScopeRef),
+		nilIfEmpty(e.PayloadHash), nilIfEmpty(e.PayloadSchemaVersion),
 	)
 	if err != nil {
 		return fmt.Errorf("outbox_repo.Insert event=%s: %w", e.EventID, err)
@@ -66,6 +68,8 @@ func (r *OutboxRepo) InsertTx(
 	_, err := tx.Exec(ctx, insertOutboxSQL,
 		e.EventID, e.ActionID, e.EventType, e.Payload,
 		string(e.Status), e.Attempts, e.NextRetryAt, e.CreatedAt,
+		nilIfEmpty(e.TenantID), nilIfEmpty(e.ScopeType), nilIfEmpty(e.ScopeRef),
+		nilIfEmpty(e.PayloadHash), nilIfEmpty(e.PayloadSchemaVersion),
 	)
 	if err != nil {
 		return fmt.Errorf("outbox_repo.InsertTx event=%s: %w", e.EventID, err)
@@ -74,12 +78,15 @@ func (r *OutboxRepo) InsertTx(
 }
 
 // insertOutboxSQL is the shared INSERT used by both Insert and InsertTx.
+// PHASE 5 (refactor): tenant_id/scope_type/scope_ref/payload_hash/
+// payload_schema_version added — see models.ActuationOutbox.
 const insertOutboxSQL = `
 	INSERT INTO actuation_outbox
 		(event_id, action_id, event_type, payload,
-		 status, attempts, next_retry_at, created_at)
+		 status, attempts, next_retry_at, created_at,
+		 tenant_id, scope_type, scope_ref, payload_hash, payload_schema_version)
 	VALUES
-		($1, $2, $3, $4, $5, $6, $7, $8)
+		($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 	ON CONFLICT (event_id) DO NOTHING
 `
 
@@ -103,7 +110,9 @@ func (r *OutboxRepo) FetchPending(ctx context.Context, limit int) ([]models.Actu
 	// and the partial outbox index make this fast in practice.
 	sql := `
 		SELECT o.event_id, o.action_id, o.event_type, o.payload::text,
-		       o.status, o.attempts, o.next_retry_at, o.sent_at, o.created_at
+		       o.status, o.attempts, o.next_retry_at, o.sent_at, o.created_at,
+		       COALESCE(o.tenant_id, ''), COALESCE(o.scope_type, ''), COALESCE(o.scope_ref, ''),
+		       COALESCE(o.payload_hash, '')
 		FROM   actuation_outbox o
 		JOIN   action_contracts  ac ON ac.action_id = o.action_id
 		WHERE  o.status          IN ('PENDING', 'FAILED')
@@ -126,6 +135,7 @@ func (r *OutboxRepo) FetchPending(ctx context.Context, limit int) ([]models.Actu
 		if err := rows.Scan(
 			&e.EventID, &e.ActionID, &e.EventType, &e.Payload,
 			&status, &e.Attempts, &e.NextRetryAt, &e.SentAt, &e.CreatedAt,
+			&e.TenantID, &e.ScopeType, &e.ScopeRef, &e.PayloadHash, // PHASE 5 (refactor)
 		); err != nil {
 			return nil, fmt.Errorf("outbox_repo.FetchPending scan: %w", err)
 		}
@@ -163,7 +173,11 @@ func (r *OutboxRepo) MarkSent(ctx context.Context, eventID string) error {
 //	attempt 3 → retry in 8 minutes
 //	attempt 4 → retry in 32 minutes
 //	attempt 5 → status = FAILED permanently (manual fix needed)
-func (r *OutboxRepo) MarkFailed(ctx context.Context, eventID string) error {
+//
+// PHASE 5 (refactor): lastErr is persisted into last_error — the Kafka
+// publish error was already available at the call site (outbox_worker.go's
+// deliver()) but previously only logged, never stored.
+func (r *OutboxRepo) MarkFailed(ctx context.Context, eventID string, lastErr string) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE actuation_outbox
 		SET
@@ -176,9 +190,10 @@ func (r *OutboxRepo) MarkFailed(ctx context.Context, eventID string) error {
 				WHEN attempts + 1 < 5 THEN
 					now() + (LEAST(30 * POWER(4, attempts), 3600) || ' seconds')::interval
 				ELSE next_retry_at
-			END
+			END,
+			last_error = $2
 		WHERE event_id = $1
-	`, eventID)
+	`, eventID, nilIfEmpty(lastErr))
 	if err != nil {
 		return fmt.Errorf("outbox_repo.MarkFailed event=%s: %w", eventID, err)
 	}

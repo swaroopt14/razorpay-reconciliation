@@ -35,6 +35,25 @@ func leakageBatchKey(batchID string) string {
 	return fmt.Sprintf("leakage.batch.%s", batchID)
 }
 
+// resolveBatchScope applies the Phase 3 BATCH scope contract to a BothScopes
+// write: an empty batch id routes to the explicit __unbatched__ bucket
+// (bug E1 fix â€” previously produced junk keys like "leakage.batch." AND kept
+// the tenant=Î£batch consistency invariant only by accident), and a real batch
+// id resolves to its batch_contracts_core UUID (blueprint Â§5.3) on the SAME
+// transaction, so the resolve commits or rolls back atomically with the
+// projection writes. The returned effectiveBatchID feeds the projection key;
+// scopeRef feeds the scope_ref column.
+func resolveBatchScope(ctx context.Context, tx pgx.Tx, tenantID, batchID string) (effectiveBatchID, scopeRef string, err error) {
+	if batchID == "" {
+		return UnbatchedScopeRef, UnbatchedScopeRef, nil
+	}
+	ref, err := resolveBatchContractID(ctx, tx, tenantID, batchID)
+	if err != nil {
+		return "", "", err
+	}
+	return batchID, ref, nil
+}
+
 // recomputeLeakageTotalsTx is the transactional twin of recomputeLeakageTotals.
 func recomputeLeakageTotalsTx(ctx context.Context, tx pgx.Tx, tenantID, key string, windowStart time.Time) error {
 	sql := `
@@ -86,11 +105,21 @@ func (r *ProjectionRepo) AtomicIncrementLeakageIntendedTotalBothScopes(
 	intendedMinor decimal.Decimal,
 	tenantWindowStart, tenantWindowEnd time.Time,
 ) error {
-	tx, err := r.pool.Begin(ctx)
+	tx, owned, err := r.beginOrJoin(ctx)
 	if err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicIncrementLeakageIntendedTotalBothScopes begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	if owned {
+		defer tx.Rollback(ctx)
+	}
+
+	// Phase 3: empty batch ids route to the __unbatched__ bucket (bug E1 fix)
+	// and real ones resolve to the batch_contracts_core UUID (blueprint Â§5.3),
+	// on the SAME tx so the resolve commits/rolls back with the writes.
+	batchID, batchScopeRef, err := resolveBatchScope(ctx, tx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
 
 	tenantKey := "leakage.total"
 	batchKey := leakageBatchKey(batchID)
@@ -99,7 +128,9 @@ func (r *ProjectionRepo) AtomicIncrementLeakageIntendedTotalBothScopes(
 		INSERT INTO projection_state
 			(tenant_id, projection_key, window_start, window_end,
 			 value_json, computed_at, projection_version,
-			 projection_family, entity_scope_type)
+			 projection_family, entity_scope_type,
+			 scope_type, scope_ref, metric_key, window_type,
+			 projection_source, projection_source_version, retention_class, expires_at)
 		VALUES ($1, $2, $3, $4,
 			jsonb_build_object(
 				'total_amount_minor',             0::numeric,
@@ -115,7 +146,9 @@ func (r *ProjectionRepo) AtomicIncrementLeakageIntendedTotalBothScopes(
 				'leakage_percentage',             0.0,
 				'breakdown_by_type',              '{}'::jsonb
 			),
-			now(), 1, 'LEAKAGE', '%s')
+			now(), 1, 'LEAKAGE', '%[1]s',
+			'%[1]s', %[2]s, 'total', '%[3]s',
+			'intent_created', $6, 'DERIVED_CACHE', %[4]s)
 		ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 		DO UPDATE SET
 			value_json = jsonb_set(
@@ -126,21 +159,24 @@ func (r *ProjectionRepo) AtomicIncrementLeakageIntendedTotalBothScopes(
 			computed_at = now()
 	`
 
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd, intendedMinor.String()); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT", "$1", "ROLLING_24H", "$4::timestamptz + interval '90 days'"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd, intendedMinor.String(), envelopeSourceVersion(ctx)); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicIncrementLeakageIntendedTotalBothScopes tenant tenant=%s: %w", tenantID, err)
 	}
 	if err := recomputeLeakageTotalsTx(ctx, tx, tenantID, tenantKey, tenantWindowStart); err != nil {
 		return err
 	}
 
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd, intendedMinor.String()); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH", "$7", "BATCH_LIFETIME", "NULL"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd, intendedMinor.String(), envelopeSourceVersion(ctx), batchScopeRef); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicIncrementLeakageIntendedTotalBothScopes batch tenant=%s batch=%s: %w", tenantID, batchID, err)
 	}
 	if err := recomputeLeakageTotalsTx(ctx, tx, tenantID, batchKey, BatchProjectionWindowStart); err != nil {
 		return err
 	}
 
-	return tx.Commit(ctx)
+	if owned {
+		return tx.Commit(ctx)
+	}
+	return nil
 }
 
 // AtomicRecordLeakageBothScopes updates leakage.total (tenant) AND
@@ -151,11 +187,21 @@ func (r *ProjectionRepo) AtomicRecordLeakageBothScopes(
 	intendedMinor, orphanMinor decimal.Decimal,
 	tenantWindowStart, tenantWindowEnd time.Time,
 ) error {
-	tx, err := r.pool.Begin(ctx)
+	tx, owned, err := r.beginOrJoin(ctx)
 	if err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicRecordLeakageBothScopes begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	if owned {
+		defer tx.Rollback(ctx)
+	}
+
+	// Phase 3: empty batch ids route to the __unbatched__ bucket (bug E1 fix)
+	// and real ones resolve to the batch_contracts_core UUID (blueprint Â§5.3),
+	// on the SAME tx so the resolve commits/rolls back with the writes.
+	batchID, batchScopeRef, err := resolveBatchScope(ctx, tx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
 
 	tenantKey := "leakage.total"
 	batchKey := leakageBatchKey(batchID)
@@ -169,7 +215,9 @@ func (r *ProjectionRepo) AtomicRecordLeakageBothScopes(
 			INSERT INTO projection_state
 				(tenant_id, projection_key, window_start, window_end,
 				 value_json, computed_at, projection_version,
-				 projection_family, entity_scope_type)
+				 projection_family, entity_scope_type,
+				 scope_type, scope_ref, metric_key, window_type,
+				 projection_source, projection_source_version, retention_class, expires_at)
 			VALUES ($1, $2, $3, $4,
 				jsonb_build_object(
 					'total_amount_minor',             $5::numeric,
@@ -185,7 +233,9 @@ func (r *ProjectionRepo) AtomicRecordLeakageBothScopes(
 					'leakage_percentage',             1.0,
 					'breakdown_by_type',              jsonb_build_object('UNMATCHED_INTENT', $5::numeric)
 				),
-				now(), 1, 'LEAKAGE', '%s')
+				now(), 1, 'LEAKAGE', '%[1]s',
+				'%[1]s', %[2]s, 'total', '%[3]s',
+				'attachment_decision', $6, 'DERIVED_CACHE', %[4]s)
 			ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 			DO UPDATE SET
 				value_json = jsonb_set(
@@ -205,7 +255,9 @@ func (r *ProjectionRepo) AtomicRecordLeakageBothScopes(
 			INSERT INTO projection_state
 				(tenant_id, projection_key, window_start, window_end,
 				 value_json, computed_at, projection_version,
-				 projection_family, entity_scope_type)
+				 projection_family, entity_scope_type,
+				 scope_type, scope_ref, metric_key, window_type,
+				 projection_source, projection_source_version, retention_class, expires_at)
 			VALUES ($1, $2, $3, $4,
 				jsonb_build_object(
 					'total_amount_minor',             $5::numeric,
@@ -221,7 +273,9 @@ func (r *ProjectionRepo) AtomicRecordLeakageBothScopes(
 					'leakage_percentage',             0.0,
 					'breakdown_by_type',              jsonb_build_object('ORPHAN_SETTLEMENT', $5::numeric)
 				),
-				now(), 1, 'LEAKAGE', '%s')
+				now(), 1, 'LEAKAGE', '%[1]s',
+				'%[1]s', %[2]s, 'total', '%[3]s',
+				'settlement_observation', $6, 'DERIVED_CACHE', %[4]s)
 			ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 			DO UPDATE SET
 				value_json = jsonb_set(
@@ -240,21 +294,24 @@ func (r *ProjectionRepo) AtomicRecordLeakageBothScopes(
 		return fmt.Errorf("projection_repo_batch_scope.AtomicRecordLeakageBothScopes: unknown leakage_type=%s", leakageType)
 	}
 
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd, amountStr); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT", "$1", "ROLLING_24H", "$4::timestamptz + interval '90 days'"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd, amountStr, envelopeSourceVersion(ctx)); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicRecordLeakageBothScopes tenant type=%s tenant=%s: %w", leakageType, tenantID, err)
 	}
 	if err := recomputeLeakageTotalsTx(ctx, tx, tenantID, tenantKey, tenantWindowStart); err != nil {
 		return err
 	}
 
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd, amountStr); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH", "$7", "BATCH_LIFETIME", "NULL"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd, amountStr, envelopeSourceVersion(ctx), batchScopeRef); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicRecordLeakageBothScopes batch type=%s tenant=%s batch=%s: %w", leakageType, tenantID, batchID, err)
 	}
 	if err := recomputeLeakageTotalsTx(ctx, tx, tenantID, batchKey, BatchProjectionWindowStart); err != nil {
 		return err
 	}
 
-	return tx.Commit(ctx)
+	if owned {
+		return tx.Commit(ctx)
+	}
+	return nil
 }
 
 // AtomicRecordVarianceBothScopes updates leakage.total (tenant) AND
@@ -267,11 +324,21 @@ func (r *ProjectionRepo) AtomicRecordVarianceBothScopes(
 	isWhitelisted bool,
 	tenantWindowStart, tenantWindowEnd time.Time,
 ) error {
-	tx, err := r.pool.Begin(ctx)
+	tx, owned, err := r.beginOrJoin(ctx)
 	if err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicRecordVarianceBothScopes begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	if owned {
+		defer tx.Rollback(ctx)
+	}
+
+	// Phase 3: empty batch ids route to the __unbatched__ bucket (bug E1 fix)
+	// and real ones resolve to the batch_contracts_core UUID (blueprint Â§5.3),
+	// on the SAME tx so the resolve commits/rolls back with the writes.
+	batchID, batchScopeRef, err := resolveBatchScope(ctx, tx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
 
 	tenantKey := "leakage.total"
 	batchKey := leakageBatchKey(batchID)
@@ -281,7 +348,9 @@ func (r *ProjectionRepo) AtomicRecordVarianceBothScopes(
 			INSERT INTO projection_state
 				(tenant_id, projection_key, window_start, window_end,
 				 value_json, computed_at, projection_version,
-				 projection_family, entity_scope_type)
+				 projection_family, entity_scope_type,
+				 scope_type, scope_ref, metric_key, window_type,
+				 projection_source, projection_source_version, retention_class, expires_at)
 			VALUES ($1, $2, $3, $4,
 				jsonb_build_object(
 					'total_amount_minor',             0::numeric,
@@ -297,25 +366,30 @@ func (r *ProjectionRepo) AtomicRecordVarianceBothScopes(
 					'leakage_percentage',             0.0,
 					'breakdown_by_type',              '{}'::jsonb
 				),
-				now(), 1, 'LEAKAGE', '%s')
+				now(), 1, 'LEAKAGE', '%[1]s',
+				'%[1]s', %[2]s, 'total', '%[3]s',
+				'variance_record', $5, 'DERIVED_CACHE', %[4]s)
 			ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 			DO UPDATE SET
 				value_json = projection_state.value_json,
 				computed_at = now()
 		`
-		if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd); err != nil {
+		if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT", "$1", "ROLLING_24H", "$4::timestamptz + interval '90 days'"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd, envelopeSourceVersion(ctx)); err != nil {
 			return fmt.Errorf("projection_repo_batch_scope.AtomicRecordVarianceBothScopes whitelisted tenant tenant=%s: %w", tenantID, err)
 		}
 		if err := recomputeLeakageTotalsTx(ctx, tx, tenantID, tenantKey, tenantWindowStart); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd); err != nil {
+		if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH", "$6", "BATCH_LIFETIME", "NULL"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd, envelopeSourceVersion(ctx), batchScopeRef); err != nil {
 			return fmt.Errorf("projection_repo_batch_scope.AtomicRecordVarianceBothScopes whitelisted batch tenant=%s batch=%s: %w", tenantID, batchID, err)
 		}
 		if err := recomputeLeakageTotalsTx(ctx, tx, tenantID, batchKey, BatchProjectionWindowStart); err != nil {
 			return err
 		}
-		return tx.Commit(ctx)
+		if owned {
+			return tx.Commit(ctx)
+		}
+		return nil
 	}
 
 	isReversal := varianceType == "REVERSAL"
@@ -326,7 +400,9 @@ func (r *ProjectionRepo) AtomicRecordVarianceBothScopes(
 			INSERT INTO projection_state
 				(tenant_id, projection_key, window_start, window_end,
 				 value_json, computed_at, projection_version,
-				 projection_family, entity_scope_type)
+				 projection_family, entity_scope_type,
+				 scope_type, scope_ref, metric_key, window_type,
+				 projection_source, projection_source_version, retention_class, expires_at)
 			VALUES ($1, $2, $3, $4,
 				jsonb_build_object(
 					'total_amount_minor',             $5::numeric,
@@ -342,7 +418,9 @@ func (r *ProjectionRepo) AtomicRecordVarianceBothScopes(
 					'leakage_percentage',             0.0,
 					'breakdown_by_type',              jsonb_build_object($6::text, $5::numeric)
 				),
-				now(), 1, 'LEAKAGE', '%s')
+				now(), 1, 'LEAKAGE', '%[1]s',
+				'%[1]s', %[2]s, 'total', '%[3]s',
+				'variance_record', $7, 'DERIVED_CACHE', %[4]s)
 			ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 			DO UPDATE SET
 				value_json = jsonb_set(
@@ -361,7 +439,9 @@ func (r *ProjectionRepo) AtomicRecordVarianceBothScopes(
 			INSERT INTO projection_state
 				(tenant_id, projection_key, window_start, window_end,
 				 value_json, computed_at, projection_version,
-				 projection_family, entity_scope_type)
+				 projection_family, entity_scope_type,
+				 scope_type, scope_ref, metric_key, window_type,
+				 projection_source, projection_source_version, retention_class, expires_at)
 			VALUES ($1, $2, $3, $4,
 				jsonb_build_object(
 					'total_amount_minor',             $5::numeric,
@@ -377,7 +457,9 @@ func (r *ProjectionRepo) AtomicRecordVarianceBothScopes(
 					'leakage_percentage',             0.0,
 					'breakdown_by_type',              jsonb_build_object($6::text, $5::numeric)
 				),
-				now(), 1, 'LEAKAGE', '%s')
+				now(), 1, 'LEAKAGE', '%[1]s',
+				'%[1]s', %[2]s, 'total', '%[3]s',
+				'variance_record', $7, 'DERIVED_CACHE', %[4]s)
 			ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 			DO UPDATE SET
 				value_json = jsonb_set(
@@ -393,21 +475,24 @@ func (r *ProjectionRepo) AtomicRecordVarianceBothScopes(
 		`
 	}
 
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd, varianceMinor.String(), varianceType); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT", "$1", "ROLLING_24H", "$4::timestamptz + interval '90 days'"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd, varianceMinor.String(), varianceType, envelopeSourceVersion(ctx)); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicRecordVarianceBothScopes tenant type=%s tenant=%s: %w", varianceType, tenantID, err)
 	}
 	if err := recomputeLeakageTotalsTx(ctx, tx, tenantID, tenantKey, tenantWindowStart); err != nil {
 		return err
 	}
 
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd, varianceMinor.String(), varianceType); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH", "$8", "BATCH_LIFETIME", "NULL"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd, varianceMinor.String(), varianceType, envelopeSourceVersion(ctx), batchScopeRef); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicRecordVarianceBothScopes batch type=%s tenant=%s batch=%s: %w", varianceType, tenantID, batchID, err)
 	}
 	if err := recomputeLeakageTotalsTx(ctx, tx, tenantID, batchKey, BatchProjectionWindowStart); err != nil {
 		return err
 	}
 
-	return tx.Commit(ctx)
+	if owned {
+		return tx.Commit(ctx)
+	}
+	return nil
 }
 
 // AtomicIncrementSettledVolumeBothScopes updates leakage.total (tenant) AND
@@ -418,11 +503,21 @@ func (r *ProjectionRepo) AtomicIncrementSettledVolumeBothScopes(
 	settledAmountMinor decimal.Decimal,
 	tenantWindowStart, tenantWindowEnd time.Time,
 ) error {
-	tx, err := r.pool.Begin(ctx)
+	tx, owned, err := r.beginOrJoin(ctx)
 	if err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicIncrementSettledVolumeBothScopes begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	if owned {
+		defer tx.Rollback(ctx)
+	}
+
+	// Phase 3: empty batch ids route to the __unbatched__ bucket (bug E1 fix)
+	// and real ones resolve to the batch_contracts_core UUID (blueprint Â§5.3),
+	// on the SAME tx so the resolve commits/rolls back with the writes.
+	batchID, batchScopeRef, err := resolveBatchScope(ctx, tx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
 
 	tenantKey := "leakage.total"
 	batchKey := leakageBatchKey(batchID)
@@ -431,12 +526,16 @@ func (r *ProjectionRepo) AtomicIncrementSettledVolumeBothScopes(
 		INSERT INTO projection_state
 			(tenant_id, projection_key, window_start, window_end,
 			 value_json, computed_at, projection_version,
-			 projection_family, entity_scope_type)
+			 projection_family, entity_scope_type,
+			 scope_type, scope_ref, metric_key, window_type,
+			 projection_source, projection_source_version, retention_class, expires_at)
 		VALUES ($1, $2, $3, $4,
 			jsonb_build_object(
 				'total_observed_settled_amount_minor', $5::numeric
 			),
-			now(), 1, 'LEAKAGE', '%s')
+			now(), 1, 'LEAKAGE', '%[1]s',
+			'%[1]s', %[2]s, 'total', '%[3]s',
+			'settlement_observation', $6, 'DERIVED_CACHE', %[4]s)
 		ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 		DO UPDATE SET
 			value_json = jsonb_set(
@@ -453,14 +552,17 @@ func (r *ProjectionRepo) AtomicIncrementSettledVolumeBothScopes(
 			computed_at = now()
 	`
 
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd, settledAmountMinor.String()); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT", "$1", "ROLLING_24H", "$4::timestamptz + interval '90 days'"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd, settledAmountMinor.String(), envelopeSourceVersion(ctx)); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicIncrementSettledVolumeBothScopes tenant tenant=%s: %w", tenantID, err)
 	}
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd, settledAmountMinor.String()); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH", "$7", "BATCH_LIFETIME", "NULL"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd, settledAmountMinor.String(), envelopeSourceVersion(ctx), batchScopeRef); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicIncrementSettledVolumeBothScopes batch tenant=%s batch=%s: %w", tenantID, batchID, err)
 	}
 
-	return tx.Commit(ctx)
+	if owned {
+		return tx.Commit(ctx)
+	}
+	return nil
 }
 
 // AtomicIncrementLeakageDuplicateRiskBothScopes updates leakage.total (tenant)
@@ -471,11 +573,21 @@ func (r *ProjectionRepo) AtomicIncrementLeakageDuplicateRiskBothScopes(
 	amount decimal.Decimal,
 	tenantWindowStart, tenantWindowEnd time.Time,
 ) error {
-	tx, err := r.pool.Begin(ctx)
+	tx, owned, err := r.beginOrJoin(ctx)
 	if err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicIncrementLeakageDuplicateRiskBothScopes begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	if owned {
+		defer tx.Rollback(ctx)
+	}
+
+	// Phase 3: empty batch ids route to the __unbatched__ bucket (bug E1 fix)
+	// and real ones resolve to the batch_contracts_core UUID (blueprint Â§5.3),
+	// on the SAME tx so the resolve commits/rolls back with the writes.
+	batchID, batchScopeRef, err := resolveBatchScope(ctx, tx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
 
 	tenantKey := "leakage.total"
 	batchKey := leakageBatchKey(batchID)
@@ -484,7 +596,9 @@ func (r *ProjectionRepo) AtomicIncrementLeakageDuplicateRiskBothScopes(
 		INSERT INTO projection_state
 			(tenant_id, projection_key, window_start, window_end,
 			 value_json, computed_at, projection_version,
-			 projection_family, entity_scope_type)
+			 projection_family, entity_scope_type,
+			 scope_type, scope_ref, metric_key, window_type,
+			 projection_source, projection_source_version, retention_class, expires_at)
 		VALUES ($1, $2, $3, $4,
 			jsonb_build_object(
 				'total_amount_minor',             0::numeric,
@@ -502,7 +616,9 @@ func (r *ProjectionRepo) AtomicIncrementLeakageDuplicateRiskBothScopes(
 				'duplicate_risk_count',           1,
 				'duplicate_risk_exposure_minor',  $5::numeric
 			),
-			now(), 1, 'LEAKAGE', '%s')
+			now(), 1, 'LEAKAGE', '%[1]s',
+			'%[1]s', %[2]s, 'total', '%[3]s',
+			'intent_created', $6, 'DERIVED_CACHE', %[4]s)
 		ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 		DO UPDATE SET
 			value_json = jsonb_set(
@@ -517,14 +633,17 @@ func (r *ProjectionRepo) AtomicIncrementLeakageDuplicateRiskBothScopes(
 			computed_at = now()
 	`
 
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd, amount.String()); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT", "$1", "ROLLING_24H", "$4::timestamptz + interval '90 days'"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd, amount.String(), envelopeSourceVersion(ctx)); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicIncrementLeakageDuplicateRiskBothScopes tenant tenant=%s: %w", tenantID, err)
 	}
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd, amount.String()); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH", "$7", "BATCH_LIFETIME", "NULL"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd, amount.String(), envelopeSourceVersion(ctx), batchScopeRef); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicIncrementLeakageDuplicateRiskBothScopes batch tenant=%s batch=%s: %w", tenantID, batchID, err)
 	}
 
-	return tx.Commit(ctx)
+	if owned {
+		return tx.Commit(ctx)
+	}
+	return nil
 }
 
 // AtomicIncrementLeakageConfirmedDuplicateBothScopes updates leakage.total
@@ -535,11 +654,21 @@ func (r *ProjectionRepo) AtomicIncrementLeakageConfirmedDuplicateBothScopes(
 	amount decimal.Decimal,
 	tenantWindowStart, tenantWindowEnd time.Time,
 ) error {
-	tx, err := r.pool.Begin(ctx)
+	tx, owned, err := r.beginOrJoin(ctx)
 	if err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicIncrementLeakageConfirmedDuplicateBothScopes begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	if owned {
+		defer tx.Rollback(ctx)
+	}
+
+	// Phase 3: empty batch ids route to the __unbatched__ bucket (bug E1 fix)
+	// and real ones resolve to the batch_contracts_core UUID (blueprint Â§5.3),
+	// on the SAME tx so the resolve commits/rolls back with the writes.
+	batchID, batchScopeRef, err := resolveBatchScope(ctx, tx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
 
 	tenantKey := "leakage.total"
 	batchKey := leakageBatchKey(batchID)
@@ -548,13 +677,17 @@ func (r *ProjectionRepo) AtomicIncrementLeakageConfirmedDuplicateBothScopes(
 		INSERT INTO projection_state
 			(tenant_id, projection_key, window_start, window_end,
 			 value_json, computed_at, projection_version,
-			 projection_family, entity_scope_type)
+			 projection_family, entity_scope_type,
+			 scope_type, scope_ref, metric_key, window_type,
+			 projection_source, projection_source_version, retention_class, expires_at)
 		VALUES ($1, $2, $3, $4,
 			jsonb_build_object(
 				'confirmed_duplicate_count',          1,
 				'confirmed_duplicate_exposure_minor', $5::numeric
 			),
-			now(), 1, 'LEAKAGE', '%s')
+			now(), 1, 'LEAKAGE', '%[1]s',
+			'%[1]s', %[2]s, 'total', '%[3]s',
+			'attachment_decision', $6, 'DERIVED_CACHE', %[4]s)
 		ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 		DO UPDATE SET
 			value_json = jsonb_set(
@@ -569,14 +702,17 @@ func (r *ProjectionRepo) AtomicIncrementLeakageConfirmedDuplicateBothScopes(
 			computed_at = now()
 	`
 
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd, amount.String()); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT", "$1", "ROLLING_24H", "$4::timestamptz + interval '90 days'"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd, amount.String(), envelopeSourceVersion(ctx)); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicIncrementLeakageConfirmedDuplicateBothScopes tenant tenant=%s: %w", tenantID, err)
 	}
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd, amount.String()); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH", "$7", "BATCH_LIFETIME", "NULL"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd, amount.String(), envelopeSourceVersion(ctx), batchScopeRef); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicIncrementLeakageConfirmedDuplicateBothScopes batch tenant=%s batch=%s: %w", tenantID, batchID, err)
 	}
 
-	return tx.Commit(ctx)
+	if owned {
+		return tx.Commit(ctx)
+	}
+	return nil
 }
 
 // AtomicIncrementValueDateMismatchBothScopes updates leakage.total (tenant)
@@ -586,11 +722,21 @@ func (r *ProjectionRepo) AtomicIncrementValueDateMismatchBothScopes(
 	tenantID, batchID string,
 	tenantWindowStart, tenantWindowEnd time.Time,
 ) error {
-	tx, err := r.pool.Begin(ctx)
+	tx, owned, err := r.beginOrJoin(ctx)
 	if err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicIncrementValueDateMismatchBothScopes begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	if owned {
+		defer tx.Rollback(ctx)
+	}
+
+	// Phase 3: empty batch ids route to the __unbatched__ bucket (bug E1 fix)
+	// and real ones resolve to the batch_contracts_core UUID (blueprint Â§5.3),
+	// on the SAME tx so the resolve commits/rolls back with the writes.
+	batchID, batchScopeRef, err := resolveBatchScope(ctx, tx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
 
 	tenantKey := "leakage.total"
 	batchKey := leakageBatchKey(batchID)
@@ -599,10 +745,14 @@ func (r *ProjectionRepo) AtomicIncrementValueDateMismatchBothScopes(
 		INSERT INTO projection_state
 			(tenant_id, projection_key, window_start, window_end,
 			 value_json, computed_at, projection_version,
-			 projection_family, entity_scope_type)
+			 projection_family, entity_scope_type,
+			 scope_type, scope_ref, metric_key, window_type,
+			 projection_source, projection_source_version, retention_class, expires_at)
 		VALUES ($1, $2, $3, $4,
 			jsonb_build_object('value_date_mismatch_count', 1),
-			now(), 1, 'LEAKAGE', '%s')
+			now(), 1, 'LEAKAGE', '%[1]s',
+			'%[1]s', %[2]s, 'total', '%[3]s',
+			'variance_record', $5, 'DERIVED_CACHE', %[4]s)
 		ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 		DO UPDATE SET
 			value_json = jsonb_set(
@@ -613,14 +763,17 @@ func (r *ProjectionRepo) AtomicIncrementValueDateMismatchBothScopes(
 			computed_at = now()
 	`
 
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT", "$1", "ROLLING_24H", "$4::timestamptz + interval '90 days'"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd, envelopeSourceVersion(ctx)); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicIncrementValueDateMismatchBothScopes tenant tenant=%s: %w", tenantID, err)
 	}
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH", "$6", "BATCH_LIFETIME", "NULL"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd, envelopeSourceVersion(ctx), batchScopeRef); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicIncrementValueDateMismatchBothScopes batch tenant=%s batch=%s: %w", tenantID, batchID, err)
 	}
 
-	return tx.Commit(ctx)
+	if owned {
+		return tx.Commit(ctx)
+	}
+	return nil
 }
 
 // AtomicRecordOverSettlementBothScopes updates leakage.total (tenant) AND
@@ -631,11 +784,21 @@ func (r *ProjectionRepo) AtomicRecordOverSettlementBothScopes(
 	amount decimal.Decimal,
 	tenantWindowStart, tenantWindowEnd time.Time,
 ) error {
-	tx, err := r.pool.Begin(ctx)
+	tx, owned, err := r.beginOrJoin(ctx)
 	if err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicRecordOverSettlementBothScopes begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	if owned {
+		defer tx.Rollback(ctx)
+	}
+
+	// Phase 3: empty batch ids route to the __unbatched__ bucket (bug E1 fix)
+	// and real ones resolve to the batch_contracts_core UUID (blueprint Â§5.3),
+	// on the SAME tx so the resolve commits/rolls back with the writes.
+	batchID, batchScopeRef, err := resolveBatchScope(ctx, tx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
 
 	tenantKey := "leakage.total"
 	batchKey := leakageBatchKey(batchID)
@@ -644,10 +807,14 @@ func (r *ProjectionRepo) AtomicRecordOverSettlementBothScopes(
 		INSERT INTO projection_state
 			(tenant_id, projection_key, window_start, window_end,
 			 value_json, computed_at, projection_version,
-			 projection_family, entity_scope_type)
+			 projection_family, entity_scope_type,
+			 scope_type, scope_ref, metric_key, window_type,
+			 projection_source, projection_source_version, retention_class, expires_at)
 		VALUES ($1, $2, $3, $4,
 			jsonb_build_object('over_settlement_amount_minor', $5::numeric, 'over_settlement_count', 1),
-			now(), 1, 'LEAKAGE', '%s')
+			now(), 1, 'LEAKAGE', '%[1]s',
+			'%[1]s', %[2]s, 'total', '%[3]s',
+			'variance_record', $6, 'DERIVED_CACHE', %[4]s)
 		ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 		DO UPDATE SET
 			value_json = jsonb_set(
@@ -668,12 +835,15 @@ func (r *ProjectionRepo) AtomicRecordOverSettlementBothScopes(
 			computed_at = now()
 	`
 
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd, amount.String()); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT", "$1", "ROLLING_24H", "$4::timestamptz + interval '90 days'"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd, amount.String(), envelopeSourceVersion(ctx)); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicRecordOverSettlementBothScopes tenant tenant=%s: %w", tenantID, err)
 	}
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd, amount.String()); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH", "$7", "BATCH_LIFETIME", "NULL"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd, amount.String(), envelopeSourceVersion(ctx), batchScopeRef); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicRecordOverSettlementBothScopes batch tenant=%s batch=%s: %w", tenantID, batchID, err)
 	}
 
-	return tx.Commit(ctx)
+	if owned {
+		return tx.Commit(ctx)
+	}
+	return nil
 }

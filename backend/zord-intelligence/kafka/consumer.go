@@ -32,6 +32,8 @@ package kafka
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"log"
 	"strings"
@@ -136,17 +138,24 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 	//   2. Calls the correct handler method
 	//   3. Returns an error if something goes wrong (message will NOT be committed)
 	//
-	// WHY A CLOSURE (func(kafka.Message) error)?
+	// WHY A CLOSURE (func(context.Context, kafka.Message) error)?
 	// Each topic needs different deserialization logic.
 	// A closure captures the specific event type for its topic.
 	// Without closures, we'd need a separate function for each topic — 13+ functions.
-	topicHandlers := map[string]func(kafka.Message) error{}
+	//
+	// PHASE 1 REFACTOR: the closure now receives a per-message context (built in
+	// consumeSingleTopic) instead of closing over StartConsumers' service-lifetime
+	// ctx. That per-message context carries the OTel trace link (previously built
+	// but never actually passed to handlers — a pre-existing gap) AND the Kafka
+	// envelope metadata (payload hash, topic, event source/version) that handlers
+	// need to claim an event_receipts row before writing any projection counters.
+	topicHandlers := map[string]func(context.Context, kafka.Message) error{}
 
 	// ── Grade B topic handlers (original — unchanged) ─────────────────────────
 	// These are wired exactly as before. No changes to existing behaviour.
 
 	wireHandler(topicHandlers, cfg.TopicIntentCreated,
-		func(msg kafka.Message) error {
+		func(ctx context.Context, msg kafka.Message) error {
 			var re models.RelayEvent
 			if err := json.Unmarshal(msg.Value, &re); err != nil {
 				return err
@@ -166,7 +175,7 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 		})
 
 	wireHandler(topicHandlers, cfg.TopicEvidenceReady,
-		func(msg kafka.Message) error {
+		func(ctx context.Context, msg kafka.Message) error {
 			var re models.RelayEvent
 			if err := json.Unmarshal(msg.Value, &re); err != nil {
 				return err
@@ -183,7 +192,7 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 
 	if !cfg.IntelligenceMode.IsGradeA() {
 		wireHandler(topicHandlers, cfg.TopicDispatchCreated,
-			func(msg kafka.Message) error {
+			func(ctx context.Context, msg kafka.Message) error {
 				var re models.RelayEvent
 				if err := json.Unmarshal(msg.Value, &re); err != nil {
 					return err
@@ -199,7 +208,7 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 			})
 
 		wireHandler(topicHandlers, cfg.TopicOutcomeNormalized,
-			func(msg kafka.Message) error {
+			func(ctx context.Context, msg kafka.Message) error {
 				var re models.RelayEvent
 				if err := json.Unmarshal(msg.Value, &re); err != nil {
 					return err
@@ -215,7 +224,7 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 			})
 
 		wireHandler(topicHandlers, cfg.TopicFinalityCert,
-			func(msg kafka.Message) error {
+			func(ctx context.Context, msg kafka.Message) error {
 				var re models.RelayEvent
 				if err := json.Unmarshal(msg.Value, &re); err != nil {
 					return err
@@ -231,7 +240,7 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 			})
 
 		wireHandler(topicHandlers, cfg.TopicFinalContract,
-			func(msg kafka.Message) error {
+			func(ctx context.Context, msg kafka.Message) error {
 				var re models.RelayEvent
 				if err := json.Unmarshal(msg.Value, &re); err != nil {
 					return err
@@ -247,7 +256,7 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 			})
 
 		wireHandler(topicHandlers, cfg.TopicDLQ,
-			func(msg kafka.Message) error {
+			func(ctx context.Context, msg kafka.Message) error {
 				var e models.DLQEvent
 				if err := json.Unmarshal(msg.Value, &e); err != nil {
 					return err
@@ -256,7 +265,7 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 			})
 
 		wireHandler(topicHandlers, cfg.TopicStatementMatch,
-			func(msg kafka.Message) error {
+			func(ctx context.Context, msg kafka.Message) error {
 				var re models.RelayEvent
 				if err := json.Unmarshal(msg.Value, &re); err != nil {
 					return err
@@ -278,7 +287,7 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 	// not registered — the service starts and runs all existing Grade B handlers.
 
 	wireHandler(topicHandlers, cfg.TopicSettlementCreated,
-		func(msg kafka.Message) error {
+		func(ctx context.Context, msg kafka.Message) error {
 			var re models.RelayEvent
 			if err := json.Unmarshal(msg.Value, &re); err != nil {
 				return err
@@ -295,7 +304,7 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 		})
 
 	wireHandler(topicHandlers, cfg.TopicAttachmentDecision,
-		func(msg kafka.Message) error {
+		func(ctx context.Context, msg kafka.Message) error {
 			var re models.RelayEvent
 			if err := json.Unmarshal(msg.Value, &re); err != nil {
 				return err
@@ -312,7 +321,7 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 		})
 
 	wireHandler(topicHandlers, cfg.TopicVarianceRecord,
-		func(msg kafka.Message) error {
+		func(ctx context.Context, msg kafka.Message) error {
 			var re models.RelayEvent
 			if err := json.Unmarshal(msg.Value, &re); err != nil {
 				return err
@@ -328,7 +337,7 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 		})
 
 	wireHandler(topicHandlers, cfg.TopicBatchSummary,
-		func(msg kafka.Message) error {
+		func(ctx context.Context, msg kafka.Message) error {
 			var re models.RelayEvent
 			if err := json.Unmarshal(msg.Value, &re); err != nil {
 				return err
@@ -344,7 +353,7 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 		})
 
 	wireHandler(topicHandlers, cfg.TopicGovernanceDecision,
-		func(msg kafka.Message) error {
+		func(ctx context.Context, msg kafka.Message) error {
 			var re models.RelayEvent
 			if err := json.Unmarshal(msg.Value, &re); err != nil {
 				return err
@@ -365,7 +374,7 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 	// The relay maps DLQItemEvent fields directly: event_id, tenant_id, trace_id,
 	// occurred_at, intent_id, batch_id, source_system, amount, reason_code.
 	wireHandler(topicHandlers, cfg.TopicDLQItem,
-		func(msg kafka.Message) error {
+		func(ctx context.Context, msg kafka.Message) error {
 			var e models.DLQItemEvent
 			if err := json.Unmarshal(msg.Value, &e); err != nil {
 				return err
@@ -388,7 +397,7 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 	if !cfg.IntelligenceMode.IsGradeA() {
 		if corridorHealthHandler, ok := handler.(CorridorHealthTickHandler); ok {
 			wireHandler(topicHandlers, cfg.TopicCorridorHealthTick,
-				func(msg kafka.Message) error {
+				func(ctx context.Context, msg kafka.Message) error {
 					var e models.CorridorHealthTickEvent
 					if err := json.Unmarshal(msg.Value, &e); err != nil {
 						return err
@@ -399,7 +408,7 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 
 		if slaTimerHandler, ok := handler.(SLATimerTickHandler); ok {
 			wireHandler(topicHandlers, cfg.TopicSLATimerTick,
-				func(msg kafka.Message) error {
+				func(ctx context.Context, msg kafka.Message) error {
 					var e models.SLATimerTickEvent
 					if err := json.Unmarshal(msg.Value, &e); err != nil {
 						return err
@@ -442,9 +451,9 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 // When Service 5C deploys, the topics become active automatically.
 // =============================================================================
 func wireHandler(
-	handlers map[string]func(kafka.Message) error,
+	handlers map[string]func(context.Context, kafka.Message) error,
 	topic string,
-	fn func(kafka.Message) error,
+	fn func(context.Context, kafka.Message) error,
 ) {
 	// Skip empty-string topics. This happens when an env var is not set
 	// or when a topic is intentionally disabled.
@@ -489,7 +498,7 @@ func consumeSingleTopic(
 	ctx context.Context,
 	brokers []string,
 	groupID, topic string,
-	handle func(kafka.Message) error,
+	handle func(context.Context, kafka.Message) error,
 ) {
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        brokers,
@@ -523,7 +532,7 @@ func consumeSingleTopic(
 		msgCtx := otel.GetTextMapPropagator().Extract(ctx, carrier)
 
 		// Start a consumer span linked to the producer's trace
-		_, span := tracer.Start(msgCtx, "consume."+msg.Topic,
+		msgCtx, span := tracer.Start(msgCtx, "consume."+msg.Topic,
 			trace.WithSpanKind(trace.SpanKindConsumer),
 			trace.WithAttributes(
 				attribute.String("messaging.system", "kafka"),
@@ -533,7 +542,20 @@ func consumeSingleTopic(
 			),
 		)
 
-		if err := handle(msg); err != nil {
+		// PHASE 1 REFACTOR: attach envelope metadata (payload hash + topic +
+		// source/version) so handlers can claim an event_receipts row before
+		// writing any projection counters. event_source/event_version do not
+		// exist on the upstream envelope yet — models.EnvelopeMetaFromContext
+		// defaults them; nothing here blocks on their absence.
+		hash := sha256.Sum256(msg.Value)
+		msgCtx = models.ContextWithEnvelopeMeta(msgCtx, models.EnvelopeMeta{
+			EventSource:  models.DefaultEventSource,
+			EventType:    msg.Topic,
+			EventVersion: models.DefaultEventVersion,
+			PayloadHash:  hex.EncodeToString(hash[:]),
+		})
+
+		if err := handle(msgCtx, msg); err != nil {
 			span.RecordError(err)
 			log.Printf("kafka: handler error topic=%s partition=%d offset=%d: %v",
 				msg.Topic, msg.Partition, msg.Offset, err)

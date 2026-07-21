@@ -51,7 +51,7 @@ func (r *ProjectionRepo) VerifyBatchTenantConsistency(
 // queryAllValueJSONByKey returns value_json for every row matching an exact
 // projection_key, across all window_start buckets.
 func (r *ProjectionRepo) queryAllValueJSONByKey(ctx context.Context, tenantID, key string) ([]string, error) {
-	rows, err := r.pool.Query(ctx, `
+	rows, err := r.q(ctx).Query(ctx, `
 		SELECT value_json FROM projection_state
 		WHERE tenant_id = $1 AND projection_key = $2
 	`, tenantID, key)
@@ -74,7 +74,7 @@ func (r *ProjectionRepo) queryAllValueJSONByKey(ctx context.Context, tenantID, k
 // queryAllValueJSONByPrefix returns value_json for every row whose
 // projection_key starts with the given prefix.
 func (r *ProjectionRepo) queryAllValueJSONByPrefix(ctx context.Context, tenantID, prefix string) ([]string, error) {
-	rows, err := r.pool.Query(ctx, `
+	rows, err := r.q(ctx).Query(ctx, `
 		SELECT value_json FROM projection_state
 		WHERE tenant_id = $1 AND projection_key LIKE $2
 	`, tenantID, prefix+"%")
@@ -94,30 +94,40 @@ func (r *ProjectionRepo) queryAllValueJSONByPrefix(ctx context.Context, tenantID
 	return result, rows.Err()
 }
 
-func (r *ProjectionRepo) verifyLeakageConsistency(ctx context.Context, tenantID string) error {
+// computeLeakageSums reads every LEAKAGE tenant/batch row for tenantID and
+// returns the summed tenant-scope and batch-scope values, ready to compare.
+// Shared by verifyLeakageConsistency (fail-fast, tests) and
+// FindConsistencyViolations (collect-all, the scheduled job).
+func (r *ProjectionRepo) computeLeakageSums(ctx context.Context, tenantID string) (tenantSum, batchSum models.LeakageValue, err error) {
 	tenantRows, err := r.queryAllValueJSONByKey(ctx, tenantID, "leakage.total")
 	if err != nil {
-		return err
+		return tenantSum, batchSum, err
 	}
 	batchRows, err := r.queryAllValueJSONByPrefix(ctx, tenantID, "leakage.batch.")
 	if err != nil {
-		return err
+		return tenantSum, batchSum, err
 	}
-
-	var tenantSum, batchSum models.LeakageValue
 	for _, raw := range tenantRows {
 		var v models.LeakageValue
 		if err := json.Unmarshal([]byte(raw), &v); err != nil {
-			return fmt.Errorf("consistency_check.verifyLeakageConsistency unmarshal tenant row tenant=%s: %w", tenantID, err)
+			return tenantSum, batchSum, fmt.Errorf("consistency_check.computeLeakageSums unmarshal tenant row tenant=%s: %w", tenantID, err)
 		}
 		addLeakageValue(&tenantSum, v)
 	}
 	for _, raw := range batchRows {
 		var v models.LeakageValue
 		if err := json.Unmarshal([]byte(raw), &v); err != nil {
-			return fmt.Errorf("consistency_check.verifyLeakageConsistency unmarshal batch row tenant=%s: %w", tenantID, err)
+			return tenantSum, batchSum, fmt.Errorf("consistency_check.computeLeakageSums unmarshal batch row tenant=%s: %w", tenantID, err)
 		}
 		addLeakageValue(&batchSum, v)
+	}
+	return tenantSum, batchSum, nil
+}
+
+func (r *ProjectionRepo) verifyLeakageConsistency(ctx context.Context, tenantID string) error {
+	tenantSum, batchSum, err := r.computeLeakageSums(ctx, tenantID)
+	if err != nil {
+		return err
 	}
 
 	checks := []struct {
@@ -186,30 +196,37 @@ func addLeakageValue(sum *models.LeakageValue, v models.LeakageValue) {
 	sum.OverSettlementCount += v.OverSettlementCount
 }
 
-func (r *ProjectionRepo) verifyAmbiguityConsistency(ctx context.Context, tenantID string) error {
+// computeAmbiguitySums is the AMBIGUITY-family twin of computeLeakageSums.
+func (r *ProjectionRepo) computeAmbiguitySums(ctx context.Context, tenantID string) (tenantSum, batchSum models.AmbiguityValue, err error) {
 	tenantRows, err := r.queryAllValueJSONByKey(ctx, tenantID, "ambiguity.summary")
 	if err != nil {
-		return err
+		return tenantSum, batchSum, err
 	}
 	batchRows, err := r.queryAllValueJSONByPrefix(ctx, tenantID, "ambiguity.batch.")
 	if err != nil {
-		return err
+		return tenantSum, batchSum, err
 	}
-
-	var tenantSum, batchSum models.AmbiguityValue
 	for _, raw := range tenantRows {
 		var v models.AmbiguityValue
 		if err := json.Unmarshal([]byte(raw), &v); err != nil {
-			return fmt.Errorf("consistency_check.verifyAmbiguityConsistency unmarshal tenant row tenant=%s: %w", tenantID, err)
+			return tenantSum, batchSum, fmt.Errorf("consistency_check.computeAmbiguitySums unmarshal tenant row tenant=%s: %w", tenantID, err)
 		}
 		addAmbiguityValue(&tenantSum, v)
 	}
 	for _, raw := range batchRows {
 		var v models.AmbiguityValue
 		if err := json.Unmarshal([]byte(raw), &v); err != nil {
-			return fmt.Errorf("consistency_check.verifyAmbiguityConsistency unmarshal batch row tenant=%s: %w", tenantID, err)
+			return tenantSum, batchSum, fmt.Errorf("consistency_check.computeAmbiguitySums unmarshal batch row tenant=%s: %w", tenantID, err)
 		}
 		addAmbiguityValue(&batchSum, v)
+	}
+	return tenantSum, batchSum, nil
+}
+
+func (r *ProjectionRepo) verifyAmbiguityConsistency(ctx context.Context, tenantID string) error {
+	tenantSum, batchSum, err := r.computeAmbiguitySums(ctx, tenantID)
+	if err != nil {
+		return err
 	}
 
 	decimalChecks := []struct {
@@ -282,30 +299,37 @@ func addAmbiguityValue(sum *models.AmbiguityValue, v models.AmbiguityValue) {
 	sum.SuccessfulDecisionCount += v.SuccessfulDecisionCount
 }
 
-func (r *ProjectionRepo) verifyDefensibilityConsistency(ctx context.Context, tenantID string) error {
+// computeDefensibilitySums is the DEFENSIBILITY-family twin of computeLeakageSums.
+func (r *ProjectionRepo) computeDefensibilitySums(ctx context.Context, tenantID string) (tenantSum, batchSum models.DefensibilityValue, err error) {
 	tenantRows, err := r.queryAllValueJSONByKey(ctx, tenantID, "defensibility.summary")
 	if err != nil {
-		return err
+		return tenantSum, batchSum, err
 	}
 	batchRows, err := r.queryAllValueJSONByPrefix(ctx, tenantID, "defensibility.batch.")
 	if err != nil {
-		return err
+		return tenantSum, batchSum, err
 	}
-
-	var tenantSum, batchSum models.DefensibilityValue
 	for _, raw := range tenantRows {
 		var v models.DefensibilityValue
 		if err := json.Unmarshal([]byte(raw), &v); err != nil {
-			return fmt.Errorf("consistency_check.verifyDefensibilityConsistency unmarshal tenant row tenant=%s: %w", tenantID, err)
+			return tenantSum, batchSum, fmt.Errorf("consistency_check.computeDefensibilitySums unmarshal tenant row tenant=%s: %w", tenantID, err)
 		}
 		addDefensibilityValue(&tenantSum, v)
 	}
 	for _, raw := range batchRows {
 		var v models.DefensibilityValue
 		if err := json.Unmarshal([]byte(raw), &v); err != nil {
-			return fmt.Errorf("consistency_check.verifyDefensibilityConsistency unmarshal batch row tenant=%s: %w", tenantID, err)
+			return tenantSum, batchSum, fmt.Errorf("consistency_check.computeDefensibilitySums unmarshal batch row tenant=%s: %w", tenantID, err)
 		}
 		addDefensibilityValue(&batchSum, v)
+	}
+	return tenantSum, batchSum, nil
+}
+
+func (r *ProjectionRepo) verifyDefensibilityConsistency(ctx context.Context, tenantID string) error {
+	tenantSum, batchSum, err := r.computeDefensibilitySums(ctx, tenantID)
+	if err != nil {
+		return err
 	}
 
 	intChecks := []struct {
@@ -372,4 +396,219 @@ func addDefensibilityValue(sum *models.DefensibilityValue, v models.Defensibilit
 	sum.IntentQualityCount += v.IntentQualityCount
 	sum.MappingConfidenceSum += v.MappingConfidenceSum
 	sum.MappingConfidenceCount += v.MappingConfidenceCount
+}
+
+// ── Gap-fix pass (2026-07-13): projection_consistency_violations job ────────
+//
+// clarification doc §11 asks to "promote VerifyBatchTenantConsistency from
+// test-only to a scheduled production job" outputting to
+// projection_consistency_violations. VerifyBatchTenantConsistency itself
+// stays fail-fast (test-only, unchanged) — FindConsistencyViolations below
+// is the collect-all sibling the scheduled job actually calls, sharing the
+// same compute*Sums functions so both stay in sync by construction.
+
+// ConsistencyViolation is one tenant-vs-batch mismatch, ready to persist into
+// projection_consistency_violations.
+type ConsistencyViolation struct {
+	ProjectionFamily string
+	MetricKey        string
+	ExpectedValue    decimal.Decimal // tenant-scope sum
+	ActualValue      decimal.Decimal // batch-scope sum
+}
+
+// FindConsistencyViolations runs all three family-level checks for tenantID
+// and returns every mismatch found (does not stop at the first one).
+func (r *ProjectionRepo) FindConsistencyViolations(ctx context.Context, tenantID string) ([]ConsistencyViolation, error) {
+	var out []ConsistencyViolation
+
+	leakTenant, leakBatch, err := r.computeLeakageSums(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, diffLeakage(leakTenant, leakBatch)...)
+
+	ambTenant, ambBatch, err := r.computeAmbiguitySums(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, diffAmbiguity(ambTenant, ambBatch)...)
+
+	defTenant, defBatch, err := r.computeDefensibilitySums(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, diffDefensibility(defTenant, defBatch)...)
+
+	return out, nil
+}
+
+func diffLeakage(tenantSum, batchSum models.LeakageValue) []ConsistencyViolation {
+	var out []ConsistencyViolation
+	decimalFields := []struct {
+		name          string
+		tenant, batch decimal.Decimal
+	}{
+		{"total_amount_minor", tenantSum.TotalAmountMinor, batchSum.TotalAmountMinor},
+		{"unmatched_amount_minor", tenantSum.UnmatchedAmountMinor, batchSum.UnmatchedAmountMinor},
+		{"under_settlement_amount_minor", tenantSum.UnderSettlementAmountMinor, batchSum.UnderSettlementAmountMinor},
+		{"orphan_amount_minor", tenantSum.OrphanAmountMinor, batchSum.OrphanAmountMinor},
+		{"reversal_exposure_minor", tenantSum.ReversalExposureMinor, batchSum.ReversalExposureMinor},
+		{"duplicate_risk_exposure_minor", tenantSum.DuplicateRiskExposureMinor, batchSum.DuplicateRiskExposureMinor},
+		{"confirmed_duplicate_exposure_minor", tenantSum.ConfirmedDuplicateExposureMinor, batchSum.ConfirmedDuplicateExposureMinor},
+		{"total_intended_amount_minor", tenantSum.TotalIntendedAmountMinor, batchSum.TotalIntendedAmountMinor},
+		{"total_observed_settled_amount_minor", tenantSum.TotalObservedSettledAmountMinor, batchSum.TotalObservedSettledAmountMinor},
+		{"over_settlement_amount_minor", tenantSum.OverSettlementAmountMinor, batchSum.OverSettlementAmountMinor},
+	}
+	for _, f := range decimalFields {
+		if !f.tenant.Equal(f.batch) {
+			out = append(out, ConsistencyViolation{"LEAKAGE", f.name, f.tenant, f.batch})
+		}
+	}
+	intFields := []struct {
+		name          string
+		tenant, batch int
+	}{
+		{"unmatched_intent_count", tenantSum.UnmatchedIntentCount, batchSum.UnmatchedIntentCount},
+		{"under_settlement_count", tenantSum.UnderSettlementCount, batchSum.UnderSettlementCount},
+		{"orphan_settlement_count", tenantSum.OrphanSettlementCount, batchSum.OrphanSettlementCount},
+		{"reversal_count", tenantSum.ReversalCount, batchSum.ReversalCount},
+		{"duplicate_risk_count", tenantSum.DuplicateRiskCount, batchSum.DuplicateRiskCount},
+		{"confirmed_duplicate_count", tenantSum.ConfirmedDuplicateCount, batchSum.ConfirmedDuplicateCount},
+		{"value_date_mismatch_count", tenantSum.ValueDateMismatchCount, batchSum.ValueDateMismatchCount},
+		{"over_settlement_count", tenantSum.OverSettlementCount, batchSum.OverSettlementCount},
+	}
+	for _, f := range intFields {
+		if f.tenant != f.batch {
+			out = append(out, ConsistencyViolation{"LEAKAGE", f.name, decimal.NewFromInt(int64(f.tenant)), decimal.NewFromInt(int64(f.batch))})
+		}
+	}
+	return out
+}
+
+func diffAmbiguity(tenantSum, batchSum models.AmbiguityValue) []ConsistencyViolation {
+	var out []ConsistencyViolation
+	decimalFields := []struct {
+		name          string
+		tenant, batch decimal.Decimal
+	}{
+		{"ambiguous_amount_minor", tenantSum.AmbiguousAmountMinor, batchSum.AmbiguousAmountMinor},
+		{"value_at_risk_minor", tenantSum.ValueAtRiskMinor, batchSum.ValueAtRiskMinor},
+	}
+	for _, f := range decimalFields {
+		if !f.tenant.Equal(f.batch) {
+			out = append(out, ConsistencyViolation{"AMBIGUITY", f.name, f.tenant, f.batch})
+		}
+	}
+	intFields := []struct {
+		name          string
+		tenant, batch int
+	}{
+		{"ambiguous_intent_count", tenantSum.AmbiguousIntentCount, batchSum.AmbiguousIntentCount},
+		{"unresolved_settlement_count", tenantSum.UnresolvedSettlementCount, batchSum.UnresolvedSettlementCount},
+		{"confidence_count", tenantSum.ConfidenceCount, batchSum.ConfidenceCount},
+		{"provider_ref_missing_count", tenantSum.ProviderRefMissingCount, batchSum.ProviderRefMissingCount},
+		{"total_decisions", tenantSum.TotalDecisions, batchSum.TotalDecisions},
+		{"low_confidence_count", tenantSum.LowConfidenceCount, batchSum.LowConfidenceCount},
+		{"candidate_collision_count", tenantSum.CandidateCollisionCount, batchSum.CandidateCollisionCount},
+		{"score_margin_count", tenantSum.ScoreMarginCount, batchSum.ScoreMarginCount},
+		{"successful_decision_count", tenantSum.SuccessfulDecisionCount, batchSum.SuccessfulDecisionCount},
+	}
+	for _, f := range intFields {
+		if f.tenant != f.batch {
+			out = append(out, ConsistencyViolation{"AMBIGUITY", f.name, decimal.NewFromInt(int64(f.tenant)), decimal.NewFromInt(int64(f.batch))})
+		}
+	}
+	floatFields := []struct {
+		name          string
+		tenant, batch float64
+	}{
+		{"confidence_sum", tenantSum.ConfidenceSum, batchSum.ConfidenceSum},
+		{"score_margin_sum", tenantSum.ScoreMarginSum, batchSum.ScoreMarginSum},
+	}
+	for _, f := range floatFields {
+		if diff := f.tenant - f.batch; diff > 1e-6 || diff < -1e-6 {
+			out = append(out, ConsistencyViolation{"AMBIGUITY", f.name, decimal.NewFromFloat(f.tenant), decimal.NewFromFloat(f.batch)})
+		}
+	}
+	return out
+}
+
+func diffDefensibility(tenantSum, batchSum models.DefensibilityValue) []ConsistencyViolation {
+	var out []ConsistencyViolation
+	intFields := []struct {
+		name          string
+		tenant, batch int
+	}{
+		{"total_intents", tenantSum.TotalIntents, batchSum.TotalIntents},
+		{"with_evidence_pack", tenantSum.WithEvidencePack, batchSum.WithEvidencePack},
+		{"with_governance_decision", tenantSum.WithGovernanceDecision, batchSum.WithGovernanceDecision},
+		{"with_replay_equivalence", tenantSum.WithReplayEquivalence, batchSum.WithReplayEquivalence},
+		{"with_kyc_checked", tenantSum.WithKYCChecked, batchSum.WithKYCChecked},
+		{"with_aml_checked", tenantSum.WithAMLChecked, batchSum.WithAMLChecked},
+		{"governance_approved_count", tenantSum.GovernanceApprovedCount, batchSum.GovernanceApprovedCount},
+		{"governance_rejected_count", tenantSum.GovernanceRejectedCount, batchSum.GovernanceRejectedCount},
+		{"governance_escalated_count", tenantSum.GovernanceEscalatedCount, batchSum.GovernanceEscalatedCount},
+		{"pack_completeness_count", tenantSum.PackCompletenessCount, batchSum.PackCompletenessCount},
+		{"with_settlement_leaf", tenantSum.WithSettlementLeaf, batchSum.WithSettlementLeaf},
+		{"with_attachment_leaf", tenantSum.WithAttachmentLeaf, batchSum.WithAttachmentLeaf},
+		{"weak_evidence_count", tenantSum.WeakEvidenceCount, batchSum.WeakEvidenceCount},
+		{"intent_quality_count", tenantSum.IntentQualityCount, batchSum.IntentQualityCount},
+		{"mapping_confidence_count", tenantSum.MappingConfidenceCount, batchSum.MappingConfidenceCount},
+	}
+	for _, f := range intFields {
+		if f.tenant != f.batch {
+			out = append(out, ConsistencyViolation{"DEFENSIBILITY", f.name, decimal.NewFromInt(int64(f.tenant)), decimal.NewFromInt(int64(f.batch))})
+		}
+	}
+	floatFields := []struct {
+		name          string
+		tenant, batch float64
+	}{
+		{"pack_completeness_sum", tenantSum.PackCompletenessSum, batchSum.PackCompletenessSum},
+		{"intent_quality_sum", tenantSum.IntentQualitySum, batchSum.IntentQualitySum},
+		{"mapping_confidence_sum", tenantSum.MappingConfidenceSum, batchSum.MappingConfidenceSum},
+	}
+	for _, f := range floatFields {
+		if diff := f.tenant - f.batch; diff > 1e-6 || diff < -1e-6 {
+			out = append(out, ConsistencyViolation{"DEFENSIBILITY", f.name, decimal.NewFromFloat(f.tenant), decimal.NewFromFloat(f.batch)})
+		}
+	}
+	return out
+}
+
+// RecordConsistencyViolations persists violations found by
+// FindConsistencyViolations into projection_consistency_violations.
+func (r *ProjectionRepo) RecordConsistencyViolations(ctx context.Context, tenantID string, violations []ConsistencyViolation) error {
+	for _, v := range violations {
+		diff := v.ExpectedValue.Sub(v.ActualValue)
+		_, err := r.q(ctx).Exec(ctx, `
+			INSERT INTO projection_consistency_violations
+				(tenant_id, projection_family, metric_key, expected_value, actual_value, difference)
+			VALUES ($1, $2, $3, $4, $5, $6)
+		`, tenantID, v.ProjectionFamily, v.MetricKey, v.ExpectedValue, v.ActualValue, diff)
+		if err != nil {
+			return fmt.Errorf("consistency_check.RecordConsistencyViolations tenant=%s family=%s metric=%s: %w",
+				tenantID, v.ProjectionFamily, v.MetricKey, err)
+		}
+	}
+	return nil
+}
+
+// ListDistinctTenants returns every tenant_id with at least one projection_state
+// row — the candidate set the scheduled consistency job iterates.
+func (r *ProjectionRepo) ListDistinctTenants(ctx context.Context) ([]string, error) {
+	rows, err := r.q(ctx).Query(ctx, `SELECT DISTINCT tenant_id FROM projection_state`)
+	if err != nil {
+		return nil, fmt.Errorf("consistency_check.ListDistinctTenants: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, fmt.Errorf("consistency_check.ListDistinctTenants scan: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
 }

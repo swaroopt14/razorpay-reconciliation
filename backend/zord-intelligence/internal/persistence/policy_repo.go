@@ -1,13 +1,26 @@
 package persistence
+
 //   policy_service.go → GetByTrigger() to find policies to evaluate on each event
 //   policy_handler.go → Insert(), SetEnabled() when ops team manages policies via API
+//
+// PHASE 5 (refactor) ADDITIONS: Insert()/SetEnabled() dual-write immutable
+// policy_definitions + policy_activations rows alongside the unchanged
+// policy_registry writes (see REFACTOR_IMPLEMENTATION_GUIDE.md §K). This
+// "PHASE 5 (refactor)" label is this refactor's phase — unrelated to this
+// codebase's own pre-existing "PHASE 5" naming elsewhere (action_contracts'
+// approval-lifecycle feature). policy_registry stays the source of truth for
+// every read path in this file; the dual-write is best-effort and never
+// fails the primary write (errors are logged, not propagated) — matching the
+// same "old table stays authoritative" precedent as Phase 1/2's dual-writes.
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/zord/zord-intelligence/internal/logger"
 	"github.com/zord/zord-intelligence/internal/models"
 )
 
@@ -19,11 +32,31 @@ func NewPolicyRepo(pool *pgxpool.Pool) *PolicyRepo {
 	return &PolicyRepo{pool: pool}
 }
 
+// policyDefinitionCols is appended to every policy_registry SELECT so
+// callers get the matching policy_definitions row's identity/digest
+// (PHASE 5 (refactor) — this refactor's phase 5, unrelated to this
+// codebase's own pre-existing "PHASE 5" naming elsewhere). A correlated
+// subquery, not a JOIN: a policy missing its dual-written definition (should
+// not happen post-backfill, but must never silently drop a live policy from
+// evaluation) still returns normally with empty strings.
+const policyDefinitionCols = `
+	COALESCE((SELECT pd.policy_registry_id::text FROM policy_definitions pd
+	          WHERE pd.policy_key = policy_registry.policy_id AND pd.policy_version = policy_registry.version
+	          ORDER BY pd.created_at DESC LIMIT 1), ''),
+	COALESCE((SELECT pd.policy_digest FROM policy_definitions pd
+	          WHERE pd.policy_key = policy_registry.policy_id AND pd.policy_version = policy_registry.version
+	          ORDER BY pd.created_at DESC LIMIT 1), ''),
+	COALESCE((SELECT pd.policy_source FROM policy_definitions pd
+	          WHERE pd.policy_key = policy_registry.policy_id AND pd.policy_version = policy_registry.version
+	          ORDER BY pd.created_at DESC LIMIT 1), '')
+`
+
 func (r *PolicyRepo) GetByTrigger(ctx context.Context, triggerType, triggerValue string) ([]models.Policy, error) {
 	sql := `
 		SELECT policy_id, version, scope_type, trigger_type, trigger_value,
 		       dsl, enabled, COALESCE(tenant_id, ''), created_at, updated_at,
-		       COALESCE(policy_family, ''), COALESCE(severity, ''), requires_manual_approval
+		       COALESCE(policy_family, ''), COALESCE(severity, ''), requires_manual_approval,
+` + policyDefinitionCols + `
 		FROM   policy_registry
 		WHERE  trigger_type  = $1
 		  AND  trigger_value = $2
@@ -46,6 +79,7 @@ func (r *PolicyRepo) GetByTrigger(ctx context.Context, triggerType, triggerValue
 			&p.Enabled, &p.TenantID,
 			&p.CreatedAt, &p.UpdatedAt,
 			&p.PolicyFamily, &p.Severity, &p.RequiresManualApproval,
+			&p.PolicyRegistryID, &p.PolicyDigest, &p.PolicySource, // PHASE 5 (refactor)
 		); err != nil {
 			return nil, fmt.Errorf("policy_repo.GetByTrigger scan: %w", err)
 		}
@@ -60,7 +94,8 @@ func (r *PolicyRepo) GetByID(ctx context.Context, policyID string) (*models.Poli
 	sql := `
 		SELECT policy_id, version, scope_type, trigger_type, trigger_value,
 		       dsl, enabled, COALESCE(tenant_id, ''), created_at, updated_at,
-		       COALESCE(policy_family, ''), COALESCE(severity, ''), requires_manual_approval
+		       COALESCE(policy_family, ''), COALESCE(severity, ''), requires_manual_approval,
+` + policyDefinitionCols + `
 		FROM   policy_registry
 		WHERE  policy_id = $1
 	`
@@ -73,6 +108,7 @@ func (r *PolicyRepo) GetByID(ctx context.Context, policyID string) (*models.Poli
 		&p.Enabled, &p.TenantID,
 		&p.CreatedAt, &p.UpdatedAt,
 		&p.PolicyFamily, &p.Severity, &p.RequiresManualApproval,
+		&p.PolicyRegistryID, &p.PolicyDigest, &p.PolicySource, // PHASE 5 (refactor)
 	)
 	if err != nil {
 		if err.Error() == "no rows in result set" {
@@ -88,7 +124,8 @@ func (r *PolicyRepo) ListAll(ctx context.Context) ([]models.Policy, error) {
 	sql := `
 		SELECT policy_id, version, scope_type, trigger_type, trigger_value,
 		       dsl, enabled, COALESCE(tenant_id, ''), created_at, updated_at,
-		       COALESCE(policy_family, ''), COALESCE(severity, ''), requires_manual_approval
+		       COALESCE(policy_family, ''), COALESCE(severity, ''), requires_manual_approval,
+` + policyDefinitionCols + `
 		FROM   policy_registry
 		ORDER  BY policy_id
 	`
@@ -107,6 +144,7 @@ func (r *PolicyRepo) ListAll(ctx context.Context) ([]models.Policy, error) {
 			&p.Enabled, &p.TenantID,
 			&p.CreatedAt, &p.UpdatedAt,
 			&p.PolicyFamily, &p.Severity, &p.RequiresManualApproval,
+			&p.PolicyRegistryID, &p.PolicyDigest, &p.PolicySource, // PHASE 5 (refactor)
 		); err != nil {
 			return nil, fmt.Errorf("policy_repo.ListAll scan: %w", err)
 		}
@@ -142,6 +180,19 @@ func (r *PolicyRepo) Insert(ctx context.Context, p models.Policy) error {
 	if err != nil {
 		return fmt.Errorf("policy_repo.Insert id=%s: %w", p.PolicyID, err)
 	}
+
+	// PHASE 5 (refactor): dual-write the immutable definition + its initial
+	// (disabled — "New policies start DISABLED") activation row. Best-effort:
+	// a failure here must not roll back the already-committed policy_registry
+	// insert, which remains the source of truth for the hot evaluation path.
+	policyRegistryID, defErr := r.insertDefinition(ctx, p, "ops_api")
+	if defErr != nil {
+		logger.Error(fmt.Sprintf("policy_repo.Insert: policy_definitions dual-write failed id=%s: %v", p.PolicyID, defErr))
+		return nil
+	}
+	if actErr := r.insertActivation(ctx, p.TenantID, policyRegistryID, false, "ops_api"); actErr != nil {
+		logger.Error(fmt.Sprintf("policy_repo.Insert: policy_activations dual-write failed id=%s: %v", p.PolicyID, actErr))
+	}
 	return nil
 }
 
@@ -155,7 +206,8 @@ func (r *PolicyRepo) GetAllCronPolicies(ctx context.Context) ([]models.Policy, e
 	sql := `
 		SELECT policy_id, version, scope_type, trigger_type, trigger_value,
 		       dsl, enabled, COALESCE(tenant_id, ''), created_at, updated_at,
-		       COALESCE(policy_family, ''), COALESCE(severity, ''), requires_manual_approval
+		       COALESCE(policy_family, ''), COALESCE(severity, ''), requires_manual_approval,
+` + policyDefinitionCols + `
 		FROM   policy_registry
 		WHERE  trigger_type = 'cron'
 		  AND  enabled      = true
@@ -176,6 +228,7 @@ func (r *PolicyRepo) GetAllCronPolicies(ctx context.Context) ([]models.Policy, e
 			&p.Enabled, &p.TenantID,
 			&p.CreatedAt, &p.UpdatedAt,
 			&p.PolicyFamily, &p.Severity, &p.RequiresManualApproval,
+			&p.PolicyRegistryID, &p.PolicyDigest, &p.PolicySource, // PHASE 5 (refactor)
 		); err != nil {
 			return nil, fmt.Errorf("policy_repo.GetAllCronPolicies scan: %w", err)
 		}
@@ -199,5 +252,109 @@ func (r *PolicyRepo) SetEnabled(ctx context.Context, policyID string, enabled bo
 	if result.RowsAffected() == 0 {
 		return fmt.Errorf("policy_repo.SetEnabled: policy %s not found", policyID)
 	}
+
+	// PHASE 5 (refactor): append an immutable activation-history row — never
+	// mutates a past row, so toggling ON/OFF/ON/OFF produces a full audit
+	// trail instead of overwriting one flag. Best-effort, same as Insert().
+	tenantID, policyRegistryID, lookupErr := r.latestDefinitionFor(ctx, policyID)
+	if lookupErr != nil {
+		logger.Error(fmt.Sprintf("policy_repo.SetEnabled: policy_definitions lookup failed id=%s: %v", policyID, lookupErr))
+		return nil
+	}
+	if actErr := r.insertActivation(ctx, tenantID, policyRegistryID, enabled, "ops_api"); actErr != nil {
+		logger.Error(fmt.Sprintf("policy_repo.SetEnabled: policy_activations dual-write failed id=%s: %v", policyID, actErr))
+	}
 	return nil
+}
+
+// ── PHASE 5 (refactor): policy_definitions / policy_activations dual-write ──
+//
+// "PHASE 5 (refactor)" = this refactor's phase 5 (policy/action/outbox
+// hardening) — see the package-doc note at the top of this file.
+
+// computePolicyDigest returns the sha256 hex digest of a policy's immutable
+// rule content. MUST match migration 011's SQL derivation exactly
+// (asserted by policy_definitions_test.go).
+func computePolicyDigest(policyKey string, version int, scopeType, triggerType, triggerValue, dsl string) string {
+	raw := fmt.Sprintf("%s|%d|%s|%s|%s|%s", policyKey, version, scopeType, triggerType, triggerValue, dsl)
+	sum := sha256.Sum256([]byte(raw))
+	return fmt.Sprintf("%x", sum)
+}
+
+// insertDefinition writes (or, on repeat calls with identical identity,
+// returns the existing) immutable policy_definitions row for p. The no-op
+// ON CONFLICT DO UPDATE exists purely so RETURNING fires on the conflicting
+// row too — same idempotent-resolve idiom as Phase 3's resolveBatchContractID.
+func (r *PolicyRepo) insertDefinition(ctx context.Context, p models.Policy, source string) (policyRegistryID string, err error) {
+	digest := computePolicyDigest(p.PolicyID, p.Version, p.ScopeType, p.TriggerType, p.TriggerValue, p.DSL)
+
+	var tenantID *string
+	if p.TenantID != "" {
+		tenantID = &p.TenantID
+	}
+	var policyFamily *string
+	if p.PolicyFamily != "" {
+		s := string(p.PolicyFamily)
+		policyFamily = &s
+	}
+	var severity *string
+	if p.Severity != "" {
+		severity = &p.Severity
+	}
+
+	err = r.pool.QueryRow(ctx, `
+		INSERT INTO policy_definitions
+			(tenant_id, policy_key, policy_version, policy_source, policy_family,
+			 scope_type, trigger_type, trigger_value, dsl, policy_digest,
+			 severity, requires_manual_approval)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		ON CONFLICT (tenant_id, policy_key, policy_version, policy_source) DO UPDATE
+			SET policy_key = policy_definitions.policy_key
+		RETURNING policy_registry_id
+	`, tenantID, p.PolicyID, p.Version, source, policyFamily,
+		p.ScopeType, p.TriggerType, p.TriggerValue, p.DSL, digest,
+		severity, p.RequiresManualApproval,
+	).Scan(&policyRegistryID)
+	if err != nil {
+		return "", fmt.Errorf("policy_repo.insertDefinition id=%s: %w", p.PolicyID, err)
+	}
+	return policyRegistryID, nil
+}
+
+// insertActivation appends one immutable policy_activations row.
+func (r *PolicyRepo) insertActivation(ctx context.Context, tenantID, policyRegistryID string, enabled bool, activatedBy string) error {
+	var tenantIDArg *string
+	if tenantID != "" {
+		tenantIDArg = &tenantID
+	}
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO policy_activations (tenant_id, policy_registry_id, enabled, activated_by)
+		VALUES ($1, $2, $3, $4)
+	`, tenantIDArg, policyRegistryID, enabled, activatedBy)
+	if err != nil {
+		return fmt.Errorf("policy_repo.insertActivation policy_registry_id=%s: %w", policyRegistryID, err)
+	}
+	return nil
+}
+
+// latestDefinitionFor returns the tenant_id + policy_registry_id of the most
+// recent policy_definitions row for policyID. Today Insert() only ever
+// creates one version per policy_id (no re-versioning flow exists yet), so
+// "latest" is simply "the one there is" — ORDER BY future-proofs this for
+// whenever a real re-versioning flow is added.
+func (r *PolicyRepo) latestDefinitionFor(ctx context.Context, policyID string) (tenantID, policyRegistryID string, err error) {
+	var tenantIDPtr *string
+	err = r.pool.QueryRow(ctx, `
+		SELECT tenant_id, policy_registry_id FROM policy_definitions
+		WHERE policy_key = $1
+		ORDER BY policy_version DESC, created_at DESC
+		LIMIT 1
+	`, policyID).Scan(&tenantIDPtr, &policyRegistryID)
+	if err != nil {
+		return "", "", fmt.Errorf("policy_repo.latestDefinitionFor id=%s: %w", policyID, err)
+	}
+	if tenantIDPtr != nil {
+		tenantID = *tenantIDPtr
+	}
+	return tenantID, policyRegistryID, nil
 }

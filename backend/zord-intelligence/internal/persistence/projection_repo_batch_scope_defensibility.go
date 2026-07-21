@@ -181,11 +181,21 @@ func (r *ProjectionRepo) AtomicRecordGovernanceCoverageBothScopes(
 	kycChecked, amlChecked, replayEquivalent bool,
 	tenantWindowStart, tenantWindowEnd time.Time,
 ) error {
-	tx, err := r.pool.Begin(ctx)
+	tx, owned, err := r.beginOrJoin(ctx)
 	if err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicRecordGovernanceCoverageBothScopes begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	if owned {
+		defer tx.Rollback(ctx)
+	}
+
+	// Phase 3: empty batch ids route to the __unbatched__ bucket (bug E1 fix)
+	// and real ones resolve to the batch_contracts_core UUID (blueprint Â§5.3),
+	// on the SAME tx so the resolve commits/rolls back with the writes.
+	batchID, batchScopeRef, err := resolveBatchScope(ctx, tx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
 
 	tenantKey := "defensibility.summary"
 	batchKey := defensibilityBatchKey(batchID)
@@ -216,7 +226,9 @@ func (r *ProjectionRepo) AtomicRecordGovernanceCoverageBothScopes(
 		INSERT INTO projection_state
 			(tenant_id, projection_key, window_start, window_end,
 			 value_json, computed_at, projection_version,
-			 projection_family, entity_scope_type)
+			 projection_family, entity_scope_type,
+			 scope_type, scope_ref, metric_key, window_type,
+			 projection_source, projection_source_version, retention_class, expires_at)
 		VALUES ($1, $2, $3, $4,
 			jsonb_build_object(
 				'total_intents',              0,
@@ -234,7 +246,9 @@ func (r *ProjectionRepo) AtomicRecordGovernanceCoverageBothScopes(
 				'audit_ready_pct',            0.0,
 				'dispute_ready_pct',          0.0
 			),
-			now(), 1, 'DEFENSIBILITY', '%s')
+			now(), 1, 'DEFENSIBILITY', '%[1]s',
+			'%[1]s', %[2]s, 'summary', '%[3]s',
+			'governance_decision', $11, 'DERIVED_CACHE', %[4]s)
 		ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 		DO UPDATE SET
 			value_json = jsonb_set(
@@ -270,8 +284,9 @@ func (r *ProjectionRepo) AtomicRecordGovernanceCoverageBothScopes(
 	`
 
 	args := []any{replayIncr, kycIncr, amlIncr, approvedIncr, rejectedIncr, escalatedIncr}
+	args = append(args, envelopeSourceVersion(ctx)) // $11 projection_source_version
 	tenantArgs := append([]any{tenantID, tenantKey, tenantWindowStart, tenantWindowEnd}, args...)
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT"), tenantArgs...); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT", "$1", "ROLLING_24H", "$4::timestamptz + interval '90 days'"), tenantArgs...); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicRecordGovernanceCoverageBothScopes tenant tenant=%s: %w", tenantID, err)
 	}
 	if err := recomputeDefensibilityRatesTx(ctx, tx, tenantID, tenantKey, tenantWindowStart); err != nil {
@@ -279,14 +294,18 @@ func (r *ProjectionRepo) AtomicRecordGovernanceCoverageBothScopes(
 	}
 
 	batchArgs := append([]any{tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd}, args...)
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH"), batchArgs...); err != nil {
+	batchArgs = append(batchArgs, batchScopeRef) // $12 scope_ref (core UUID)
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH", "$12", "BATCH_LIFETIME", "NULL"), batchArgs...); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicRecordGovernanceCoverageBothScopes batch tenant=%s batch=%s: %w", tenantID, batchID, err)
 	}
 	if err := recomputeDefensibilityRatesTx(ctx, tx, tenantID, batchKey, BatchProjectionWindowStart); err != nil {
 		return err
 	}
 
-	return tx.Commit(ctx)
+	if owned {
+		return tx.Commit(ctx)
+	}
+	return nil
 }
 
 // AtomicIncrementDefensibilityIntentBothScopes updates defensibility.summary
@@ -297,11 +316,21 @@ func (r *ProjectionRepo) AtomicIncrementDefensibilityIntentBothScopes(
 	hasEvidencePack bool,
 	tenantWindowStart, tenantWindowEnd time.Time,
 ) error {
-	tx, err := r.pool.Begin(ctx)
+	tx, owned, err := r.beginOrJoin(ctx)
 	if err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicIncrementDefensibilityIntentBothScopes begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	if owned {
+		defer tx.Rollback(ctx)
+	}
+
+	// Phase 3: empty batch ids route to the __unbatched__ bucket (bug E1 fix)
+	// and real ones resolve to the batch_contracts_core UUID (blueprint Â§5.3),
+	// on the SAME tx so the resolve commits/rolls back with the writes.
+	batchID, batchScopeRef, err := resolveBatchScope(ctx, tx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
 
 	tenantKey := "defensibility.summary"
 	batchKey := defensibilityBatchKey(batchID)
@@ -315,7 +344,9 @@ func (r *ProjectionRepo) AtomicIncrementDefensibilityIntentBothScopes(
 		INSERT INTO projection_state
 			(tenant_id, projection_key, window_start, window_end,
 			 value_json, computed_at, projection_version,
-			 projection_family, entity_scope_type)
+			 projection_family, entity_scope_type,
+			 scope_type, scope_ref, metric_key, window_type,
+			 projection_source, projection_source_version, retention_class, expires_at)
 		VALUES ($1, $2, $3, $4,
 			jsonb_build_object(
 				'total_intents',              1,
@@ -333,7 +364,9 @@ func (r *ProjectionRepo) AtomicIncrementDefensibilityIntentBothScopes(
 				'audit_ready_pct',            0.0,
 				'dispute_ready_pct',          0.0
 			),
-			now(), 1, 'DEFENSIBILITY', '%s')
+			now(), 1, 'DEFENSIBILITY', '%[1]s',
+			'%[1]s', %[2]s, 'summary', '%[3]s',
+			'attachment_decision', $6, 'DERIVED_CACHE', %[4]s)
 		ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 		DO UPDATE SET
 			value_json = jsonb_set(
@@ -348,21 +381,24 @@ func (r *ProjectionRepo) AtomicIncrementDefensibilityIntentBothScopes(
 			computed_at = now()
 	`
 
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd, packIncr); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT", "$1", "ROLLING_24H", "$4::timestamptz + interval '90 days'"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd, packIncr, envelopeSourceVersion(ctx)); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicIncrementDefensibilityIntentBothScopes tenant tenant=%s: %w", tenantID, err)
 	}
 	if err := recomputeDefensibilityRatesTx(ctx, tx, tenantID, tenantKey, tenantWindowStart); err != nil {
 		return err
 	}
 
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd, packIncr); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH", "$7", "BATCH_LIFETIME", "NULL"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd, packIncr, envelopeSourceVersion(ctx), batchScopeRef); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicIncrementDefensibilityIntentBothScopes batch tenant=%s batch=%s: %w", tenantID, batchID, err)
 	}
 	if err := recomputeDefensibilityRatesTx(ctx, tx, tenantID, batchKey, BatchProjectionWindowStart); err != nil {
 		return err
 	}
 
-	return tx.Commit(ctx)
+	if owned {
+		return tx.Commit(ctx)
+	}
+	return nil
 }
 
 // AtomicIncrementDefensibilityEvidencePackBothScopes updates
@@ -372,11 +408,21 @@ func (r *ProjectionRepo) AtomicIncrementDefensibilityEvidencePackBothScopes(
 	tenantID, batchID string,
 	tenantWindowStart, tenantWindowEnd time.Time,
 ) error {
-	tx, err := r.pool.Begin(ctx)
+	tx, owned, err := r.beginOrJoin(ctx)
 	if err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicIncrementDefensibilityEvidencePackBothScopes begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	if owned {
+		defer tx.Rollback(ctx)
+	}
+
+	// Phase 3: empty batch ids route to the __unbatched__ bucket (bug E1 fix)
+	// and real ones resolve to the batch_contracts_core UUID (blueprint Â§5.3),
+	// on the SAME tx so the resolve commits/rolls back with the writes.
+	batchID, batchScopeRef, err := resolveBatchScope(ctx, tx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
 
 	tenantKey := "defensibility.summary"
 	batchKey := defensibilityBatchKey(batchID)
@@ -385,7 +431,9 @@ func (r *ProjectionRepo) AtomicIncrementDefensibilityEvidencePackBothScopes(
 		INSERT INTO projection_state
 			(tenant_id, projection_key, window_start, window_end,
 			 value_json, computed_at, projection_version,
-			 projection_family, entity_scope_type)
+			 projection_family, entity_scope_type,
+			 scope_type, scope_ref, metric_key, window_type,
+			 projection_source, projection_source_version, retention_class, expires_at)
 		VALUES ($1, $2, $3, $4,
 			jsonb_build_object(
 				'total_intents',              0,
@@ -403,7 +451,9 @@ func (r *ProjectionRepo) AtomicIncrementDefensibilityEvidencePackBothScopes(
 				'audit_ready_pct',            0.0,
 				'dispute_ready_pct',          0.0
 			),
-			now(), 1, 'DEFENSIBILITY', '%s')
+			now(), 1, 'DEFENSIBILITY', '%[1]s',
+			'%[1]s', %[2]s, 'summary', '%[3]s',
+			'evidence_pack', $5, 'DERIVED_CACHE', %[4]s)
 		ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 		DO UPDATE SET
 			value_json = jsonb_set(
@@ -414,21 +464,24 @@ func (r *ProjectionRepo) AtomicIncrementDefensibilityEvidencePackBothScopes(
 			computed_at = now()
 	`
 
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT", "$1", "ROLLING_24H", "$4::timestamptz + interval '90 days'"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd, envelopeSourceVersion(ctx)); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicIncrementDefensibilityEvidencePackBothScopes tenant tenant=%s: %w", tenantID, err)
 	}
 	if err := recomputeDefensibilityRatesTx(ctx, tx, tenantID, tenantKey, tenantWindowStart); err != nil {
 		return err
 	}
 
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH", "$6", "BATCH_LIFETIME", "NULL"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd, envelopeSourceVersion(ctx), batchScopeRef); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicIncrementDefensibilityEvidencePackBothScopes batch tenant=%s batch=%s: %w", tenantID, batchID, err)
 	}
 	if err := recomputeDefensibilityRatesTx(ctx, tx, tenantID, batchKey, BatchProjectionWindowStart); err != nil {
 		return err
 	}
 
-	return tx.Commit(ctx)
+	if owned {
+		return tx.Commit(ctx)
+	}
+	return nil
 }
 
 // AtomicRecordEvidencePackQualityBothScopes updates defensibility.summary
@@ -440,11 +493,21 @@ func (r *ProjectionRepo) AtomicRecordEvidencePackQualityBothScopes(
 	settlementLeafPresent, attachmentDecisionLeafPresent bool,
 	tenantWindowStart, tenantWindowEnd time.Time,
 ) error {
-	tx, err := r.pool.Begin(ctx)
+	tx, owned, err := r.beginOrJoin(ctx)
 	if err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicRecordEvidencePackQualityBothScopes begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	if owned {
+		defer tx.Rollback(ctx)
+	}
+
+	// Phase 3: empty batch ids route to the __unbatched__ bucket (bug E1 fix)
+	// and real ones resolve to the batch_contracts_core UUID (blueprint Â§5.3),
+	// on the SAME tx so the resolve commits/rolls back with the writes.
+	batchID, batchScopeRef, err := resolveBatchScope(ctx, tx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
 
 	tenantKey := "defensibility.summary"
 	batchKey := defensibilityBatchKey(batchID)
@@ -462,7 +525,9 @@ func (r *ProjectionRepo) AtomicRecordEvidencePackQualityBothScopes(
 		INSERT INTO projection_state
 			(tenant_id, projection_key, window_start, window_end,
 			 value_json, computed_at, projection_version,
-			 projection_family, entity_scope_type)
+			 projection_family, entity_scope_type,
+			 scope_type, scope_ref, metric_key, window_type,
+			 projection_source, projection_source_version, retention_class, expires_at)
 		VALUES ($1, $2, $3, $4,
 			jsonb_build_object(
 				'total_intents',              0,
@@ -484,7 +549,9 @@ func (r *ProjectionRepo) AtomicRecordEvidencePackQualityBothScopes(
 				'weak_evidence_count',        0,
 				'weak_evidence_rate',         0.0
 			),
-			now(), 1, 'DEFENSIBILITY', '%s')
+			now(), 1, 'DEFENSIBILITY', '%[1]s',
+			'%[1]s', %[2]s, 'summary', '%[3]s',
+			'evidence_pack', $8, 'DERIVED_CACHE', %[4]s)
 		ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 		DO UPDATE SET
 			value_json = jsonb_set(
@@ -507,21 +574,24 @@ func (r *ProjectionRepo) AtomicRecordEvidencePackQualityBothScopes(
 			computed_at = now()
 	`
 
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd, packCompletenessScore, settlementLeafInt, attachmentLeafInt); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT", "$1", "ROLLING_24H", "$4::timestamptz + interval '90 days'"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd, packCompletenessScore, settlementLeafInt, attachmentLeafInt, envelopeSourceVersion(ctx)); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicRecordEvidencePackQualityBothScopes tenant tenant=%s: %w", tenantID, err)
 	}
 	if err := recomputeDefensibilityEvidenceRatesTx(ctx, tx, tenantID, tenantKey, tenantWindowStart); err != nil {
 		return err
 	}
 
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd, packCompletenessScore, settlementLeafInt, attachmentLeafInt); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH", "$9", "BATCH_LIFETIME", "NULL"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd, packCompletenessScore, settlementLeafInt, attachmentLeafInt, envelopeSourceVersion(ctx), batchScopeRef); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicRecordEvidencePackQualityBothScopes batch tenant=%s batch=%s: %w", tenantID, batchID, err)
 	}
 	if err := recomputeDefensibilityEvidenceRatesTx(ctx, tx, tenantID, batchKey, BatchProjectionWindowStart); err != nil {
 		return err
 	}
 
-	return tx.Commit(ctx)
+	if owned {
+		return tx.Commit(ctx)
+	}
+	return nil
 }
 
 // AtomicIncrementDefensibilityWeakEvidenceBothScopes updates
@@ -531,11 +601,21 @@ func (r *ProjectionRepo) AtomicIncrementDefensibilityWeakEvidenceBothScopes(
 	tenantID, batchID string,
 	tenantWindowStart, tenantWindowEnd time.Time,
 ) error {
-	tx, err := r.pool.Begin(ctx)
+	tx, owned, err := r.beginOrJoin(ctx)
 	if err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicIncrementDefensibilityWeakEvidenceBothScopes begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	if owned {
+		defer tx.Rollback(ctx)
+	}
+
+	// Phase 3: empty batch ids route to the __unbatched__ bucket (bug E1 fix)
+	// and real ones resolve to the batch_contracts_core UUID (blueprint Â§5.3),
+	// on the SAME tx so the resolve commits/rolls back with the writes.
+	batchID, batchScopeRef, err := resolveBatchScope(ctx, tx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
 
 	tenantKey := "defensibility.summary"
 	batchKey := defensibilityBatchKey(batchID)
@@ -544,7 +624,9 @@ func (r *ProjectionRepo) AtomicIncrementDefensibilityWeakEvidenceBothScopes(
 		INSERT INTO projection_state
 			(tenant_id, projection_key, window_start, window_end,
 			 value_json, computed_at, projection_version,
-			 projection_family, entity_scope_type)
+			 projection_family, entity_scope_type,
+			 scope_type, scope_ref, metric_key, window_type,
+			 projection_source, projection_source_version, retention_class, expires_at)
 		VALUES ($1, $2, $3, $4,
 			jsonb_build_object(
 				'total_intents', 0, 'with_evidence_pack', 0,
@@ -558,7 +640,9 @@ func (r *ProjectionRepo) AtomicIncrementDefensibilityWeakEvidenceBothScopes(
 				'with_attachment_leaf', 0, 'attachment_evidence_coverage', 0.0,
 				'weak_evidence_count', 1, 'weak_evidence_rate', 0.0
 			),
-			now(), 1, 'DEFENSIBILITY', '%s')
+			now(), 1, 'DEFENSIBILITY', '%[1]s',
+			'%[1]s', %[2]s, 'summary', '%[3]s',
+			'variance_record', $5, 'DERIVED_CACHE', %[4]s)
 		ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 		DO UPDATE SET
 			value_json = jsonb_set(
@@ -569,21 +653,24 @@ func (r *ProjectionRepo) AtomicIncrementDefensibilityWeakEvidenceBothScopes(
 			computed_at = now()
 	`
 
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT", "$1", "ROLLING_24H", "$4::timestamptz + interval '90 days'"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd, envelopeSourceVersion(ctx)); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicIncrementDefensibilityWeakEvidenceBothScopes tenant tenant=%s: %w", tenantID, err)
 	}
 	if err := recomputeDefensibilityEvidenceRatesTx(ctx, tx, tenantID, tenantKey, tenantWindowStart); err != nil {
 		return err
 	}
 
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH", "$6", "BATCH_LIFETIME", "NULL"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd, envelopeSourceVersion(ctx), batchScopeRef); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicIncrementDefensibilityWeakEvidenceBothScopes batch tenant=%s batch=%s: %w", tenantID, batchID, err)
 	}
 	if err := recomputeDefensibilityEvidenceRatesTx(ctx, tx, tenantID, batchKey, BatchProjectionWindowStart); err != nil {
 		return err
 	}
 
-	return tx.Commit(ctx)
+	if owned {
+		return tx.Commit(ctx)
+	}
+	return nil
 }
 
 // AtomicRecordDefensibilityIntentQualityBothScopes updates
@@ -594,11 +681,21 @@ func (r *ProjectionRepo) AtomicRecordDefensibilityIntentQualityBothScopes(
 	intentQualityScore float64,
 	tenantWindowStart, tenantWindowEnd time.Time,
 ) error {
-	tx, err := r.pool.Begin(ctx)
+	tx, owned, err := r.beginOrJoin(ctx)
 	if err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicRecordDefensibilityIntentQualityBothScopes begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	if owned {
+		defer tx.Rollback(ctx)
+	}
+
+	// Phase 3: empty batch ids route to the __unbatched__ bucket (bug E1 fix)
+	// and real ones resolve to the batch_contracts_core UUID (blueprint Â§5.3),
+	// on the SAME tx so the resolve commits/rolls back with the writes.
+	batchID, batchScopeRef, err := resolveBatchScope(ctx, tx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
 
 	tenantKey := "defensibility.summary"
 	batchKey := defensibilityBatchKey(batchID)
@@ -607,14 +704,18 @@ func (r *ProjectionRepo) AtomicRecordDefensibilityIntentQualityBothScopes(
 		INSERT INTO projection_state
 			(tenant_id, projection_key, window_start, window_end,
 			 value_json, computed_at, projection_version,
-			 projection_family, entity_scope_type)
+			 projection_family, entity_scope_type,
+			 scope_type, scope_ref, metric_key, window_type,
+			 projection_source, projection_source_version, retention_class, expires_at)
 		VALUES ($1, $2, $3, $4,
 			jsonb_build_object(
 				'intent_quality_sum',      $5::float8,
 				'intent_quality_count',    1,
 				'avg_intent_quality_score', $5::float8
 			),
-			now(), 1, 'DEFENSIBILITY', '%s')
+			now(), 1, 'DEFENSIBILITY', '%[1]s',
+			'%[1]s', %[2]s, 'summary', '%[3]s',
+			'intent_created', $6, 'DERIVED_CACHE', %[4]s)
 		ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 		DO UPDATE SET
 			value_json = jsonb_set(
@@ -629,21 +730,24 @@ func (r *ProjectionRepo) AtomicRecordDefensibilityIntentQualityBothScopes(
 			computed_at = now()
 	`
 
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd, intentQualityScore); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT", "$1", "ROLLING_24H", "$4::timestamptz + interval '90 days'"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd, intentQualityScore, envelopeSourceVersion(ctx)); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicRecordDefensibilityIntentQualityBothScopes tenant tenant=%s: %w", tenantID, err)
 	}
 	if err := recomputeDefensibilityEvidenceRatesTx(ctx, tx, tenantID, tenantKey, tenantWindowStart); err != nil {
 		return err
 	}
 
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd, intentQualityScore); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH", "$7", "BATCH_LIFETIME", "NULL"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd, intentQualityScore, envelopeSourceVersion(ctx), batchScopeRef); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicRecordDefensibilityIntentQualityBothScopes batch tenant=%s batch=%s: %w", tenantID, batchID, err)
 	}
 	if err := recomputeDefensibilityEvidenceRatesTx(ctx, tx, tenantID, batchKey, BatchProjectionWindowStart); err != nil {
 		return err
 	}
 
-	return tx.Commit(ctx)
+	if owned {
+		return tx.Commit(ctx)
+	}
+	return nil
 }
 
 // AtomicRecordDefensibilityMappingConfidenceBothScopes updates
@@ -654,11 +758,21 @@ func (r *ProjectionRepo) AtomicRecordDefensibilityMappingConfidenceBothScopes(
 	mappingConfidence float64,
 	tenantWindowStart, tenantWindowEnd time.Time,
 ) error {
-	tx, err := r.pool.Begin(ctx)
+	tx, owned, err := r.beginOrJoin(ctx)
 	if err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicRecordDefensibilityMappingConfidenceBothScopes begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	if owned {
+		defer tx.Rollback(ctx)
+	}
+
+	// Phase 3: empty batch ids route to the __unbatched__ bucket (bug E1 fix)
+	// and real ones resolve to the batch_contracts_core UUID (blueprint Â§5.3),
+	// on the SAME tx so the resolve commits/rolls back with the writes.
+	batchID, batchScopeRef, err := resolveBatchScope(ctx, tx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
 
 	tenantKey := "defensibility.summary"
 	batchKey := defensibilityBatchKey(batchID)
@@ -667,14 +781,18 @@ func (r *ProjectionRepo) AtomicRecordDefensibilityMappingConfidenceBothScopes(
 		INSERT INTO projection_state
 			(tenant_id, projection_key, window_start, window_end,
 			 value_json, computed_at, projection_version,
-			 projection_family, entity_scope_type)
+			 projection_family, entity_scope_type,
+			 scope_type, scope_ref, metric_key, window_type,
+			 projection_source, projection_source_version, retention_class, expires_at)
 		VALUES ($1, $2, $3, $4,
 			jsonb_build_object(
 				'mapping_confidence_sum',   $5::float8,
 				'mapping_confidence_count', 1,
 				'avg_mapping_confidence',   $5::float8
 			),
-			now(), 1, 'DEFENSIBILITY', '%s')
+			now(), 1, 'DEFENSIBILITY', '%[1]s',
+			'%[1]s', %[2]s, 'summary', '%[3]s',
+			'settlement_observation', $6, 'DERIVED_CACHE', %[4]s)
 		ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 		DO UPDATE SET
 			value_json = jsonb_set(
@@ -689,19 +807,22 @@ func (r *ProjectionRepo) AtomicRecordDefensibilityMappingConfidenceBothScopes(
 			computed_at = now()
 	`
 
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd, mappingConfidence); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT", "$1", "ROLLING_24H", "$4::timestamptz + interval '90 days'"), tenantID, tenantKey, tenantWindowStart, tenantWindowEnd, mappingConfidence, envelopeSourceVersion(ctx)); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicRecordDefensibilityMappingConfidenceBothScopes tenant tenant=%s: %w", tenantID, err)
 	}
 	if err := recomputeDefensibilityEvidenceRatesTx(ctx, tx, tenantID, tenantKey, tenantWindowStart); err != nil {
 		return err
 	}
 
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd, mappingConfidence); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH", "$7", "BATCH_LIFETIME", "NULL"), tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd, mappingConfidence, envelopeSourceVersion(ctx), batchScopeRef); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicRecordDefensibilityMappingConfidenceBothScopes batch tenant=%s batch=%s: %w", tenantID, batchID, err)
 	}
 	if err := recomputeDefensibilityEvidenceRatesTx(ctx, tx, tenantID, batchKey, BatchProjectionWindowStart); err != nil {
 		return err
 	}
 
-	return tx.Commit(ctx)
+	if owned {
+		return tx.Commit(ctx)
+	}
+	return nil
 }

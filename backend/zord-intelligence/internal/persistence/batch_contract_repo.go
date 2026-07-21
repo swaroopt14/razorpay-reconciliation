@@ -153,9 +153,11 @@ type LeakageWindowSummary struct {
 }
 
 // BatchContractRepo provides Upsert and Read operations for batch_contracts.
+//
+// Phase 1 refactor: no BatchWriter. Upsert must be able to join the ambient
+// event transaction from HandleBatchSummaryUpdated. See ProjectionRepo comment.
 type BatchContractRepo struct {
 	pool *pgxpool.Pool
-	bw   *BatchWriter // optional; nil = direct pool.Exec (default)
 }
 
 // NewBatchContractRepo creates a BatchContractRepo.
@@ -163,9 +165,73 @@ func NewBatchContractRepo(pool *pgxpool.Pool) *BatchContractRepo {
 	return &BatchContractRepo{pool: pool}
 }
 
-// SetBatchWriter enables write-batching for Upsert calls.
-func (r *BatchContractRepo) SetBatchWriter(bw *BatchWriter) {
-	r.bw = bw
+// ── Phase 2 refactor: batch identity + summary split (shadow writes) ─────────
+//
+// batch_contracts.batch_id is only the client's own source-system label, not
+// tenant-scoped — see REFACTOR_IMPLEMENTATION_GUIDE.md §I0 for the live bug
+// this fixes. batch_contracts_core adds a real, DB-enforced identity via
+// UNIQUE(tenant_id, external_batch_id).
+//
+// Every write method below keeps writing to batch_contracts EXACTLY as
+// before (zero behavior change, still the sole read source) and ADDITIONALLY
+// shadow-writes the same delta into the new split tables. Reads do not touch
+// the new tables yet — that cutover is gated behind Phase 4's automated
+// shadow-diff job. Method names ending in "Shadow" are the Phase 2 additions.
+
+// resolveOrCreate returns the stable internal UUID for (tenantID,
+// externalBatchID), creating the batch_contracts_core row on first sight.
+// Safe under concurrent first-writers: INSERT..ON CONFLICT DO UPDATE (a
+// no-op self-assignment) is used instead of DO NOTHING purely so RETURNING
+// still fires on the conflicting row.
+//
+// Phase 3: the SQL lives in the package-level resolveBatchContractID
+// (projection_meta.go) so BATCH-scoped projection writers share the exact
+// same resolution semantics.
+func (r *BatchContractRepo) resolveOrCreate(ctx context.Context, tenantID, externalBatchID string) (string, error) {
+	return resolveBatchContractID(ctx, r.q(ctx), tenantID, externalBatchID)
+}
+
+// GetCoreID returns the internal batch_contracts_core UUID for (tenantID,
+// externalBatchID), or nil if the batch hasn't been shadow-written or
+// backfilled yet. Read-only — backs the additive `internal_batch_uuid`
+// field on the v1 /batches response (decision I-Q3).
+func (r *BatchContractRepo) GetCoreID(ctx context.Context, tenantID, externalBatchID string) (*string, error) {
+	var id string
+	err := r.q(ctx).QueryRow(ctx, `
+		SELECT batch_contract_id FROM batch_contracts_core WHERE tenant_id = $1 AND external_batch_id = $2
+	`, tenantID, externalBatchID).Scan(&id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("batch_contract_repo.GetCoreID tenant=%s batch=%s: %w", tenantID, externalBatchID, err)
+	}
+	return &id, nil
+}
+
+// GetCoreIDsByExternalIDs batch-resolves internal UUIDs for many external
+// batch IDs in one query — used by ListBatches to avoid N+1 lookups.
+func (r *BatchContractRepo) GetCoreIDsByExternalIDs(ctx context.Context, tenantID string, externalBatchIDs []string) (map[string]string, error) {
+	if len(externalBatchIDs) == 0 {
+		return map[string]string{}, nil
+	}
+	rows, err := r.q(ctx).Query(ctx, `
+		SELECT external_batch_id, batch_contract_id FROM batch_contracts_core
+		WHERE tenant_id = $1 AND external_batch_id = ANY($2)
+	`, tenantID, externalBatchIDs)
+	if err != nil {
+		return nil, fmt.Errorf("batch_contract_repo.GetCoreIDsByExternalIDs tenant=%s: %w", tenantID, err)
+	}
+	defer rows.Close()
+	result := make(map[string]string, len(externalBatchIDs))
+	for rows.Next() {
+		var extID, id string
+		if err := rows.Scan(&extID, &id); err != nil {
+			return nil, fmt.Errorf("batch_contract_repo.GetCoreIDsByExternalIDs scan: %w", err)
+		}
+		result[extID] = id
+	}
+	return result, nil
 }
 
 // Upsert performs a full-replacement upsert of a batch contract row.
@@ -256,17 +322,160 @@ func (r *BatchContractRepo) Upsert(ctx context.Context, bc BatchContract) error 
 		bc.IntentCountCoverage, bc.IntentValueCoverage,
 		bc.ObservedCountAllocationCoverage, bc.ObservedValueAllocationCoverage,
 	}
-	var err error
-	if r.bw != nil {
-		err = r.bw.Exec(ctx, sql, args...)
-	} else {
-		_, err = r.pool.Exec(ctx, sql, args...)
-	}
-	if err != nil {
+	// Phase 1 refactor: always go through r.q(ctx) so this write joins the
+	// ambient event transaction (event_receipts RunOnce) when HandleBatchSummaryUpdated
+	// is mid-flight. BatchWriter coalescing is reserved for intelligence_snapshots only.
+	if _, err := r.q(ctx).Exec(ctx, sql, args...); err != nil {
 		return fmt.Errorf("batch_contract_repo.Upsert batch_id=%s tenant=%s: %w",
 			bc.BatchID, bc.TenantID, err)
 	}
+	if err := r.upsertReconciliationSummaryShadow(ctx, bc); err != nil {
+		return err
+	}
+	// ambiguity_score is the one field Upsert sets on the old table that
+	// belongs to batch_risk_summary in the new split, not batch_reconciliation_summary
+	// — caught live by the shadow-diff worker (blueprint-alignment pass,
+	// 2026-07-14): it was never being shadow-written anywhere until now.
+	return r.upsertRiskAmbiguityScoreShadow(ctx, bc)
+}
+
+// upsertRiskAmbiguityScoreShadow writes Upsert's ambiguity_score into
+// batch_risk_summary. Separated from upsertReconciliationSummaryShadow
+// because ambiguity_score is the only Upsert-owned field living on the risk
+// table rather than the reconciliation table.
+func (r *BatchContractRepo) upsertRiskAmbiguityScoreShadow(ctx context.Context, bc BatchContract) error {
+	if bc.AmbiguityScore == nil {
+		return nil
+	}
+	batchContractID, err := r.resolveOrCreate(ctx, bc.TenantID, bc.BatchID)
+	if err != nil {
+		return err
+	}
+	sql := `
+		INSERT INTO batch_risk_summary (batch_contract_id, tenant_id, ambiguity_score, computed_at)
+		VALUES ($1, $2, $3, now())
+		ON CONFLICT (batch_contract_id) DO UPDATE SET
+			ambiguity_score = EXCLUDED.ambiguity_score,
+			computed_at     = now()
+	`
+	if _, err := r.q(ctx).Exec(ctx, sql, batchContractID, bc.TenantID, *bc.AmbiguityScore); err != nil {
+		return fmt.Errorf("batch_contract_repo.upsertRiskAmbiguityScoreShadow batch=%s tenant=%s: %w",
+			bc.BatchID, bc.TenantID, err)
+	}
 	return nil
+}
+
+// upsertReconciliationSummaryShadow is the Phase 2 shadow write for Upsert:
+// same full-replacement semantics, same field set, targeting
+// batch_reconciliation_summary via the resolved batch_contracts_core identity.
+//
+// match_confidence and observed_value_allocation_coverage are deliberately
+// NOT written here (blueprint-alignment pass, 2026-07-14) — they were exact
+// duplicates of matched_attachment_confidence/observed_value_coverage below,
+// which this function already populates from the identical Go values.
+func (r *BatchContractRepo) upsertReconciliationSummaryShadow(ctx context.Context, bc BatchContract) error {
+	batchContractID, err := r.resolveOrCreate(ctx, bc.TenantID, bc.BatchID)
+	if err != nil {
+		return err
+	}
+	bc.BatchFinalityStatus = models.NormalizeBatchFinalityStatus(bc.BatchFinalityStatus)
+
+	// Gap-fix pass (2026-07-13): populate the blueprint's target v2 field
+	// names alongside the 1:1-mirrored ones above. currency/matched_attachment_confidence/
+	// observed_value_coverage have honest mappings from existing data;
+	// source_version/source_payload_hash come from the Kafka envelope
+	// riding the context (see internal/models/envelope_meta.go). Fields with
+	// no honest source (matched_intended_amount_minor, matched_pair_variance_minor,
+	// etc.) are intentionally omitted here and stay NULL — see migration
+	// 005_batch_contracts_gap_fixes.sql comment for why.
+	currency := "INR"
+	if bc.BatchCurrency != nil && *bc.BatchCurrency != "" {
+		currency = *bc.BatchCurrency
+	}
+	env := models.EnvelopeMetaFromContext(ctx)
+
+	sql := `
+		INSERT INTO batch_reconciliation_summary (
+			batch_contract_id, tenant_id, total_count, success_count, failed_count, pending_count,
+			reversed_count, partial_recon_count,
+			total_intended_amount_minor, total_confirmed_amount_minor, original_settled_amount_minor, total_variance_minor,
+			batch_finality_status,
+			total_intent_count, matched_intent_count, ambiguous_count, unresolved_intent_count, conflicted_count, orphan_observation_count,
+			original_intended_amount_minor, ambiguous_amount_minor, unresolved_intended_amount_minor, conflicted_amount_minor, orphan_observed_amount_minor, net_batch_delta_minor,
+			intent_count_coverage, intent_value_coverage, observed_count_allocation_coverage,
+			currency, matched_attachment_confidence, observed_value_coverage, source_version, source_payload_hash,
+			computed_at)
+		VALUES
+			($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
+			 $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,
+			 $26,$27,$28,$29,$30,$31,$32,$33, now())
+		ON CONFLICT (batch_contract_id) DO UPDATE SET
+			total_count                   = EXCLUDED.total_count,
+			success_count                 = EXCLUDED.success_count,
+			failed_count                  = EXCLUDED.failed_count,
+			pending_count                 = EXCLUDED.pending_count,
+			reversed_count                = EXCLUDED.reversed_count,
+			partial_recon_count           = EXCLUDED.partial_recon_count,
+			total_intended_amount_minor   = EXCLUDED.total_intended_amount_minor,
+			total_confirmed_amount_minor  = EXCLUDED.total_confirmed_amount_minor,
+			original_settled_amount_minor = EXCLUDED.original_settled_amount_minor,
+			total_variance_minor          = EXCLUDED.total_variance_minor,
+			batch_finality_status         = EXCLUDED.batch_finality_status,
+			total_intent_count            = EXCLUDED.total_intent_count,
+			matched_intent_count          = EXCLUDED.matched_intent_count,
+			ambiguous_count               = EXCLUDED.ambiguous_count,
+			unresolved_intent_count       = EXCLUDED.unresolved_intent_count,
+			conflicted_count              = EXCLUDED.conflicted_count,
+			orphan_observation_count      = EXCLUDED.orphan_observation_count,
+			original_intended_amount_minor = EXCLUDED.original_intended_amount_minor,
+			ambiguous_amount_minor        = EXCLUDED.ambiguous_amount_minor,
+			unresolved_intended_amount_minor = EXCLUDED.unresolved_intended_amount_minor,
+			conflicted_amount_minor       = EXCLUDED.conflicted_amount_minor,
+			orphan_observed_amount_minor  = EXCLUDED.orphan_observed_amount_minor,
+			net_batch_delta_minor         = EXCLUDED.net_batch_delta_minor,
+			intent_count_coverage         = EXCLUDED.intent_count_coverage,
+			intent_value_coverage         = EXCLUDED.intent_value_coverage,
+			observed_count_allocation_coverage = EXCLUDED.observed_count_allocation_coverage,
+			currency                       = EXCLUDED.currency,
+			matched_attachment_confidence  = EXCLUDED.matched_attachment_confidence,
+			observed_value_coverage        = EXCLUDED.observed_value_coverage,
+			source_version                 = EXCLUDED.source_version,
+			source_payload_hash            = EXCLUDED.source_payload_hash,
+			computed_at                    = now()
+	`
+	args := []any{
+		batchContractID, bc.TenantID, bc.TotalCount, bc.SuccessCount, bc.FailedCount, bc.PendingCount,
+		bc.ReversedCount, bc.PartialReconCount,
+		bc.TotalIntendedAmountMinor.String(),
+		bc.TotalConfirmedAmountMinor.String(),
+		bc.OriginalSettledAmountMinor.String(),
+		bc.TotalVarianceMinor.String(),
+		bc.BatchFinalityStatus,
+		bc.TotalIntentCount, bc.MatchedIntentCount, bc.AmbiguousCount, bc.UnresolvedIntentCount, bc.ConflictedCount, bc.OrphanObservationCount,
+		bc.OriginalIntendedAmountMinor.String(),
+		bc.AmbiguousAmountMinor.String(),
+		bc.UnresolvedIntendedAmountMinor.String(),
+		bc.ConflictedAmountMinor.String(),
+		bc.OrphanObservedAmountMinor.String(),
+		bc.NetBatchDeltaMinor.String(),
+		bc.IntentCountCoverage, bc.IntentValueCoverage,
+		bc.ObservedCountAllocationCoverage,
+		currency, bc.MatchConfidence, bc.ObservedValueAllocationCoverage, env.EventVersion, nullableString(env.PayloadHash),
+	}
+	if _, err := r.q(ctx).Exec(ctx, sql, args...); err != nil {
+		return fmt.Errorf("batch_contract_repo.upsertReconciliationSummaryShadow batch=%s tenant=%s: %w",
+			bc.BatchID, bc.TenantID, err)
+	}
+	return nil
+}
+
+// nullableString converts an empty string to nil so it stores as SQL NULL
+// instead of an empty string.
+func nullableString(v string) any {
+	if v == "" {
+		return nil
+	}
+	return v
 }
 
 // SetDefensibilityTier updates ONLY the defensibility_tier for a batch.
@@ -275,9 +484,13 @@ func (r *BatchContractRepo) Upsert(ctx context.Context, bc BatchContract) error 
 // scored the batch. Separated from Upsert to avoid race conditions where
 // a BatchSummaryUpdatedEvent arrives and accidentally clears a tier
 // that was just computed.
+//
+// tenantID (Phase 2 addition — the one exception to "no signature changes"
+// in §I1: it was already in scope at the single call site and is required
+// to resolve the batch_contracts_core identity for the shadow write).
 func (r *BatchContractRepo) SetDefensibilityTier(
 	ctx context.Context,
-	batchID string,
+	batchID, tenantID string,
 	tier string, // "STRONG" | "GOOD" | "WEAK" | "FRAGILE"
 ) error {
 	sql := `
@@ -286,7 +499,7 @@ func (r *BatchContractRepo) SetDefensibilityTier(
 		       last_updated_at    = now()
 		WHERE  batch_id = $1
 	`
-	tag, err := r.pool.Exec(ctx, sql, batchID, tier)
+	tag, err := r.q(ctx).Exec(ctx, sql, batchID, tier)
 	if err != nil {
 		return fmt.Errorf("batch_contract_repo.SetDefensibilityTier batch_id=%s: %w", batchID, err)
 	}
@@ -295,6 +508,23 @@ func (r *BatchContractRepo) SetDefensibilityTier(
 		// service processes a governance decision before the first
 		// BatchSummaryUpdatedEvent arrives. This is not an error.
 		return nil
+	}
+	if tenantID == "" {
+		return nil
+	}
+	batchContractID, err := r.resolveOrCreate(ctx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
+	shadowSQL := `
+		INSERT INTO batch_risk_summary (batch_contract_id, tenant_id, defensibility_tier, computed_at)
+		VALUES ($1, $2, $3, now())
+		ON CONFLICT (batch_contract_id) DO UPDATE SET
+			defensibility_tier = EXCLUDED.defensibility_tier,
+			computed_at        = now()
+	`
+	if _, err := r.q(ctx).Exec(ctx, shadowSQL, batchContractID, tenantID, tier); err != nil {
+		return fmt.Errorf("batch_contract_repo.SetDefensibilityTier shadow batch_id=%s: %w", batchID, err)
 	}
 	return nil
 }
@@ -310,7 +540,7 @@ func (r *BatchContractRepo) GetByID(
 		FROM   batch_contracts
 		WHERE  batch_id = $1
 	`
-	row := r.pool.QueryRow(ctx, sql, batchID)
+	row := r.q(ctx).QueryRow(ctx, sql, batchID)
 	bc, err := scanBatchContract(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -339,7 +569,7 @@ func (r *BatchContractRepo) ListByTenant(
 		ORDER  BY last_updated_at DESC
 		LIMIT  $2
 	`
-	rows, err := r.pool.Query(ctx, sql, tenantID, limit)
+	rows, err := r.q(ctx).Query(ctx, sql, tenantID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("batch_contract_repo.ListByTenant tenant=%s: %w", tenantID, err)
 	}
@@ -383,7 +613,7 @@ func (r *BatchContractRepo) ListTopByAmount(
 		ORDER  BY batch_contracts.total_intended_amount_minor DESC NULLS LAST
 		LIMIT  $2
 	`
-	rows, err := r.pool.Query(ctx, sql, tenantID, limit)
+	rows, err := r.q(ctx).Query(ctx, sql, tenantID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("batch_contract_repo.ListTopByAmount tenant=%s: %w", tenantID, err)
 	}
@@ -423,7 +653,7 @@ func (r *BatchContractRepo) ListRequiringReview(
 		ORDER  BY last_updated_at DESC
 		LIMIT  $2
 	`
-	rows, err := r.pool.Query(ctx, sql, tenantID, limit)
+	rows, err := r.q(ctx).Query(ctx, sql, tenantID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("batch_contract_repo.ListRequiringReview tenant=%s: %w", tenantID, err)
 	}
@@ -459,7 +689,7 @@ func (r *BatchContractRepo) ListByFinalityStatus(
 		ORDER  BY last_updated_at DESC
 		LIMIT  $3
 	`
-	rows, err := r.pool.Query(ctx, sql, tenantID, status, limit)
+	rows, err := r.q(ctx).Query(ctx, sql, tenantID, status, limit)
 	if err != nil {
 		return nil, fmt.Errorf("batch_contract_repo.ListByFinalityStatus tenant=%s status=%s: %w", tenantID, status, err)
 	}
@@ -498,7 +728,7 @@ func (r *BatchContractRepo) ListForLeakageExposure(
 	sql += `
 		ORDER  BY COALESCE(first_intent_created_at, created_at) ASC, batch_id ASC
 	`
-	rows, err := r.pool.Query(ctx, sql, args...)
+	rows, err := r.q(ctx).Query(ctx, sql, args...)
 	if err != nil {
 		return nil, fmt.Errorf("batch_contract_repo.ListForLeakageExposure tenant=%s: %w", tenantID, err)
 	}
@@ -520,7 +750,7 @@ func (r *BatchContractRepo) SummarizeLeakageForWindow(
 	tenantID string,
 	windowStart, windowEnd time.Time,
 ) (*LeakageWindowSummary, error) {
-	row := r.pool.QueryRow(ctx, `
+	row := r.q(ctx).QueryRow(ctx, `
 		SELECT
 			COALESCE(SUM(
 				CASE
@@ -586,7 +816,7 @@ func (r *BatchContractRepo) GetUnmatchedAndOrphanForTenant(
 	ctx context.Context,
 	tenantID string,
 ) (unmatched, orphan decimal.Decimal, err error) {
-	row := r.pool.QueryRow(ctx, `
+	row := r.q(ctx).QueryRow(ctx, `
 		SELECT
 			COALESCE(SUM(unmatched_amount_minor)::text, '0'),
 			COALESCE(SUM(orphan_observed_amount_minor)::text, '0')
@@ -957,7 +1187,7 @@ func (r *BatchContractRepo) AtomicAccumulateIntentFeatures(
 		refPresent = 1
 	}
 	amountSquared := amountMinor.Mul(amountMinor)
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_contracts (
 			batch_id, tenant_id,
 			intent_row_count, intent_total_amount_minor, intent_amount_square_sum,
@@ -998,6 +1228,52 @@ func (r *BatchContractRepo) AtomicAccumulateIntentFeatures(
 	if err != nil {
 		return fmt.Errorf("batch_contract_repo.AtomicAccumulateIntentFeatures batch=%s: %w", batchID, err)
 	}
+
+	batchContractID, err := r.resolveOrCreate(ctx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
+	_, err = r.q(ctx).Exec(ctx, `
+		INSERT INTO batch_reconciliation_summary (
+			batch_contract_id, tenant_id,
+			intent_row_count, intent_total_amount_minor, intent_amount_square_sum,
+			intent_min_amount_minor, intent_max_amount_minor,
+			client_payout_ref_present_count,
+			batch_currency, batch_source_system, batch_rail, batch_intent_type, batch_provider_key,
+			first_intent_created_at, computed_at
+		)
+		VALUES ($1,$2,1,$3,$4,$3,$3,$5,$6,$7,$8,$9,$10,$11,now())
+		ON CONFLICT (batch_contract_id) DO UPDATE SET
+			intent_row_count = batch_reconciliation_summary.intent_row_count + 1,
+			intent_total_amount_minor = batch_reconciliation_summary.intent_total_amount_minor + EXCLUDED.intent_total_amount_minor,
+			intent_amount_square_sum = batch_reconciliation_summary.intent_amount_square_sum + EXCLUDED.intent_amount_square_sum,
+			intent_min_amount_minor = CASE
+				WHEN batch_reconciliation_summary.intent_min_amount_minor IS NULL THEN EXCLUDED.intent_min_amount_minor
+				WHEN batch_reconciliation_summary.intent_min_amount_minor > EXCLUDED.intent_min_amount_minor THEN EXCLUDED.intent_min_amount_minor
+				ELSE batch_reconciliation_summary.intent_min_amount_minor
+			END,
+			intent_max_amount_minor = CASE
+				WHEN batch_reconciliation_summary.intent_max_amount_minor IS NULL THEN EXCLUDED.intent_max_amount_minor
+				WHEN batch_reconciliation_summary.intent_max_amount_minor < EXCLUDED.intent_max_amount_minor THEN EXCLUDED.intent_max_amount_minor
+				ELSE batch_reconciliation_summary.intent_max_amount_minor
+			END,
+			client_payout_ref_present_count = batch_reconciliation_summary.client_payout_ref_present_count + EXCLUDED.client_payout_ref_present_count,
+			batch_currency = COALESCE(batch_reconciliation_summary.batch_currency, NULLIF(EXCLUDED.batch_currency, '')),
+			batch_source_system = COALESCE(batch_reconciliation_summary.batch_source_system, NULLIF(EXCLUDED.batch_source_system, '')),
+			batch_rail = COALESCE(batch_reconciliation_summary.batch_rail, NULLIF(EXCLUDED.batch_rail, '')),
+			batch_intent_type = COALESCE(batch_reconciliation_summary.batch_intent_type, NULLIF(EXCLUDED.batch_intent_type, '')),
+			batch_provider_key = COALESCE(batch_reconciliation_summary.batch_provider_key, NULLIF(EXCLUDED.batch_provider_key, '')),
+			first_intent_created_at = CASE
+				WHEN batch_reconciliation_summary.first_intent_created_at IS NULL THEN EXCLUDED.first_intent_created_at
+				WHEN batch_reconciliation_summary.first_intent_created_at > EXCLUDED.first_intent_created_at THEN EXCLUDED.first_intent_created_at
+				ELSE batch_reconciliation_summary.first_intent_created_at
+			END,
+			computed_at = now()
+	`, batchContractID, tenantID, amountMinor.String(), amountSquared.String(), refPresent,
+		currency, sourceSystem, rail, intentType, providerKey, createdAt)
+	if err != nil {
+		return fmt.Errorf("batch_contract_repo.AtomicAccumulateIntentFeatures shadow batch=%s: %w", batchID, err)
+	}
 	return nil
 }
 
@@ -1022,7 +1298,7 @@ func (r *BatchContractRepo) UpsertIntentSnapshot(
 		createdAt = time.Now().UTC()
 	}
 
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_contracts (
 			batch_id, tenant_id,
 			total_count, pending_count,
@@ -1122,6 +1398,99 @@ func (r *BatchContractRepo) UpsertIntentSnapshot(
 	if err != nil {
 		return fmt.Errorf("batch_contract_repo.UpsertIntentSnapshot batch=%s: %w", bc.BatchID, err)
 	}
+
+	batchContractID, err := r.resolveOrCreate(ctx, bc.TenantID, bc.BatchID)
+	if err != nil {
+		return err
+	}
+	_, err = r.q(ctx).Exec(ctx, `
+		INSERT INTO batch_reconciliation_summary (
+			batch_contract_id, tenant_id,
+			total_count, pending_count,
+			total_intended_amount_minor, batch_finality_status,
+			intent_row_count, intent_total_amount_minor, intent_amount_square_sum,
+			intent_min_amount_minor, intent_max_amount_minor,
+			client_payout_ref_present_count,
+			batch_currency, batch_source_system, batch_rail, batch_intent_type, batch_provider_key,
+			first_intent_created_at, computed_at
+		)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,now())
+		ON CONFLICT (batch_contract_id) DO UPDATE SET
+			total_count = GREATEST(batch_reconciliation_summary.total_count, EXCLUDED.total_count),
+			pending_count = CASE
+				WHEN batch_reconciliation_summary.batch_finality_status IN ('FULLY_RECONCILED', 'PARTIALLY_RECONCILED', 'FAILED', 'REQUIRES_REVIEW', 'CLOSED')
+					THEN batch_reconciliation_summary.pending_count
+				ELSE GREATEST(batch_reconciliation_summary.pending_count, EXCLUDED.pending_count)
+			END,
+			total_intended_amount_minor = GREATEST(
+				batch_reconciliation_summary.total_intended_amount_minor,
+				EXCLUDED.total_intended_amount_minor
+			),
+			batch_finality_status = CASE
+				WHEN batch_reconciliation_summary.batch_finality_status IN ('FULLY_RECONCILED', 'PARTIALLY_RECONCILED', 'FAILED', 'REQUIRES_REVIEW', 'CLOSED')
+					THEN batch_reconciliation_summary.batch_finality_status
+				ELSE EXCLUDED.batch_finality_status
+			END,
+			intent_row_count = GREATEST(batch_reconciliation_summary.intent_row_count, EXCLUDED.intent_row_count),
+			intent_total_amount_minor = GREATEST(
+				batch_reconciliation_summary.intent_total_amount_minor,
+				EXCLUDED.intent_total_amount_minor
+			),
+			intent_amount_square_sum = GREATEST(
+				batch_reconciliation_summary.intent_amount_square_sum,
+				EXCLUDED.intent_amount_square_sum
+			),
+			intent_min_amount_minor = CASE
+				WHEN batch_reconciliation_summary.intent_min_amount_minor IS NULL THEN EXCLUDED.intent_min_amount_minor
+				WHEN EXCLUDED.intent_min_amount_minor IS NULL THEN batch_reconciliation_summary.intent_min_amount_minor
+				WHEN batch_reconciliation_summary.intent_min_amount_minor > EXCLUDED.intent_min_amount_minor THEN EXCLUDED.intent_min_amount_minor
+				ELSE batch_reconciliation_summary.intent_min_amount_minor
+			END,
+			intent_max_amount_minor = CASE
+				WHEN batch_reconciliation_summary.intent_max_amount_minor IS NULL THEN EXCLUDED.intent_max_amount_minor
+				WHEN EXCLUDED.intent_max_amount_minor IS NULL THEN batch_reconciliation_summary.intent_max_amount_minor
+				WHEN batch_reconciliation_summary.intent_max_amount_minor < EXCLUDED.intent_max_amount_minor THEN EXCLUDED.intent_max_amount_minor
+				ELSE batch_reconciliation_summary.intent_max_amount_minor
+			END,
+			client_payout_ref_present_count = GREATEST(
+				batch_reconciliation_summary.client_payout_ref_present_count,
+				EXCLUDED.client_payout_ref_present_count
+			),
+			batch_currency = COALESCE(batch_reconciliation_summary.batch_currency, NULLIF(EXCLUDED.batch_currency, '')),
+			batch_source_system = COALESCE(batch_reconciliation_summary.batch_source_system, NULLIF(EXCLUDED.batch_source_system, '')),
+			batch_rail = COALESCE(batch_reconciliation_summary.batch_rail, NULLIF(EXCLUDED.batch_rail, '')),
+			batch_intent_type = COALESCE(batch_reconciliation_summary.batch_intent_type, NULLIF(EXCLUDED.batch_intent_type, '')),
+			batch_provider_key = COALESCE(batch_reconciliation_summary.batch_provider_key, NULLIF(EXCLUDED.batch_provider_key, '')),
+			first_intent_created_at = CASE
+				WHEN batch_reconciliation_summary.first_intent_created_at IS NULL THEN EXCLUDED.first_intent_created_at
+				WHEN EXCLUDED.first_intent_created_at IS NULL THEN batch_reconciliation_summary.first_intent_created_at
+				WHEN batch_reconciliation_summary.first_intent_created_at > EXCLUDED.first_intent_created_at THEN EXCLUDED.first_intent_created_at
+				ELSE batch_reconciliation_summary.first_intent_created_at
+			END,
+			computed_at = now()
+	`,
+		batchContractID,
+		bc.TenantID,
+		bc.TotalCount,
+		bc.PendingCount,
+		bc.TotalIntendedAmountMinor.String(),
+		bc.BatchFinalityStatus,
+		bc.IntentRowCount,
+		bc.IntentTotalAmountMinor.String(),
+		bc.IntentAmountSquareSum.String(),
+		nullableDecimalString(bc.IntentMinAmountMinor),
+		nullableDecimalString(bc.IntentMaxAmountMinor),
+		bc.ClientPayoutRefPresentCount,
+		bc.BatchCurrency,
+		bc.BatchSourceSystem,
+		bc.BatchRail,
+		bc.BatchIntentType,
+		bc.BatchProviderKey,
+		bc.FirstIntentCreatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("batch_contract_repo.UpsertIntentSnapshot shadow batch=%s: %w", bc.BatchID, err)
+	}
 	return nil
 }
 
@@ -1137,7 +1506,7 @@ func (r *BatchContractRepo) SetLeakagePrediction(
 	if batchID == "" || tenantID == "" {
 		return nil
 	}
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_contracts (
 			batch_id, tenant_id, predicted_leakage_rate, predicted_leakage_minor, predicted_leakage_model_id, predicted_at
 		)
@@ -1151,6 +1520,26 @@ func (r *BatchContractRepo) SetLeakagePrediction(
 	`, batchID, tenantID, rate.String(), amountMinor.String(), modelID, predictedAt)
 	if err != nil {
 		return fmt.Errorf("batch_contract_repo.SetLeakagePrediction batch=%s: %w", batchID, err)
+	}
+
+	batchContractID, err := r.resolveOrCreate(ctx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
+	_, err = r.q(ctx).Exec(ctx, `
+		INSERT INTO batch_reconciliation_summary (
+			batch_contract_id, tenant_id, predicted_leakage_rate, predicted_leakage_minor, predicted_leakage_model_id, predicted_at, computed_at
+		)
+		VALUES ($1,$2,$3,$4,$5,$6,now())
+		ON CONFLICT (batch_contract_id) DO UPDATE SET
+			predicted_leakage_rate     = EXCLUDED.predicted_leakage_rate,
+			predicted_leakage_minor    = EXCLUDED.predicted_leakage_minor,
+			predicted_leakage_model_id = EXCLUDED.predicted_leakage_model_id,
+			predicted_at               = EXCLUDED.predicted_at,
+			computed_at                = now()
+	`, batchContractID, tenantID, rate.String(), amountMinor.String(), modelID, predictedAt)
+	if err != nil {
+		return fmt.Errorf("batch_contract_repo.SetLeakagePrediction shadow batch=%s: %w", batchID, err)
 	}
 	return nil
 }
@@ -1173,7 +1562,7 @@ func (r *BatchContractRepo) AtomicAddBatchUnmatchedAmount(
 	if batchID == "" || !amountMinor.IsPositive() {
 		return nil
 	}
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_contracts (batch_id, tenant_id, unmatched_amount_minor)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (batch_id) DO UPDATE SET
@@ -1182,6 +1571,28 @@ func (r *BatchContractRepo) AtomicAddBatchUnmatchedAmount(
 	`, batchID, tenantID, amountMinor.String())
 	if err != nil {
 		return fmt.Errorf("batch_contract_repo.AtomicAddBatchUnmatchedAmount batch=%s: %w", batchID, err)
+	}
+	return r.addRiskAmountShadow(ctx, batchID, tenantID, "unmatched_amount_minor", amountMinor)
+}
+
+// addRiskAmountShadow is the Phase 2 shadow write shared by the single-column
+// risk-amount increment methods (unmatched/reversal/orphan/duplicate-risk).
+// column is always a compile-time constant passed by the caller, never
+// user input, so building the SQL string with it is safe.
+func (r *BatchContractRepo) addRiskAmountShadow(ctx context.Context, batchID, tenantID, column string, amountMinor decimal.Decimal) error {
+	batchContractID, err := r.resolveOrCreate(ctx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
+	sql := fmt.Sprintf(`
+		INSERT INTO batch_risk_summary (batch_contract_id, tenant_id, %s, computed_at)
+		VALUES ($1, $2, $3, now())
+		ON CONFLICT (batch_contract_id) DO UPDATE SET
+			%s          = batch_risk_summary.%s + EXCLUDED.%s,
+			computed_at = now()
+	`, column, column, column, column)
+	if _, err := r.q(ctx).Exec(ctx, sql, batchContractID, tenantID, amountMinor.String()); err != nil {
+		return fmt.Errorf("batch_contract_repo.addRiskAmountShadow batch=%s column=%s: %w", batchID, column, err)
 	}
 	return nil
 }
@@ -1196,7 +1607,7 @@ func (r *BatchContractRepo) AtomicAddBatchReversalExposure(
 	if batchID == "" || !amountMinor.IsPositive() {
 		return nil
 	}
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_contracts (batch_id, tenant_id, reversal_exposure_minor)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (batch_id) DO UPDATE SET
@@ -1206,7 +1617,7 @@ func (r *BatchContractRepo) AtomicAddBatchReversalExposure(
 	if err != nil {
 		return fmt.Errorf("batch_contract_repo.AtomicAddBatchReversalExposure batch=%s: %w", batchID, err)
 	}
-	return nil
+	return r.addRiskAmountShadow(ctx, batchID, tenantID, "reversal_exposure_minor", amountMinor)
 }
 
 // AtomicAddBatchOrphanAmount increments orphan_amount_minor for a batch.
@@ -1219,7 +1630,7 @@ func (r *BatchContractRepo) AtomicAddBatchOrphanAmount(
 	if batchID == "" || !amountMinor.IsPositive() {
 		return nil
 	}
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_contracts (batch_id, tenant_id, orphan_amount_minor)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (batch_id) DO UPDATE SET
@@ -1229,7 +1640,7 @@ func (r *BatchContractRepo) AtomicAddBatchOrphanAmount(
 	if err != nil {
 		return fmt.Errorf("batch_contract_repo.AtomicAddBatchOrphanAmount batch=%s: %w", batchID, err)
 	}
-	return nil
+	return r.addRiskAmountShadow(ctx, batchID, tenantID, "orphan_amount_minor", amountMinor)
 }
 
 // AtomicAddBatchDuplicateRiskExposure increments duplicate_risk_exposure_minor.
@@ -1242,7 +1653,7 @@ func (r *BatchContractRepo) AtomicAddBatchDuplicateRiskExposure(
 	if batchID == "" || !amountMinor.IsPositive() {
 		return nil
 	}
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_contracts (batch_id, tenant_id, duplicate_risk_exposure_minor)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (batch_id) DO UPDATE SET
@@ -1252,7 +1663,7 @@ func (r *BatchContractRepo) AtomicAddBatchDuplicateRiskExposure(
 	if err != nil {
 		return fmt.Errorf("batch_contract_repo.AtomicAddBatchDuplicateRiskExposure batch=%s: %w", batchID, err)
 	}
-	return nil
+	return r.addRiskAmountShadow(ctx, batchID, tenantID, "duplicate_risk_exposure_minor", amountMinor)
 }
 
 // AtomicAddBatchVarianceBreakdown increments the explained/unexplained variance
@@ -1287,7 +1698,7 @@ func (r *BatchContractRepo) AtomicAddBatchVarianceBreakdown(
 		missingRefIncr = 1
 	}
 
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_contracts
 			(batch_id, tenant_id, whitelisted_deduction_minor, unexplained_variance_minor, under_settlement_amount_minor, missing_ref_count)
 		VALUES ($1, $2, $3, $4, $5, $6)
@@ -1300,6 +1711,31 @@ func (r *BatchContractRepo) AtomicAddBatchVarianceBreakdown(
 	`, batchID, tenantID, whitelisted.String(), unexplained.String(), underSettlement.String(), missingRefIncr)
 	if err != nil {
 		return fmt.Errorf("batch_contract_repo.AtomicAddBatchVarianceBreakdown batch=%s: %w", batchID, err)
+	}
+
+	batchContractID, err := r.resolveOrCreate(ctx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
+	if _, err := r.q(ctx).Exec(ctx, `
+		INSERT INTO batch_risk_summary (batch_contract_id, tenant_id, whitelisted_deduction_minor, unexplained_variance_minor, missing_ref_count, computed_at)
+		VALUES ($1, $2, $3, $4, $5, now())
+		ON CONFLICT (batch_contract_id) DO UPDATE SET
+			whitelisted_deduction_minor = batch_risk_summary.whitelisted_deduction_minor + EXCLUDED.whitelisted_deduction_minor,
+			unexplained_variance_minor  = batch_risk_summary.unexplained_variance_minor  + EXCLUDED.unexplained_variance_minor,
+			missing_ref_count           = batch_risk_summary.missing_ref_count           + EXCLUDED.missing_ref_count,
+			computed_at                 = now()
+	`, batchContractID, tenantID, whitelisted.String(), unexplained.String(), missingRefIncr); err != nil {
+		return fmt.Errorf("batch_contract_repo.AtomicAddBatchVarianceBreakdown shadow risk batch=%s: %w", batchID, err)
+	}
+	if _, err := r.q(ctx).Exec(ctx, `
+		INSERT INTO batch_reconciliation_summary (batch_contract_id, tenant_id, under_settlement_amount_minor, computed_at)
+		VALUES ($1, $2, $3, now())
+		ON CONFLICT (batch_contract_id) DO UPDATE SET
+			under_settlement_amount_minor = batch_reconciliation_summary.under_settlement_amount_minor + EXCLUDED.under_settlement_amount_minor,
+			computed_at                   = now()
+	`, batchContractID, tenantID, underSettlement.String()); err != nil {
+		return fmt.Errorf("batch_contract_repo.AtomicAddBatchVarianceBreakdown shadow reconciliation batch=%s: %w", batchID, err)
 	}
 	return nil
 }
@@ -1315,7 +1751,7 @@ func (r *BatchContractRepo) AtomicIncrementBatchMissingRef(
 	if batchID == "" || count <= 0 {
 		return nil
 	}
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_contracts (batch_id, tenant_id, missing_ref_count)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (batch_id) DO UPDATE SET
@@ -1324,6 +1760,20 @@ func (r *BatchContractRepo) AtomicIncrementBatchMissingRef(
 	`, batchID, tenantID, count)
 	if err != nil {
 		return fmt.Errorf("batch_contract_repo.AtomicIncrementBatchMissingRef batch=%s: %w", batchID, err)
+	}
+
+	batchContractID, err := r.resolveOrCreate(ctx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
+	if _, err := r.q(ctx).Exec(ctx, `
+		INSERT INTO batch_risk_summary (batch_contract_id, tenant_id, missing_ref_count, computed_at)
+		VALUES ($1, $2, $3, now())
+		ON CONFLICT (batch_contract_id) DO UPDATE SET
+			missing_ref_count = batch_risk_summary.missing_ref_count + EXCLUDED.missing_ref_count,
+			computed_at       = now()
+	`, batchContractID, tenantID, count); err != nil {
+		return fmt.Errorf("batch_contract_repo.AtomicIncrementBatchMissingRef shadow batch=%s: %w", batchID, err)
 	}
 	return nil
 }
@@ -1347,7 +1797,7 @@ func (r *BatchContractRepo) AtomicAddBatchBankRefStats(
 	if hasBankRef {
 		bankRefIncr = 1
 	}
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_contracts (batch_id, tenant_id, settlement_ref_count, bank_ref_present_count)
 		VALUES ($1, $2, 1, $3)
 		ON CONFLICT (batch_id) DO UPDATE SET
@@ -1357,6 +1807,21 @@ func (r *BatchContractRepo) AtomicAddBatchBankRefStats(
 	`, batchID, tenantID, bankRefIncr)
 	if err != nil {
 		return fmt.Errorf("batch_contract_repo.AtomicAddBatchBankRefStats batch=%s: %w", batchID, err)
+	}
+
+	batchContractID, err := r.resolveOrCreate(ctx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
+	if _, err := r.q(ctx).Exec(ctx, `
+		INSERT INTO batch_risk_summary (batch_contract_id, tenant_id, settlement_ref_count, bank_ref_present_count, computed_at)
+		VALUES ($1, $2, 1, $3, now())
+		ON CONFLICT (batch_contract_id) DO UPDATE SET
+			settlement_ref_count   = batch_risk_summary.settlement_ref_count + 1,
+			bank_ref_present_count = batch_risk_summary.bank_ref_present_count + EXCLUDED.bank_ref_present_count,
+			computed_at            = now()
+	`, batchContractID, tenantID, bankRefIncr); err != nil {
+		return fmt.Errorf("batch_contract_repo.AtomicAddBatchBankRefStats shadow batch=%s: %w", batchID, err)
 	}
 	return nil
 }
@@ -1380,7 +1845,7 @@ func (r *BatchContractRepo) AtomicAddBatchClientRefStats(
 	if hasClientRef {
 		clientRefIncr = 1
 	}
-	_, err := r.pool.Exec(ctx, `
+	_, err := r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_contracts (batch_id, tenant_id, decision_ref_count, client_ref_present_count)
 		VALUES ($1, $2, 1, $3)
 		ON CONFLICT (batch_id) DO UPDATE SET
@@ -1390,6 +1855,21 @@ func (r *BatchContractRepo) AtomicAddBatchClientRefStats(
 	`, batchID, tenantID, clientRefIncr)
 	if err != nil {
 		return fmt.Errorf("batch_contract_repo.AtomicAddBatchClientRefStats batch=%s: %w", batchID, err)
+	}
+
+	batchContractID, err := r.resolveOrCreate(ctx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
+	if _, err := r.q(ctx).Exec(ctx, `
+		INSERT INTO batch_risk_summary (batch_contract_id, tenant_id, decision_ref_count, client_ref_present_count, computed_at)
+		VALUES ($1, $2, 1, $3, now())
+		ON CONFLICT (batch_contract_id) DO UPDATE SET
+			decision_ref_count       = batch_risk_summary.decision_ref_count + 1,
+			client_ref_present_count = batch_risk_summary.client_ref_present_count + EXCLUDED.client_ref_present_count,
+			computed_at              = now()
+	`, batchContractID, tenantID, clientRefIncr); err != nil {
+		return fmt.Errorf("batch_contract_repo.AtomicAddBatchClientRefStats shadow batch=%s: %w", batchID, err)
 	}
 	return nil
 }

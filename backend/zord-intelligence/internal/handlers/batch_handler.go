@@ -90,9 +90,16 @@ type batchContractResponse struct {
 	BankRefPresentCount   int `json:"bank_ref_present_count"`
 	DecisionRefCount      int `json:"decision_ref_count"`
 	ClientRefPresentCount int `json:"client_ref_present_count"`
+
+	// Phase 2 refactor (decision I-Q3): the batch's new tenant-scoped internal
+	// identity (batch_contracts_core.id). Additive field — omitted until the
+	// batch has been shadow-written or backfilled, so older/pre-Phase-2
+	// consumers see no change and newer ones can start relying on it once
+	// populated. See REFACTOR_IMPLEMENTATION_GUIDE.md §I.
+	InternalBatchUUID *string `json:"internal_batch_uuid,omitempty"`
 }
 
-func newBatchContractResponse(b persistence.BatchContract) batchContractResponse {
+func newBatchContractResponse(b persistence.BatchContract, internalUUID *string) batchContractResponse {
 	pct := func(v float64) float64 { return math.Round(v*10000) / 100 }
 	pctPtr := func(v *float64) *float64 {
 		if v == nil {
@@ -155,6 +162,7 @@ func newBatchContractResponse(b persistence.BatchContract) batchContractResponse
 		BankRefPresentCount:   b.BankRefPresentCount,
 		DecisionRefCount:      b.DecisionRefCount,
 		ClientRefPresentCount: b.ClientRefPresentCount,
+		InternalBatchUUID:     internalUUID,
 	}
 }
 
@@ -202,10 +210,17 @@ func (h *BatchHandler) GetBatch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Phase 2: best-effort UUID lookup (indexed, single row) — never blocks
+	// or fails the response if unavailable (e.g. batch predates backfill).
+	internalUUID, err := h.batchRepo.GetCoreID(r.Context(), tenantID, batchID)
+	if err != nil {
+		internalUUID = nil
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"tenant_id":         tenantID,
 		"intelligence_mode": string(mode),
-		"batch":             newBatchContractResponse(*batch),
+		"batch":             newBatchContractResponse(*batch, internalUUID),
 		"batch_health":      batchHealth,
 	})
 }
@@ -246,9 +261,24 @@ func (h *BatchHandler) ListBatches(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Phase 2: one batched UUID lookup for the whole page instead of N+1
+	// per-row queries. Best-effort — a lookup failure just omits the field.
+	extIDs := make([]string, len(raw))
+	for i, b := range raw {
+		extIDs[i] = b.BatchID
+	}
+	uuidByBatchID, err := h.batchRepo.GetCoreIDsByExternalIDs(r.Context(), tenantID, extIDs)
+	if err != nil {
+		uuidByBatchID = map[string]string{}
+	}
+
 	batches := make([]batchContractResponse, len(raw))
 	for i, b := range raw {
-		batches[i] = newBatchContractResponse(b)
+		var internalUUID *string
+		if id, ok := uuidByBatchID[b.BatchID]; ok {
+			internalUUID = &id
+		}
+		batches[i] = newBatchContractResponse(b, internalUUID)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{

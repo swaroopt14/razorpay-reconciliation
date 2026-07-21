@@ -21,7 +21,7 @@ func (r *ProjectionRepo) IsProcessed(ctx context.Context, tenantID, eventID stri
 	`
 
 	var processed bool
-	if err := r.pool.QueryRow(ctx, sql, tenantID, eventID).Scan(&processed); err != nil {
+	if err := r.q(ctx).QueryRow(ctx, sql, tenantID, eventID).Scan(&processed); err != nil {
 		return false, fmt.Errorf("processed_event_repo.IsProcessed tenant_id=%s event_id=%s: %w", tenantID, eventID, err)
 	}
 	return processed, nil
@@ -39,7 +39,7 @@ func (r *ProjectionRepo) MarkProcessed(ctx context.Context, tenantID, eventID st
 		ON CONFLICT (tenant_id, event_id) DO NOTHING
 	`
 
-	if _, err := r.pool.Exec(ctx, sql, tenantID, eventID); err != nil {
+	if _, err := r.q(ctx).Exec(ctx, sql, tenantID, eventID); err != nil {
 		return fmt.Errorf("processed_event_repo.MarkProcessed tenant_id=%s event_id=%s: %w", tenantID, eventID, err)
 	}
 	return nil
@@ -61,7 +61,7 @@ func (r *ProjectionRepo) IsFinalityProcessed(ctx context.Context, tenantID, cert
 	`
 
 	var processed bool
-	if err := r.pool.QueryRow(ctx, sql, tenantID, certificateID).Scan(&processed); err != nil {
+	if err := r.q(ctx).QueryRow(ctx, sql, tenantID, certificateID).Scan(&processed); err != nil {
 		return false, fmt.Errorf("processed_event_repo.IsFinalityProcessed tenant_id=%s certificate_id=%s: %w", tenantID, certificateID, err)
 	}
 	return processed, nil
@@ -79,7 +79,7 @@ func (r *ProjectionRepo) MarkFinalityProcessed(ctx context.Context, tenantID, ce
 		ON CONFLICT (tenant_id, certificate_id) DO NOTHING
 	`
 
-	if _, err := r.pool.Exec(ctx, sql, tenantID, certificateID); err != nil {
+	if _, err := r.q(ctx).Exec(ctx, sql, tenantID, certificateID); err != nil {
 		return fmt.Errorf("processed_event_repo.MarkFinalityProcessed tenant_id=%s certificate_id=%s: %w", tenantID, certificateID, err)
 	}
 	return nil

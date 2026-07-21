@@ -1,0 +1,16 @@
+ action_contracts          |          0
+ actuation_outbox          |          0
+ batch_contracts           |          3
+ intelligence_explanations |          0
+ intelligence_mode_config  |          1
+ intelligence_snapshots    |        534
+ ml_feature_store          |        207
+ ml_labels                 |          2
+ ml_model_registry         |          0
+ ml_predictions            |        114
+ policy_registry           |         32
+ processed_events          |        255
+ processed_finality        |          0
+ projection_state          |        119
+ sla_timers                |         59
+
