@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"zord-intent-engine/internal/auth"
 	"zord-intent-engine/internal/models"
 	"zord-intent-engine/internal/services"
 	"zord-intent-engine/internal/validator"
@@ -52,6 +53,12 @@ func main() {
 	err := vault.InitVaultKey(cfg.VaultKey)
 	if err != nil {
 		log.Fatal("failed to initialize vault key:", err)
+	}
+
+	// R-01: every public, tenant-scoped handler must run behind a verified
+	// principal. Fail startup rather than silently serve with auth disabled.
+	if err := auth.InitJWTSigningSecret(); err != nil {
+		log.Fatal("failed to initialize JWT signing secret:", err)
 	}
 
 	ctx := context.Background()
@@ -143,24 +150,31 @@ func main() {
 		}
 	})
 
-	mux.HandleFunc("/v1/dlq", dlqHandler.List)
-	mux.HandleFunc("/v1/dlq/manual-review", dlqHandler.GetManualReviewDLQ)
-	mux.HandleFunc("/v1/dlq/terminal/count", dlqHandler.GetTerminalDLQCount)
-	mux.HandleFunc("/v1/dlq/", func(w http.ResponseWriter, r *http.Request) {
+	// R-01: these routes carry tenant-scoped payment data and are reachable
+	// either through the public Kong gateway (/v1/*) or directly by
+	// zord-console's server (/api/prod/intents/*) — both must run behind a
+	// verified principal so a caller-supplied tenant_id can never diverge
+	// from the tenant the caller is actually authenticated as.
+	// /internal/* routes are deliberately NOT wrapped here — R-02 covers
+	// those with a separate internal-service-token check, not end-user JWTs.
+	mux.HandleFunc("/v1/dlq", auth.Protect(dlqHandler.List))
+	mux.HandleFunc("/v1/dlq/manual-review", auth.Protect(dlqHandler.GetManualReviewDLQ))
+	mux.HandleFunc("/v1/dlq/terminal/count", auth.Protect(dlqHandler.GetTerminalDLQCount))
+	mux.HandleFunc("/v1/dlq/", auth.Protect(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/dlq" || r.URL.Path == "/v1/dlq/" {
 			dlqHandler.List(w, r)
 		} else {
 			dlqHandler.GetByID(w, r) // NEW: /v1/dlq/{dlq_id}
 		}
-	})
-	mux.HandleFunc("/v1/intents/", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("/v1/intents/", auth.Protect(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/intents" || r.URL.Path == "/v1/intents/" {
 			intentHandler.List(w, r)
 		} else {
 			intentHandler.GetByID(w, r)
 		}
-	})
-	mux.HandleFunc("/v1/intents", intentHandler.List)
+	}))
+	mux.HandleFunc("/v1/intents", auth.Protect(intentHandler.List))
 	mux.HandleFunc("/internal/intents/count", intentHandler.CountAll)
 	mux.HandleFunc("/internal/intents/by-envelope", intentHandler.GetByEnvelopeAnyTenant)
 	mux.HandleFunc("/internal/outbox/lease", outboxHandler.Lease)
@@ -172,9 +186,9 @@ func main() {
 	mux.HandleFunc("/internal/relay/canonical_batches/lease", batchOutboxHandler.Lease)
 	mux.HandleFunc("/internal/relay/canonical_batches/ack", batchOutboxHandler.Ack)
 	mux.HandleFunc("/internal/relay/canonical_batches/nack", batchOutboxHandler.Nack)
-	mux.HandleFunc("/api/prod/intents/batch-ids", intentHandler.ListBatchIDs)
-	mux.HandleFunc("/api/prod/intents/payment-intents", intentHandler.ListPaymentIntentLiteByBatch)
-	mux.HandleFunc("/api/prod/intents/dlq-items", intentHandler.ListDLQItemsByBatchSimple)
+	mux.HandleFunc("/api/prod/intents/batch-ids", auth.Protect(intentHandler.ListBatchIDs))
+	mux.HandleFunc("/api/prod/intents/payment-intents", auth.Protect(intentHandler.ListPaymentIntentLiteByBatch))
+	mux.HandleFunc("/api/prod/intents/dlq-items", auth.Protect(intentHandler.ListDLQItemsByBatchSimple))
 	mux.HandleFunc("/internal/airflow/transform", airflowHandler.Transform)
 	mux.HandleFunc("/internal/normalization/quality", normHandler.Quality)
 

@@ -129,6 +129,14 @@ spec:
                 secretKeyRef:
                   name: zord-app-secrets
                   key: RELAY_SERVICES_0_AUTH_TOKEN
+            # R-01: same shared secret zord-edge signs access tokens with and
+            # Kong verifies at the gateway (kong-jwt-secret) — already exists
+            # in zord-app-secrets, just mounting it into one more deployment.
+            - name: JWT_SIGNING_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: zord-app-secrets
+                  key: JWT_SIGNING_SECRET
             - name: WORKER_POOL_SIZE
               value: "64"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
