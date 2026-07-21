@@ -4,6 +4,7 @@ import { mapBackendDlqForClient } from '@/services/backend/dlqBffTransform'
 import {
   applyRefreshedSessionCookies,
   requireSessionTenantForProdProxy,
+  resolveProxyForwardAuthorization,
 } from '@/services/auth/resolvePayoutTenant.server'
 
 // Force dynamic rendering for API routes
@@ -31,10 +32,14 @@ export async function GET(request: NextRequest) {
   if (!gate.ok) return gate.response
   const tenantId = gate.tenantId
 
+  const auth = await resolveProxyForwardAuthorization(request, undefined)
+  if (!auth.ok) return auth.response
+  const authorization = auth.authorization
+
   try {
     const [standardRows, manualReviewRows] = await Promise.all([
-      fetchDLQItems({ tenant_id: tenantId }),
-      fetchDLQManualReviewItems({ tenant_id: tenantId }),
+      fetchDLQItems({ tenant_id: tenantId, authorization }),
+      fetchDLQManualReviewItems({ tenant_id: tenantId, authorization }),
     ])
     const list = mergeDlqRows(
       Array.isArray(standardRows) ? standardRows : [],
@@ -51,7 +56,7 @@ export async function GET(request: NextRequest) {
         total: transformedItems.length,
       },
     })
-    applyRefreshedSessionCookies(res, gate.refreshedPayload)
+    applyRefreshedSessionCookies(res, auth.refreshedPayload ?? gate.refreshedPayload)
     return res
   } catch (error) {
     const res = NextResponse.json({
@@ -63,7 +68,7 @@ export async function GET(request: NextRequest) {
       },
       error: error instanceof Error ? error.message : 'Failed to fetch DLQ items',
     })
-    applyRefreshedSessionCookies(res, gate.refreshedPayload)
+    applyRefreshedSessionCookies(res, auth.refreshedPayload ?? gate.refreshedPayload)
     return res
   }
 }

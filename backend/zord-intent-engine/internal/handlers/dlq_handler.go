@@ -18,23 +18,27 @@ func NewDLQHandler(repo persistence.DLQRepository) *DLQHandler {
 }
 
 // GET /v1/dlq
-// - No tenant_id  → all DLQ entries
-// - tenant_id=?   → DLQ entries for that tenant
+// R-01: this is a public, Kong-gated route protected by auth.Protect, which
+// only rejects a *supplied* tenant_id that doesn't match the caller's
+// principal — it does not require one to be present. This handler used to
+// fall back to every tenant's rows when tenant_id was omitted, which meant
+// any authenticated user could see every other tenant's DLQ data just by
+// leaving the query param off. tenant_id is now required here, matching
+// IntentHandler.List's pattern. The legitimate cross-tenant aggregate need
+// (ops "resources" dashboard total DLQ count) is served by the internal-only
+// /internal/dlq/count route (see CountAll below) instead.
 func (h *DLQHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	tenantID := r.URL.Query().Get("tenant_id")
+	tenantID := strings.TrimSpace(r.URL.Query().Get("tenant_id"))
 
-	var (
-		items []models.DLQEntry
-		err   error
-	)
-
-	if tenantID != "" {
-		items, err = h.repo.ListByTenant(ctx, tenantID)
-	} else {
-		items, err = h.repo.ListAll(ctx)
+	if tenantID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "tenant_id is required"})
+		return
 	}
 
+	items, err := h.repo.ListByTenant(ctx, tenantID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -42,6 +46,25 @@ func (h *DLQHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(items)
+}
+
+// CountAll returns the platform-wide DLQ row count across every tenant.
+// Internal-only (see cmd/main.go: wrapped in auth.RequireInternalScope) —
+// backs the ops "resources" dashboard's aggregate count, which has no single
+// tenant to scope to by design. Not reachable through the public gateway.
+func (h *DLQHandler) CountAll(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	items, err := h.repo.ListAll(ctx)
+	if err != nil {
+		respondError(w, "DATABASE_ERROR", "Failed to count DLQ items", http.StatusInternalServerError, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(struct {
+		Total int `json:"total"`
+	}{Total: len(items)})
 }
 
 // NEW: GET /v1/dlq/:dlq_id

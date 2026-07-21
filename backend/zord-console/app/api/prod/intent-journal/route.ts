@@ -7,6 +7,7 @@ import { fetchIntents } from '@/services/backend/intents'
 import {
   applyRefreshedSessionCookies,
   requireSessionTenantForProdProxy,
+  resolveProxyForwardAuthorization,
 } from '@/services/auth/resolvePayoutTenant.server'
 
 export const dynamic = 'force-dynamic'
@@ -55,6 +56,10 @@ export async function GET(request: NextRequest) {
   if (!gate.ok) return gate.response
   const tenantId = gate.tenantId
 
+  const auth = await resolveProxyForwardAuthorization(request, undefined)
+  if (!auth.ok) return auth.response
+  const authorization = auth.authorization
+
   const batchId = request.nextUrl.searchParams.get('batch_id')?.trim() || undefined
 
   try {
@@ -62,9 +67,9 @@ export async function GET(request: NextRequest) {
     const batchesUrl = `${intelBase}${BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.BATCHES}?tenant_id=${encodeURIComponent(tenantId)}&limit=100`
 
     const [intentsRes, dlqRaw, dlqManualRaw, batchesJson] = await Promise.all([
-      fetchIntents({ tenant_id: tenantId, batch_id: batchId }),
-      fetchDLQItems({ tenant_id: tenantId }),
-      fetchDLQManualReviewItems({ tenant_id: tenantId }),
+      fetchIntents({ tenant_id: tenantId, batch_id: batchId, authorization }),
+      fetchDLQItems({ tenant_id: tenantId, authorization }),
+      fetchDLQManualReviewItems({ tenant_id: tenantId, authorization }),
       fetchIntelligenceJson(batchesUrl, tenantId),
     ])
 
@@ -101,7 +106,7 @@ export async function GET(request: NextRequest) {
       intents: { items, pagination: intentsRes.pagination },
       dlq: { items: dlqItems },
     })
-    applyRefreshedSessionCookies(res, gate.refreshedPayload)
+    applyRefreshedSessionCookies(res, auth.refreshedPayload ?? gate.refreshedPayload)
     return res
   } catch (error) {
     const res = NextResponse.json(
@@ -114,7 +119,7 @@ export async function GET(request: NextRequest) {
       },
       { status: 502, headers: { 'cache-control': 'no-store' } },
     )
-    applyRefreshedSessionCookies(res, gate.refreshedPayload)
+    applyRefreshedSessionCookies(res, auth.refreshedPayload ?? gate.refreshedPayload)
     return res
   }
 }
