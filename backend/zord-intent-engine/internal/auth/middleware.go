@@ -86,11 +86,39 @@ var requestedTenantHeaders = []string{"X-Tenant-ID", "x-tenant-id", "tenant-id",
 
 func requestedTenant(r *http.Request) string {
 	for _, h := range requestedTenantHeaders {
-		if v := strings.TrimSpace(r.Header.Get(h)); v != "" {
+		if v := normalizeHeaderTenant(r.Header.Get(h)); v != "" {
 			return v
 		}
 	}
 	return strings.TrimSpace(r.URL.Query().Get("tenant_id"))
+}
+
+// normalizeHeaderTenant collapses a header value that repeats the identical
+// tenant ID multiple times, comma-joined, into a single value.
+//
+// This happens legitimately on the wire: some callers set the same tenant
+// under two case-variant header names (e.g. X-Tenant-ID and x-tenant-id) in
+// one request — those normalise to the same HTTP header, and most fetch/
+// Headers implementations *append* rather than overwrite on a duplicate,
+// producing "value, value" rather than "value". That is not two different
+// tenant claims, just the same one written twice, and must not be rejected
+// as a mismatch. If the comma-separated parts are NOT all identical, this
+// deliberately returns the raw value unchanged — a request actually
+// claiming two different tenants in one header is ambiguous and should
+// fail the match, not be silently resolved to one of them.
+func normalizeHeaderTenant(raw string) string {
+	v := strings.TrimSpace(raw)
+	if v == "" || !strings.Contains(v, ",") {
+		return v
+	}
+	parts := strings.Split(v, ",")
+	first := strings.TrimSpace(parts[0])
+	for _, p := range parts[1:] {
+		if strings.TrimSpace(p) != first {
+			return v // genuinely conflicting values — leave ambiguous, let it fail HasTenant
+		}
+	}
+	return first
 }
 
 // RequireTenantMatch must be chained after RequireAuth. If the request
