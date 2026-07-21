@@ -179,6 +179,7 @@ func main() {
 	// token + explicit scope, not just gateway-route obscurity.
 	mux.HandleFunc("/internal/intents/count", auth.RequireInternalScope(auth.ScopeIntentReadCrossTenant, intentHandler.CountAll))
 	mux.HandleFunc("/internal/intents/by-envelope", auth.RequireInternalScope(auth.ScopeIntentReadCrossTenant, intentHandler.GetByEnvelopeAnyTenant))
+	mux.HandleFunc("/internal/dlq/count", auth.RequireInternalScope(auth.ScopeIntentReadCrossTenant, dlqHandler.CountAll))
 	mux.HandleFunc("/internal/outbox/lease", outboxHandler.Lease)
 	mux.HandleFunc("/internal/outbox/ack", outboxHandler.Ack)
 	mux.HandleFunc("/internal/outbox/nack", outboxHandler.Nack)

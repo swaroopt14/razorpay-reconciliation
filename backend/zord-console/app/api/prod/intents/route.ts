@@ -3,6 +3,7 @@ import { fetchIntents } from '@/services/backend/intents'
 import {
   applyRefreshedSessionCookies,
   requireSessionTenantForProdProxy,
+  resolveProxyForwardAuthorization,
 } from '@/services/auth/resolvePayoutTenant.server'
 
 // Force dynamic rendering for API routes
@@ -12,6 +13,9 @@ export async function GET(request: NextRequest) {
   const gate = await requireSessionTenantForProdProxy(request)
   if (!gate.ok) return gate.response
   const tenantId = gate.tenantId
+
+  const auth = await resolveProxyForwardAuthorization(request, undefined)
+  if (!auth.ok) return auth.response
 
   try {
     const searchParams = request.nextUrl.searchParams
@@ -26,6 +30,7 @@ export async function GET(request: NextRequest) {
       status,
       tenant_id: tenantId,
       batch_id: batchId,
+      authorization: auth.authorization,
     })
 
     const items = (response.items ?? []).map((intent) => ({
@@ -56,7 +61,7 @@ export async function GET(request: NextRequest) {
       items,
       pagination: response.pagination,
     })
-    applyRefreshedSessionCookies(res, gate.refreshedPayload)
+    applyRefreshedSessionCookies(res, auth.refreshedPayload ?? gate.refreshedPayload)
     return res
   } catch (error) {
     const res = NextResponse.json({
@@ -68,7 +73,7 @@ export async function GET(request: NextRequest) {
       },
       error: error instanceof Error ? error.message : 'Failed to fetch intents',
     })
-    applyRefreshedSessionCookies(res, gate.refreshedPayload)
+    applyRefreshedSessionCookies(res, auth.refreshedPayload ?? gate.refreshedPayload)
     return res
   }
 }

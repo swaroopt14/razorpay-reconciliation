@@ -59,6 +59,14 @@ export interface IntentListParams {
   tenant_id?: string
   status?: string
   batch_id?: string
+  /**
+   * R-01: /v1/intents is behind auth.Protect on zord-intent-engine — every
+   * caller must present the signed-in session's JWT, or the request 401s
+   * before tenant_id is even checked. Callers MUST resolve this via
+   * resolveProxyForwardAuthorization (see services/auth/resolvePayoutTenant.server)
+   * and pass it through; omitting it is not a degraded mode, it's a guaranteed 401.
+   */
+  authorization?: string
 }
 
 /**
@@ -66,7 +74,7 @@ export interface IntentListParams {
  * Endpoint: GET http://localhost:8083/v1/intents
  */
 export async function fetchIntents(params: IntentListParams = {}): Promise<IntentListResponse> {
-  const { page = 1, page_size = 50, tenant_id, status, batch_id } = params
+  const { page = 1, page_size = 50, tenant_id, status, batch_id, authorization } = params
 
   const queryParams = new URLSearchParams()
   queryParams.set('page', String(page))
@@ -90,6 +98,10 @@ export async function fetchIntents(params: IntentListParams = {}): Promise<Inten
     const response = await fetch(fullUrl, {
       ...DEFAULT_FETCH_OPTIONS,
       method: 'GET',
+      headers: {
+        ...DEFAULT_FETCH_OPTIONS.headers,
+        ...(authorization ? { Authorization: authorization } : {}),
+      },
       signal: controller.signal,
     })
 
