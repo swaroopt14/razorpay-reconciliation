@@ -70,6 +70,14 @@ spec:
               value: http://zord-relay:8082
             - name: ZORD_INTENT_ENGINE_URL
               value: http://zord-intent-engine:8083
+            # R-02: sent as X-Internal-Service-Token on calls to
+            # zord-intent-engine's /internal/intents/* routes — must match
+            # its INTERNAL_SERVICE_TOKEN (same zord-app-secrets key).
+            - name: INTERNAL_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: zord-app-secrets
+                  key: INTENT_ENGINE_INTERNAL_SERVICE_TOKEN
             - name: ZORD_CONTRACTS_URL
               value: http://zord-relay:8082
             - name: ZORD_PII_ENCLAVE_URL

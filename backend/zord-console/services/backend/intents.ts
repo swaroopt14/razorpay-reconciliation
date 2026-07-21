@@ -1,6 +1,18 @@
 // Intent Service - Fetches data from zord-intent-engine
 import { BACKEND_SERVICES, buildUrl, DEFAULT_FETCH_OPTIONS, API_TIMEOUT } from '@/config/api.endpoints'
 
+/**
+ * R-02: zord-intent-engine's /internal/intents/* routes require a signed
+ * internal-service token (X-Internal-Service-Token), not an end-user JWT —
+ * these are cross-tenant reads with no single tenant to scope to, so they
+ * can never be protected by the per-tenant session auth used elsewhere.
+ * Must match INTERNAL_SERVICE_TOKEN configured on zord-intent-engine.
+ */
+function internalServiceHeaders(): HeadersInit {
+  const token = process.env.INTERNAL_SERVICE_TOKEN
+  return token ? { 'X-Internal-Service-Token': token } : {}
+}
+
 export interface BackendIntent {
   intent_id: string
   envelope_id: string
@@ -124,6 +136,7 @@ export async function fetchIntentsTotalCount(): Promise<number> {
     const response = await fetch(url, {
       ...DEFAULT_FETCH_OPTIONS,
       method: 'GET',
+      headers: { ...DEFAULT_FETCH_OPTIONS.headers, ...internalServiceHeaders() },
       signal: controller.signal,
     })
     clearTimeout(timeoutId)
@@ -159,6 +172,7 @@ export async function fetchIntentByEnvelopeAnyTenant(
     const response = await fetch(url, {
       ...DEFAULT_FETCH_OPTIONS,
       method: 'GET',
+      headers: { ...DEFAULT_FETCH_OPTIONS.headers, ...internalServiceHeaders() },
       signal: controller.signal,
     })
     clearTimeout(timeoutId)

@@ -137,6 +137,15 @@ spec:
                 secretKeyRef:
                   name: zord-app-secrets
                   key: JWT_SIGNING_SECRET
+            # R-02: gates /internal/intents/count and /internal/intents/by-envelope.
+            # Must match zord-console's INTERNAL_SERVICE_TOKEN env below.
+            # NOTE: this key is new — ops must add it to zord-app-secrets
+            # before this deployment rolls out with the auth check live.
+            - name: INTERNAL_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: zord-app-secrets
+                  key: INTENT_ENGINE_INTERNAL_SERVICE_TOKEN
             - name: WORKER_POOL_SIZE
               value: "64"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT

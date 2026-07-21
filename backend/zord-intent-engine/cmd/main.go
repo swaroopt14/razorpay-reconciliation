@@ -175,8 +175,10 @@ func main() {
 		}
 	}))
 	mux.HandleFunc("/v1/intents", auth.Protect(intentHandler.List))
-	mux.HandleFunc("/internal/intents/count", intentHandler.CountAll)
-	mux.HandleFunc("/internal/intents/by-envelope", intentHandler.GetByEnvelopeAnyTenant)
+	// R-02: cross-tenant internal reads require a signed internal service
+	// token + explicit scope, not just gateway-route obscurity.
+	mux.HandleFunc("/internal/intents/count", auth.RequireInternalScope(auth.ScopeIntentReadCrossTenant, intentHandler.CountAll))
+	mux.HandleFunc("/internal/intents/by-envelope", auth.RequireInternalScope(auth.ScopeIntentReadCrossTenant, intentHandler.GetByEnvelopeAnyTenant))
 	mux.HandleFunc("/internal/outbox/lease", outboxHandler.Lease)
 	mux.HandleFunc("/internal/outbox/ack", outboxHandler.Ack)
 	mux.HandleFunc("/internal/outbox/nack", outboxHandler.Nack)

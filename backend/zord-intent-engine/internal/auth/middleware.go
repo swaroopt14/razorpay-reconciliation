@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 )
@@ -108,6 +109,18 @@ func RequireTenantMatch(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		if requested := requestedTenant(r); requested != "" && !principal.HasTenant(requested) {
+			// Diagnostic logging (temporary): a 2026-07-21 report showed this
+			// firing for what should have been a same-tenant request forwarded
+			// by zord-console's own BFF, which independently verifies JWT
+			// tenant == session tenant before forwarding. Logging both raw
+			// values here — rather than guessing at a fix — until a
+			// reproduction confirms whether this is a genuine stale-JWT/
+			// current-tenant divergence (correct to reject) or a bug in how
+			// either side derives its value (needs a real fix).
+			log.Printf(
+				"tenant_mismatch route=%s principal_subject=%q principal_tenant=%q requested_tenant=%q auth_method=%q",
+				r.URL.Path, principal.SubjectID, principal.TenantID, requested, principal.AuthMethod,
+			)
 			writeAuthError(w, http.StatusForbidden, "TENANT_FORBIDDEN", "requested tenant is not authorised for this principal")
 			return
 		}
