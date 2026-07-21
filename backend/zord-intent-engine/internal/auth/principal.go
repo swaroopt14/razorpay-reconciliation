@@ -7,7 +7,10 @@
 // every handler must come from a verified principal, not from request input.
 package auth
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 // AuthPrincipal is the verified identity behind an inbound public request,
 // derived from a signed JWT issued by zord-edge. It is the only source of
@@ -26,15 +29,20 @@ type AuthPrincipal struct {
 
 // HasTenant reports whether the principal is allowed to act as tenantID —
 // either as its primary tenant or one of its explicitly allowed tenants.
+// Comparison is trimmed and case-insensitive: tenant IDs are UUIDs, whose
+// case carries no meaning, and the same value can arrive from several
+// sources (a JWT claim, an HTTP header, a query param) that don't all
+// normalise case identically — this must not become a false "mismatch".
 func (p AuthPrincipal) HasTenant(tenantID string) bool {
+	tenantID = strings.TrimSpace(tenantID)
 	if tenantID == "" {
 		return false
 	}
-	if p.TenantID == tenantID {
+	if strings.EqualFold(strings.TrimSpace(p.TenantID), tenantID) {
 		return true
 	}
 	for _, t := range p.AllowedTenants {
-		if t == tenantID {
+		if strings.EqualFold(strings.TrimSpace(t), tenantID) {
 			return true
 		}
 	}
