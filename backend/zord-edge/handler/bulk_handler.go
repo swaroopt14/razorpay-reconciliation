@@ -438,7 +438,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 		// ── Collect all non-empty rows for batch parse ──────────────────────
 		var allCSVRows []bulkSourceRow
-		fileRowNumber := 1
+		fileRowNumber := 0
 		for {
 			row, err := reader.Read()
 			if err == io.EOF {
@@ -727,7 +727,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 		// ── Collect all non-empty XLSX rows for batch parse ─────────────────
 		var allXLSXRows []bulkSourceRow
-		fileRowNumber := 1
+		fileRowNumber := 0
 		for dataRows.Next() {
 			fileRowNumber++
 			row, err := dataRows.Columns()
