@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -9,12 +10,45 @@ import (
 	"github.com/IBM/sarama"
 )
 
-type Consumer struct {
-	ready   chan bool
-	handler func([]byte) error
+// PermanentFailure carries everything about a Kafka message whose handler
+// exhausted every retry attempt — the raw materials a durable failure
+// ledger needs (R-03). This package stays decoupled from any specific
+// payload schema or persistence mechanism: it hands the caller Kafka-level
+// facts (topic/partition/offset/headers/value) plus the handler's own
+// verdict (attempts, last error) and lets the caller's FailureRecorder do
+// the payload parsing and durable write.
+type PermanentFailure struct {
+	Topic     string
+	Partition int32
+	Offset    int64
+	Key       []byte
+	Value     []byte
+	Headers   []*sarama.RecordHeader
+	Attempts  int
+	LastError error
 }
 
-func StartConsumer(ctx context.Context, brokers []string, groupID, topic string, handler func([]byte) error) error {
+// FailureRecorder durably persists a PermanentFailure before the source
+// Kafka offset is allowed to advance past it. A non-nil return means the
+// write did not succeed and the message must NOT be marked — see
+// ConsumeClaim, which stops consuming (ending the session, forcing a
+// rejoin) rather than advancing on a failed write.
+type FailureRecorder func(ctx context.Context, f PermanentFailure) error
+
+type Consumer struct {
+	ready              chan bool
+	handler            func([]byte) error
+	onPermanentFailure FailureRecorder
+}
+
+// StartConsumer requires onPermanentFailure — R-03 makes durable failure
+// recording a precondition for offset advancement, not an optional add-on,
+// so there is no "run without it" mode to silently fall back to.
+func StartConsumer(ctx context.Context, brokers []string, groupID, topic string, handler func([]byte) error, onPermanentFailure FailureRecorder) error {
+	if onPermanentFailure == nil {
+		return errors.New("kafka.StartConsumer: onPermanentFailure is required (R-03: no durable failure recording, no consumer)")
+	}
+
 	config := sarama.NewConfig()
 	config.Version = sarama.V2_8_0_0
 
@@ -31,8 +65,9 @@ func StartConsumer(ctx context.Context, brokers []string, groupID, topic string,
 	}
 
 	consumer := &Consumer{
-		ready:   make(chan bool),
-		handler: handler,
+		ready:              make(chan bool),
+		handler:            handler,
+		onPermanentFailure: onPermanentFailure,
 	}
 
 	go func() {
@@ -74,12 +109,15 @@ func (c *Consumer) Cleanup(sarama.ConsumerGroupSession) error {
 // Retrying the same message here, in place, before ever moving on to the
 // next one, means no later mark can ever advance past an unresolved earlier
 // message. Most failures are transient (DB/enclave blips) and now get a real
-// chance to succeed instead of being lost outright. A message that still
-// fails after all attempts is marked anyway (so it doesn't block this
-// partition forever) but loudly logged, replacing a silent loss with a
-// visible one an operator can act on.
+// chance to succeed instead of being lost outright.
+//
+// R-03: a message that still fails after all attempts is no longer marked
+// unconditionally. It is durably recorded first (see FailureRecorder) —
+// only a successful durable write earns the mark. If the durable write
+// itself fails, ConsumeClaim stops (returns an error, ending this session)
+// rather than advancing past a failure nobody can find later.
 const (
-	maxHandlerAttempts = 5
+	maxHandlerAttempts    = 5
 	handlerRetryBaseDelay = 200 * time.Millisecond
 )
 
@@ -107,10 +145,35 @@ func (c *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, claim saram
 	for msg := range claim.Messages() {
 		logPrefix := fmt.Sprintf("partition=%d offset=%d", msg.Partition, msg.Offset)
 		err := callWithRetry(c.handler, msg.Value, logPrefix, time.Sleep)
-		if err != nil {
-			log.Printf("⚠️ Handler permanently failed after %d attempts %s — marking to avoid blocking this partition indefinitely; message is now lost: %v",
-				maxHandlerAttempts, logPrefix, err)
+		if err == nil {
+			session.MarkMessage(msg, "")
+			continue
 		}
+
+		log.Printf("⚠️ Handler permanently failed after %d attempts %s — recording durable failure before marking: %v",
+			maxHandlerAttempts, logPrefix, err)
+
+		recErr := c.onPermanentFailure(session.Context(), PermanentFailure{
+			Topic:     msg.Topic,
+			Partition: msg.Partition,
+			Offset:    msg.Offset,
+			Key:       msg.Key,
+			Value:     msg.Value,
+			Headers:   msg.Headers,
+			Attempts:  maxHandlerAttempts,
+			LastError: err,
+		})
+		if recErr != nil {
+			// Do NOT mark. Ending the session here (returning an error)
+			// forces a rejoin; consumption resumes from the last marked
+			// offset, so this same message is redelivered and retried
+			// rather than silently advanced past — per R-03: "never
+			// advance only because logging succeeded."
+			log.Printf("🛑 Failed to durably record permanent failure %s — stopping this partition's consumption without marking: %v",
+				logPrefix, recErr)
+			return fmt.Errorf("durable failure recording failed, refusing to advance offset: %w", recErr)
+		}
+
 		session.MarkMessage(msg, "")
 	}
 	return nil
