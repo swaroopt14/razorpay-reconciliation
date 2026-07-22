@@ -84,6 +84,7 @@ func main() {
 	outboxPullRepo := persistence.NewOutboxPullRepo(db.DB)
 	dlqPullRepo := persistence.NewDLQPullRepo(db.DB)
 	batchPullRepo := persistence.NewBatchPullRepo(db.DB)
+	consumerFailureRepo := persistence.NewConsumerFailureRepo(db.DB)
 
 	// -------- Validator --------
 	intentValidator := validator.NewValidator(dlqRepo)
@@ -177,8 +178,6 @@ func main() {
 	mux.HandleFunc("/v1/intents", auth.Protect(intentHandler.List))
 	// R-02: cross-tenant internal reads require a signed internal service
 	// token + explicit scope, not just gateway-route obscurity.
-	mux.HandleFunc("/internal/intents/count", auth.RequireInternalScope(auth.ScopeIntentReadCrossTenant, intentHandler.CountAll))
-	mux.HandleFunc("/internal/intents/by-envelope", auth.RequireInternalScope(auth.ScopeIntentReadCrossTenant, intentHandler.GetByEnvelopeAnyTenant))
 	mux.HandleFunc("/internal/dlq/count", auth.RequireInternalScope(auth.ScopeIntentReadCrossTenant, dlqHandler.CountAll))
 	mux.HandleFunc("/internal/outbox/lease", outboxHandler.Lease)
 	mux.HandleFunc("/internal/outbox/ack", outboxHandler.Ack)
@@ -271,12 +270,26 @@ func main() {
 
 		return nil
 	}
+
+	// R-03: durable failure recording for the main event topic — event_id,
+	// tenant_id and trace_id come from models.Event when the payload parses;
+	// a payload that doesn't even unmarshal still gets a durable record,
+	// keyed by topic:partition:offset instead of event_id.
+	recordEventFailure := newFailureRecorder(consumerFailureRepo, func(payload []byte) (eventID, tenantID, traceID string) {
+		var event models.Event
+		if err := json.Unmarshal(payload, &event); err != nil {
+			return "", "", ""
+		}
+		return event.EventID, event.TenantID.String(), event.TraceID.String()
+	})
+
 	err = kafka.StartConsumer(
 		ctx,
 		brokers,
 		groupID,
 		topic,
 		handler,
+		recordEventFailure,
 	)
 	if err != nil {
 		log.Fatalf("Kafka consumer failed: %v", err)
@@ -285,6 +298,18 @@ func main() {
 
 	// -------- TOKENIZE RESULT CONSUMER --------
 
+	// R-03: same durable-failure requirement as the main consumer.
+	// TokenizeResultEvent has no event_id field, so its IdempotencyKey
+	// stands in for one; falls back to topic:partition:offset if even that
+	// isn't present or the payload doesn't parse.
+	recordTokenizeResultFailure := newFailureRecorder(consumerFailureRepo, func(payload []byte) (eventID, tenantID, traceID string) {
+		var event models.TokenizeResultEvent
+		if err := json.Unmarshal(payload, &event); err != nil {
+			return "", "", ""
+		}
+		return event.IdempotencyKey, event.TenantID, event.TraceID
+	})
+
 	go func() {
 		err := kafka.StartConsumer(
 			ctx,
@@ -292,6 +317,7 @@ func main() {
 			"intent-engine-tokenize-result-group",
 			resultTopic,
 			resultHandler,
+			recordTokenizeResultFailure,
 		)
 		if err != nil {
 			log.Fatalf("Kafka tokenize result consumer failed: %v", err)
@@ -306,4 +332,51 @@ func main() {
 		Handler: otelhttp.NewHandler(mux, "http"),
 	}
 	log.Fatal(server.ListenAndServe())
+}
+
+// newFailureRecorder builds a kafka.FailureRecorder (R-03) that durably
+// writes a permanently-failed message to consumer_failure_receipts before
+// kafka.ConsumeClaim is allowed to mark it. parse extracts whatever
+// event_id/tenant_id/trace_id the specific topic's payload schema carries —
+// the main event topic and the tokenize-result topic use different Go
+// types, so each StartConsumer call supplies its own parse func while
+// sharing this same recording/idempotency logic.
+func newFailureRecorder(
+	repo persistence.ConsumerFailureRepository,
+	parse func(payload []byte) (eventID, tenantID, traceID string),
+) kafka.FailureRecorder {
+	return func(ctx context.Context, f kafka.PermanentFailure) error {
+		eventID, tenantID, traceID := parse(f.Value)
+
+		headerMap := make(map[string]string, len(f.Headers))
+		for _, h := range f.Headers {
+			headerMap[string(h.Key)] = string(h.Value)
+		}
+		headersJSON, _ := json.Marshal(headerMap)
+
+		errorCategory := "PROCESSING_ERROR"
+		if eventID == "" && tenantID == "" && traceID == "" {
+			// parse() only returns all-empty when the payload itself didn't
+			// unmarshal — a real processing failure always resolves at
+			// least a tenant_id, since ProcessIncomingIntent needs one too.
+			errorCategory = "PAYLOAD_UNMARSHAL_ERROR"
+		}
+
+		return repo.Record(ctx, models.ConsumerFailureReceipt{
+			IdempotencyKey: persistence.FailureIdempotencyKey(eventID, f.Topic, f.Partition, f.Offset),
+			EventID:        eventID,
+			Topic:          f.Topic,
+			Partition:      f.Partition,
+			Offset:         f.Offset,
+			TenantID:       tenantID,
+			TraceID:        traceID,
+			Payload:        f.Value,
+			PayloadHash:    persistence.HashPayload(f.Value),
+			HeadersJSON:    headersJSON,
+			ErrorCategory:  errorCategory,
+			ErrorMessage:   f.LastError.Error(),
+			AttemptCount:   f.Attempts,
+			LastAttemptAt:  time.Now().UTC(),
+		})
+	}
 }
