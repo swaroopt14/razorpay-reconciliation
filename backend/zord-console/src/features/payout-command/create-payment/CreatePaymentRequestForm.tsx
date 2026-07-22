@@ -70,7 +70,7 @@ function validatePayload(p: IntentRequestV1): ValidationError[] {
   return errs
 }
 
-export default function CustomerCreateIntentPage() {
+export function CreatePaymentRequestForm() {
   const [apiKey, setApiKey] = useState<string>('')
   const [tenantName, setTenantName] = useState<string>('')
   const [idempotencyKey, setIdempotencyKey] = useState<string>(genIdempotencyKey())
@@ -217,10 +217,10 @@ export default function CustomerCreateIntentPage() {
               {tenantName ? `Tenant: ${tenantName}` : 'Tenant: (not set)'}
             </span>
             <Link
-              href="/customer/tenant/register"
+              href="/payout-command-view/settings/api-keys"
               className="px-3 py-1.5 text-xs font-semibold bg-white text-cx-text border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
             >
-              Register Tenant
+              API keys
             </Link>
           </div>
         </div>
@@ -486,7 +486,7 @@ export default function CustomerCreateIntentPage() {
                     ) : null}
                   </div>
                   <Link
-                    href="/customer/intents"
+                    href="/payout-command-view/today?dock=grid"
                     className="px-3 py-1.5 text-xs font-semibold bg-white text-emerald-800 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-colors"
                   >
                     View Journal
@@ -551,9 +551,9 @@ export default function CustomerCreateIntentPage() {
           </div>
 
           <div className="mt-4 text-xs text-cx-neutral">
-            Tip: If you are getting <span className="font-mono">UNAUTHORIZED</span>, verify the API key from{' '}
-            <Link href="/customer/tenant/register" className="text-cx-purple-700 font-semibold hover:underline">
-              Tenant Registration
+            Tip: If you are getting <span className="font-mono">UNAUTHORIZED</span>, verify the API key in{' '}
+            <Link href="/payout-command-view/settings/api-keys" className="text-cx-purple-700 font-semibold hover:underline">
+              API keys
             </Link>
             .
           </div>
@@ -562,9 +562,4 @@ export default function CustomerCreateIntentPage() {
     </div>
   )
 }
-
-// Re-export for embedding outside the /customer route (e.g. as a tab inside
-// Batch Command Center). Same component, same behavior — page metadata is at
-// the route level so reusing the body has no side effects.
-export { CustomerCreateIntentPage as CreatePaymentRequestForm }
 

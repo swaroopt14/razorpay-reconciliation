@@ -190,15 +190,7 @@ export default function RegisterPage() {
             </Link>
           </p>
           <p className="mt-3 text-center text-[12px] leading-relaxed text-slate-400">
-            By creating a workspace you agree to our{' '}
-            <Link href="/terms" className="font-medium text-[#2B55E8] hover:underline">
-              terms of use
-            </Link>{' '}
-            and{' '}
-            <Link href="/privacy" className="font-medium text-[#2B55E8] hover:underline">
-              privacy policy
-            </Link>
-            .
+            By creating a workspace you agree to our terms of use and privacy policy.
           </p>
         </>
       }

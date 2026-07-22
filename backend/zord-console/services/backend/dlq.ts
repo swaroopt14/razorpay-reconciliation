@@ -203,7 +203,7 @@ export async function fetchDLQItemById(
  * Replaces the old fetchDLQItems() + .length approach: that hit the public
  * /v1/dlq route, which now requires a tenant_id (R-01 fix) and no longer
  * has an "all tenants" fallback — the aggregate need moved here instead,
- * same pattern as fetchIntentsTotalCount.
+ * Internal-only DLQ count helper used by platform health probes.
  */
 export async function fetchDLQTotalCount(): Promise<number> {
   const url = buildUrl('INTENT_ENGINE', BACKEND_SERVICES.INTENT_ENGINE.ENDPOINTS.DLQ_COUNT_ALL)
