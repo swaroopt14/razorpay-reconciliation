@@ -1,0 +1,46 @@
+# Allow all app services to make outbound calls to internal infrastructure (Postgres, Kafka, Redis)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-internal
+  namespace: zord
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          - zord-edge
+          - zord-intent-engine
+          - zord-token-enclave
+          - zord-relay
+          - zord-outcome-engine
+          - zord-evidence
+          - zord-intelligence
+          - zord-prompt-layer
+          - zord-console
+          - zord-ml-service
+  policyTypes:
+    - Egress
+  egress:
+    # Allow DNS resolution (kube-system)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Allow traffic to any pod in zord namespace (internal services, Postgres, Kafka, Redis)
+    - to:
+        - podSelector: {}
+    # Allow HTTPS to AWS services (S3, Secrets Manager, STS for IRSA)
+    - ports:
+        - protocol: TCP
+          port: 443
+    # Allow HTTP to AWS metadata (IRSA token endpoint)
+    - ports:
+        - protocol: TCP
+          port: 80

@@ -66,3 +66,15 @@ resources:
   - services/ml-service/deployment.yaml
   - services/ml-service/pdb.yaml
   - services/ml-service/hpa.yaml
+  # Network Policies
+  - network-policies/default-deny.yaml
+  - network-policies/allow-kong-to-services.yaml
+  - network-policies/allow-console-to-backends.yaml
+  - network-policies/allow-intent-to-enclave.yaml
+  - network-policies/allow-relay-to-services.yaml
+  - network-policies/allow-postgres-access.yaml
+  - network-policies/allow-kafka-access.yaml
+  - network-policies/allow-redis-access.yaml
+  - network-policies/allow-monitoring.yaml
+  - network-policies/allow-egress-internal.yaml
+  - network-policies/allow-egress-infrastructure.yaml
