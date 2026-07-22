@@ -28,6 +28,7 @@ import (
 
 	// "zord-intent-engine/internal/pii"
 	"zord-intent-engine/internal/guards"
+	"zord-intent-engine/internal/persistence"
 	"zord-intent-engine/internal/validator"
 	"zord-intent-engine/internal/vault"
 	"zord-intent-engine/storage"
@@ -102,11 +103,12 @@ const (
 var batchAggregateGroup singleflight.Group
 
 type IntentService struct {
-	validator     *validator.Validator
-	repo          CanonicalIntentRepository
-	s3            *storage.S3Store
-	tokenizeQueue *KafkaTokenizeQueue
-	db            *sql.DB
+	validator        *validator.Validator
+	repo             CanonicalIntentRepository
+	s3               *storage.S3Store
+	tokenizeQueue    *KafkaTokenizeQueue
+	db               *sql.DB
+	tenantDailyUsage persistence.TenantDailyUsageRepository
 }
 
 var enclaveHTTPClient = &http.Client{
@@ -142,6 +144,10 @@ type CanonicalIntentRepository interface {
 		tenantID string,
 		envelopeID string,
 	) (*models.CanonicalIntent, error)
+
+	// R-05: minimal approval primitive for a held (REQUIRES_REVIEW) intent.
+	GetHeldIntentForApproval(ctx context.Context, tenantID, intentID string) (amount decimal.Decimal, currency string, governanceState string, err error)
+	ApproveHeldIntent(ctx context.Context, tenantID, intentID string) error
 
 	UpdateSnapshotRefs(
 		ctx context.Context,
@@ -189,37 +195,57 @@ func NewIntentService(
 	s3 *storage.S3Store,
 	q *KafkaTokenizeQueue,
 	db *sql.DB,
+	tenantDailyUsage persistence.TenantDailyUsageRepository,
 ) *IntentService {
 	return &IntentService{
-		validator:     v,
-		repo:          r,
-		s3:            s3,
-		tokenizeQueue: q,
-		db:            db,
+		validator:        v,
+		repo:             r,
+		s3:               s3,
+		tokenizeQueue:    q,
+		db:               db,
+		tenantDailyUsage: tenantDailyUsage,
 	}
+}
+
+// ErrIntentNotHeld is returned by ApproveHeldIntent when the target intent's
+// governance_state isn't REQUIRES_REVIEW — there's nothing to approve.
+var ErrIntentNotHeld = errors.New("intent is not currently held for review")
+
+// ApproveHeldIntent is R-05's minimal approval primitive: re-run the same
+// atomic ReserveIfWithinLimit check against TODAY's usage (not the total
+// that was current when the intent was originally held — "approval
+// rechecks the latest total instead of trusting the original calculation")
+// and, only if it now fits, flip the intent to ACCEPTED. This is
+// deliberately not a review UI/audit-trail/permissions system — just the
+// atomic re-check the doc's acceptance tests require to exist at all.
+func (s *IntentService) ApproveHeldIntent(ctx context.Context, tenantID, intentID string) (string, error) {
+	amount, currency, governanceState, err := s.repo.GetHeldIntentForApproval(ctx, tenantID, intentID)
+	if err != nil {
+		return "", fmt.Errorf("approve held intent: %w", err)
+	}
+	if governanceState != "REQUIRES_REVIEW" {
+		return "", ErrIntentNotHeld
+	}
+
+	businessDate := persistence.BusinessDateUTC(time.Now())
+	decision, _, err := s.tenantDailyUsage.ReserveIfWithinLimit(
+		ctx, tenantID, businessDate, currency, amount, decimal.NewFromInt(guards.TenantDailyLimit),
+	)
+	if err != nil {
+		return "", fmt.Errorf("approve held intent: daily usage reservation: %w", err)
+	}
+	if decision != persistence.DailyLimitDecisionAccept {
+		// Still over today's limit — remains FLAGGED_FOR_REVIEW, no change.
+		return decision, nil
+	}
+
+	if err := s.repo.ApproveHeldIntent(ctx, tenantID, intentID); err != nil {
+		return "", fmt.Errorf("approve held intent: %w", err)
+	}
+	return decision, nil
 }
 
 /* ---------------- Helpers ---------------- */
-
-// sumTenantAmountToday returns the tenant's total accepted intent amount so
-// far today (server-local calendar day), for the daily-limit policy check
-// (ledger item #10). Resolved once per request (not per row) by callers.
-func sumTenantAmountToday(ctx context.Context, sqlDB *sql.DB, tenantID string) (decimal.Decimal, error) {
-	var total sql.NullString
-	err := sqlDB.QueryRowContext(ctx, `
-		SELECT COALESCE(SUM(amount), 0)::text
-		FROM payment_intents
-		WHERE tenant_id = $1
-		  AND created_at >= date_trunc('day', now())
-	`, tenantID).Scan(&total)
-	if err != nil {
-		return decimal.Zero, err
-	}
-	if !total.Valid || total.String == "" {
-		return decimal.Zero, nil
-	}
-	return decimal.NewFromString(total.String)
-}
 
 func parseAmount(value string) (decimal.Decimal, error) {
 	v := strings.TrimSpace(value)
@@ -1062,7 +1088,6 @@ func (s *IntentService) ApplyPolicy(nir *models.NormalizedIngestRecord, req mode
 func (s *IntentService) processIncomingIntentInternal(
 	ctx context.Context,
 	event *models.Event,
-	tenantDailyTotalSoFar decimal.Decimal,
 ) (
 	retIn *models.IncomingIntent,
 	retProfile *models.MappingProfile,
@@ -2164,13 +2189,37 @@ func (s *IntentService) processIncomingIntentInternal(
 		canonical.Governance.PolicyFlags = append(canonical.Governance.PolicyFlags, "BATCH_SIZE_EXCEEDS_LIMIT")
 	}
 
-	// Tenant daily-amount policy limit (ledger item #10): same posture as the
-	// batch-size limit above — held for review, not blocked outright, since
-	// this has never been enforced before. tenantDailyTotalSoFar is resolved
-	// once per request by the caller (not per row) and reflects the tenant's
-	// accepted amount today prior to this request, so it does not include
-	// other rows still being processed in the same batch.
-	if tenantDailyTotalSoFar.Add(canonical.Amount).GreaterThan(decimal.NewFromInt(guards.TenantDailyLimit)) {
+	// Tenant daily-amount policy limit (R-05): atomic per-(tenant,
+	// business_date, currency) reservation, not a stale pre-read total.
+	// Locking the usage row inside one transaction — rather than reading a
+	// snapshot before this row is decided — is what makes this safe against
+	// two concurrent requests (or two rows in the same batch) both reading
+	// the same total and both passing: the second one to reach the lock
+	// always sees the first one's committed increment. A held (REQUIRES_
+	// REVIEW) amount is never added to accepted_amount — only ACCEPT does.
+	//
+	// Known limitation: an ACCEPT reservation commits before this row is
+	// actually persisted to payment_intents (repo.Save happens later, in
+	// the caller). If that later save fails, the reservation is not rolled
+	// back — the tenant's usage row reflects a slightly higher total than
+	// what's actually in payment_intents until the next request corrects
+	// course. A full compensating-transaction/saga wasn't built for this
+	// rare failure mode; none of R-05's acceptance tests exercise it.
+	businessDate := persistence.BusinessDateUTC(time.Now())
+	dailyLimitDecision, dailyTotalBefore, errDailyUsage := s.tenantDailyUsage.ReserveIfWithinLimit(
+		ctx, canonical.TenantID, businessDate, canonical.Currency,
+		canonical.Amount, decimal.NewFromInt(guards.TenantDailyLimit),
+	)
+	if errDailyUsage != nil {
+		// Fail safe, not fail open: R-05 exists because the old check could
+		// be silently bypassed. An usage-tracking failure holds for review
+		// rather than risking an unverified amount passing as ACCEPTED.
+		log.Printf("⚠️ tenant_daily_usage reservation failed, holding for review [tenant=%s currency=%s]: %v",
+			canonical.TenantID, canonical.Currency, errDailyUsage)
+		dailyLimitDecision = persistence.DailyLimitDecisionRequiresReview
+		dailyTotalBefore = decimal.Zero
+	}
+	if dailyLimitDecision == persistence.DailyLimitDecisionRequiresReview {
 		canonical.GovernanceState = "REQUIRES_REVIEW"
 		canonical.Governance.PolicyFlags = append(canonical.Governance.PolicyFlags, "TENANT_DAILY_LIMIT_EXCEEDED")
 	}
@@ -2202,10 +2251,13 @@ func (s *IntentService) processIncomingIntentInternal(
 
 	// Finalize governance_decision_hash + input_facts_hash now that
 	// GovernanceState, DuplicateRiskFlag and Amount are all settled.
+	// dailyTotalBefore is the accepted total prior to this reservation —
+	// an audit fact about what the decision was based on, not the
+	// post-reservation total.
 	canonical.GovernanceHash = s.computeGovernanceHash(
 		&canonical,
 		canonicalInput.PurposeCode,
-		tenantDailyTotalSoFar.Mul(decimal.NewFromInt(100)).IntPart(),
+		dailyTotalBefore.Mul(decimal.NewFromInt(100)).IntPart(),
 	)
 
 	retPolicyDecision = buildIntentPolicyDecision(
@@ -2386,14 +2438,8 @@ func (s *IntentService) ProcessIncomingIntent(
 	var policyDecision *models.IntentPolicyDecision
 	var duplicateDecision *models.DuplicateDecision
 
-	dailyTotalSoFar, errDailyTotal := sumTenantAmountToday(ctx, s.db, event.TenantID.String())
-	if errDailyTotal != nil {
-		log.Printf("⚠️ ProcessIncomingIntent: failed to resolve tenant daily total, proceeding as if zero: %v", errDailyTotal)
-		dailyTotalSoFar = decimal.Zero
-	}
-
 	in, resolvedProfile, decryptedPayload, rawAuditPayload, auditProfileID, auditProfileVersion, sourceRowNum,
-		nir, canonical, outbox, registryEntry, retDlq, retErr, policyDecision, duplicateDecision = s.processIncomingIntentInternal(ctx, event, dailyTotalSoFar)
+		nir, canonical, outbox, registryEntry, retDlq, retErr, policyDecision, duplicateDecision = s.processIncomingIntentInternal(ctx, event)
 	if retErr != nil {
 		return nil, nil, retErr
 	}
@@ -2511,17 +2557,16 @@ func (s *IntentService) ProcessIncomingIntentsBatch(
 		}
 	}
 
-	// Tenant daily-amount total (ledger item #10), resolved once upfront for
-	// the whole batch rather than per row — same rationale as batchRunID above.
-	dailyTotalSoFar, errDailyTotal := sumTenantAmountToday(ctx, s.db, events[0].TenantID.String())
-	if errDailyTotal != nil {
-		log.Printf("⚠️ ProcessIncomingIntentsBatch: failed to resolve tenant daily total, proceeding as if zero: %v", errDailyTotal)
-		dailyTotalSoFar = decimal.Zero
-	}
-
+	// R-05: unlike batchRunID above, the daily-amount limit is deliberately
+	// NOT resolved once upfront here. Each row now reserves its own slice of
+	// the tenant's daily limit atomically inside processIncomingIntentInternal,
+	// so row N in this loop correctly sees rows 1..N-1's already-committed
+	// usage — a single stale total shared across the whole batch previously
+	// let every row individually look fine against the same starting number
+	// while collectively blowing through the limit.
 	for _, event := range events {
 		in, resolvedProfile, decryptedPayload, rawAuditPayload, auditProfileID, auditProfileVersion, sourceRowNum,
-			nir, canonical, outbox, registryEntry, dlq, err, policyDecision, duplicateDecision := s.processIncomingIntentInternal(ctx, event, dailyTotalSoFar)
+			nir, canonical, outbox, registryEntry, dlq, err, policyDecision, duplicateDecision := s.processIncomingIntentInternal(ctx, event)
 		if err != nil {
 			log.Printf("⚠️ ProcessIncomingIntentsBatch: system error preparing intent: %v", err)
 			continue

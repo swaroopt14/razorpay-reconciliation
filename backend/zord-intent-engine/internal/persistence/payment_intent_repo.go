@@ -705,6 +705,51 @@ func (r *PaymentIntentRepo) UpdateSnapshotRefs(
 	return err
 }
 
+// GetHeldIntentForApproval returns the amount/currency/governance_state of
+// one intent, scoped to tenant — R-05's approval re-check needs the amount
+// and currency to re-run ReserveIfWithinLimit, and the governance_state to
+// refuse approving something that was never actually held.
+func (r *PaymentIntentRepo) GetHeldIntentForApproval(ctx context.Context, tenantID, intentID string) (amount decimal.Decimal, currency string, governanceState string, err error) {
+	var amountStr string
+	err = r.db.QueryRowContext(ctx, `
+		SELECT amount::text, currency, governance_state
+		FROM payment_intents
+		WHERE tenant_id = $1 AND intent_id = $2
+	`, tenantID, intentID).Scan(&amountStr, &currency, &governanceState)
+	if err != nil {
+		return decimal.Zero, "", "", err
+	}
+	amount, err = decimal.NewFromString(amountStr)
+	return amount, currency, governanceState, err
+}
+
+// ApproveHeldIntent flips a REQUIRES_REVIEW intent to VALID/ACCEPTED after
+// R-05's atomic re-check confirms it now fits within the tenant's daily
+// limit. Updates payment_intents and outbox together so a not-yet-leased
+// outbox row reflects the approval too. An outbox row that zord-relay has
+// already leased/sent as FLAGGED_FOR_REVIEW is not retroactively redelivered
+// — that would need a real evidence/re-emission story, out of scope here.
+func (r *PaymentIntentRepo) ApproveHeldIntent(ctx context.Context, tenantID, intentID string) error {
+	if _, err := r.db.ExecContext(ctx, `
+		UPDATE payment_intents
+		SET governance_state = 'VALID', governance_decision = 'Pass',
+		    intent_lifecycle_state = 'ACCEPTED', updated_at = now()
+		WHERE tenant_id = $1 AND intent_id = $2
+	`, tenantID, intentID); err != nil {
+		return fmt.Errorf("approve held intent: update payment_intents: %w", err)
+	}
+
+	if _, err := r.db.ExecContext(ctx, `
+		UPDATE outbox
+		SET governance_state = 'VALID', governance_decision = 'Pass',
+		    intent_lifecycle_state = 'ACCEPTED'
+		WHERE tenant_id = $1 AND aggregate_id = $2
+	`, tenantID, intentID); err != nil {
+		return fmt.Errorf("approve held intent: update outbox: %w", err)
+	}
+	return nil
+}
+
 func (r *PaymentIntentRepo) GetPreviousTenantCanonicalHash(
 	ctx context.Context,
 	tenantID string,

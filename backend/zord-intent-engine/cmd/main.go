@@ -85,6 +85,7 @@ func main() {
 	dlqPullRepo := persistence.NewDLQPullRepo(db.DB)
 	batchPullRepo := persistence.NewBatchPullRepo(db.DB)
 	consumerFailureRepo := persistence.NewConsumerFailureRepo(db.DB)
+	tenantDailyUsageRepo := persistence.NewTenantDailyUsageRepo(db.DB)
 
 	// -------- Validator --------
 	intentValidator := validator.NewValidator(dlqRepo)
@@ -120,6 +121,7 @@ func main() {
 		s3store,
 		tokenizeQueue,
 		db.DB,
+		tenantDailyUsageRepo,
 	)
 
 	// -------- DLQ HTTP (READ-ONLY) --------
@@ -203,6 +205,10 @@ func main() {
 	tenantSynonymHandler := handlers.NewTenantSynonymHandler(db.DB)
 	mux.HandleFunc("/v1/admin/tenant-synonyms", tenantSynonymHandler.ListOrCreate)
 	mux.HandleFunc("/v1/admin/tenant-synonyms/", tenantSynonymHandler.Deactivate)
+
+	// ── Admin: R-05 held-intent approval ──────────────────────────────────────
+	intentApprovalHandler := handlers.NewIntentApprovalHandler(intentService)
+	mux.HandleFunc("/v1/admin/intents/", auth.Protect(intentApprovalHandler.Approve))
 
 	handler := func(msg []byte) error {
 		var event models.Event
