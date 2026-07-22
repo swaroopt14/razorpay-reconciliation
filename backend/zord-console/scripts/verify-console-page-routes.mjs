@@ -28,7 +28,11 @@ function walk(dir, acc = []) {
 const pages = walk(appDir)
 const prodCallers = pages.filter((p) => {
   const text = fs.readFileSync(p, 'utf8')
-  return text.includes("'/api/prod") || text.includes('"/api/prod") || text.includes('`/api/prod')
+  return (
+    text.includes("'/api/prod") ||
+    text.includes('"/api/prod') ||
+    text.includes('`/api/prod')
+  )
 })
 
 let missing = 0
