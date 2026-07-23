@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -193,8 +195,24 @@ func relayInstanceID(r *http.Request) string {
 
 func authorizeRelay(r *http.Request) bool {
 	expected := strings.TrimSpace(os.Getenv("RELAY_AUTH_TOKEN"))
+
+	// Fail closed — if token is not configured, deny all requests.
 	if expected == "" {
-		return true
+		log.Printf("SECURITY: RELAY_AUTH_TOKEN is not set — rejecting request from %s", r.RemoteAddr)
+		return false
 	}
-	return r.Header.Get("X-Relay-Token") == expected
+
+	provided := strings.TrimSpace(r.Header.Get("X-Relay-Token"))
+	if provided == "" {
+		log.Printf("SECURITY: missing X-Relay-Token header from %s %s", r.RemoteAddr, r.URL.Path)
+		return false
+	}
+
+	// Constant-time comparison prevents timing side-channel attacks.
+	if subtle.ConstantTimeCompare([]byte(expected), []byte(provided)) != 1 {
+		log.Printf("SECURITY: invalid relay auth token from %s %s", r.RemoteAddr, r.URL.Path)
+		return false
+	}
+
+	return true
 }
