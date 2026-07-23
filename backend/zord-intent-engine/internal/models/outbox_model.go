@@ -8,6 +8,14 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+// OutboxEvent intentionally has NO fields for batch_quality_score,
+// avg_reference_quality, avg_duplicate_risk, low_matchability_count, or
+// duplicate_risk_count, even though those columns exist on the outbox
+// table (db/migrations/20260707095144_create_outbox.sql). They are
+// batch-level aggregates that don't belong on a per-intent row — see
+// db/migrations/20260723070000_deprecate_outbox_batch_aggregate_columns.sql
+// (R-10). Do not add them here: the real, actively-written per-batch
+// versions live on CanonicalBatch (batch.go), backed by canonical_batches.
 type OutboxEvent struct {
 	EventID           string    `json:"event_id" db:"event_id"`
 	EnvelopeID        string    `json:"envelope_id" db:"envelope_id"`
