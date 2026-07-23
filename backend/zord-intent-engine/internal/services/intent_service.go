@@ -1082,6 +1082,26 @@ func (s *IntentService) ApplyPolicy(nir *models.NormalizedIngestRecord, req mode
 	return gov
 }
 
+// applyHardStrictReject upgrades gov to a hard reject when profile is in
+// HARD_STRICT mode and at least one required field is missing. Returns true
+// when it did so, so the caller can pick a DLQ reason code distinct from the
+// generic SEMANTIC_INVALID. Factored out of processIncomingIntentInternal so
+// R-09's HARD_STRICT gating is unit-testable without a full IntentService
+// (S3/Kafka/DB) — same rationale as R-03's callWithRetry extraction in
+// kafka/consumer.go. REVIEW_STRICT and OBSERVE profiles are untouched: this
+// only ever fires for the new, explicitly opted-in mode.
+func applyHardStrictReject(profile *models.MappingProfile, requiredFieldGapCount int, missingFieldNames []string, gov *models.Governance) bool {
+	if profile == nil || profile.ValidationMode != models.ValidationModeHardStrict || requiredFieldGapCount == 0 {
+		return false
+	}
+	gov.SemanticValid = false
+	for _, f := range missingFieldNames {
+		gov.MissingFields = appendUniq(gov.MissingFields, f)
+	}
+	gov.PolicyFlags = appendUniq(gov.PolicyFlags, "HARD_STRICT_REQUIRED_FIELD_MISSING")
+	return true
+}
+
 /* ---------------- Pipeline ---------------- */
 
 // ProcessIncomingIntent is the ONLY entrypoint.
@@ -1455,6 +1475,10 @@ func (s *IntentService) processIncomingIntentInternal(
 	fieldsMap := make(map[string]models.NIRField)
 	gapCount := 0
 	lowConfCount := 0
+	// R-09: names of required fields that were missing, so a HARD_STRICT
+	// reject (below) can report exactly which fields the tenant needs to
+	// fix — REVIEW_STRICT/OBSERVE never read this, only the count.
+	var missingRequiredFieldNames []string
 
 	// Helper to add structured field
 	addFields := func(name string, value any, path string, required bool) {
@@ -1462,6 +1486,7 @@ func (s *IntentService) processIncomingIntentInternal(
 		if value == "" || value == nil {
 			if required {
 				gapCount++
+				missingRequiredFieldNames = append(missingRequiredFieldNames, name)
 			}
 			conf = 0.0
 		}
@@ -1479,12 +1504,13 @@ func (s *IntentService) processIncomingIntentInternal(
 	}
 
 	// requiredFor lets a tenant's mapping profile promote an otherwise-optional
-	// field to required (StrictRequiredFieldsJSON), driving the existing
-	// required-field-gap -> governance FLAGGED mechanism below. The 5 baseline
-	// fields above are always required regardless of profile — tenant policy
-	// can only ADD requirements on top of core structural safety, never remove
-	// them. OBSERVE mode records these fields for visibility but never flags,
-	// since it has no gate to enforce yet (that's Phase 4 policy engine work).
+	// field to required (StrictRequiredFieldsJSON), driving the required-field-
+	// gap mechanism below: REVIEW_STRICT (and the default, unconfigured
+	// profile) flags for review; HARD_STRICT (R-09) hard-rejects instead. The
+	// 5 baseline fields above are always required regardless of profile —
+	// tenant policy can only ADD requirements on top of core structural
+	// safety, never remove them. OBSERVE mode records these fields for
+	// visibility but never flags or rejects.
 	requiredFor := func(name string, hardcodedDefault bool) bool {
 		if resolvedProfile == nil {
 			return hardcodedDefault
@@ -1625,9 +1651,22 @@ func (s *IntentService) processIncomingIntentInternal(
 
 	// -------- STEP 6.5: APPLY GOVERNANCE POLICY (NEW) --------
 	governance := s.ApplyPolicy(nir, parsed)
+
+	// R-09: HARD_STRICT is an explicit per-tenant opt-in (mapping_profiles.
+	// validation_mode, set via the admin mapping-profile API) that turns a
+	// profile-required-field gap into a hard reject instead of the
+	// REVIEW_STRICT/default hold-for-review path. It reuses the exact
+	// SemanticValid/POLICY_DLQ mechanism below rather than a separate reject
+	// path, so REVIEW_STRICT and OBSERVE tenants see zero behavior change.
+	hardStrictRejected := applyHardStrictReject(resolvedProfile, nir.RequiredFieldGapCount, missingRequiredFieldNames, &governance)
+
 	if !governance.SemanticValid {
 		log.Printf("⚠️ Semantic Policy Violation for EnvelopeID=%s: %v", in.EnvelopeID, governance.SemanticErrors)
-		policyDLQStatus := models.ClassifyDLQ("SEMANTIC_INVALID")
+		reasonCode := "SEMANTIC_INVALID"
+		if hardStrictRejected {
+			reasonCode = "HARD_STRICT_REQUIRED_FIELD_MISSING"
+		}
+		policyDLQStatus := models.ClassifyDLQ(reasonCode)
 
 		// Build a comprehensive error detail from all governance failure collections
 		var errorParts []string
@@ -1649,7 +1688,7 @@ func (s *IntentService) processIncomingIntentInternal(
 			TenantID:       in.TenantID.String(),
 			EnvelopeID:     in.EnvelopeID.String(),
 			Stage:          "POLICY_DLQ",
-			ReasonCode:     "SEMANTIC_INVALID",
+			ReasonCode:     reasonCode,
 			ErrorDetail:    errorDetail,
 			DLQStatus:      policyDLQStatus,
 			BatchID:        batchIDStr,

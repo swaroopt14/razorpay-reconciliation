@@ -123,7 +123,7 @@ func (h *MappingProfileHandler) Create(w http.ResponseWriter, r *http.Request) {
 		req.Status = "active"
 	}
 	if req.ValidationMode == "" {
-		req.ValidationMode = models.ValidationModeStrict
+		req.ValidationMode = models.ValidationModeReviewStrict
 	}
 	req.ProfileHash = req.ComputeProfileHash()
 
@@ -312,7 +312,7 @@ func (h *MappingProfileHandler) Update(w http.ResponseWriter, r *http.Request, p
 	}
 
 	if req.ValidationMode == "" {
-		req.ValidationMode = models.ValidationModeStrict
+		req.ValidationMode = models.ValidationModeReviewStrict
 	}
 	req.ProfileHash = req.ComputeProfileHash()
 
