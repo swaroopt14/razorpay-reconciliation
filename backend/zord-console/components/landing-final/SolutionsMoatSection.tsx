@@ -5,16 +5,16 @@ import { motion, useReducedMotion } from 'framer-motion'
 
 const moatItems = [
   {
-    title: 'Data moat',
-    body: 'Connected financial data grows with every rail and institution, powering one normalized access layer operators trust.',
+    title: 'Governed Payment Action Contract',
+    body: 'The authorised beneficiary, amount, policy, route and expected outcome remain bound to one versioned transaction contract.',
   },
   {
-    title: 'Technology moat',
-    body: 'Payout-native architecture with proof attached to every state transition, not stitched dashboards and exports.',
+    title: 'Evidence by Design',
+    body: 'Evidence is recorded throughout the payment lifecycle, rather than reconstructed later from portals, spreadsheets and screenshots.',
   },
   {
-    title: 'Deployment moat',
-    body: 'Real-world operator validation turns live volume into learning no synthetic demo or slide deck can match.',
+    title: 'Rail-neutral payment workflows',
+    body: 'Works across files, APIs, banks, PSPs, ledgers and tokenised rails without replacing the systems that move funds.',
   },
 ] as const
 
@@ -94,11 +94,11 @@ export function SolutionsMoatSection() {
               <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-white/10 text-[#6EE7B7] ring-1 ring-white/20 backdrop-blur-md sm:h-7 sm:w-7">
                 <Sparkles className="h-3 w-3 sm:h-3.5 sm:w-3.5" strokeWidth={2.25} />
               </span>
-              <span>The competitive moat</span>
+              <span>Why payment infrastructure needs Zord</span>
             </div>
 
             <h2 className="mt-5 text-[1.85rem] font-semibold leading-[1.05] tracking-[-0.055em] text-white sm:mt-6 sm:text-[2.5rem] md:text-[2.85rem] lg:text-[3.1rem]">
-              Why this advantage is sustainable
+              One control and evidence layer across payment systems
             </h2>
 
             <div className="mt-8 flex flex-col gap-3 sm:mt-9 sm:gap-3.5">

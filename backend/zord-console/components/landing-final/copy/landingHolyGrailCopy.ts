@@ -42,7 +42,7 @@ export const PAYOUT_COMMAND_HOLY_GRAIL = {
   },
   journals: {
     intentJournal: 'Intent Journal',
-    settlementJournal: 'Settlement Journal',
+    settlementJournal: 'Execution and settlement',
   },
   pages: {
     paymentGaps: 'Payment Gaps & Value at Risk',

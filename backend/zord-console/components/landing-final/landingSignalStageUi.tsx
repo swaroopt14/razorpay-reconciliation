@@ -53,10 +53,10 @@ export function RiskIntelligenceCard({ animate }: { animate: boolean }) {
         >
           <div className="min-w-0 flex-1">
             <h3 className="text-[22px] font-semibold leading-tight tracking-[-0.03em] text-white">
-              Risk Intelligence
+              Cross-border payout status
             </h3>
             <p className="mt-3 max-w-[30ch] text-sm font-medium leading-[1.55] text-white/80">
-              Live monitoring of payment health, routing quality, and settlement behavior.
+              Compare authorised value, provider acknowledgements, fees, deductions and final settlement across the payout lifecycle.
             </p>
           </div>
           <button
@@ -138,11 +138,11 @@ export function SignalFloatingOverlays({ opacity }: { opacity?: MotionValue<numb
       >
         <div className="flex items-start justify-between">
           <span className="text-[1.55rem] font-semibold leading-none tracking-[-0.04em] text-[#1A1A1A]">
-            +₹12,840
+            +$12,840
           </span>
           <Info className="mt-0.5 h-3.5 w-3.5 text-[#9CA3AF]" strokeWidth={1.75} />
         </div>
-        <p className="mt-1.5 text-[12px] text-[#666666]">Captured recovery</p>
+        <p className="mt-1.5 text-[12px] text-[#666666]">Potential settlement variance</p>
         <button
           type="button"
           className="mt-3 flex w-full cursor-pointer items-center justify-between rounded-full bg-[#111111] py-2.5 pl-4 pr-2 text-[12.5px] font-semibold text-white transition-colors duration-150 hover:bg-black focus:outline-none focus:ring-2 focus:ring-[#111] focus:ring-offset-2"
@@ -164,7 +164,7 @@ export function SignalFloatingOverlays({ opacity }: { opacity?: MotionValue<numb
           Risk alert
         </div>
         <p className="px-4 py-3 text-[12px] leading-relaxed text-[#374151]">
-          Confirmation drift detected on UPI rail
+          Provider acknowledgement received, final settlement pending
         </p>
       </motion.div>
     </>

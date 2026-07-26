@@ -54,11 +54,10 @@ export function ResourcesValueSection() {
             </div>
 
             <h2 className="mt-5 text-[1.85rem] font-semibold leading-[1.05] tracking-[-0.055em] text-white sm:mt-6 sm:text-[2.5rem] md:text-[2.85rem]">
-              One operating model across ops, finance, and engineering.
+              How the Payment Action Contract preserves payout intent
             </h2>
             <p className="mx-auto mt-4 max-w-lg text-[14px] leading-relaxed text-white/70 sm:text-[15px]">
-              Move from high-level understanding to rollout confidence, then go deeper into security, pricing, and
-              implementation when your team is ready.
+              See the exact object Zord creates after validating authority, beneficiary, amount, commercial terms, policy and permitted execution conditions.
             </p>
 
             <div className="mt-8 flex flex-col gap-3 sm:mt-9 sm:gap-3.5">

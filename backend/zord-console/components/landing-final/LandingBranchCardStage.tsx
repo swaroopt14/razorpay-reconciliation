@@ -68,10 +68,10 @@ export function LandingBranchCardStage() {
       {/* Header keeps the shared padded shell; the branch stage below is full-bleed. */}
       <div className={LANDING_SECTION_SHELL}>
         <LandingSectionHeader
-          badge="Live signals"
+          badge="PAYMENT LIFECYCLE INTELLIGENCE"
           title="Signals surface before"
           titleAccent="money leaks"
-          description="Live payment health, routing quality, and settlement behavior, scored continuously and acted on before finance feels the impact."
+          description="Zord compares each downstream event with the authorised payment contract and surfaces material differences before they become difficult to recover."
           animated
           inView={inView}
         />
