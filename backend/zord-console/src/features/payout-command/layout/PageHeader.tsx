@@ -24,6 +24,13 @@ type PageHeaderProps = {
   onAskZordToggle: () => void
   /** Workspace dock uses inline chat — hide header popup trigger. */
   hideAskZordButton?: boolean
+  /**
+   * Landing / demo previews: open Batch Command Center mock in-place instead of
+   * navigating to `/payout-command-view/batch-command-center` (404 when logged out).
+   */
+  onViewBatches?: () => void
+  /** Landing / demo previews: open integrations mock instead of live API-keys popover. */
+  onIntegrationsClick?: () => void
   /** Home: toggle command center vs connected-systems (knowledge flow) view */
   homeSystemKnowledgeFlow?: {
     enabled: boolean
@@ -37,6 +44,8 @@ export function PageHeader({
   pageSubtitle,
   onAskZordToggle,
   hideAskZordButton = false,
+  onViewBatches,
+  onIntegrationsClick,
   homeSystemKnowledgeFlow,
 }: PageHeaderProps) {
   const router = useRouter()
@@ -60,6 +69,11 @@ export function PageHeader({
     }
     router.refresh()
   }
+
+  const viewBatchesClassName =
+    'inline-flex h-9 items-center rounded-[8px] border border-[#111111] bg-white px-2.5 text-[14px] font-semibold text-[#111111] hover:bg-[#fafafa]'
+  const integrationsFallbackClassName =
+    'inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-[#111111] bg-white px-2.5 text-[14px] font-semibold text-[#111111] hover:bg-[#fafafa]'
 
   return (
     <div className="mb-6 flex flex-col gap-0">
@@ -132,16 +146,41 @@ export function PageHeader({
             </button>
           ) : null}
 
-          <a
-            href={batchCenterHref}
-            data-testid="view-batches-link"
-            className="inline-flex h-9 items-center rounded-[8px] border border-[#111111] bg-white px-2.5 text-[14px] font-semibold text-[#111111] hover:bg-[#fafafa]"
-            title="View batch-level payment details"
-          >
-            View Batches
-          </a>
+          {onViewBatches ? (
+            <button
+              type="button"
+              onClick={onViewBatches}
+              data-testid="view-batches-link"
+              className={viewBatchesClassName}
+              title="View batch-level payment details"
+            >
+              View Batches
+            </button>
+          ) : (
+            <a
+              href={batchCenterHref}
+              data-testid="view-batches-link"
+              className={viewBatchesClassName}
+              title="View batch-level payment details"
+            >
+              View Batches
+            </a>
+          )}
 
-          <ApiKeysPopoverButton label="Integrations" />
+          {onIntegrationsClick ? (
+            <button
+              type="button"
+              onClick={onIntegrationsClick}
+              className={integrationsFallbackClassName}
+              title="Connected PSP, bank, and API integrations"
+              data-testid="integrations-preview-button"
+            >
+              <Glyph name="key" className="h-3.5 w-3.5 opacity-90" />
+              Integrations
+            </button>
+          ) : (
+            <ApiKeysPopoverButton label="Integrations" />
+          )}
 
           <button
             type="button"

@@ -2,8 +2,10 @@ package handlers
 
 import (
 	"database/sql"
+	"errors"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"zord-evidence/models"
@@ -16,17 +18,19 @@ import (
 // ProofHandler serves the spec §4–§7 endpoints.
 // It is completely independent of EvidenceHandler — no existing methods modified.
 type ProofHandler struct {
-	svc        *services.EvidenceService
-	enrichRepo *repositories.EnrichmentRepository
-	db         *sql.DB
+	svc              *services.EvidenceService
+	enrichRepo       *repositories.EnrichmentRepository
+	verificationRepo *repositories.VerificationRepository
+	db               *sql.DB
 }
 
 func NewProofHandler(
 	svc *services.EvidenceService,
 	enrichRepo *repositories.EnrichmentRepository,
+	verificationRepo *repositories.VerificationRepository,
 	db *sql.DB,
 ) *ProofHandler {
-	return &ProofHandler{svc: svc, enrichRepo: enrichRepo, db: db}
+	return &ProofHandler{svc: svc, enrichRepo: enrichRepo, verificationRepo: verificationRepo, db: db}
 }
 
 // GET /v1/evidence/packs/:packID/enriched
@@ -108,38 +112,179 @@ func (h *ProofHandler) VerifyPack(c *gin.Context) {
 		return
 	}
 
+	ctx := c.Request.Context()
 	checkedAt := time.Now().UTC()
+
+	// -------- Level 1: DB / Merkle self-consistency --------
+	// Proves the current database rows reproduce the root currently stored in
+	// the database. On its own this does NOT prove the archive is intact, the
+	// signature is valid, or that Service 2/5 haven't replaced a stored hash —
+	// see Level 3 below for an independent check.
 	computed := services.RecomputeMerkleRoot(pack)
 	stored := pack.MerkleRoot
+	merklePassed := computed == stored
 
-	if computed == stored {
-		if markErr := h.enrichRepo.MarkVerified(c.Request.Context(), packID, true, checkedAt); markErr != nil {
-			log.Printf("proof.verify: mark_verified failed pack=%s err=%v", packID, markErr)
+	// -------- Level 3: encrypted archive verification --------
+	// Previously only invoked during dispute export (P1-02) — a pack could
+	// show VERIFIED here even if its archived object was modified, undecryptable,
+	// or diverged from the sealed manifest. Wiring it into /verify closes that gap.
+	archiveStatus := models.VerificationLayerStatusPassed
+	archiveExplanation := ""
+	if archiveErr := h.svc.VerifyArchiveForPack(ctx, packID); archiveErr != nil {
+		archiveExplanation = archiveErr.Error()
+		if errors.Is(archiveErr, services.ErrArchiveNotAvailable) {
+			archiveStatus = models.VerificationLayerStatusNotAvailable
+		} else {
+			archiveStatus = models.VerificationLayerStatusFailed
 		}
-		c.JSON(http.StatusOK, models.VerifyResponse{
-			Status:         "VERIFIED",
-			EvidencePackID: packID,
-			CheckedAt:      checkedAt,
-			StoredRoot:     stored,
-			ComputedRoot:   computed,
-			Explanation:    "Merkle root reproduced exactly from live database entries. Evidence pack is cryptographically intact.",
-		})
+	}
+
+	// -------- Level 2: signature verification --------
+	// Independently re-verifies the ed25519 signature against this
+	// deployment's trusted key — not the key_id recorded on the row being
+	// checked (see Signer.PublicKey doc comment for why that distinction
+	// matters). Previously there was no verify counterpart to signing at all.
+	signatureStatus := models.VerificationLayerStatusPassed
+	signatureExplanation := ""
+	if sigErr := h.svc.VerifyPackSignature(pack); sigErr != nil {
+		signatureExplanation = sigErr.Error()
+		if errors.Is(sigErr, services.ErrSignatureNotAvailable) {
+			signatureStatus = models.VerificationLayerStatusNotAvailable
+		} else {
+			signatureStatus = models.VerificationLayerStatusFailed
+		}
+	}
+
+	resp := models.VerifyResponse{
+		EvidencePackID:       packID,
+		CheckedAt:            checkedAt,
+		StoredRoot:           stored,
+		ComputedRoot:         computed,
+		DBMerkleStatus:       statusLabel(merklePassed),
+		ArchiveStatus:        archiveStatus,
+		ArchiveExplanation:   archiveExplanation,
+		SignatureStatus:      signatureStatus,
+		SignatureExplanation: signatureExplanation,
+	}
+
+	// Overall status composition:
+	//   CORRUPTED             — DB/Merkle self-check failed (foundational, checked first).
+	//   COMPROMISED           — DB/Merkle passed, but an independent source (archive
+	//                           and/or signature) positively disagrees with it.
+	//   INTERNALLY_CONSISTENT — DB/Merkle passed, and every layer that DID run
+	//                           agreed, but at least one layer couldn't be checked.
+	//   VERIFIED              — every layer that exists for this pack independently agrees.
+	var failures []models.VerificationFailure
+	var failedLayers, unavailableLayers []string
+	if archiveStatus == models.VerificationLayerStatusFailed {
+		failedLayers = append(failedLayers, "archive: "+archiveExplanation)
+		failures = append(failures, models.VerificationFailure{Layer: models.VerificationLayerArchive, Status: archiveStatus, Reason: archiveExplanation})
+	}
+	if archiveStatus == models.VerificationLayerStatusNotAvailable {
+		unavailableLayers = append(unavailableLayers, "archive: "+archiveExplanation)
+		failures = append(failures, models.VerificationFailure{Layer: models.VerificationLayerArchive, Status: archiveStatus, Reason: archiveExplanation})
+	}
+	if signatureStatus == models.VerificationLayerStatusFailed {
+		failedLayers = append(failedLayers, "signature: "+signatureExplanation)
+		failures = append(failures, models.VerificationFailure{Layer: models.VerificationLayerSignature, Status: signatureStatus, Reason: signatureExplanation})
+	}
+	if signatureStatus == models.VerificationLayerStatusNotAvailable {
+		unavailableLayers = append(unavailableLayers, "signature: "+signatureExplanation)
+		failures = append(failures, models.VerificationFailure{Layer: models.VerificationLayerSignature, Status: signatureStatus, Reason: signatureExplanation})
+	}
+
+	httpStatus := http.StatusOK
+	switch {
+	case !merklePassed:
+		log.Printf("[ALERT] proof.verify CORRUPTED pack=%s stored_root=%s computed_root=%s — evidence pack has decoupled from its original anchor root",
+			packID, stored, computed)
+		resp.Status = models.VerificationOverallCorrupted
+		resp.Explanation = "ALERT: live database leaf hashes do not reproduce the original Merkle root. Evidence pack has decoupled from its anchor root. Immediate investigation required."
+		httpStatus = http.StatusUnprocessableEntity
+		failures = append(failures, models.VerificationFailure{Layer: models.VerificationLayerDBMerkle, Status: models.VerificationLayerStatusFailed, Reason: resp.Explanation})
+
+	case len(failedLayers) > 0:
+		log.Printf("[ALERT] proof.verify COMPROMISED pack=%s failed_layers=%v — an independent source disagrees with the database",
+			packID, failedLayers)
+		resp.Status = models.VerificationOverallCompromised
+		resp.Explanation = "ALERT: database and Merkle root are internally consistent, but independent verification failed — " + strings.Join(failedLayers, "; ")
+		httpStatus = http.StatusUnprocessableEntity
+
+	case len(unavailableLayers) > 0:
+		resp.Status = models.VerificationOverallInternallyConsistent
+		resp.Explanation = "Database and Merkle root are internally consistent. Not all independent layers could be checked — " + strings.Join(unavailableLayers, "; ") + ". This is not full dispute-ready proof."
+
+	default:
+		resp.Status = models.VerificationOverallVerified
+		resp.Explanation = "Merkle root reproduced from live database entries, and every independent source (encrypted archive, signature) verified successfully."
+	}
+
+	// Overall correctness — never mark verified=true unless every layer we
+	// actually checked passed.
+	overallOK := resp.Status == models.VerificationOverallVerified
+	if markErr := h.enrichRepo.MarkVerified(ctx, packID, overallOK, checkedAt); markErr != nil {
+		log.Printf("proof.verify: mark_verified failed pack=%s err=%v", packID, markErr)
+	}
+
+	// Persist an immutable audit record of this run — evidence_verification_runs
+	// (+ evidence_verification_failures) — so a pack's verification history is
+	// provable even after a later check passes, unlike the single mutable
+	// verification_status/last_verified_at columns updated above.
+	run := &models.VerificationRun{
+		EvidencePackID:  packID,
+		TenantID:        pack.TenantID,
+		OverallStatus:   resp.Status,
+		DBMerkleStatus:  resp.DBMerkleStatus,
+		ArchiveStatus:   archiveStatus,
+		SignatureStatus: signatureStatus,
+		StoredRoot:      stored,
+		ComputedRoot:    computed,
+		Explanation:     resp.Explanation,
+		CheckedAt:       checkedAt,
+		Failures:        failures,
+	}
+	if saveErr := h.verificationRepo.SaveRun(ctx, run); saveErr != nil {
+		log.Printf("proof.verify: save_verification_run failed pack=%s err=%v", packID, saveErr)
+	} else {
+		resp.VerificationRunID = run.VerificationRunID
+	}
+
+	c.JSON(httpStatus, resp)
+}
+
+// GET /v1/evidence/packs/:packID/verification-runs
+// Returns the immutable audit trail of past /verify calls for this pack —
+// evidence_verification_runs + evidence_verification_failures — so a pack's
+// verification history is inspectable even after a later check overwrites
+// the single mutable evidence_packs.verification_status field.
+func (h *ProofHandler) GetVerificationRuns(c *gin.Context) {
+	packID := c.Param("packID")
+
+	limit := 50
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
+	runs, err := h.verificationRepo.ListRunsForPack(c.Request.Context(), packID, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Corrupted — emit high-priority alert log per spec §7
-	log.Printf("[ALERT] proof.verify CORRUPTED pack=%s stored_root=%s computed_root=%s — evidence pack has decoupled from its original anchor root",
-		packID, stored, computed)
-	_ = h.enrichRepo.MarkVerified(c.Request.Context(), packID, false, checkedAt)
-
-	c.JSON(http.StatusUnprocessableEntity, models.VerifyResponse{
-		Status:         "CORRUPTED",
+	c.JSON(http.StatusOK, models.VerificationRunsResponse{
 		EvidencePackID: packID,
-		CheckedAt:      checkedAt,
-		StoredRoot:     stored,
-		ComputedRoot:   computed,
-		Explanation:    "ALERT: live database leaf hashes do not reproduce the original Merkle root. Evidence pack has decoupled from its anchor root. Immediate investigation required.",
+		Runs:           runs,
+		Count:          len(runs),
 	})
+}
+
+func statusLabel(passed bool) string {
+	if passed {
+		return "PASSED"
+	}
+	return "FAILED"
 }
 
 // GET /v1/dispute/export/preview
@@ -211,6 +356,27 @@ func (h *ProofHandler) ExportPreview(c *gin.Context) {
 	c.JSON(http.StatusOK, preview)
 }
 
+// GET /v1/evidence/packs/:packID/exports
+// P2-02 admin/ops: list who exported this pack, when, and with which file hash.
+func (h *ProofHandler) ListPackExports(c *gin.Context) {
+	if c.GetHeader("X-Admin-Token") == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "listing exports requires X-Admin-Token header"})
+		return
+	}
+
+	packID := c.Param("packID")
+	resp, err := h.svc.ListPackExports(c.Request.Context(), packID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || strings.Contains(err.Error(), "not found") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "evidence pack not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
 // POST /v1/dispute/export
 // Spec §6 — multi-tier dispute export engine.
 func (h *ProofHandler) DisputeExport(c *gin.Context) {
@@ -275,6 +441,13 @@ func (h *ProofHandler) DisputeExport(c *gin.Context) {
 	if err != nil {
 		if strings.Contains(err.Error(), "unsupported export_type") {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if errors.Is(err, services.ErrArchiveVerificationFailed) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"error":            err.Error(),
+				"evidence_pack_id": pack.EvidencePackID,
+			})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

@@ -86,7 +86,7 @@ func TransportValidation() gin.HandlerFunc {
 
 		// Strict enforcement using MaxBytesReader to prevent spoofed Content-Length
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxPayloadSize)
-
+		c.Set("PayloadSize", c.Request.ContentLength)
 		c.Next()
 	}
 }

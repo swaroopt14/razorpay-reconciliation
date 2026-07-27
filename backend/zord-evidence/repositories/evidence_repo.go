@@ -2,14 +2,24 @@ package repositories
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 	"zord-evidence/models"
+	"zord-evidence/utils"
 
+	"github.com/lib/pq"
 	"github.com/shopspring/decimal"
 )
+
+// ErrPackAlreadyExists is returned when a concurrent goroutine already committed
+// an ACTIVE evidence pack for the same (tenant_id, intent_id) or (tenant_id, batch_id).
+// The caller should treat this as a successful no-op — the pack exists, mission accomplished.
+var ErrPackAlreadyExists = errors.New("evidence pack already exists for this intent/batch")
 
 type EvidenceRepository struct {
 	db *sql.DB
@@ -26,21 +36,221 @@ func nullStr(s string) sql.NullString {
 	return sql.NullString{String: s, Valid: true}
 }
 
-// SavePack persists the full evidence pack in a single transaction:
-//   - evidence_packs row (§14.1)
-//   - evidence_items rows (§14.2)
-//   - evidence_signatures rows
-//   - evidence_outbox_events row (for relay polling)
-func (r *EvidenceRepository) SavePack(ctx context.Context, pack *models.EvidencePack, objectRef string, outboxEvent *models.OutboxEvent) error {
-	tx, err := r.db.BeginTx(ctx, nil)
+// AcquireIntentAdvisoryLock attempts to acquire a Postgres session-level advisory
+// lock scoped to the given (tenantID, intentID) pair within an existing transaction.
+// The lock is automatically released when the transaction commits or rolls back,
+// so no explicit unlock is needed.
+//
+// Returns true if the lock was acquired (this goroutine "won"), false if another
+// session already holds it (another goroutine is generating the same pack).
+func (r *EvidenceRepository) AcquireIntentAdvisoryLock(ctx context.Context, tx *sql.Tx, tenantID, intentID string) (bool, error) {
+	lockKey := advisoryLockKey(tenantID + ":intent:" + intentID)
+	var acquired bool
+	err := tx.QueryRowContext(ctx, `SELECT pg_try_advisory_xact_lock($1)`, lockKey).Scan(&acquired)
 	if err != nil {
+		return false, fmt.Errorf("acquire intent advisory lock: %w", err)
+	}
+	return acquired, nil
+}
+
+// AcquireBatchAdvisoryLock is the batch-scoped equivalent of AcquireIntentAdvisoryLock.
+func (r *EvidenceRepository) AcquireBatchAdvisoryLock(ctx context.Context, tx *sql.Tx, tenantID, batchID string) (bool, error) {
+	lockKey := advisoryLockKey(tenantID + ":batch:" + batchID)
+	var acquired bool
+	err := tx.QueryRowContext(ctx, `SELECT pg_try_advisory_xact_lock($1)`, lockKey).Scan(&acquired)
+	if err != nil {
+		return false, fmt.Errorf("acquire batch advisory lock: %w", err)
+	}
+	return acquired, nil
+}
+
+// BeginTx exposes a transaction begin so the service layer can open a tx,
+// acquire the advisory lock, and pass the same tx to SavePack.
+func (r *EvidenceRepository) BeginTx(ctx context.Context) (*sql.Tx, error) {
+	return r.db.BeginTx(ctx, nil)
+}
+
+// advisoryLockKey converts an arbitrary string key into a stable int64
+// suitable for pg_try_advisory_xact_lock.
+//
+// FIX-11: Replaced FNV-1a with SHA-256 truncated to the first 8 bytes.
+// FNV-64 cast to int64 loses one bit of range and has non-uniform distribution
+// in the upper half, raising birthday-paradox collision probability at scale.
+// SHA-256 has cryptographically uniform distribution; taking the first 8 bytes
+// as a big-endian int64 gives 2^63 effective keys with collision probability
+// negligible even at millions of concurrent intents.
+func advisoryLockKey(key string) int64 {
+	sum := sha256.Sum256([]byte(key))
+	// Interpret the first 8 bytes as a big-endian uint64, then reinterpret as
+	// int64. This preserves the full bit distribution without sign bias.
+	u := binary.BigEndian.Uint64(sum[:8])
+	return int64(u)
+}
+
+// SavePack persists the full evidence pack in a single transaction:
+//   - evidence_packs row (§14.1) with denormalized signature_alg/signature_value
+//   - evidence_items rows (§14.2)
+//   - evidence_pack_signatures rows (canonical signature store)
+//   - evidence_outbox_events row (for relay polling)
+//
+// If an ACTIVE pack for the same (tenant_id, intent_id) already exists (inserted
+// by a concurrent goroutine that won the race), SavePack returns ErrPackAlreadyExists
+// so the caller can treat it as a clean no-op.
+func (r *EvidenceRepository) SavePack(ctx context.Context, pack *models.EvidencePack, objectRef string, outboxEvent *models.OutboxEvent) error {
+	return r.SavePackInTx(ctx, nil, pack, objectRef, outboxEvent)
+}
+
+// SavePackInTx is like SavePack but reuses an existing transaction (used when the
+// caller has already acquired an advisory lock inside that transaction).
+func (r *EvidenceRepository) SavePackInTx(ctx context.Context, existingTx *sql.Tx, pack *models.EvidencePack, objectRef string, outboxEvent *models.OutboxEvent) error {
+	var tx *sql.Tx
+	var err error
+	ownTx := existingTx == nil
+	if ownTx {
+		tx, err = r.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback() //nolint:errcheck
+	} else {
+		tx = existingTx
+	}
+
+	if err := r.savePackCoreInTx(ctx, tx, pack, objectRef, outboxEvent); err != nil {
+		if ownTx && errors.Is(err, ErrPackAlreadyExists) {
+			_ = tx.Rollback()
+		}
 		return err
 	}
-	defer tx.Rollback()
 
+	if ownTx {
+		return tx.Commit()
+	}
+	return nil
+}
+
+// SavePackDraftInTx persists a pack in DRAFT status plus archive metadata and inclusion
+// proofs in a single transaction. Outbox events are deferred until ActivatePackInTx.
+func (r *EvidenceRepository) SavePackDraftInTx(
+	ctx context.Context,
+	existingTx *sql.Tx,
+	pack *models.EvidencePack,
+	objectRef string,
+	archive *models.EvidenceArchive,
+	proofs []models.InclusionProof,
+) error {
+	var tx *sql.Tx
+	ownTx := existingTx == nil
+	if ownTx {
+		var err error
+		tx, err = r.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback() //nolint:errcheck
+	} else {
+		tx = existingTx
+	}
+
+	if err := r.savePackCoreInTx(ctx, tx, pack, objectRef, nil); err != nil {
+		if ownTx && errors.Is(err, ErrPackAlreadyExists) {
+			_ = tx.Rollback()
+		}
+		return err
+	}
+	if archive != nil {
+		if err := r.saveArchiveInTx(ctx, tx, archive); err != nil {
+			return fmt.Errorf("save archive draft: %w", err)
+		}
+	}
+	if err := r.saveInclusionProofsInTx(ctx, tx, pack.EvidencePackID, proofs); err != nil {
+		return fmt.Errorf("save inclusion proofs draft: %w", err)
+	}
+
+	if ownTx {
+		return tx.Commit()
+	}
+	return nil
+}
+
+// ActivatePackInTx marks a DRAFT pack ACTIVE, finalizes archive hash, and writes the outbox event.
+func (r *EvidenceRepository) ActivatePackInTx(
+	ctx context.Context,
+	existingTx *sql.Tx,
+	packID, objectRef, archiveHash string,
+	outboxEvent *models.OutboxEvent,
+) error {
+	var tx *sql.Tx
+	ownTx := existingTx == nil
+	if ownTx {
+		var err error
+		tx, err = r.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback() //nolint:errcheck
+	} else {
+		tx = existingTx
+	}
+
+	res, err := tx.ExecContext(ctx, `
+UPDATE evidence_packs
+SET pack_status=$2, object_ref=$3, updated_at=NOW()
+WHERE evidence_pack_id=$1 AND pack_status=$4`,
+		packID, models.PackStatusActive, objectRef, models.PackStatusDraft,
+	)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return ErrPackAlreadyExists
+		}
+		return fmt.Errorf("activate pack: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("activate pack: draft row not found for %s", packID)
+	}
+
+	if archiveHash != "" {
+		_, err = tx.ExecContext(ctx, `
+UPDATE evidence_archives
+SET archive_ciphertext_hash=$2
+WHERE evidence_pack_id=$1`, packID, archiveHash)
+		if err != nil {
+			return fmt.Errorf("finalize archive ciphertext hash: %w", err)
+		}
+	}
+
+	if outboxEvent != nil {
+		if err := r.SaveToOutbox(ctx, tx, outboxEvent); err != nil {
+			return fmt.Errorf("save to outbox: %w", err)
+		}
+	}
+
+	if ownTx {
+		return tx.Commit()
+	}
+	return nil
+}
+
+func (r *EvidenceRepository) savePackCoreInTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	pack *models.EvidencePack,
+	objectRef string,
+	outboxEvent *models.OutboxEvent,
+) error {
 	schemaVersionsJSON, _ := json.Marshal(pack.SchemaVersions)
 
-	_, err = tx.ExecContext(ctx, `
+	sigAlg := "ed25519"
+	sigValue := ""
+	if len(pack.Signatures) > 0 {
+		sigAlg = pack.Signatures[0].Alg
+		sigValue = pack.Signatures[0].Sig
+	}
+
+	// INSERT ... ON CONFLICT DO NOTHING is the last line of defence against
+	// duplicate packs. The partial unique index on ACTIVE rows is enforced at
+	// activation time via ActivatePackInTx.
+	res, err := tx.ExecContext(ctx, `
 INSERT INTO evidence_packs(
 	evidence_pack_id, tenant_id, intent_id, contract_id, batch_id, client_payout_ref, amount, currency, mode, pack_status, merkle_root,
 	ruleset_version, schema_versions_json, signature_alg, signature_value, object_ref,
@@ -51,8 +261,11 @@ INSERT INTO evidence_packs(
 	settlement_record_received, canonical_settlement_created, bank_reference,
 	client_reference, attachment_decision, match_confidence,
 	value_date_check, amount_match, zord_signature,
+	merkle_scheme_version,
+	artifact_id, artifact_version_id,
 	created_at, updated_at
-) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39)`,
+) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42)
+ON CONFLICT DO NOTHING`,
 		pack.EvidencePackID,
 		pack.TenantID,
 		nullStr(pack.IntentID),
@@ -62,12 +275,12 @@ INSERT INTO evidence_packs(
 		pack.Amount,
 		pack.Currency,
 		pack.Mode,
-		"ACTIVE",
+		pack.PackStatus,
 		pack.MerkleRoot,
 		pack.RulesetVersion,
 		schemaVersionsJSON,
-		"ed25519",
-		pack.Signatures[0].Sig,
+		sigAlg,
+		sigValue,
 		objectRef,
 		nullStr(pack.SupersedesPackID),
 		pack.PackCompletenessScore,
@@ -90,11 +303,17 @@ INSERT INTO evidence_packs(
 		pack.ValueDateCheck,
 		pack.AmountMatch,
 		nullStr(pack.ZordSignature),
+		utils.MerkleSchemeV2, // FIX P1-08: all new packs use domain-separated V2
+		nullStr(pack.ArtifactID),
+		nullStr(pack.ArtifactVersionID),
 		pack.CreatedAt,
 		pack.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert pack: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrPackAlreadyExists
 	}
 
 	for i, item := range pack.Items {
@@ -116,12 +335,8 @@ INSERT INTO evidence_items(
 	}
 
 	for _, sig := range pack.Signatures {
-		_, err = tx.ExecContext(ctx, `
-INSERT INTO evidence_signatures(evidence_pack_id, signer, alg, signature, signed_at)
-VALUES($1,$2,$3,$4,$5)`,
-			pack.EvidencePackID, sig.Signer, sig.Alg, sig.Sig, sig.SignedAt)
-		if err != nil {
-			return fmt.Errorf("insert signature: %w", err)
+		if err := r.savePackSignatureInTx(ctx, tx, pack.EvidencePackID, sig); err != nil {
+			return err
 		}
 	}
 
@@ -131,31 +346,190 @@ VALUES($1,$2,$3,$4,$5)`,
 		}
 	}
 
-	return tx.Commit()
+	return nil
 }
 
+func (r *EvidenceRepository) savePackSignatureInTx(ctx context.Context, tx *sql.Tx, packID string, sig models.Signature) error {
+	keyID := sig.KeyID
+	if keyID == "" {
+		keyID = "unknown"
+	}
+	canonicalVersion := sig.CanonicalizationVersion
+	if canonicalVersion == "" {
+		canonicalVersion = models.CanonicalLegacyV1
+	}
+	signedPayloadHash := sig.SignedPayloadHash
+	verificationStatus := sig.VerificationStatus
+	if verificationStatus == "" {
+		verificationStatus = models.SignatureVerificationNotVerified
+	}
+
+	_, err := tx.ExecContext(ctx, `
+INSERT INTO evidence_pack_signatures(
+	evidence_pack_id, signer_id, alg, key_id, signature_value,
+	signed_payload_hash, signed_payload, canonicalization_version, signed_at, verification_status
+) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+ON CONFLICT (evidence_pack_id, signer_id, alg, key_id) DO NOTHING`,
+		packID,
+		sig.Signer,
+		sig.Alg,
+		keyID,
+		sig.Sig,
+		signedPayloadHash,
+		nullStr(sig.SignedPayload),
+		canonicalVersion,
+		sig.SignedAt,
+		verificationStatus,
+	)
+	if err != nil {
+		return fmt.Errorf("insert pack signature: %w", err)
+	}
+	return nil
+}
+
+// loadPackSignatures reads canonical signature rows for a pack. Falls back to
+// denormalized evidence_packs columns when no rows exist (legacy packs).
+func (r *EvidenceRepository) loadPackSignatures(
+	ctx context.Context,
+	packID string,
+	fallbackAlg, fallbackSig string,
+	fallbackSignedAt time.Time,
+) ([]models.Signature, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT signer_id, alg, key_id, signature_value, signed_payload_hash,
+       COALESCE(signed_payload, ''), canonicalization_version, signed_at, verification_status
+FROM evidence_pack_signatures
+WHERE evidence_pack_id = $1
+ORDER BY signed_at ASC`, packID)
+	if err != nil {
+		return nil, fmt.Errorf("load pack signatures: %w", err)
+	}
+	defer rows.Close()
+
+	var sigs []models.Signature
+	for rows.Next() {
+		var sig models.Signature
+		if err := rows.Scan(
+			&sig.Signer,
+			&sig.Alg,
+			&sig.KeyID,
+			&sig.Sig,
+			&sig.SignedPayloadHash,
+			&sig.SignedPayload,
+			&sig.CanonicalizationVersion,
+			&sig.SignedAt,
+			&sig.VerificationStatus,
+		); err != nil {
+			return nil, fmt.Errorf("scan pack signature: %w", err)
+		}
+		sigs = append(sigs, sig)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if len(sigs) > 0 {
+		return sigs, nil
+	}
+
+	if fallbackSig == "" {
+		return nil, nil
+	}
+
+	return []models.Signature{{
+		Signer:                  models.SignerIDZordEvidence,
+		Alg:                     fallbackAlg,
+		Sig:                     fallbackSig,
+		SignedAt:                fallbackSignedAt,
+		KeyID:                   "legacy_unknown",
+		CanonicalizationVersion: models.CanonicalLegacyV1,
+		VerificationStatus:      models.SignatureVerificationNotVerified,
+	}}, nil
+}
+
+// MarkPackSignaturesVerified updates verification_status on all signatures for a pack.
+func (r *EvidenceRepository) MarkPackSignaturesVerified(ctx context.Context, packID string, verified bool) error {
+	status := models.SignatureVerificationNotVerified
+	if verified {
+		status = models.SignatureVerificationVerified
+	}
+	_, err := r.db.ExecContext(ctx, `
+UPDATE evidence_pack_signatures
+SET verification_status = $2
+WHERE evidence_pack_id = $1`, packID, status)
+	if err != nil {
+		return fmt.Errorf("mark pack signatures verified: %w", err)
+	}
+	return nil
+}
+
+func (r *EvidenceRepository) saveArchiveInTx(ctx context.Context, tx *sql.Tx, a *models.EvidenceArchive) error {
+	_, err := tx.ExecContext(ctx, `
+INSERT INTO evidence_archives(
+	archive_id, evidence_pack_id, tenant_id, object_ref,
+	encryption_key_id, archive_ciphertext_hash, plaintext_manifest_hash,
+	archive_size_bytes, archive_version, created_at
+) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+		a.ArchiveID, a.EvidencePackID, a.TenantID, a.ObjectRef,
+		nullStr(a.EncryptionKeyID), a.ArchiveCiphertextHash, a.PlaintextManifestHash,
+		a.ArchiveSizeBytes, a.ArchiveVersion, a.CreatedAt,
+	)
+	return err
+}
+
+func (r *EvidenceRepository) saveInclusionProofsInTx(ctx context.Context, tx *sql.Tx, packID string, proofs []models.InclusionProof) error {
+	for _, p := range proofs {
+		pathJSON, _ := json.Marshal(p.ProofPath)
+		_, err := tx.ExecContext(ctx, `
+INSERT INTO merkle_inclusion_proofs(evidence_pack_id,leaf_index, leaf_hash, proof_path_json, created_at)
+VALUES($1,$2,$3,$4,$5)
+ON CONFLICT (evidence_pack_id, leaf_index) DO NOTHING`,
+			packID, p.LeafIndex, p.LeafHash, pathJSON, p.CreatedAt)
+		if err != nil {
+			return fmt.Errorf("insert inclusion proof: %w", err)
+		}
+	}
+	return nil
+}
+
+func isUniqueViolation(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "23505"
+}
+
+// SaveToOutbox inserts a single outbox event into evidence_outbox_events.
+// FIX-17: evidence_pack_id and payload_hash are now written so downstream
+// relay consumers can correlate outbox rows directly to pack rows and detect
+// payload tampering without re-fetching the full pack.
 func (r *EvidenceRepository) SaveToOutbox(ctx context.Context, tx *sql.Tx, event *models.OutboxEvent) error {
 	query := `
 INSERT INTO evidence_outbox_events (
-	trace_id, envelope_id, tenant_id, contract_id, aggregate_type, aggregate_id, 
-	event_type, payload, status, created_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	trace_id, envelope_id, tenant_id, contract_id, aggregate_type, aggregate_id,
+	event_type, payload, status, created_at, evidence_pack_id, payload_hash
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 `
+	args := []any{
+		nullStr(event.TraceID), nullStr(event.EnvelopeID), event.TenantID, nullStr(event.ContractID),
+		event.AggregateType, event.AggregateID, event.EventType,
+		event.Payload, event.Status, event.CreatedAt,
+		nullStr(event.EvidencePackID),
+		nullStr(event.PayloadHash),
+	}
 	var err error
 	if tx != nil {
-		_, err = tx.ExecContext(ctx, query,
-			nullStr(event.TraceID), nullStr(event.EnvelopeID), event.TenantID, nullStr(event.ContractID),
-			event.AggregateType, event.AggregateID, event.EventType,
-			event.Payload, event.Status, event.CreatedAt,
-		)
+		_, err = tx.ExecContext(ctx, query, args...)
 	} else {
-		_, err = r.db.ExecContext(ctx, query,
-			nullStr(event.TraceID), nullStr(event.EnvelopeID), event.TenantID, nullStr(event.ContractID),
-			event.AggregateType, event.AggregateID, event.EventType,
-			event.Payload, event.Status, event.CreatedAt,
-		)
+		_, err = r.db.ExecContext(ctx, query, args...)
 	}
 	return err
+}
+
+// nullStrPtr converts a *string to sql.NullString safely.
+func nullStrPtr(s *string) sql.NullString {
+	if s == nil || *s == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: *s, Valid: true}
 }
 
 // GetPackByID fetches a pack with its items from evidence_packs + evidence_items.
@@ -166,6 +540,7 @@ func (r *EvidenceRepository) GetPackByID(ctx context.Context, packID string) (*m
 	var signature string
 	var sigAlg string
 	var intentID, contractID, batchID, supersedesPackID sql.NullString
+	var artifactID, artifactVersionID sql.NullString
 	var schemaVersionsJSON []byte
 
 	var srr, csc sql.NullTime
@@ -186,6 +561,8 @@ func (r *EvidenceRepository) GetPackByID(ctx context.Context, packID string) (*m
 	             settlement_record_received, canonical_settlement_created, bank_reference,
 	             client_reference, attachment_decision, match_confidence,
 	             value_date_check, amount_match, zord_signature,
+	             COALESCE(merkle_scheme_version, 'merkle_v1'),
+	             artifact_id, artifact_version_id,
 	             created_at
 	      FROM evidence_packs WHERE evidence_pack_id=$1`
 	err := r.db.QueryRowContext(ctx, q, packID).Scan(
@@ -197,6 +574,8 @@ func (r *EvidenceRepository) GetPackByID(ctx context.Context, packID string) (*m
 		&pack.PaymentInstructionReceived, &pack.CanonicalIntentCreated, &pack.MappingProfileUsed,
 		&pack.RequiredFieldsStatus, &pack.TokenizationStatus, &pack.GovernanceDecision,
 		&srr, &csc, &br, &cr, &ad, &mc, &vdc, &am, &pack.ZordSignature,
+		&pack.MerkleSchemeVersion,
+		&artifactID, &artifactVersionID,
 		&createdAt,
 	)
 	if err != nil {
@@ -213,6 +592,12 @@ func (r *EvidenceRepository) GetPackByID(ctx context.Context, packID string) (*m
 	}
 	if supersedesPackID.Valid {
 		pack.SupersedesPackID = supersedesPackID.String
+	}
+	if artifactID.Valid {
+		pack.ArtifactID = artifactID.String
+	}
+	if artifactVersionID.Valid {
+		pack.ArtifactVersionID = artifactVersionID.String
 	}
 	if srr.Valid {
 		pack.SettlementRecordReceived = &srr.Time
@@ -252,7 +637,11 @@ func (r *EvidenceRepository) GetPackByID(ctx context.Context, packID string) (*m
 	}
 	pack.EvidencePackID = packID
 	pack.CreatedAt = createdAt
-	pack.Signatures = []models.Signature{{Signer: "zord_evidence", Alg: sigAlg, Sig: signature, SignedAt: createdAt}}
+	sigs, err := r.loadPackSignatures(ctx, packID, sigAlg, signature, createdAt)
+	if err != nil {
+		return nil, "", err
+	}
+	pack.Signatures = sigs
 
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT item_type, item_ref, item_hash, leaf_hash, schema_version
@@ -288,6 +677,7 @@ func (r *EvidenceRepository) ListByIntentID(ctx context.Context, tenantID, inten
 		       settlement_record_received, canonical_settlement_created, bank_reference,
 		       client_reference, attachment_decision, match_confidence,
 		       value_date_check, amount_match,
+		       artifact_id, artifact_version_id,
 		       created_at
 		FROM evidence_packs
 		WHERE tenant_id=$1 AND intent_id=$2
@@ -301,6 +691,7 @@ func (r *EvidenceRepository) ListByIntentID(ctx context.Context, tenantID, inten
 	for rows.Next() {
 		var s models.EvidencePackSummary
 		var iid, cid, bid, spid sql.NullString
+		var aid, avid sql.NullString
 		var srr, csc sql.NullTime
 		var br, cr, ad sql.NullString
 		var mc sql.NullFloat64
@@ -316,6 +707,7 @@ func (r *EvidenceRepository) ListByIntentID(ctx context.Context, tenantID, inten
 			&s.PaymentInstructionReceived, &s.CanonicalIntentCreated, &s.MappingProfileUsed,
 			&s.RequiredFieldsStatus, &s.TokenizationStatus, &s.GovernanceDecision,
 			&srr, &csc, &br, &cr, &ad, &mc, &vdc, &am,
+			&aid, &avid,
 			&s.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -331,6 +723,12 @@ func (r *EvidenceRepository) ListByIntentID(ctx context.Context, tenantID, inten
 		}
 		if spid.Valid {
 			s.SupersedesPackID = spid.String
+		}
+		if aid.Valid {
+			s.ArtifactID = aid.String
+		}
+		if avid.Valid {
+			s.ArtifactVersionID = avid.String
 		}
 		if srr.Valid {
 			s.SettlementRecordReceived = &srr.Time
@@ -381,6 +779,7 @@ func (r *EvidenceRepository) ListByBatchID(ctx context.Context, tenantID, batchI
 		       settlement_record_received, canonical_settlement_created, bank_reference,
 		       client_reference, attachment_decision, match_confidence,
 		       value_date_check, amount_match,
+		       artifact_id, artifact_version_id,
 		       created_at
 		FROM evidence_packs
 		WHERE tenant_id=$1 AND batch_id=$2
@@ -394,6 +793,7 @@ func (r *EvidenceRepository) ListByBatchID(ctx context.Context, tenantID, batchI
 	for rows.Next() {
 		var s models.EvidencePackSummary
 		var iid, cid, bid, spid sql.NullString
+		var aid, avid sql.NullString
 		var srr, csc sql.NullTime
 		var br, cr, ad sql.NullString
 		var mc sql.NullFloat64
@@ -409,6 +809,7 @@ func (r *EvidenceRepository) ListByBatchID(ctx context.Context, tenantID, batchI
 			&s.PaymentInstructionReceived, &s.CanonicalIntentCreated, &s.MappingProfileUsed,
 			&s.RequiredFieldsStatus, &s.TokenizationStatus, &s.GovernanceDecision,
 			&srr, &csc, &br, &cr, &ad, &mc, &vdc, &am,
+			&aid, &avid,
 			&s.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -424,6 +825,12 @@ func (r *EvidenceRepository) ListByBatchID(ctx context.Context, tenantID, batchI
 		}
 		if spid.Valid {
 			s.SupersedesPackID = spid.String
+		}
+		if aid.Valid {
+			s.ArtifactID = aid.String
+		}
+		if avid.Valid {
+			s.ArtifactVersionID = avid.String
 		}
 		if srr.Valid {
 			s.SettlementRecordReceived = &srr.Time
@@ -474,6 +881,7 @@ func (r *EvidenceRepository) ListIntentPacksByBatchID(ctx context.Context, tenan
 		       settlement_record_received, canonical_settlement_created, bank_reference,
 		       client_reference, attachment_decision, match_confidence,
 		       value_date_check, amount_match,
+		       artifact_id, artifact_version_id,
 		       created_at
 		FROM evidence_packs
 		WHERE tenant_id=$1 AND batch_id=$2 AND intent_id IS NOT NULL
@@ -487,6 +895,7 @@ func (r *EvidenceRepository) ListIntentPacksByBatchID(ctx context.Context, tenan
 	for rows.Next() {
 		var s models.EvidencePackSummary
 		var iid, cid, bid, spid sql.NullString
+		var aid, avid sql.NullString
 		var srr, csc sql.NullTime
 		var br, cr, ad sql.NullString
 		var mc sql.NullFloat64
@@ -502,6 +911,7 @@ func (r *EvidenceRepository) ListIntentPacksByBatchID(ctx context.Context, tenan
 			&s.PaymentInstructionReceived, &s.CanonicalIntentCreated, &s.MappingProfileUsed,
 			&s.RequiredFieldsStatus, &s.TokenizationStatus, &s.GovernanceDecision,
 			&srr, &csc, &br, &cr, &ad, &mc, &vdc, &am,
+			&aid, &avid,
 			&s.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -517,6 +927,12 @@ func (r *EvidenceRepository) ListIntentPacksByBatchID(ctx context.Context, tenan
 		}
 		if spid.Valid {
 			s.SupersedesPackID = spid.String
+		}
+		if aid.Valid {
+			s.ArtifactID = aid.String
+		}
+		if avid.Valid {
+			s.ArtifactVersionID = avid.String
 		}
 		if srr.Valid {
 			s.SettlementRecordReceived = &srr.Time
@@ -578,16 +994,71 @@ func (r *EvidenceRepository) MarkPackSuperseded(ctx context.Context, oldPackID, 
 	return nil
 }
 
+// MarkPackSupersededInTx is the transaction-scoped variant of MarkPackSuperseded.
+func (r *EvidenceRepository) MarkPackSupersededInTx(ctx context.Context, tx *sql.Tx, oldPackID, newPackID string) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE evidence_packs SET pack_status='SUPERSEDED', updated_at=NOW()
+		WHERE evidence_pack_id=$1`, oldPackID)
+	if err != nil {
+		return fmt.Errorf("mark superseded: %w", err)
+	}
+	return nil
+}
+
 // SaveArchive persists §14.3 evidence_archives metadata.
 func (r *EvidenceRepository) SaveArchive(ctx context.Context, a *models.EvidenceArchive) error {
 	_, err := r.db.ExecContext(ctx, `
-INSERT INTO evidence_archives(archive_id, evidence_pack_id, tenant_id, object_ref,
-	encryption_key_id, archive_hash, archive_version, created_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+INSERT INTO evidence_archives(
+	archive_id, evidence_pack_id, tenant_id, object_ref,
+	encryption_key_id, archive_ciphertext_hash, plaintext_manifest_hash,
+	archive_size_bytes, archive_version, created_at
+) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
 		a.ArchiveID, a.EvidencePackID, a.TenantID, a.ObjectRef,
-		nullStr(a.EncryptionKeyID), a.ArchiveHash, a.ArchiveVersion, a.CreatedAt,
+		nullStr(a.EncryptionKeyID), a.ArchiveCiphertextHash, a.PlaintextManifestHash,
+		a.ArchiveSizeBytes, a.ArchiveVersion, a.CreatedAt,
 	)
 	return err
+}
+
+// GetArchiveByPackID returns the archive metadata row for a pack.
+func (r *EvidenceRepository) GetArchiveByPackID(ctx context.Context, packID string) (*models.EvidenceArchive, error) {
+	a := &models.EvidenceArchive{}
+	var verifiedAt sql.NullTime
+	err := r.db.QueryRowContext(ctx, `
+SELECT archive_id, evidence_pack_id, tenant_id, object_ref,
+       COALESCE(encryption_key_id, ''),
+       COALESCE(archive_ciphertext_hash, ''),
+       COALESCE(plaintext_manifest_hash, ''),
+       COALESCE(archive_size_bytes, 0),
+       archive_version, archive_verified_at, created_at
+FROM evidence_archives
+WHERE evidence_pack_id = $1
+ORDER BY created_at DESC
+LIMIT 1`, packID).Scan(
+		&a.ArchiveID, &a.EvidencePackID, &a.TenantID, &a.ObjectRef,
+		&a.EncryptionKeyID, &a.ArchiveCiphertextHash, &a.PlaintextManifestHash,
+		&a.ArchiveSizeBytes, &a.ArchiveVersion, &verifiedAt, &a.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if verifiedAt.Valid {
+		t := verifiedAt.Time
+		a.ArchiveVerifiedAt = &t
+	}
+	return a, nil
+}
+
+// MarkArchiveVerified sets archive_verified_at after a successful Mode A verify.
+func (r *EvidenceRepository) MarkArchiveVerified(ctx context.Context, packID string, verifiedAt time.Time) error {
+	_, err := r.db.ExecContext(ctx, `
+UPDATE evidence_archives
+SET archive_verified_at = $2
+WHERE evidence_pack_id = $1`, packID, verifiedAt)
+	if err != nil {
+		return fmt.Errorf("mark archive verified: %w", err)
+	}
+	return nil
 }
 
 // SaveInclusionProofs persists §14.4 merkle_inclusion_proofs rows (one per leaf).
@@ -601,10 +1072,10 @@ func (r *EvidenceRepository) SaveInclusionProofs(ctx context.Context, packID str
 	for _, p := range proofs {
 		pathJSON, _ := json.Marshal(p.ProofPath)
 		_, err = tx.ExecContext(ctx, `
-INSERT INTO merkle_inclusion_proofs(evidence_pack_id, leaf_hash, proof_path_json, created_at)
-VALUES($1,$2,$3,$4)
-ON CONFLICT (evidence_pack_id, leaf_hash) DO NOTHING`,
-			packID, p.LeafHash, pathJSON, p.CreatedAt)
+INSERT INTO merkle_inclusion_proofs(evidence_pack_id,leaf_index, leaf_hash, proof_path_json, created_at)
+VALUES($1,$2,$3,$4,$5)
+ON CONFLICT (evidence_pack_id, leaf_index) DO NOTHING`,
+			packID, p.LeafIndex, p.LeafHash, pathJSON, p.CreatedAt)
 		if err != nil {
 			return fmt.Errorf("insert inclusion proof: %w", err)
 		}
@@ -615,7 +1086,7 @@ ON CONFLICT (evidence_pack_id, leaf_hash) DO NOTHING`,
 // GetInclusionProofs fetches all inclusion proofs for a pack (§14.4).
 func (r *EvidenceRepository) GetInclusionProofs(ctx context.Context, packID string) ([]models.InclusionProof, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT leaf_hash, proof_path_json, created_at
+		SELECT leaf_index, leaf_hash, proof_path_json, created_at
 		FROM merkle_inclusion_proofs WHERE evidence_pack_id=$1`, packID)
 	if err != nil {
 		return nil, err
@@ -626,7 +1097,7 @@ func (r *EvidenceRepository) GetInclusionProofs(ctx context.Context, packID stri
 	for rows.Next() {
 		var p models.InclusionProof
 		var pathJSON []byte
-		if err := rows.Scan(&p.LeafHash, &pathJSON, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.LeafIndex, &p.LeafHash, &pathJSON, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal(pathJSON, &p.ProofPath)
@@ -664,4 +1135,50 @@ WHERE replay_job_id=$1`,
 		jobID, nullStr(newPackID), equivalenceResult, diffJSON, now,
 	)
 	return err
+}
+
+// FailReplayJob transitions a replay job to FAILED status and records the reason.
+// FIX-16: Previously there was no FAILED state — a generation error left the
+// job permanently in PENDING with no signal to the caller. Callers can now
+// distinguish PENDING (in progress), COMPLETED (done), and FAILED (errored).
+func (r *EvidenceRepository) FailReplayJob(ctx context.Context, jobID, reason string) error {
+	now := time.Now().UTC()
+	_, err := r.db.ExecContext(ctx, `
+UPDATE evidence_replay_jobs
+SET status='FAILED', failure_reason=$2, completed_at=$3
+WHERE replay_job_id=$1`,
+		jobID, reason, now,
+	)
+	return err
+}
+
+// ListExportLogsByPackID returns all export audit rows for a pack, newest first.
+func (r *EvidenceRepository) ListExportLogsByPackID(ctx context.Context, packID string) ([]models.EvidenceExportLogEntry, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT export_id, evidence_pack_id, tenant_id,
+       COALESCE(intent_id, ''), COALESCE(payment_reference, ''),
+       export_type, COALESCE(dispute_reason, ''), COALESCE(requested_by, ''),
+       exported_at, COALESCE(file_hash, '')
+FROM evidence_export_log
+WHERE evidence_pack_id = $1
+ORDER BY exported_at DESC`, packID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]models.EvidenceExportLogEntry, 0)
+	for rows.Next() {
+		var e models.EvidenceExportLogEntry
+		if err := rows.Scan(
+			&e.ExportID, &e.EvidencePackID, &e.TenantID,
+			&e.IntentID, &e.PaymentReference,
+			&e.ExportType, &e.DisputeReason, &e.RequestedBy,
+			&e.ExportedAt, &e.FileHash,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }

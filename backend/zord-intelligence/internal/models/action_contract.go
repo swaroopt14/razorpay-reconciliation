@@ -97,6 +97,56 @@ type ActionContract struct {
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
 	// Set once at creation. Never updated. This is the only mutable-looking field
 	// but it is written once and protected by the IMMUTABILITY RULE.
+
+	// ── PHASE 5 (refactor) ADDITIONS: policy/action/outbox hardening ────────
+	// "PHASE 5 (refactor)" = this refactor's phase 5 — unrelated to the
+	// ContractStatus/ExpiresAt/PolicyFamily/Severity fields above, which
+	// predate this refactor under this codebase's own, different "PHASE 5"
+	// naming (see REFACTOR_IMPLEMENTATION_GUIDE.md §K for the full mapping).
+
+	PolicyRegistryID string `json:"policy_registry_id,omitempty" db:"policy_registry_id"`
+	// FK to policy_definitions.policy_registry_id — the exact immutable rule
+	// version that fired this action (blueprint §6).
+	PolicySource string `json:"policy_source,omitempty" db:"policy_source"`
+	PolicyDigest string `json:"policy_digest,omitempty" db:"policy_digest"`
+
+	ScopeType string `json:"scope_type,omitempty" db:"scope_type"`
+	ScopeRef  string `json:"scope_ref,omitempty" db:"scope_ref"`
+	// Primary scope classifier, derived from ScopeRefs with precedence
+	// BATCH > CORRIDOR > INTENT > CONTRACT > TENANT (see action_service.go's
+	// deriveScope) — additive alongside ScopeRefs, never replaces it.
+
+	TriggerEventSource  string `json:"trigger_event_source,omitempty" db:"trigger_event_source"`
+	TriggerEventType    string `json:"trigger_event_type,omitempty" db:"trigger_event_type"`
+	TriggerEventVersion string `json:"trigger_event_version,omitempty" db:"trigger_event_version"`
+	// Sourced from the Kafka envelope (models.EnvelopeMetaFromContext), same
+	// idiom as Phase 3's envelopeSourceVersion. TriggerEventID itself is not
+	// a new field — it already existed as an idempotency-key input; it is
+	// promoted to its own stored column via db:"trigger_event_id" below.
+	TriggerEventID string `json:"trigger_event_id,omitempty" db:"trigger_event_id"`
+
+	InputFactsHash string `json:"input_facts_hash,omitempty" db:"input_facts_hash"`
+	PayloadHash    string `json:"payload_hash,omitempty" db:"payload_hash"`
+	// sha256 hex of InputRefsJSON / PayloadJSON respectively — integrity
+	// hashes, not signatures (see SignaturePayloadHash below for the signed one).
+	PayloadSchemaVersion string `json:"payload_schema_version,omitempty" db:"payload_schema_version"`
+
+	MappingProfileID      *string `json:"mapping_profile_id,omitempty" db:"mapping_profile_id"`
+	MappingProfileVersion *string `json:"mapping_profile_version,omitempty" db:"mapping_profile_version"`
+	MappingProfileHash    *string `json:"mapping_profile_hash,omitempty" db:"mapping_profile_hash"`
+	// Reserved per blueprint §6 — no current ZPI concept of a carrier mapping
+	// profile exists yet. Always nil/NULL until a future phase needs them.
+
+	SignatureAlgorithm          string     `json:"signature_algorithm,omitempty" db:"signature_algorithm"`
+	SignatureKeyID              string     `json:"signature_key_id,omitempty" db:"signature_key_id"`
+	SignaturePayloadHash        string     `json:"signature_payload_hash,omitempty" db:"signature_payload_hash"`
+	CanonicalizationVersion     string     `json:"canonicalization_version,omitempty" db:"canonicalization_version"`
+	SignedAt                    *time.Time `json:"signed_at,omitempty" db:"signed_at"`
+	SignatureVerificationStatus string     `json:"signature_verification_status,omitempty" db:"signature_verification_status"`
+	// Real signature metadata (clarification §5), replacing the old plain
+	// Signature field's implicit "just trust the hash" semantics. Signature
+	// itself (above) still holds the actual signature value — these columns
+	// describe HOW it was produced and whether it's been checked.
 }
 
 // ContractStatus is the approval lifecycle of an ActionContract.

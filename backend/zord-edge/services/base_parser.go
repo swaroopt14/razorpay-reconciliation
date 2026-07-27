@@ -2,9 +2,9 @@ package services
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
-	"unicode"
+
+	"github.com/shopspring/decimal"
 )
 
 // baseParser provides common utilities for static parsers.
@@ -18,21 +18,43 @@ func (p *baseParser) get(row []string, idx int) string {
 	return strings.TrimSpace(row[idx])
 }
 
-// parseAmount handles common numeric cleaning.
-func (p *baseParser) parseAmount(raw string) (float64, error) {
-	if strings.TrimSpace(raw) == "" {
-		return 0, fmt.Errorf("amount is empty")
+// parseAmount parses a monetary string with arbitrary precision using decimal arithmetic.
+// It rejects ambiguous inputs that mix European and US-style separators (e.g. "1.000,50")
+// to prevent silent precision errors. Valid inputs: "1234.56", "1,234.56", "-99.9", "100".
+func (p *baseParser) parseAmount(raw string) (decimal.Decimal, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return decimal.Zero, fmt.Errorf("amount is empty")
 	}
 
-	// Default: Strip currency symbols and commas
-	cleaned := strings.Map(func(r rune) rune {
-		if unicode.IsDigit(r) || r == '.' || r == '-' {
-			return r
-		}
-		return -1
-	}, raw)
+	// Remove leading currency symbols (₹, $, €, £, ¥) and trailing whitespace
+	trimmed = strings.TrimSpace(strings.TrimLeft(trimmed, "₹$€£¥"))
 
-	return strconv.ParseFloat(cleaned, 64)
+	dotCount := strings.Count(trimmed, ".")
+	commaCount := strings.Count(trimmed, ",")
+
+	// Reject ambiguous separator combinations:
+	// e.g. "1.000,50" (European style) or multiple dots "1.000.000"
+	if dotCount > 1 {
+		return decimal.Zero, fmt.Errorf("ambiguous amount format (multiple dots): %q", raw)
+	}
+	if dotCount == 1 && commaCount >= 1 {
+		dotIdx := strings.Index(trimmed, ".")
+		commaIdx := strings.LastIndex(trimmed, ",")
+		if commaIdx > dotIdx {
+			// e.g. "1.000,50" — comma is the decimal separator
+			return decimal.Zero, fmt.Errorf("ambiguous amount format (comma after dot suggests European style): %q — send as %q", raw, strings.Replace(strings.ReplaceAll(trimmed, ".", ""), ",", ".", 1))
+		}
+	}
+
+	// Safe to strip thousand-separator commas (US/IN style: "1,234.56" -> "1234.56")
+	cleaned := strings.ReplaceAll(trimmed, ",", "")
+
+	dec, err := decimal.NewFromString(cleaned)
+	if err != nil {
+		return decimal.Zero, fmt.Errorf("cannot parse amount %q: %w", raw, err)
+	}
+	return dec, nil
 }
 
 // buildColIndex creates a map of trimmed header names to indices.

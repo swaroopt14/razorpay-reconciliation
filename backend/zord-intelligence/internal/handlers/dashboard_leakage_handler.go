@@ -139,9 +139,17 @@ func (h *DashboardLeakageHandler) GetLeakageKPIs(w http.ResponseWriter, r *http.
 
 	from, to := parseDateRangeParams(r)
 
+	batchID := r.URL.Query().Get("batch_id")
+	scopeType := "TENANT"
+	var scopeRef *string
+	if batchID != "" {
+		scopeType = "BATCH"
+		scopeRef = &batchID
+	}
+
 	snap, err := h.snapshotRepo.GetLatestByTypeFiltered(
 		r.Context(),
-		tenantID, "LEAKAGE", "TENANT", nil,
+		tenantID, "LEAKAGE", scopeType, scopeRef,
 		from, to,
 	)
 	if err != nil {
@@ -177,7 +185,9 @@ func (h *DashboardLeakageHandler) GetLeakageKPIs(w http.ResponseWriter, r *http.
 	resp.ReversalExposureMinor = kpis.ReversalExposureMinor
 
 	// Override unmatched and orphan amounts from batch_contracts (authoritative source).
-	if h.batchRepo != nil {
+	// Only applies to the TENANT-wide view — a single batch's snapshot fields are
+	// already authoritative for that batch.
+	if batchID == "" && h.batchRepo != nil {
 		if unmatched, orphan, bErr := h.batchRepo.GetUnmatchedAndOrphanForTenant(r.Context(), tenantID); bErr == nil {
 			resp.UnmatchedAmountMinor = unmatched
 			resp.OrphanAmountMinor = orphan
@@ -197,7 +207,7 @@ func (h *DashboardLeakageHandler) GetLeakageKPIs(w http.ResponseWriter, r *http.
 	// L10 = total_amount_minor + ambiguous_amount_minor × ambiguity_risk_weight
 	ambSnap, err := h.snapshotRepo.GetLatestByTypeFiltered(
 		r.Context(),
-		tenantID, "AMBIGUITY", "TENANT", nil,
+		tenantID, "AMBIGUITY", scopeType, scopeRef,
 		from, to,
 	)
 	if err == nil && ambSnap != nil {

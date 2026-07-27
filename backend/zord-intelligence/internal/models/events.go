@@ -34,6 +34,7 @@ type RelayEvent struct {
 	ProofReadinessScore    float64         `json:"proof_readiness_score"`
 	BeneficiaryFingerprint string          `json:"beneficiary_fingerprint"`
 	IntendedExecutionAt    *time.Time      `json:"intended_execution_at"`
+	ClientBatchID          string         `json:"batchid,omitempty"`
 }
 
 // ── Event 1: from Service 2 ───────────────────────────────────────────────────
@@ -217,6 +218,7 @@ type EvidencePackReadyEvent struct {
 	TenantID                          string    `json:"tenant_id"`
 	IntentID                          string    `json:"intent_id"`
 	ContractID                        string    `json:"contract_id"`
+	BatchID                           string    `json:"batch_id"`
 	EvidencePackID                    string    `json:"evidence_pack_id"`
 	MerkleRoot                        string    `json:"merkle_root"` // cryptographic proof of evidence contents
 	OccurredAt                        time.Time `json:"occurred_at"`
@@ -578,10 +580,10 @@ type BatchSummaryUpdatedEvent struct {
 	PartialReconCount int `json:"partial_recon_count"` // attached but with variance
 
 	// ── Aggregate money amounts (all in minor units) ──────────────────────────
-	TotalIntendedAmountMinor  decimal.Decimal `json:"total_intended_amount_minor"`
-	TotalConfirmedAmountMinor decimal.Decimal `json:"total_confirmed_amount_minor"`
+	TotalIntendedAmountMinor   decimal.Decimal `json:"total_intended_amount_minor"`
+	TotalConfirmedAmountMinor  decimal.Decimal `json:"total_confirmed_amount_minor"`
 	OriginalSettledAmountMinor decimal.Decimal `json:"original_settled_amount"`
-	TotalVarianceMinor        decimal.Decimal `json:"total_variance_minor"` // positive = leakage
+	TotalVarianceMinor         decimal.Decimal `json:"total_variance_minor"` // positive = leakage
 
 	// ── Intelligence scores ───────────────────────────────────────────────────
 	AmbiguityScore float64 `json:"ambiguity_score"` // 0.0–1.0 computed by Service 5C
@@ -600,26 +602,25 @@ type BatchSummaryUpdatedEvent struct {
 	ConflictedCount     int     `json:"conflicted_count"`      // attachments with conflicting signals
 	AggregateScore      float64 `json:"aggregate_score"`       // overall batch attachment quality score — primary input for P1
 
-	TotalIntentCount int `json:"total_intent_count"` // total intents in the batch
-	MatchedIntentCount int `json:"matched_intent_count"`
-	UnresolvedIntentCount int `json:"unresolved_intent_count"`
-	OrphanObservationCount	int `json:"orphan_observation_count"`
+	TotalIntentCount       int `json:"total_intent_count"` // total intents in the batch
+	MatchedIntentCount     int `json:"matched_intent_count"`
+	UnresolvedIntentCount  int `json:"unresolved_intent_count"`
+	OrphanObservationCount int `json:"orphan_observation_count"`
 
-	OriginalIntendedAmount decimal.Decimal `json:"original_intended_amount"`
-	MatchedIntendedAmount decimal.Decimal `json:"matched_intended_amount"`
-	MatchedObservedAmount decimal.Decimal `json:"matched_observed_amount"`
+	OriginalIntendedAmount   decimal.Decimal `json:"original_intended_amount"`
+	MatchedIntendedAmount    decimal.Decimal `json:"matched_intended_amount"`
+	MatchedObservedAmount    decimal.Decimal `json:"matched_observed_amount"`
 	UnresolvedIntendedAmount decimal.Decimal `json:"unresolved_intended_amount"`
 	AmbiguousAmount          decimal.Decimal `json:"ambiguous_amount"`
 	ConflictedAmount         decimal.Decimal `json:"conflicted_amount"`
-	OrphanObservedAmount decimal.Decimal `json:"orphan_observed_amount"`
-	MatchedPairVariance decimal.Decimal `json:"matched_pair_variance"`
-	NetBatchDelta decimal.Decimal `json:"net_batch_delta"`
+	OrphanObservedAmount     decimal.Decimal `json:"orphan_observed_amount"`
+	MatchedPairVariance      decimal.Decimal `json:"matched_pair_variance"`
+	NetBatchDelta            decimal.Decimal `json:"net_batch_delta"`
 
-	IntentCountCoverage float64 `json:"intent_count_coverage"`
-	IntentValueCoverage float64 `json:"intent_value_coverage"`
+	IntentCountCoverage      float64 `json:"intent_count_coverage"`
+	IntentValueCoverage      float64 `json:"intent_value_coverage"`
 	ObservationCountCoverage float64 `json:"observed_count_allocation_coverage"` // "observation_count_coverage"`
 	ObservationValueCoverage float64 `json:"observed_value_allocation_coverage"`
-
 }
 
 // ── NEW EVENT E: from Service 6 ──────────────────────────────────────────────
@@ -656,6 +657,7 @@ type GovernanceDecisionCreatedEvent struct {
 	GovernanceDecisionID string `json:"governance_decision_id"` // "gdec_" + uuid
 	IntentID             string `json:"intent_id"`              // which payout this covers
 	ContractID           string `json:"contract_id"`
+	BatchID              string `json:"batch_id"`         // which batch this intent belongs to
 	EvidencePackID       string `json:"evidence_pack_id"` // which evidence pack contains this decision
 
 	// ── Decision outcome ──────────────────────────────────────────────────────

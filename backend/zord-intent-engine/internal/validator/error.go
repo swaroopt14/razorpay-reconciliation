@@ -28,3 +28,13 @@ func semanticError(msg string) error {
 		Msg:  msg,
 	}
 }
+
+// corridorError reuses the same reason code the preguard corridor check used
+// to emit ("TENANT_CORRIDOR_NOT_ALLOWED"), so existing DLQ dashboards/filters
+// keyed on that code keep working even though the check now runs earlier.
+func corridorError(msg string) error {
+	return ValidationError{
+		Code: "TENANT_CORRIDOR_NOT_ALLOWED",
+		Msg:  msg,
+	}
+}

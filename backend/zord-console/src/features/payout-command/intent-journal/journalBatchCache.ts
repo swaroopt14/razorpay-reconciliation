@@ -16,7 +16,6 @@ import {
   mapIntelligenceRowToBatchRecord,
   type JournalBatchRecord,
 } from '@/services/payout-command/prod-api/mapIntentEngineBatch'
-import { getAllProdDlqRows } from '@/services/payout-command/prod-api/getProdDlqPage'
 import { getProdDlqManualReview } from '@/services/payout-command/prod-api/getProdDlqManualReview'
 import { dlqItemMatchesBatch, mergeDlqItemsById } from '@/services/payout-command/prod-api/mapDlqContext'
 import { apiTrimmedString } from '@/services/payout-command/prod-api/coerceApiField'
@@ -50,7 +49,7 @@ export async function fetchJournalSidebarBatches(tenantId: string): Promise<Jour
 
     if (tenantId.trim()) {
       try {
-        const batchesRes = await getIntelligenceBatches({ limit: 100 })
+        const batchesRes = await getIntelligenceBatches({ limit: 25 })
         for (const row of (batchesRes?.batches ?? []).map(mapIntelligenceRowToBatchRecord)) {
           const bid = apiTrimmedString(row.batchId)
           if (!bid) continue
@@ -64,37 +63,20 @@ export async function fetchJournalSidebarBatches(tenantId: string): Promise<Jour
             source: existing.source || row.source,
             intelligenceCounts: row.intelligenceCounts ?? existing.intelligenceCounts,
             transactions: existing.transactions > 0 ? existing.transactions : (row.transactions || existing.transactions),
+            aggregateConfidenceScore: row.aggregateConfidenceScore ?? existing.aggregateConfidenceScore,
+            unresolvedCount: Math.max(existing.unresolvedCount, row.unresolvedCount),
+            mismatchCount: Math.max(existing.mismatchCount, row.mismatchCount),
           })
         }
       } catch {
         /* optional enrichment */
       }
 
-      // Fetch aggregate_confidence_score (0–1) from payment-intents for every batch in parallel
+      // Manual-review queue only — avoids paging the full DLQ on every sidebar load.
       try {
-        const batchIds = Array.from(merged.keys())
-        const scoreResults = await Promise.allSettled(
-          batchIds.map((bid) => fetchJournalPaymentIntents(bid)),
-        )
-        for (let i = 0; i < batchIds.length; i++) {
-          const result = scoreResults[i]
-          if (result?.status !== 'fulfilled' || !result.value) continue
-          const raw = result.value.items?.find((item) => item.aggregate_confidence_score != null)?.aggregate_confidence_score
-          if (raw == null) continue
-          const score = typeof raw === 'string' ? Number.parseFloat(raw) : raw
-          if (!Number.isFinite(score)) continue
-          const bid = batchIds[i]!
-          const existing = merged.get(bid)
-          if (existing) merged.set(bid, { ...existing, aggregateConfidenceScore: score })
-        }
-      } catch {
-        /* optional enrichment */
-      }
-
-      try {
-        const dlqItems = await getAllProdDlqRows()
+        const manualReview = await getProdDlqManualReview()
         const counts = new Map<string, number>()
-        for (const row of dlqItems) {
+        for (const row of manualReview?.items ?? []) {
           const bid = apiTrimmedString(row.client_batch_ref) || apiTrimmedString(row.batch_id)
           if (!bid) continue
           counts.set(bid, (counts.get(bid) ?? 0) + 1)
@@ -112,7 +94,7 @@ export async function fetchJournalSidebarBatches(tenantId: string): Promise<Jour
               transactions: count,
               confirmedCount: 0,
               highConfidenceCount: 0,
-              mismatchCount: 0,
+              mismatchCount: count,
               unresolvedCount: count,
               engineSidebar: true,
             })
@@ -207,37 +189,6 @@ export async function fetchJournalDlqItems(batchId: string): Promise<IntentJourn
           total: merged.length,
         },
       }
-    }
-
-    try {
-      const dlqItems = await getAllProdDlqRows()
-      const filteredItems = dlqItems.filter((row) => dlqItemMatchesBatch(row, bid))
-
-      if (filteredItems.length > 0) {
-        const merged = mergeDlqItemsById(manualForBatch, filteredItems.map((row) => ({
-          dlq_id: row.dlq_id,
-          client_batch_ref: row.client_batch_ref,
-          batch_id: row.batch_id,
-          source_row_num: row.source_row_num,
-          stage: row.stage,
-          reason_code: row.reason_code,
-          error_detail: row.error_detail,
-          dlq_status: row.dlq_status,
-          intent_context: row.intent_context,
-          replayable: row.replayable,
-          created_at: row.created_at,
-        })))
-        return {
-          items: merged,
-          pagination: {
-            page: 1,
-            page_size: merged.length,
-            total: merged.length,
-          },
-        }
-      }
-    } catch {
-      /* optional fallback */
     }
 
     if (sessionRes.ok && sessionRes.data) return sessionRes.data

@@ -1,4 +1,4 @@
-/** V1-honest copy shared across final-landing pages — no fake scale stats or testimonials. */
+/** V1-honest copy shared across final-landing pages, no fake scale stats or testimonials. */
 
 import { PAYOUT_COMMAND_HOLY_GRAIL as H } from '@/components/landing-final/copy/landingHolyGrailCopy'
 
@@ -6,7 +6,7 @@ export const landingPricingCopy = {
   eyebrow: 'Pricing',
   title: `Commercial clarity for ${H.productName}.`,
   description:
-    `${H.productName} is sold as a payout operations workspace — sandbox to evaluate, then custom commercials for production rollout. Contact sales for pricing; no checkout or payroll SKUs on this product.`,
+    `${H.productName} is sold as a payout operations workspace, sandbox to evaluate, then custom commercials for production rollout. Contact sales for pricing; no checkout or payroll SKUs on this product.`,
   heroStats: [
     { value: 'Sandbox', label: 'evaluate first' },
     { value: 'Custom', label: 'production commercials' },
@@ -19,7 +19,7 @@ export const landingPricingCopy = {
     kicker: 'Payout operations workspace',
     metric: 'Contact sales',
     detail:
-      'Commercials are shaped around workspace depth, connector coverage, Evidence Pack workflows, and rollout support — not generic payment acceptance rates.',
+      'Commercials are shaped around workspace depth, connector coverage, Evidence Pack workflows, and rollout support, not generic payment acceptance rates.',
     subdetail:
       'Start in sandbox to validate the operating model, then work with Arealis on production commercials when ops, finance, and engineering are ready.',
     highlights: [
@@ -65,7 +65,7 @@ export const landingPricingCopy = {
     {
       question: `How is ${H.productName} priced?`,
       answer:
-        'Pricing is custom and based on workspace usage, connector coverage, rollout depth, and support needs. There is no self-serve checkout rate on this product — teams start in sandbox and move to commercials with sales.',
+        'Pricing is custom and based on workspace usage, connector coverage, rollout depth, and support needs. There is no self-serve checkout rate on this product, teams start in sandbox and move to commercials with sales.',
     },
     {
       question: 'When should I contact sales?',
@@ -90,7 +90,7 @@ export const buyerPersonas = [
     title: 'Operations',
     role: 'Payout ops & support',
     body:
-      'Needs one queue for connector drift, confirmation delays, and unconfirmed exposure — not three dashboards and a spreadsheet rebuild every incident.',
+      'Needs one queue for connector drift, confirmation delays, and unconfirmed exposure, not three dashboards and a spreadsheet rebuild every incident.',
     tags: ['Exception queues', 'Connector watch', 'Batch review'],
   },
   {
@@ -111,7 +111,7 @@ export const buyerPersonas = [
     title: 'Risk & compliance',
     role: 'Review & audit',
     body:
-      'Needs defensible proof attached to each payout state — not screenshots assembled after a dispute or regulator question arrives.',
+      'Needs defensible proof attached to each payout state, not screenshots assembled after a dispute or regulator question arrives.',
     tags: ['Audit trail', 'Evidence Pack exports', 'Case context'],
   },
 ] as const

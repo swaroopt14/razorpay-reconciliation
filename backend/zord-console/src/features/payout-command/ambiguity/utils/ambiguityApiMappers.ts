@@ -1,6 +1,5 @@
 import type {
   AmbiguityKpiResolved,
-  AmbiguityMixSegment,
   AmbiguityVelocityPoint,
   AmbiguityVelocitySeries,
   IntelligenceBatchRow,
@@ -69,25 +68,6 @@ export function getValueAtRiskDelta(amb: AmbiguityKpiResolved | null): string | 
   return formatDeltaPct(delta)
 }
 
-const MIX_COLORS = ['#000000', '#334155', '#64748b', '#00239C', '#94a3b8', '#cbd5e1']
-
-export function getAmbiguityMix(
-  amb: AmbiguityKpiResolved | null,
-): { segments: AmbiguityMixSegment[]; centerPct: string | null; colors: string[] } {
-  if (!amb?.ambiguity_mix_segments?.length) {
-    return { segments: [], centerPct: null, colors: [] }
-  }
-
-  const center =
-    amb.clearing_pct != null ? `${amb.clearing_pct.toFixed(1)}%` : null
-
-  return {
-    segments: amb.ambiguity_mix_segments,
-    centerPct: center,
-    colors: amb.ambiguity_mix_segments.map((_, i) => MIX_COLORS[i % MIX_COLORS.length]),
-  }
-}
-
 export function getMatchingHeatmap(
   _amb: AmbiguityKpiResolved | null,
   heatmapOverride?: MatchingExecutionHeatmap | null,
@@ -129,9 +109,4 @@ export function batchDisplayValue(b: IntelligenceBatchRow): string {
   const n = typeof v === 'number' ? v : Number(String(v).replace(/,/g, ''))
   if (Number.isFinite(n) && n === 0) return '0'
   return formatAmbiguityInr(v)
-}
-
-export function criticalAlertCount(amb: AmbiguityKpiResolved | null): number | null {
-  // Only the API's critical_alert_count field. ambiguous_intent_count is a different metric.
-  return amb?.critical_alert_count ?? null
 }

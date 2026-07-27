@@ -17,8 +17,6 @@ import { AskZordPanel } from '../layout/AskZordPanel'
 import { PayoutConsoleNavStack } from '../layout/PayoutConsoleNavStack'
 import { PageHeader } from '../layout/PageHeader'
 import { PayoutPageActionsProvider } from '../layout/PayoutPageActionsContext'
-// Connectors dock temporarily hidden — keep imports for when CONNECTORS_DOCK_TEMPORARILY_HIDDEN is false.
-// import ConnectorIntelligenceClient from '../connectors/ConnectorIntelligenceClient'
 import {
   AmbiguitySurface,
   BillingSurface,
@@ -30,7 +28,6 @@ import {
   LeakageSurface,
   ProofSurface,
   PostDisbursalMonitoringSurface,
-  // SandboxConnectorsSurface,
   SupportSurface,
   WorkspaceSurface,
 } from '../surfaces'
@@ -199,10 +196,6 @@ export default function PayoutCommandViewClient({
     if (activeDock === 'settlement') {
       return <SettlementJournalSurface initialClientBatchId={scope.clientBatchId} />
     }
-    // Connectors dock temporarily hidden — see CONNECTORS_DOCK_TEMPORARILY_HIDDEN in model.ts.
-    // if (activeDock === 'connectors') {
-    //   return forceMode === 'sandbox' ? <SandboxConnectorsSurface /> : <ConnectorIntelligenceClient />
-    // }
     if (activeDock === 'proof')
       return (
         <EvidenceSurface initialBatchId={sharedBatchId} />
@@ -222,7 +215,6 @@ export default function PayoutCommandViewClient({
     activeDock,
     activeTab,
     askZord,
-    forceMode,
     scope.batchId,
     scope.clientBatchId,
     scope.accountTab,

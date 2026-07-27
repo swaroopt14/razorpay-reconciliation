@@ -34,15 +34,22 @@ func validateAmount(value string) error {
 	return nil
 }
 
+// validateCurrency enforces the system's single currency policy: INR only.
+// This used to accept USD/EUR/GBP here only for guards.RunPreGuards to reject
+// them moments later with TENANT_CORRIDOR_NOT_ALLOWED — an intent could pass
+// one validation stage and fail the next for the same underlying reason. This
+// is now the single source of truth, reusing that same reason code so
+// existing DLQ classification keeps working.
 func validateCurrency(code string) error {
 	code = strings.ToUpper(strings.TrimSpace(code))
 
-	switch code {
-	case "INR", "USD", "EUR", "GBP":
-		return nil
-	default:
+	if code == "" {
 		return semanticError("currency must be ISO-4217 compliant")
 	}
+	if code != "INR" {
+		return corridorError("only INR corridor is currently supported")
+	}
+	return nil
 }
 
 func validateIntendedExecution(executionAt string) error {
@@ -123,14 +130,12 @@ func validateInstrumentParsed(intent models.ParsedIncomingIntent) error {
 		if !ifscRegex.MatchString(strings.TrimSpace(intent.Beneficiary.Instrument.IFSC)) {
 			return semanticError("Invalid IFSC format: must be exactly 11 characters")
 		}
-		// FIX: Reject invalid combinations
-		// if intent.Beneficiary.Instrument.VPA != "" {
-		// 	return semanticError("VPA not allowed for BANK instrument")
-		// }
-		// FIX: Routing alignment
-		// if intent.ProviderHint != "" && intent.ProviderHint != "BANK_RAIL" {
-		// 	return semanticError("BANK instrument requires BANK_RAIL provider_hint")
-		// }
+		if strings.TrimSpace(intent.Beneficiary.Instrument.VPA) != "" {
+			return semanticError("VPA not allowed for BANK instrument")
+		}
+		if intent.ProviderHint != "" && intent.ProviderHint != "BANK_RAIL" {
+			return semanticError("BANK instrument requires BANK_RAIL provider_hint")
+		}
 
 	case "UPI":
 		if strings.TrimSpace(intent.Beneficiary.Instrument.VPA) == "" {
@@ -139,17 +144,15 @@ func validateInstrumentParsed(intent models.ParsedIncomingIntent) error {
 		if !strings.Contains(intent.Beneficiary.Instrument.VPA, "@") {
 			return semanticError("invalid UPI VPA")
 		}
-		// FIX: Reject invalid combinations
-		// if intent.AccountNumber != "" || intent.Beneficiary.Instrument.IFSC != "" {
-		// 	return semanticError("AccountNumber/IFSC not allowed for UPI instrument")
-		// }
-		// FIX: Routing alignment
-		// if intent.ProviderHint != "" && intent.ProviderHint != "UPI_RAIL" {
-		// 	return semanticError("UPI instrument requires UPI_RAIL provider_hint")
-		// }
+		if strings.TrimSpace(intent.AccountNumber) != "" || strings.TrimSpace(intent.Beneficiary.Instrument.IFSC) != "" {
+			return semanticError("account_number/IFSC not allowed for UPI instrument")
+		}
+		if intent.ProviderHint != "" && intent.ProviderHint != "UPI_RAIL" {
+			return semanticError("UPI instrument requires UPI_RAIL provider_hint")
+		}
 
 	case "WALLET", "CARD":
-		return nil
+		return semanticError("WALLET/CARD instruments are not supported yet")
 
 	default:
 		return nil

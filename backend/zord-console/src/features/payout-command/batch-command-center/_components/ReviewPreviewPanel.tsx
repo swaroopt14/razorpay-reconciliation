@@ -168,6 +168,7 @@ export function ReviewPreviewPanel({
   settlementFileRows,
   failuresTabHref,
   loading,
+  showFilePreview = true,
 }: {
   failures: JournalFailureRow[]
   intents: JournalIntentRow[]
@@ -176,6 +177,8 @@ export function ReviewPreviewPanel({
   settlementFileRows: BatchRow[]
   failuresTabHref: string
   loading?: boolean
+  /** When false, hides the uploaded-file preview block (used on landing). */
+  showFilePreview?: boolean
 }) {
   const [queueMode, setQueueMode] = useState<PreviewMode>('intent')
   const [fileMode, setFileMode] = useState<PreviewMode>('intent')
@@ -215,20 +218,22 @@ export function ReviewPreviewPanel({
         />
       )}
 
-      <div className="mt-8 border-t border-[#e2e8f0] pt-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-[14px] font-bold text-[#0f172a]">{BATCH_REVIEW_COPY.filePreview.title}</h3>
-            <p className="mt-1 text-[13px] text-[#64748b]">{BATCH_REVIEW_COPY.filePreview.subtitle}</p>
+      {showFilePreview ? (
+        <div className="mt-8 border-t border-[#e2e8f0] pt-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-[14px] font-bold text-[#0f172a]">{BATCH_REVIEW_COPY.filePreview.title}</h3>
+              <p className="mt-1 text-[13px] text-[#64748b]">{BATCH_REVIEW_COPY.filePreview.subtitle}</p>
+            </div>
+            <ModeToggle mode={fileMode} onChange={setFileMode} />
           </div>
-          <ModeToggle mode={fileMode} onChange={setFileMode} />
+          <ReviewTableBody
+            rows={filePreviewRows}
+            failuresTabHref={failuresTabHref}
+            emptyMessage={BATCH_REVIEW_COPY.filePreview.empty}
+          />
         </div>
-        <ReviewTableBody
-          rows={filePreviewRows}
-          failuresTabHref={failuresTabHref}
-          emptyMessage={BATCH_REVIEW_COPY.filePreview.empty}
-        />
-      </div>
+      ) : null}
     </section>
   )
 }

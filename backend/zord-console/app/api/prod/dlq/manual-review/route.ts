@@ -4,6 +4,7 @@ import { mapBackendDlqForClient } from '@/services/backend/dlqBffTransform'
 import {
   applyRefreshedSessionCookies,
   requireSessionTenantForProdProxy,
+  resolveProxyForwardAuthorization,
 } from '@/services/auth/resolvePayoutTenant.server'
 
 export const dynamic = 'force-dynamic'
@@ -13,8 +14,11 @@ export async function GET(request: NextRequest) {
   if (!gate.ok) return gate.response
   const tenantId = gate.tenantId
 
+  const auth = await resolveProxyForwardAuthorization(request, undefined)
+  if (!auth.ok) return auth.response
+
   try {
-    const items = await fetchDLQManualReviewItems({ tenant_id: tenantId })
+    const items = await fetchDLQManualReviewItems({ tenant_id: tenantId, authorization: auth.authorization })
     const list = Array.isArray(items) ? items : []
 
     const transformedItems = list.map(mapBackendDlqForClient)
@@ -27,7 +31,7 @@ export async function GET(request: NextRequest) {
         total: transformedItems.length,
       },
     })
-    applyRefreshedSessionCookies(res, gate.refreshedPayload)
+    applyRefreshedSessionCookies(res, auth.refreshedPayload ?? gate.refreshedPayload)
     return res
   } catch (error) {
     const res = NextResponse.json(
@@ -42,7 +46,7 @@ export async function GET(request: NextRequest) {
       },
       { status: 502 },
     )
-    applyRefreshedSessionCookies(res, gate.refreshedPayload)
+    applyRefreshedSessionCookies(res, auth.refreshedPayload ?? gate.refreshedPayload)
     return res
   }
 }

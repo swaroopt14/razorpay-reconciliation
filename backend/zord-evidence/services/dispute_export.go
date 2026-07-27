@@ -25,6 +25,7 @@ type ExportResult struct {
 }
 
 // BuildDisputeExport compiles the requested export format from the given pack.
+// Mode A (P1-02): archive verification is required before any export proceeds.
 // It enforces masking rules per spec §8 and records the export in the log table.
 func (s *EvidenceService) BuildDisputeExport(
 	ctx context.Context,
@@ -32,6 +33,9 @@ func (s *EvidenceService) BuildDisputeExport(
 	pack *models.EvidencePack,
 	db *sql.DB,
 ) (*ExportResult, error) {
+	if err := s.VerifyArchiveForPack(ctx, pack.EvidencePackID); err != nil {
+		return nil, err
+	}
 
 	var payload []byte
 	var contentType, filename string
@@ -70,22 +74,26 @@ func (s *EvidenceService) BuildDisputeExport(
 	payloadHash := fmt.Sprintf("%x", sum[:])
 	exportID := "exp_" + uuid.NewString()
 
-	// Persist export log (spec §6)
+	// Persist export log (spec §6). Fail the export if the audit row cannot be
+	// written — auditors must have a durable record of who exported what.
 	if db != nil {
-		_, _ = db.ExecContext(ctx, `
+		if _, err := db.ExecContext(ctx, `
 INSERT INTO evidence_export_log(
     export_id, evidence_pack_id, tenant_id, intent_id,
     payment_reference, export_type, dispute_reason, requested_by, file_hash
 ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
 			exportID, pack.EvidencePackID, pack.TenantID, pack.IntentID,
 			req.PaymentReference, req.ExportType, req.DisputeReason, req.RequestedBy, payloadHash,
-		)
+		); err != nil {
+			return nil, fmt.Errorf("persist evidence_export_log: %w", err)
+		}
 
-		// Increment export_count on the pack row
-		_, _ = db.ExecContext(ctx,
+		if _, err := db.ExecContext(ctx,
 			`UPDATE evidence_packs SET export_count = export_count + 1, updated_at = NOW() WHERE evidence_pack_id = $1`,
 			pack.EvidencePackID,
-		)
+		); err != nil {
+			return nil, fmt.Errorf("increment export_count: %w", err)
+		}
 	}
 
 	return &ExportResult{
@@ -624,7 +632,7 @@ func buildBankPSPPack(pack *models.EvidencePack, req models.DisputeExportRequest
 	// variance_flag (legacy boolean column kept for backward compatibility)
 	varianceFlag := "false"
 	if v := getLeafByType(pack, models.LeafTypeVarianceDecision); v != nil {
-		if v.Hash != models.ZeroVarianceHash {
+		if v.Hash != "" {
 			varianceFlag = "true"
 		}
 	}
@@ -764,7 +772,7 @@ func deriveVarianceLabel(pack *models.EvidencePack) string {
 	if v == nil {
 		return "UNKNOWN"
 	}
-	if v.Hash == models.ZeroVarianceHash {
+	if v.Hash == "" {
 		return "ZERO"
 	}
 	return "NON-ZERO"
@@ -834,6 +842,11 @@ func BuildEnrichedPack(pack *models.EvidencePack) *models.EnrichedEvidencePack {
 
 // RecomputeMerkleRoot deterministically re-derives the Merkle root from stored
 // items exactly as GeneratePack does. Used by the verify endpoint.
+//
+// FIX P1-08: Respects the MerkleSchemeVersion stored on the pack so that packs
+// sealed before the V2 upgrade (domain-separated internal nodes) continue to
+// verify correctly with their original V1 scheme. New packs (merkle_v2) are
+// verified with the domain-separated scheme.
 func RecomputeMerkleRoot(pack *models.EvidencePack) string {
 	leaves := make([]utils.MerkleLeaf, 0, len(pack.Items))
 	for i, item := range pack.Items {
@@ -841,6 +854,11 @@ func RecomputeMerkleRoot(pack *models.EvidencePack) string {
 		leafHash := utils.SHA256Hex(leafInput)
 		leaves = append(leaves, utils.MerkleLeaf{Index: i, LeafHash: leafHash})
 	}
+	if pack.MerkleSchemeVersion == utils.MerkleSchemeV1 || pack.MerkleSchemeVersion == "" {
+		// Legacy packs: use V1 (no domain separation) to reproduce original root.
+		return utils.BuildMerkleRootV1(leaves)
+	}
+	// Current packs (merkle_v2): use domain-separated internal node hashing.
 	return utils.BuildMerkleRoot(leaves)
 }
 

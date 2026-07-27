@@ -42,7 +42,9 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 		RequestFingerprint: fingerprint,
 	}
 
-	id, err := services.PersistIdempotency(context.Request.Context(), rawIntent, db.DB)
+	reqCtx := context.Request.Context()
+
+	id, err := services.PersistIdempotency(reqCtx, rawIntent, db.DB)
 	if err != nil {
 		if errors.Is(err, services.ErrFingerprintMismatch) {
 			context.JSON(http.StatusBadRequest, gin.H{
@@ -50,6 +52,14 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 				"ErrorCode":      "IDEMPOTENCY_CONFLICT",
 				"ErrorMsg":       "IDEMPOTENCY_KEY_REUSE_WITH_DIFFERENT_PAYLOAD",
 				"HttpStatus":     http.StatusBadRequest,
+			})
+			return
+		}
+		if errors.Is(err, services.ErrIdempotencyInFlight) {
+			context.JSON(http.StatusConflict, gin.H{
+				"ErrorCode":  "IDEMPOTENCY_IN_FLIGHT",
+				"ErrorMsg":   "request with this idempotency key is already being processed",
+				"HttpStatus": http.StatusConflict,
 			})
 			return
 		}
@@ -71,6 +81,14 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 		return
 	}
 
+	claimActive := rawIntent.IdempotencyKey != ""
+	ingestOK := false
+	defer func() {
+		if claimActive && !ingestOK {
+			services.ReleaseIdempotencyClaim(reqCtx, db.DB, rawIntent.TenantID, rawIntent.IdempotencyKey, fingerprint)
+		}
+	}()
+
 	//traceID := context.GetString("trace_id")
 	traceID := uuid.Must(uuid.NewV7()).String()
 	payloadSize := len(rawPayload)
@@ -84,6 +102,10 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 
 	envelopeID := uuid.Must(uuid.NewV7()).String()
 	receivedAt := time.Now().UTC()
+	// A single-intent submission has no separate "file" artifact — it is its
+	// own artifact, so we mint one id per request (mirrors bulk file-level ingest).
+	artifactID := uuid.Must(uuid.NewV7()).String()
+	artifactVersionID := "ART_V1"
 
 	headersBytes, _ := json.Marshal(context.Request.Header)
 	headersHashSum := sha256.Sum256(headersBytes)
@@ -114,7 +136,7 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 	rawIntent.EventType = "Envelope.Created"
 	//Need to replace Hashed payload with Encrypted Payload before sending to S3
 
-	storageAck, err := services.ProcessRawIntent(context.Request.Context(), rawIntent, h.S3store, envelopeID, receivedAt)
+	storageAck, err := services.ProcessRawIntent(reqCtx, rawIntent, h.S3store, envelopeID, receivedAt)
 	if err != nil {
 		log.Printf("Error processing intent: %v", err)
 		context.JSON(http.StatusInternalServerError, gin.H{
@@ -134,6 +156,8 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 		})
 		return
 	}
+	storageAck.ArtifactId = artifactID
+	storageAck.ArtifactVersionId = artifactVersionID
 
 	//Hash Payload Using SHA256
 	payloadHashSum := sha256.Sum256(rawPayload)
@@ -141,7 +165,20 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 
 	rawIntent.PayloadHash = payloadHash
 
-	if err := services.RawIntent(context.Request.Context(), rawIntent, storageAck); err != nil {
+	rawRowHash, err := services.ComputeRawRowHash(rawPayload)
+	if err != nil {
+		log.Printf("Error computing raw_row_hash for trace_id=%s: %v", rawIntent.TraceID, err)
+		context.JSON(http.StatusInternalServerError, gin.H{
+			"TraceID":    rawIntent.TraceID,
+			"ErrorCode":  "INTERNAL_SERVER_ERROR",
+			"ErrorMsg":   "Failed to compute raw_row_hash.",
+			"HttpStatus": http.StatusInternalServerError,
+		})
+		return
+	}
+	rawIntent.RawRowHash = rawRowHash
+
+	if err := services.RawIntent(reqCtx, rawIntent, storageAck); err != nil {
 		log.Printf("Error persisting raw intent: %v", err)
 		context.JSON(http.StatusInternalServerError, gin.H{
 			"TraceID":    rawIntent.TraceID,
@@ -152,6 +189,7 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 		return
 	}
 
+	ingestOK = true
 	context.JSON(http.StatusAccepted, gin.H{
 		"EnvelopeID":  storageAck.EnvelopeId,
 		"Trace_id":    rawIntent.TraceID,

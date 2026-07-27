@@ -2,23 +2,46 @@ package models
 
 import "time"
 
-// ProofStatus is the full production-grade state machine for every payment lifecycle.
+// ProofStatus is the state machine for a payment evidence pack.
+//
+// Transitions:
+//
+//	DRAFT → MISSING_* → PROOF_READY → PROOF_ASSEMBLED → VERIFIED → EXPORTED
+//	Any state → REVOKED_SUPERSEDED (when a newer pack supersedes this one)
+//	NEEDS_REVIEW is a holding state for packs that require manual intervention.
+//
+// FIX-09: Removed ProofStatusCertified. "CERTIFIED" implied an external
+// certification step that does not exist in this service. A sealed pack is
+// PROOF_ASSEMBLED. CERTIFIED is reserved for a future explicit certification
+// workflow and must not be used by DeriveProofStatus.
+//
+// Added ProofStatusProofAssembled and ProofStatusMissingVarianceEvidence to
+// replace the ambiguous CERTIFIED and the misleading MISSING_REPLAY_CHECK.
 type ProofStatus string
 
 const (
-	ProofStatusDraft                ProofStatus = "DRAFT"
-	ProofStatusPartialProof         ProofStatus = "PARTIAL_PROOF"
+	// Informational / in-progress states.
+	ProofStatusDraft        ProofStatus = "DRAFT"
+	ProofStatusPartialProof ProofStatus = "PARTIAL_PROOF"
+	ProofStatusNeedsReview  ProofStatus = "NEEDS_REVIEW"
+
+	// Missing-component states (one per required proof component).
 	ProofStatusMissingIntent        ProofStatus = "MISSING_INTENT"
 	ProofStatusMissingSettlement    ProofStatus = "MISSING_SETTLEMENT"
 	ProofStatusMissingMatchDecision ProofStatus = "MISSING_MATCH_DECISION"
 	ProofStatusMissingGovernance    ProofStatus = "MISSING_GOVERNANCE"
-	ProofStatusMissingReplayCheck   ProofStatus = "MISSING_REPLAY_CHECK"
-	ProofStatusNeedsReview          ProofStatus = "NEEDS_REVIEW"
-	ProofStatusProofReady           ProofStatus = "PROOF_READY"
-	ProofStatusCertified            ProofStatus = "CERTIFIED"
-	ProofStatusVerified             ProofStatus = "VERIFIED"
-	ProofStatusExported             ProofStatus = "EXPORTED"
-	ProofStatusRevokedSuperseded    ProofStatus = "REVOKED_SUPERSEDED"
+	// FIX-09: Replaces MISSING_REPLAY_CHECK. The 5th scoring component is
+	// variance-and-decision evidence, not replay/duplicate-spend detection.
+	ProofStatusMissingVarianceEvidence ProofStatus = "MISSING_VARIANCE_EVIDENCE"
+
+	// Terminal / sealed states.
+	ProofStatusProofReady ProofStatus = "PROOF_READY"
+	// FIX-09: Replaces CERTIFIED. Means all leaves are present and the Merkle
+	// root has been sealed and signed — no external certification required.
+	ProofStatusProofAssembled    ProofStatus = "PROOF_ASSEMBLED"
+	ProofStatusVerified          ProofStatus = "VERIFIED"
+	ProofStatusExported          ProofStatus = "EXPORTED"
+	ProofStatusRevokedSuperseded ProofStatus = "REVOKED_SUPERSEDED"
 )
 
 // ProofScoreComponent holds a weighted check result and explains any deduction.
@@ -38,12 +61,15 @@ type ProofScoreResult struct {
 }
 
 // ProofComponents tracks per-pipeline artifact availability derived from leaf presence.
+// Note: ReplayCheckPassed is a DB/JSON field name retained for compatibility;
+// its semantic meaning is "variance and decision evidence leaves are present",
+// not duplicate-spend / replay detection.
 type ProofComponents struct {
 	PaymentInstructionAvailable bool `json:"payment_instruction_available"`
 	SettlementRecordAvailable   bool `json:"settlement_record_available"`
 	MatchDecisionAvailable      bool `json:"match_decision_available"`
 	GovernanceDecisionAvailable bool `json:"governance_decision_available"`
-	ReplayCheckPassed           bool `json:"replay_check_passed"`
+	ReplayCheckPassed           bool `json:"replay_check_passed"` // semantic: variance+decision evidence present
 }
 
 // CryptographicSignatures holds per-artifact hashes for the pack.
@@ -60,9 +86,6 @@ type CryptographicSignatures struct {
 
 // EnrichedEvidencePack is the spec §4 response. Wraps the canonical EvidencePack
 // with proof state, score, operational metadata, and cryptographic index.
-// Upstream lineage signals (Service 2 / Service 5) are already present on the
-// embedded EvidencePack fields (payment_instruction_received, bank_reference, etc.)
-// and are not duplicated here as nested objects.
 type EnrichedEvidencePack struct {
 	EvidencePack
 
@@ -118,13 +141,45 @@ type LineageEdge struct {
 }
 
 // VerifyResponse is the payload for POST /v1/evidence/{id}/verify.
+//
+// Status combines three independent layers — it is only VERIFIED when all
+// that exist for this pack pass. This is intentionally not the full 5-level
+// verification model from the evidence refactor spec (source-artifact and
+// business-replay layers need Service 2 API support that doesn't exist yet)
+// — it's Level 1 (DB/Merkle self-consistency), Level 2 (signature), and
+// Level 3 (encrypted archive), the last two of which previously existed but
+// were never invoked from /verify (signature had no verify counterpart at
+// all; archive was only checked during dispute export).
+//
+//	VERIFIED               — DB/Merkle, archive, and signature all verified independently.
+//	CORRUPTED               — DB/Merkle recomputation does not match the stored root.
+//	COMPROMISED             — DB/Merkle passed, but the archive and/or signature
+//	                          positively failed independent verification.
+//	INTERNALLY_CONSISTENT   — DB/Merkle passed, and every layer that DID run
+//	                          agreed, but at least one layer (archive and/or
+//	                          signature) could not be checked for this pack
+//	                          (e.g. it predates that feature, or the relevant
+//	                          key/storage isn't configured on this deployment).
+//	                          Not full proof.
 type VerifyResponse struct {
-	Status         string    `json:"status"` // VERIFIED | CORRUPTED
-	EvidencePackID string    `json:"evidence_pack_id"`
-	CheckedAt      time.Time `json:"checked_at"`
-	StoredRoot     string    `json:"stored_root"`
-	ComputedRoot   string    `json:"computed_root,omitempty"`
-	Explanation    string    `json:"explanation"`
+	Status            string    `json:"status"`
+	EvidencePackID    string    `json:"evidence_pack_id"`
+	VerificationRunID string    `json:"verification_run_id,omitempty"`
+	CheckedAt         time.Time `json:"checked_at"`
+	StoredRoot        string    `json:"stored_root"`
+	ComputedRoot      string    `json:"computed_root,omitempty"`
+	Explanation       string    `json:"explanation"`
+
+	// DBMerkleStatus is Level 1: PASSED | FAILED.
+	DBMerkleStatus string `json:"db_merkle_status"`
+
+	// ArchiveStatus is Level 3: PASSED | FAILED | NOT_AVAILABLE.
+	ArchiveStatus      string `json:"archive_status"`
+	ArchiveExplanation string `json:"archive_explanation,omitempty"`
+
+	// SignatureStatus is Level 2: PASSED | FAILED | NOT_AVAILABLE.
+	SignatureStatus      string `json:"signature_status"`
+	SignatureExplanation string `json:"signature_explanation,omitempty"`
 }
 
 // DisputeExportRequest is the payload for POST /v1/dispute/export.
@@ -145,8 +200,29 @@ const (
 	ExportTypeRawJSON        = "RAW_JSON"
 )
 
+// EvidenceExportLogEntry is one row from evidence_export_log (who exported what/when).
+type EvidenceExportLogEntry struct {
+	ExportID         string    `json:"export_id"`
+	EvidencePackID   string    `json:"evidence_pack_id"`
+	TenantID         string    `json:"tenant_id"`
+	IntentID         string    `json:"intent_id,omitempty"`
+	PaymentReference string    `json:"payment_reference,omitempty"`
+	ExportType       string    `json:"export_type"`
+	DisputeReason    string    `json:"dispute_reason,omitempty"`
+	RequestedBy      string    `json:"requested_by,omitempty"`
+	ExportedAt       time.Time `json:"exported_at"`
+	FileHash         string    `json:"file_hash"`
+}
+
+// ListPackExportsResponse is returned by GET /v1/evidence/packs/:packID/exports.
+type ListPackExportsResponse struct {
+	EvidencePackID string                   `json:"evidence_pack_id"`
+	Exports        []EvidenceExportLogEntry `json:"exports"`
+	Count          int                      `json:"count"`
+}
+
 // MaskedEvidenceItem is a field-level masked version of EvidenceItem for
-// business-facing layouts (spec §8 data masking).
+// business-facing layouts (data masking per spec §8).
 type MaskedEvidenceItem struct {
 	Type          string `json:"type"`
 	Ref           string `json:"ref"`

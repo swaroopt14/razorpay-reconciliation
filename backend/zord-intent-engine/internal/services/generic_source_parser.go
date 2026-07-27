@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/shopspring/decimal"
 	"zord-intent-engine/internal/models"
 )
 
@@ -17,34 +18,49 @@ func NewGenericSourceParser() *GenericSourceParser {
 	return &GenericSourceParser{}
 }
 
-// ParseToCanonicalJSON returns the canonical JSON bytes ready for json.Unmarshal into ParsedIncomingIntent.
+// ParseToCanonicalJSON returns the canonical JSON bytes ready for json.Unmarshal into ParsedIncomingIntent,
+// plus any source columns that profile.ColumnMap did not account for — these are never dropped,
+// only surfaced so the caller can record them in the NIR's unmapped_json for audit/lineage.
 // This is called from intent_service.go Step 4 — after decrypt, before normalizer.
 func (p *GenericSourceParser) ParseToCanonicalJSON(
 	rawJSON []byte,
 	profile *models.MappingProfile,
-) ([]byte, error) {
+) ([]byte, map[string]any, error) {
 	// Unmarshal the raw JSON (keys = tenant's column headers)
 	var raw map[string]any
 	if err := json.Unmarshal(rawJSON, &raw); err != nil {
-		return nil, fmt.Errorf("raw JSON unmarshal: %w", err)
+		return nil, nil, fmt.Errorf("raw JSON unmarshal: %w", err)
 	}
 
 	// Build colIndex: lowercase tenant column name → value in raw
 	lowerRaw := make(map[string]any, len(raw))
+	// Maps the lowercased/trimmed key back to the original raw key, so the
+	// unmapped-fields report preserves the tenant's original column name.
+	lowerToOriginal := make(map[string]string, len(raw))
 	for k, v := range raw {
-		lowerRaw[strings.ToLower(strings.TrimSpace(k))] = v
+		lk := strings.ToLower(strings.TrimSpace(k))
+		lowerRaw[lk] = v
+		lowerToOriginal[lk] = k
 	}
+
+	consumed := make(map[string]bool, len(profile.ColumnMap))
 
 	canonical := make(map[string]any)
 	if sourceRowRef, ok := raw["source_row_ref"]; ok {
 		canonical["source_row_ref"] = sourceRowRef
+		consumed["source_row_ref"] = true
 	}
 
 	// For each entry in profile.ColumnMap: universalField → tenantColumnName
 	// Read the value from lowerRaw using tenantColumnName (lowercased)
 	for universalField, tenantCol := range profile.ColumnMap {
-		val, ok := lowerRaw[strings.ToLower(strings.TrimSpace(tenantCol))]
-		if !ok || val == nil || val == "" {
+		lk := strings.ToLower(strings.TrimSpace(tenantCol))
+		val, ok := lowerRaw[lk]
+		if !ok {
+			continue
+		}
+		consumed[lk] = true
+		if val == nil || val == "" {
 			continue
 		}
 		// Apply type normalization per field
@@ -55,7 +71,19 @@ func (p *GenericSourceParser) ParseToCanonicalJSON(
 	// Apply defaults from profile
 	ensureProfileDefaults(canonical, profile)
 
-	return json.Marshal(canonical)
+	unmapped := make(map[string]any)
+	for lk, v := range lowerRaw {
+		if consumed[lk] {
+			continue
+		}
+		unmapped[lowerToOriginal[lk]] = v
+	}
+
+	canonicalBytes, err := json.Marshal(canonical)
+	if err != nil {
+		return nil, nil, err
+	}
+	return canonicalBytes, unmapped, nil
 }
 
 func applyFieldNormalization(field string, rawVal string, profile *models.MappingProfile) any {
@@ -66,11 +94,13 @@ func applyFieldNormalization(field string, rawVal string, profile *models.Mappin
 
 	switch field {
 	case "amount.value":
-		amt, err := parseRawAmount(rawVal, profile.AmountFormat)
+		// Use exact decimal arithmetic — never pass through float64.
+		d, err := parseRawAmount(rawVal, profile.AmountFormat)
 		if err != nil {
 			return rawVal // Fallback to raw value on parse error
 		}
-		return fmt.Sprintf("%.2f", amt)
+		// Return the decimal's string representation formatted to two decimal places.
+		return d.StringFixed(2)
 
 	case "intended_execution_at":
 		t, err := parseFlexibleDate(rawVal, profile.DateFormat)
@@ -84,11 +114,15 @@ func applyFieldNormalization(field string, rawVal string, profile *models.Mappin
 	}
 }
 
-func parseRawAmount(raw string, format models.AmountFormat) (float64, error) {
+// parseRawAmount strips formatting characters and returns an exact decimal.Decimal.
+// Using shopspring/decimal avoids IEEE-754 float64 rounding on large monetary values
+// (e.g. 1234567.89 stored as 1234567.8900000001 in float64).
+func parseRawAmount(raw string, format models.AmountFormat) (decimal.Decimal, error) {
 	if strings.TrimSpace(raw) == "" {
-		return 0, fmt.Errorf("amount is empty")
+		return decimal.Zero, fmt.Errorf("amount is empty")
 	}
 
+	// Strip currency symbols, thousand-separators and whitespace; keep digits, '.', '-'.
 	cleaned := strings.Map(func(r rune) rune {
 		if unicode.IsDigit(r) || r == '.' || r == '-' {
 			return r
@@ -96,15 +130,16 @@ func parseRawAmount(raw string, format models.AmountFormat) (float64, error) {
 		return -1
 	}, raw)
 
-	val, err := strconv.ParseFloat(cleaned, 64)
+	d, err := decimal.NewFromString(cleaned)
 	if err != nil {
-		return 0, err
+		return decimal.Zero, fmt.Errorf("cannot parse amount %q: %w", raw, err)
 	}
 
+	// Paise → rupees: exact integer division, no float rounding.
 	if format == models.AmountFormatPaise {
-		return val / 100.0, nil
+		d = d.Div(decimal.NewFromInt(100))
 	}
-	return val, nil
+	return d, nil
 }
 
 func parseFlexibleDate(raw string, preferredLayout string) (time.Time, error) {

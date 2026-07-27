@@ -49,6 +49,20 @@ type ActuationOutbox struct {
 	// nil = not yet sent. Non-nil = sent at this time.
 
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
+
+	// ── PHASE 5 (refactor) ADDITIONS ─────────────────────────────────────
+	// "PHASE 5 (refactor)" = this refactor's phase 5 (policy/action/outbox
+	// hardening) — unrelated to any other "Phase 5" naming in this codebase.
+	TenantID             string `json:"tenant_id,omitempty" db:"tenant_id"`
+	ScopeType            string `json:"scope_type,omitempty" db:"scope_type"`
+	ScopeRef             string `json:"scope_ref,omitempty" db:"scope_ref"`
+	PayloadHash          string `json:"payload_hash,omitempty" db:"payload_hash"`
+	PayloadSchemaVersion string `json:"payload_schema_version,omitempty" db:"payload_schema_version"`
+	LastError            string `json:"last_error,omitempty" db:"last_error"`
+	// TenantID/ScopeType/ScopeRef mirror the parent ActionContract (denormalized
+	// for fast tenant/scope-filtered outbox queries without a join).
+	// LastError is populated by MarkFailed with the actual Kafka publish
+	// error — previously only logged, now also visible from the DB.
 }
 
 // OutboxStatus is the delivery lifecycle of an outbox entry.

@@ -126,7 +126,12 @@ func (r *IntentQueryRepo) ListIntents(
 		tokenization_status,
 		governance_decision,
 		payment_instruction_received,
-		canonical_intent_created
+		canonical_intent_created,
+		COALESCE(intent_lifecycle_state, '') as intent_lifecycle_state,
+		COALESCE(mapping_profile_hash, '') as mapping_profile_hash,
+		COALESCE(policy_source, '') as policy_source,
+		COALESCE(policy_version, '') as policy_version,
+		COALESCE(policy_hash, '') as policy_hash
 	FROM payment_intents
 	%s
 	ORDER BY created_at DESC
@@ -183,6 +188,11 @@ func (r *IntentQueryRepo) ListIntents(
 			&intent.GovernanceDecision,
 			&intent.PaymentInstructionReceived,
 			&intent.CanonicalIntentCreated,
+			&intent.IntentLifecycleState,
+			&intent.MappingProfileHash,
+			&intent.PolicySource,
+			&intent.PolicyVersion,
+			&intent.PolicyHash,
 		)
 
 		if err != nil {
@@ -234,7 +244,12 @@ func (r *IntentQueryRepo) GetIntentByID(
 		tokenization_status,
 		governance_decision,
 		payment_instruction_received,
-		canonical_intent_created
+		canonical_intent_created,
+		COALESCE(intent_lifecycle_state, '') as intent_lifecycle_state,
+		COALESCE(mapping_profile_hash, '') as mapping_profile_hash,
+		COALESCE(policy_source, '') as policy_source,
+		COALESCE(policy_version, '') as policy_version,
+		COALESCE(policy_hash, '') as policy_hash
 	FROM payment_intents
 	WHERE tenant_id = $1
 	AND intent_id=$2
@@ -279,6 +294,11 @@ func (r *IntentQueryRepo) GetIntentByID(
 		&intent.GovernanceDecision,
 		&intent.PaymentInstructionReceived,
 		&intent.CanonicalIntentCreated,
+		&intent.IntentLifecycleState,
+		&intent.MappingProfileHash,
+		&intent.PolicySource,
+		&intent.PolicyVersion,
+		&intent.PolicyHash,
 	)
 
 	if err != nil {
@@ -290,6 +310,7 @@ func (r *IntentQueryRepo) GetIntentByID(
 
 	return intent, nil
 }
+
 func (r *IntentQueryRepo) ListBatchesForSidebar(
 	ctx context.Context,
 	tenantID string,
@@ -438,14 +459,21 @@ func (r *IntentQueryRepo) ListPaymentIntentsByBatch(
 			tokenization_status,
 			governance_decision,
 			payment_instruction_received,
-			canonical_intent_created
+			canonical_intent_created,
+			COALESCE(intent_lifecycle_state, '') as intent_lifecycle_state,
+		COALESCE(mapping_profile_hash, '') as mapping_profile_hash,
+		COALESCE(policy_source, '') as policy_source,
+		COALESCE(policy_version, '') as policy_version,
+		COALESCE(policy_hash, '') as policy_hash
 		FROM payment_intents
 		WHERE tenant_id = $1
 		  AND batchid = $2
 		ORDER BY created_at DESC, intent_id DESC
+		LIMIT $3 OFFSET $4
 	`
 
-	rows, err := r.db.QueryContext(ctx, dataQ, tenantID, batchID)
+	offset := (page - 1) * pageSize
+	rows, err := r.db.QueryContext(ctx, dataQ, tenantID, batchID, pageSize, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to fetch payment intents by batch: %w", err)
 	}
@@ -492,6 +520,11 @@ func (r *IntentQueryRepo) ListPaymentIntentsByBatch(
 			&intent.GovernanceDecision,
 			&intent.PaymentInstructionReceived,
 			&intent.CanonicalIntentCreated,
+			&intent.IntentLifecycleState,
+			&intent.MappingProfileHash,
+			&intent.PolicySource,
+			&intent.PolicyVersion,
+			&intent.PolicyHash,
 		); err != nil {
 			return nil, 0, fmt.Errorf("failed to scan payment intent detail row: %w", err)
 		}
@@ -552,9 +585,11 @@ func (r *IntentQueryRepo) ListDLQItemsByBatch(
 				NULLIF(n.fields_json->>'client_batch_ref', '')
 		  ) = $2
 		ORDER BY d.created_at DESC, d.dlq_id DESC
+		LIMIT $3 OFFSET $4
 	`
 
-	rows, err := r.db.QueryContext(ctx, dataQ, tenantID, batchID)
+	offset := (page - 1) * pageSize
+	rows, err := r.db.QueryContext(ctx, dataQ, tenantID, batchID, pageSize, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to fetch dlq items by batch: %w", err)
 	}
@@ -643,9 +678,12 @@ func (r *IntentQueryRepo) ListPaymentIntentLiteByBatch(
 		WHERE tenant_id = $1
 		  AND batchid = $2
 		ORDER BY source_row_num ASC NULLS LAST, created_at ASC, intent_id ASC
+		LIMIT $3
 	`
 
-	rows, err := r.db.QueryContext(ctx, q, tenantID, batchID)
+	// Enforce a server-side safety limit to prevent large customer files from overwhelming memory.
+	const safetyLimit = 5000
+	rows, err := r.db.QueryContext(ctx, q, tenantID, batchID, safetyLimit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch payment intent lite rows: %w", err)
 	}

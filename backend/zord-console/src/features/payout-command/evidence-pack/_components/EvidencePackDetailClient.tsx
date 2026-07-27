@@ -64,7 +64,7 @@ export function EvidencePackDetailClient({ packId }: EvidencePackDetailClientPro
   const [pack, setPack] = useState<EvidencePackFull | null>(null)
   const [loading, setLoading] = useState(true)
 
-  const isBatch = pack ? isBatchEvidencePackFull(pack) : false
+  const isBatch = pack ? isBatchEvidencePackFull(pack) : Boolean(batchId)
   const tab = parseTab(searchParams.get('tab'), isBatch)
 
   useEffect(() => {
@@ -74,22 +74,24 @@ export function EvidencePackDetailClient({ packId }: EvidencePackDetailClientPro
       const bid = apiTrimmedString(batchId)
       let full = await getEvidencePackFull(packId)
 
-      if (!full && bid) {
+      // Prefer batch lineage when opening from Evidence Pack Browser (batch_id in URL),
+      // or when the pack endpoint is empty / not usable for BATCH_PROOF.
+      if (bid && (!full || isBatchEvidencePackFull(full))) {
         const { packs } = await listEvidencePacksForBatch(bid)
         if (cancelled) return
-        const summary = packs.find((row) => apiTrimmedString(row.evidence_pack_id) === apiTrimmedString(packId))
-        if (summary && isBatchEvidencePack(summary)) {
-          const lineage = await getEvidenceBatchLineageGraph(bid)
-          if (lineage.data) {
+        const summary =
+          packs.find((row) => apiTrimmedString(row.evidence_pack_id) === apiTrimmedString(packId)) ??
+          packs.find(isBatchEvidencePack) ??
+          null
+        const lineage = await getEvidenceBatchLineageGraph(bid)
+        if (lineage.data) {
+          const lineagePackId = apiTrimmedString(lineage.data.evidence_pack_id)
+          const summaryIsBatch = summary ? isBatchEvidencePack(summary) : false
+          const matchesPack =
+            apiTrimmedString(summary?.evidence_pack_id) === apiTrimmedString(packId) ||
+            lineagePackId === apiTrimmedString(packId)
+          if (summaryIsBatch || matchesPack || !full) {
             full = evidencePackFullFromBatchLineage(bid, lineage.data, summary, packId)
-          }
-        } else {
-          const lineage = await getEvidenceBatchLineageGraph(bid)
-          if (
-            lineage.data &&
-            apiTrimmedString(lineage.data.evidence_pack_id) === apiTrimmedString(packId)
-          ) {
-            full = evidencePackFullFromBatchLineage(bid, lineage.data, summary ?? null, packId)
           }
         }
       }
@@ -174,7 +176,20 @@ export function EvidencePackDetailClient({ packId }: EvidencePackDetailClientPro
     return evidenceCopy.graph.subtitle
   }, [isBatch])
 
-  if (!loading && pack && !isBatch && redirectPending.current) {
+  if (loading) {
+    return (
+      <main
+        className="payout-command-console min-h-screen bg-[#f5f5f5] text-[15px] leading-[1.55] antialiased"
+        style={{ fontFamily: DASHBOARD_FONT_STACK }}
+      >
+        <div className="mx-auto max-w-[1400px] px-3 py-10 sm:px-4 lg:px-5">
+          <p className="text-center text-[14px] text-[#6f716d]">Loading evidence pack…</p>
+        </div>
+      </main>
+    )
+  }
+
+  if (!loading && pack && !isBatchEvidencePackFull(pack) && redirectPending.current) {
     return (
       <main
         className="payout-command-console min-h-screen bg-[#f5f5f5] text-[15px] leading-[1.55] antialiased"
@@ -186,6 +201,9 @@ export function EvidencePackDetailClient({ packId }: EvidencePackDetailClientPro
       </main>
     )
   }
+
+  const showBatchHub = Boolean(batchId) && (isBatch || !pack)
+  const showBatchExport = isBatch && tab === 'export' && pack
 
   return (
     <main
@@ -222,21 +240,26 @@ export function EvidencePackDetailClient({ packId }: EvidencePackDetailClientPro
         </nav>
 
         <div className="rounded-[16px] border border-[#E5E5E5] bg-white p-5 sm:p-6">
-          {isBatch && tab === 'graph' ? (
+          {showBatchHub && tab === 'graph' ? (
             <BatchEvidenceHub batchPackId={packId} batchId={batchId} />
           ) : null}
-          {isBatch && tab === 'export' ? <EvidencePackExportTab pack={pack} /> : null}
-          {!isBatch && tab === 'summary' ? (
+          {showBatchExport ? <EvidencePackExportTab pack={pack} /> : null}
+          {!showBatchHub && tab === 'summary' ? (
             <EvidencePackSummaryTab pack={pack} batchId={batchId} loading={loading} />
           ) : null}
-          {!isBatch && tab === 'timeline' ? (
+          {!showBatchHub && tab === 'timeline' ? (
             <EvidencePackTimelineTab pack={pack} packId={packId} loading={loading} />
           ) : null}
-          {!isBatch && tab === 'items' ? <EvidencePackItemsTab pack={pack} loading={loading} /> : null}
-          {!isBatch && tab === 'graph' ? (
+          {!showBatchHub && tab === 'items' ? <EvidencePackItemsTab pack={pack} loading={loading} /> : null}
+          {!showBatchHub && tab === 'graph' ? (
             <EvidencePackGraphTab packId={packId} batchId={batchId} intentId={pack?.intent_id} />
           ) : null}
-          {!isBatch && tab === 'export' ? <EvidencePackExportTab pack={pack} /> : null}
+          {!showBatchHub && tab === 'export' ? <EvidencePackExportTab pack={pack} /> : null}
+          {!pack && !showBatchHub ? (
+            <p className="py-10 text-center text-[14px] text-[#6f716d]">
+              Evidence pack could not be loaded. Go back and open the batch proof again.
+            </p>
+          ) : null}
         </div>
       </div>
     </main>

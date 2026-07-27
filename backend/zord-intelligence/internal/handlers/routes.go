@@ -71,6 +71,7 @@ func NewRouter(
 	patternH *PatternHandler,
 	recommendationH *RecommendationHandler,
 	batchH *BatchHandler,
+	batchIntelligenceH *BatchIntelligenceHandler,
 	leakageTimeseriesH *LeakageTimeseriesHandler,
 	historyH *HistoryHandler,
 	explanationH *ExplanationHandler,
@@ -163,6 +164,11 @@ func NewRouter(
 
 			// GET /v1/intelligence/batches/{batch_id}?tenant_id=X
 			r.Get("/{batch_id}", batchH.GetBatch)
+
+			// GET /v1/intelligence/batches/{batch_id}/intelligence?tenant_id=X
+			// All four batch-scoped intelligence layers (LEAKAGE, AMBIGUITY,
+			// DEFENSIBILITY, RECOMMENDATION) for one batch in a single response.
+			r.Get("/{batch_id}/intelligence", batchIntelligenceH.GetBatchIntelligence)
 		})
 
 		// ── PHASE 6: Snapshot history endpoint ───────────────────────────

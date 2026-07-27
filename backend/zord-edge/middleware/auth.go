@@ -38,6 +38,7 @@ func Authenticate() gin.HandlerFunc {
 				c.Set("user_id", claims.UserID)
 				c.Set("email", claims.Email)
 				c.Set("role", claims.Role)
+				c.Set(contextKeyPrincipalType, PrincipalUserSession)
 				c.Next()
 				return
 			}
@@ -52,6 +53,7 @@ func Authenticate() gin.HandlerFunc {
 		}
 		c.Set("tenant_id", response.TenantId)
 		c.Set("tenant_name", response.TenantName)
+		c.Set(contextKeyPrincipalType, PrincipalTenantAPIKey)
 		c.Next()
 	}
 }

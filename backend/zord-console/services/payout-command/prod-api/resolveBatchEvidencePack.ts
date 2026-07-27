@@ -34,9 +34,11 @@ export async function resolveBatchPackFromLineageGraph(
 }
 
 export function isBatchEvidencePack(summary: EvidencePackSummaryRow): boolean {
-  const intentId = apiTrimmedString(summary.intent_id)
   const mode = apiTrimmedString(summary.mode).toUpperCase()
-  return !intentId && (mode.includes('BATCH') || mode === '')
+  // Mode wins: BATCH_PROOF rows can still carry a leftover intent_id from some APIs.
+  if (mode.includes('BATCH')) return true
+  const intentId = apiTrimmedString(summary.intent_id)
+  return !intentId && mode === ''
 }
 
 /** Synthetic full pack when GET /packs/:id is empty but batch lineage graph exists. */

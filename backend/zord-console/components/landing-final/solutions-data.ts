@@ -30,19 +30,6 @@ export interface SolutionItem {
   relatedProducts: string[]
 }
 
-export const solutionMenuViews = [
-  {
-    id: 'use-case',
-    label: 'By use case',
-    description: 'Explore ZORD by the operator problem you need to solve first.',
-  },
-  {
-    id: 'workflow',
-    label: 'By workflow',
-    description: 'Browse the payment, onboarding, and data flows teams modernize next.',
-  },
-] as const
-
 export const solutionEntries: SolutionItem[] = [
   {
     slug: 'open-finance',
@@ -463,11 +450,3 @@ export const solutionEntries: SolutionItem[] = [
     relatedProducts: ['Inbound bank payments', 'Connector performance', 'Collections proof'],
   },
 ]
-
-export function getSolutionsForView(view: SolutionViewId) {
-  return solutionEntries.filter((entry) => entry.views.includes(view))
-}
-
-export function getSolutionBySlug(slug: string) {
-  return solutionEntries.find((entry) => entry.slug === slug)
-}

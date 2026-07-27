@@ -316,6 +316,99 @@ func (s *RecommendationIntelligenceService) ComputeAndSave(
 	})
 }
 
+// ComputeAndSaveForBatch is the batch-scoped twin of ComputeAndSave.
+//
+// Reads the batch-scoped LEAKAGE, AMBIGUITY, and DEFENSIBILITY snapshots
+// (RCA and PATTERN stay tenant/already-batch-scoped via their own pipelines
+// and are intentionally not read here) and synthesises them into a
+// batch-scoped RECOMMENDATION snapshot using the same deterministic card
+// builders as the tenant path.
+func (s *RecommendationIntelligenceService) ComputeAndSaveForBatch(
+	ctx context.Context,
+	tenantID, batchID string,
+) error {
+	var cards []RecommendationCard
+	var sourceIDs []string
+
+	leakageSnap, _ := s.snapshotRepo.GetLatestByType(ctx, tenantID, "LEAKAGE", "BATCH", &batchID)
+	ambiguitySnap, _ := s.snapshotRepo.GetLatestByType(ctx, tenantID, "AMBIGUITY", "BATCH", &batchID)
+	defensibilitySnap, _ := s.snapshotRepo.GetLatestByType(ctx, tenantID, "DEFENSIBILITY", "BATCH", &batchID)
+
+	if leakageSnap == nil && ambiguitySnap == nil && defensibilitySnap == nil {
+		return nil
+	}
+
+	if leakageSnap != nil {
+		sourceIDs = append(sourceIDs, leakageSnap.SnapshotID)
+		cards = append(cards, s.cardsFromLeakage(leakageSnap)...)
+	}
+	if ambiguitySnap != nil {
+		sourceIDs = append(sourceIDs, ambiguitySnap.SnapshotID)
+		cards = append(cards, s.cardsFromAmbiguity(ambiguitySnap)...)
+	}
+	if defensibilitySnap != nil {
+		sourceIDs = append(sourceIDs, defensibilitySnap.SnapshotID)
+		cards = append(cards, s.cardsFromDefensibility(defensibilitySnap)...)
+	}
+
+	priorityOrder := map[string]int{"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+	sort.Slice(cards, func(i, j int) bool {
+		pi := priorityOrder[cards[i].Priority]
+		pj := priorityOrder[cards[j].Priority]
+		if pi != pj {
+			return pi < pj
+		}
+		return cards[i].PriorityScore > cards[j].PriorityScore
+	})
+
+	snap := RecommendationSnapshot{
+		Cards:             cards,
+		SourceSnapshotIDs: sourceIDs,
+		ComputedAt:        time.Now().UTC(),
+	}
+	for _, c := range cards {
+		switch c.Priority {
+		case "CRITICAL":
+			snap.CriticalCount++
+			snap.TotalAmountAtStakeMinor = snap.TotalAmountAtStakeMinor.Add(c.AmountAtStakeMinor)
+			snap.RecommendationImpactEstimateMinor = snap.RecommendationImpactEstimateMinor.Add(c.AmountAtStakeMinor)
+		case "HIGH":
+			snap.HighCount++
+			snap.TotalAmountAtStakeMinor = snap.TotalAmountAtStakeMinor.Add(c.AmountAtStakeMinor)
+			snap.RecommendationImpactEstimateMinor = snap.RecommendationImpactEstimateMinor.Add(c.AmountAtStakeMinor)
+		case "MEDIUM":
+			snap.MediumCount++
+		case "LOW":
+			snap.LowCount++
+		}
+		if c.PriorityScore > snap.RecommendationPriorityScore {
+			snap.RecommendationPriorityScore = c.PriorityScore
+		}
+	}
+
+	projRefsJSON, _ := json.Marshal(sourceIDs)
+	snapJSON, err := json.Marshal(snap)
+	if err != nil {
+		return fmt.Errorf("recommendation_svc.ComputeAndSaveForBatch marshal tenant=%s batch=%s: %w", tenantID, batchID, err)
+	}
+
+	snapID := "snap_" + uuid.New().String()
+	modelVer := "rule_based_v1"
+	return s.snapshotRepo.Create(ctx, persistence.IntelligenceSnapshot{
+		SnapshotID:         snapID,
+		TenantID:           tenantID,
+		SnapshotType:       "RECOMMENDATION",
+		ScopeType:          "BATCH",
+		ScopeRef:           &batchID,
+		WindowStart:        persistence.BatchProjectionWindowStart,
+		WindowEnd:          persistence.BatchProjectionWindowEnd,
+		ProjectionRefsJSON: projRefsJSON,
+		SnapshotJSON:       snapJSON,
+		ModelVersion:       &modelVer,
+		CreatedAt:          time.Now().UTC(),
+	})
+}
+
 // cardsFromLeakage extracts recommendation cards from a LEAKAGE snapshot.
 func (s *RecommendationIntelligenceService) cardsFromLeakage(
 	snap *persistence.IntelligenceSnapshot,
@@ -1008,7 +1101,7 @@ func (s *RecommendationIntelligenceService) buildRemappingRecs(
 		}
 		// Only fire if we have enough data and quality is measurably weak
 		weakParse := prov.AvgParseConfidence > 0 && prov.AvgParseConfidence < 0.70
-		weakMapping := prov.AvgParseConfidence > 0 && prov.AvgParseConfidence < 0.70
+		weakMapping := prov.AvgMappingConfidence > 0 && prov.AvgMappingConfidence < 0.70
 		if !weakParse && !weakMapping {
 			continue
 		}
@@ -1016,9 +1109,9 @@ func (s *RecommendationIntelligenceService) buildRemappingRecs(
 		priority := "MEDIUM"
 		issue := "parse"
 		confScore := prov.AvgParseConfidence
-		if weakMapping && prov.AvgParseConfidence > prov.AvgParseConfidence {
+		if weakMapping && prov.AvgMappingConfidence < prov.AvgParseConfidence {
 			issue = "mapping"
-			confScore = prov.AvgParseConfidence
+			confScore = prov.AvgMappingConfidence
 		}
 		if weakParse && weakMapping {
 			issue = "parse and mapping"

@@ -47,7 +47,7 @@ import (
 type OutboxWorker struct {
 	outboxRepo *persistence.OutboxRepo
 	actionRepo *persistence.ActionContractRepo // PHASE 5: for expiry sweep
-	projRepo   *persistence.ProjectionRepo    // for RCA fragment TTL cleanup
+	projRepo   *persistence.ProjectionRepo     // for RCA fragment TTL cleanup
 	producer   *kafkapkg.Producer
 	cfg        *config.Config
 }
@@ -158,7 +158,7 @@ func (w *OutboxWorker) deliver(ctx context.Context, entry models.ActuationOutbox
 	if err != nil {
 		logger.Error(fmt.Sprintf("outbox_worker: unknown event_type=%s for event=%s — marking failed",
 			entry.EventType, entry.EventID))
-		_ = w.outboxRepo.MarkFailed(ctx, entry.EventID)
+		_ = w.outboxRepo.MarkFailed(ctx, entry.EventID, err.Error())
 		return
 	}
 
@@ -168,7 +168,9 @@ func (w *OutboxWorker) deliver(ctx context.Context, entry models.ActuationOutbox
 	if publishErr != nil {
 		logger.Error(fmt.Sprintf("outbox_worker: publish failed event=%s topic=%s attempt=%d: %v",
 			entry.EventID, topic, entry.Attempts+1, publishErr))
-		if err := w.outboxRepo.MarkFailed(ctx, entry.EventID); err != nil {
+		// PHASE 5 (refactor): persist the actual error into last_error, not
+		// just the container log — see outbox_repo.MarkFailed.
+		if err := w.outboxRepo.MarkFailed(ctx, entry.EventID, publishErr.Error()); err != nil {
 			logger.Error(fmt.Sprintf("outbox_worker: mark_failed error event=%s: %v", entry.EventID, err))
 		}
 		return

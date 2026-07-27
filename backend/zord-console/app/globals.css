@@ -240,6 +240,26 @@ body {
   animation-play-state: paused;
 }
 
+@keyframes solutions-marquee-ltr {
+  0% {
+    transform: translate3d(-50%, 0, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.solutions-marquee-track {
+  display: flex;
+  width: max-content;
+  flex-wrap: nowrap;
+  animation: solutions-marquee-ltr 28s linear infinite;
+}
+
+.solutions-marquee-root:hover .solutions-marquee-track {
+  animation-play-state: paused;
+}
+
 .mask-horizontal-faded {
   mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
   -webkit-mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);

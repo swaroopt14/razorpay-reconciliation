@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 
 	// "zord-intent-engine/internal/pii"
 	"zord-intent-engine/internal/guards"
+	"zord-intent-engine/internal/persistence"
 	"zord-intent-engine/internal/validator"
 	"zord-intent-engine/internal/vault"
 	"zord-intent-engine/storage"
@@ -101,11 +103,12 @@ const (
 var batchAggregateGroup singleflight.Group
 
 type IntentService struct {
-	validator     *validator.Validator
-	repo          CanonicalIntentRepository
-	s3            *storage.S3Store
-	tokenizeQueue *KafkaTokenizeQueue
-	db            *sql.DB
+	validator        *validator.Validator
+	repo             CanonicalIntentRepository
+	s3               *storage.S3Store
+	tokenizeQueue    *KafkaTokenizeQueue
+	db               *sql.DB
+	tenantDailyUsage persistence.TenantDailyUsageRepository
 }
 
 var enclaveHTTPClient = &http.Client{
@@ -115,10 +118,8 @@ var enclaveHTTPClient = &http.Client{
 
 // getTenantSynonyms returns tenant-specific synonym overrides from DB.
 // Returns empty map if tenant has no custom synonyms — falls back to global dict.
-func (s *IntentService) getTenantSynonyms(tenantID uuid.UUID) map[string]string {
-	// TODO Phase 2: load from tenant_synonym_profiles table
-	// For now return empty — global synonym dict in normalizer package handles everything
-	return map[string]string{}
+func (s *IntentService) getTenantSynonyms(ctx context.Context, tenantID uuid.UUID) map[string]string {
+	return loadTenantSynonyms(ctx, s.db, tenantID)
 }
 
 // Repository abstraction
@@ -129,7 +130,14 @@ type CanonicalIntentRepository interface {
 		intent models.CanonicalIntent,
 		outbox models.OutboxEvent,
 		registry *models.BusinessIdempotencyEntry,
+		policyDecision *models.IntentPolicyDecision,
+		duplicateDecision *models.DuplicateDecision,
 	) (models.CanonicalIntent, error)
+
+	SaveBatch(
+		ctx context.Context,
+		items []models.SaveBatchItem,
+	) ([]models.CanonicalIntent, []models.DLQEntry, error)
 
 	FindByEnvelope(
 		ctx context.Context,
@@ -137,14 +145,20 @@ type CanonicalIntentRepository interface {
 		envelopeID string,
 	) (*models.CanonicalIntent, error)
 
+	// R-05: minimal approval primitive for a held (REQUIRES_REVIEW) intent.
+	GetHeldIntentForApproval(ctx context.Context, tenantID, intentID string) (amount decimal.Decimal, currency string, governanceState string, err error)
+	ApproveHeldIntent(ctx context.Context, tenantID, intentID string) error
+
 	UpdateSnapshotRefs(
 		ctx context.Context,
+		tenantID string,
 		intentID string,
 		canonicalRef string,
 		nirRef string,
 		govRef string,
 		hash string,
 		prevHash string,
+		governanceHash string,
 	) error
 
 	GetPreviousTenantCanonicalHash(
@@ -165,6 +179,9 @@ type CanonicalIntentRepository interface {
 		key string,
 	) (*models.BusinessIdempotencyEntry, error)
 
+	FindIntentIDByIdempotencyKey(ctx context.Context, tenantID, idempotencyKey string) (string, error)
+	FindIntentIDByClientPayoutRef(ctx context.Context, tenantID, clientPayoutRef string) (string, error)
+
 	UpdateBatchAggregateConfidence(
 		ctx context.Context,
 		tenantID string,
@@ -178,14 +195,54 @@ func NewIntentService(
 	s3 *storage.S3Store,
 	q *KafkaTokenizeQueue,
 	db *sql.DB,
+	tenantDailyUsage persistence.TenantDailyUsageRepository,
 ) *IntentService {
 	return &IntentService{
-		validator:     v,
-		repo:          r,
-		s3:            s3,
-		tokenizeQueue: q,
-		db:            db,
+		validator:        v,
+		repo:             r,
+		s3:               s3,
+		tokenizeQueue:    q,
+		db:               db,
+		tenantDailyUsage: tenantDailyUsage,
 	}
+}
+
+// ErrIntentNotHeld is returned by ApproveHeldIntent when the target intent's
+// governance_state isn't REQUIRES_REVIEW — there's nothing to approve.
+var ErrIntentNotHeld = errors.New("intent is not currently held for review")
+
+// ApproveHeldIntent is R-05's minimal approval primitive: re-run the same
+// atomic ReserveIfWithinLimit check against TODAY's usage (not the total
+// that was current when the intent was originally held — "approval
+// rechecks the latest total instead of trusting the original calculation")
+// and, only if it now fits, flip the intent to ACCEPTED. This is
+// deliberately not a review UI/audit-trail/permissions system — just the
+// atomic re-check the doc's acceptance tests require to exist at all.
+func (s *IntentService) ApproveHeldIntent(ctx context.Context, tenantID, intentID string) (string, error) {
+	amount, currency, governanceState, err := s.repo.GetHeldIntentForApproval(ctx, tenantID, intentID)
+	if err != nil {
+		return "", fmt.Errorf("approve held intent: %w", err)
+	}
+	if governanceState != "REQUIRES_REVIEW" {
+		return "", ErrIntentNotHeld
+	}
+
+	businessDate := persistence.BusinessDateUTC(time.Now())
+	decision, _, err := s.tenantDailyUsage.ReserveIfWithinLimit(
+		ctx, tenantID, businessDate, currency, amount, decimal.NewFromInt(guards.TenantDailyLimit),
+	)
+	if err != nil {
+		return "", fmt.Errorf("approve held intent: daily usage reservation: %w", err)
+	}
+	if decision != persistence.DailyLimitDecisionAccept {
+		// Still over today's limit — remains FLAGGED_FOR_REVIEW, no change.
+		return decision, nil
+	}
+
+	if err := s.repo.ApproveHeldIntent(ctx, tenantID, intentID); err != nil {
+		return "", fmt.Errorf("approve held intent: %w", err)
+	}
+	return decision, nil
 }
 
 /* ---------------- Helpers ---------------- */
@@ -279,16 +336,58 @@ func (s *IntentService) isAbnormalAmount(amount decimal.Decimal, currency string
 	return amount.GreaterThan(threshold)
 }
 
-func (s *IntentService) computeBusinessIdempotencyKey(tenantID string, fingerPrint string, amount decimal.Decimal, currency string, timeBucket string) string {
-	// FIX: deterministic business idempotency key
-	// business_idempotency_key = SHA256(tenant_id + beneficiary_fingerprint + amount_minor + currency + time_bucket)
+// computeBusinessIdempotencyKey uses the "preferred" business_idempotency_hash
+// formula (tenant_id + source_system + client_payout_ref + amount + currency)
+// when clientPayoutRef is a reliable reference, else falls back to
+// business_idempotency_fallback_hash (beneficiary_fingerprint + amount +
+// currency + execution_date + invoice_ref + purpose_code). invoiceRef has no
+// ingestion pipeline yet, so it hashes as "" — see canonical_row_hash for the
+// same treatment.
+func (s *IntentService) computeBusinessIdempotencyKey(
+	tenantID string,
+	sourceSystem string,
+	clientPayoutRef string,
+	fingerPrint string,
+	amount decimal.Decimal,
+	currency string,
+	intendedExecutionAt string,
+	purposeCode string,
+) string {
+	amountMinor := amount.Mul(decimal.NewFromInt(100)).IntPart()
 
-	// Normalize amount to string (fixed precision)
-	amountStr := amount.String()
+	if canonicalizer.IsReliableClientPayoutRef(clientPayoutRef) {
+		hash, err := canonicalizer.ComputeBusinessIdempotencyHash(canonicalizer.BusinessIdempotencyHashInput{
+			TenantID:        tenantID,
+			SourceSystem:    sourceSystem,
+			ClientPayoutRef: clientPayoutRef,
+			AmountMinor:     amountMinor,
+			Currency:        currency,
+		})
+		if err == nil {
+			return hash
+		}
+		log.Printf("⚠️ Failed to compute business_idempotency_hash for tenant %s: %v", tenantID, err)
+	}
 
-	raw := tenantID + fingerPrint + amountStr + strings.ToUpper(currency) + timeBucket
-	hash := sha256.Sum256([]byte(raw))
-	return hex.EncodeToString(hash[:])
+	executionDate := ""
+	if t, err := time.Parse(time.RFC3339, strings.TrimSpace(intendedExecutionAt)); err == nil {
+		executionDate = t.UTC().Format("2006-01-02")
+	}
+
+	hash, err := canonicalizer.ComputeBusinessIdempotencyFallbackHash(canonicalizer.BusinessIdempotencyFallbackHashInput{
+		TenantID:               tenantID,
+		BeneficiaryFingerprint: fingerPrint,
+		AmountMinor:            amountMinor,
+		Currency:               currency,
+		ExecutionDate:          executionDate,
+		InvoiceRef:             "",
+		PurposeCode:            purposeCode,
+	})
+	if err != nil {
+		log.Printf("⚠️ Failed to compute business_idempotency_fallback_hash for tenant %s: %v", tenantID, err)
+		return ""
+	}
+	return hash
 }
 
 func (s *IntentService) computeRequestFingerprint(beneficiaryName string, amount decimal.Decimal, accountNumber string, vpa string, currency string) string {
@@ -301,6 +400,119 @@ func (s *IntentService) computeRequestFingerprint(beneficiaryName string, amount
 
 	hash := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(hash[:])
+}
+
+// computeCanonicalRowHash sets intent.CanonicalRowHash =
+// SHA-256(JCS_Canonicalize(interpreted business fields)) using fields already
+// present on intent. PaymentRail is sourced from BeneficiaryType (the
+// normalized beneficiary.instrument.kind rail enum); InvoiceRef has no
+// ingestion pipeline yet, so it hashes as an empty string until one exists.
+func (s *IntentService) computeCanonicalRowHash(intent *models.CanonicalIntent) string {
+	hash, err := canonicalizer.ComputeCanonicalRowHash(canonicalizer.CanonicalRowHashInput{
+		SourceRowRef:           intent.SourceRowRef,
+		ClientPayoutRef:        intent.ClientPayoutRef,
+		BeneficiaryFingerprint: intent.BeneficiaryFingerprint,
+		AmountMinor:            intent.Amount.Mul(decimal.NewFromInt(100)).IntPart(),
+		Currency:               intent.Currency,
+		IntendedExecutionAt:    intent.IntendedExecutionAt,
+		PaymentRail:            intent.BeneficiaryType,
+		InvoiceRef:             "",
+	})
+	if err != nil {
+		log.Printf("⚠️ Failed to compute canonical_row_hash for intent %s: %v", intent.IntentID, err)
+		return ""
+	}
+	return hash
+}
+
+// tokenizedDataHashMasterSecret is the master secret TOKENIZED_DATA_HASH_MASTER_SECRET
+// used to derive a per-tenant HMAC key for tokenized_data_hash — see
+// canonicalizer.DeriveTenantScopedKey. No per-tenant key store exists yet.
+var tokenizedDataHashMasterSecret = os.Getenv("TOKENIZED_DATA_HASH_MASTER_SECRET")
+
+// computeTokenizedDataHash returns tokenized_data_hash for the tenant-scoped
+// tokenized beneficiary fields in tokenMap. Missing token keys hash as null,
+// matching the hash spec.
+func (s *IntentService) computeTokenizedDataHash(tenantID string, tokenMap map[string]string) string {
+	key := canonicalizer.DeriveTenantScopedKey(tokenizedDataHashMasterSecret, tenantID)
+	hash, err := canonicalizer.ComputeTokenizedDataHash(key, canonicalizer.TokenizedDataHashInput{
+		TenantID:             tenantID,
+		BeneficiaryNameToken: tokenMap["name"],
+		AccountNumberToken:   tokenMap["account_number"],
+		IFSCToken:            tokenMap["ifsc"],
+		VPAToken:             tokenMap["vpa"],
+		EmailToken:           tokenMap["email"],
+		PhoneToken:           tokenMap["phone"],
+	})
+	if err != nil {
+		log.Printf("⚠️ Failed to compute tokenized_data_hash for tenant %s: %v", tenantID, err)
+		return ""
+	}
+	return hash
+}
+
+// computeEvidenceLeafHashes returns raw_row_leaf_hash and
+// canonical_row_leaf_hash for intent. ArtifactID/ArtifactVersionID are sealed
+// by an upstream artifact service, not derived here — left blank until that
+// pipeline exists. row_index uses intent.SourceRowNum (defaulting to 0 if
+// unset). raw_row_hash uses intent.RawRowHash, relayed from zord-edge
+// (JCS-canonicalized hash of the exact original row bytes); falls back to
+// intent.PayloadHash (plain SHA-256 of the raw payload) for older paths that
+// never set RawRowHash.
+func (s *IntentService) computeEvidenceLeafHashes(intent *models.CanonicalIntent) (rawLeafHash string, canonicalLeafHash string) {
+	rowIndex := 0
+	if intent.SourceRowNum != nil {
+		rowIndex = *intent.SourceRowNum
+	}
+
+	rawRowHash := intent.RawRowHash
+	if rawRowHash == "" {
+		rawRowHash = intent.PayloadHash
+	}
+
+	rawLeafHash, err := canonicalizer.ComputeRawRowEvidenceLeafHash(canonicalizer.RawRowEvidenceLeafHashInput{
+		TenantID:     intent.TenantID,
+		SourceRowRef: intent.SourceRowRef,
+		RowIndex:     rowIndex,
+		RawRowHash:   rawRowHash,
+	})
+	if err != nil {
+		log.Printf("⚠️ Failed to compute raw_row_evidence_leaf_hash for intent %s: %v", intent.IntentID, err)
+	}
+	canonicalLeafHash, err = canonicalizer.ComputeCanonicalRowEvidenceLeafHash(canonicalizer.CanonicalRowEvidenceLeafHashInput{
+		TenantID:         intent.TenantID,
+		SourceRowRef:     intent.SourceRowRef,
+		CanonicalRowHash: intent.CanonicalRowHash,
+	})
+	if err != nil {
+		log.Printf("⚠️ Failed to compute canonical_row_evidence_leaf_hash for intent %s: %v", intent.IntentID, err)
+	}
+	return rawLeafHash, canonicalLeafHash
+}
+
+// computeGenericMappingProfileHash builds mapping_profile_hash for requests
+// where no registered MappingProfile matched (ResolveProfileForIntent
+// returned nil — e.g. no source_system header, or no profile registered for
+// it). field_mappings is derived from the NIR field-level source paths this
+// request actually used, so the hash reflects real interpretation rules
+// instead of being left blank whenever there's no formal profile row.
+func (s *IntentService) computeGenericMappingProfileHash(profileID, profileVersion, sourceSystem, detectedFormat string, fieldsMap map[string]models.NIRField) string {
+	fieldMappings := make(map[string]string, len(fieldsMap))
+	for name, f := range fieldsMap {
+		fieldMappings[name] = f.SourcePath
+	}
+	p := &models.MappingProfile{
+		ProfileID:                profileID,
+		ProfileVersion:           profileVersion,
+		SourceSystem:             sourceSystem,
+		FileFormat:               detectedFormat,
+		ColumnMap:                fieldMappings,
+		StrictRequiredFieldsJSON: json.RawMessage("[]"),
+		SoftInferableFieldsJSON:  json.RawMessage("[]"),
+		FieldKindPolicyJSON:      json.RawMessage("{}"),
+		SensitiveFieldPolicyJSON: json.RawMessage("{}"),
+	}
+	return p.ComputeProfileHash()
 }
 
 // computeScores calculates all 7 intent-level scores.
@@ -870,32 +1082,72 @@ func (s *IntentService) ApplyPolicy(nir *models.NormalizedIngestRecord, req mode
 	return gov
 }
 
+// applyHardStrictReject upgrades gov to a hard reject when profile is in
+// HARD_STRICT mode and at least one required field is missing. Returns true
+// when it did so, so the caller can pick a DLQ reason code distinct from the
+// generic SEMANTIC_INVALID. Factored out of processIncomingIntentInternal so
+// R-09's HARD_STRICT gating is unit-testable without a full IntentService
+// (S3/Kafka/DB) — same rationale as R-03's callWithRetry extraction in
+// kafka/consumer.go. REVIEW_STRICT and OBSERVE profiles are untouched: this
+// only ever fires for the new, explicitly opted-in mode.
+func applyHardStrictReject(profile *models.MappingProfile, requiredFieldGapCount int, missingFieldNames []string, gov *models.Governance) bool {
+	if profile == nil || profile.ValidationMode != models.ValidationModeHardStrict || requiredFieldGapCount == 0 {
+		return false
+	}
+	gov.SemanticValid = false
+	for _, f := range missingFieldNames {
+		gov.MissingFields = appendUniq(gov.MissingFields, f)
+	}
+	gov.PolicyFlags = appendUniq(gov.PolicyFlags, "HARD_STRICT_REQUIRED_FIELD_MISSING")
+	return true
+}
+
 /* ---------------- Pipeline ---------------- */
 
 // ProcessIncomingIntent is the ONLY entrypoint.
-func (s *IntentService) ProcessIncomingIntent(
+func (s *IntentService) processIncomingIntentInternal(
 	ctx context.Context,
 	event *models.Event,
-) (retCanonical *models.CanonicalIntent, retDlq *models.DLQEntry, retErr error) {
+) (
+	retIn *models.IncomingIntent,
+	retProfile *models.MappingProfile,
+	retDecrypted []byte,
+	retRawAudit []byte,
+	retAuditProfileID string,
+	retAuditProfileVersion string,
+	retSourceRowNum *int,
+	retNir *models.NormalizedIngestRecord,
+	retCanonical *models.CanonicalIntent,
+	retOutbox *models.OutboxEvent,
+	retRegistry *models.BusinessIdempotencyEntry,
+	retDlq *models.DLQEntry,
+	retErr error,
+	retPolicyDecision *models.IntentPolicyDecision,
+	retDuplicateDecision *models.DuplicateDecision,
+) {
 
 	//Unmarshal Payload into IncomingIntent struct
 	var in *models.IncomingIntent
 
 	in = &models.IncomingIntent{
-		TenantID:         event.TenantID,
-		EnvelopeID:       event.EnvelopeID,
-		TraceID:          event.TraceID,
-		Source:           event.Source,
-		SourceSystem:     event.SourceSystem,
-		ObjectRef:        event.ObjectRef,
-		IdempotencyKey:   event.IdempotencyKey,
-		EncryptedPayload: event.Payload,
-		PayloadHash:      event.PayloadHash,
-		ReceivedAt:       event.ReceivedAt,
-		BatchID:          event.BatchID,
-		FileName:         event.FileName,
-		FileContentHash:  event.FileContentHash,
-		RowCountEstimate: event.RowCountEstimate,
+		TenantID:          event.TenantID,
+		EnvelopeID:        event.EnvelopeID,
+		TraceID:           event.TraceID,
+		Source:            event.Source,
+		SourceSystem:      event.SourceSystem,
+		ObjectRef:         event.ObjectRef,
+		IdempotencyKey:    event.IdempotencyKey,
+		EncryptedPayload:  event.Payload,
+		PayloadHash:       event.PayloadHash,
+		RawRowHash:        event.RawRowHash,
+		ArtifactID:        event.ArtifactID,
+		ArtifactVersionID: event.ArtifactVersionID,
+		ReceivedAt:        event.ReceivedAt,
+		BatchID:           event.BatchID,
+		SourceRowRef:      event.SourceRowRef,
+		FileName:          event.FileName,
+		FileContentHash:   event.FileContentHash,
+		RowCountEstimate:  event.RowCountEstimate,
 	}
 
 	var resolvedProfile *models.MappingProfile
@@ -906,122 +1158,18 @@ func (s *IntentService) ProcessIncomingIntent(
 	var sourceRowNum *int
 	var err error
 
-	defer func() {
-		if retDlq != nil && retDlq.SourceRowNum == nil && sourceRowNum != nil {
-			retDlq.SourceRowNum = sourceRowNum
-		}
-
-		if in.BatchID == nil || *in.BatchID == "" {
-			return
-		}
-
-		if retErr != nil {
-			return
-		}
-
-		var status = "ACCEPTED"
-		var errDetail = ""
-		var mappingID = ""
-		var profileIDHint = ""
-
-		if retDlq != nil {
-			if retDlq.ReasonCode == "DUPLICATE_BUSINESS_KEY" || retDlq.ReasonCode == "DUPLICATE_IDEMPOTENCY_KEY" {
-				status = "DUPLICATE"
-			} else {
-				status = "FAILED"
-			}
-			errDetail = retDlq.ReasonCode
-		}
-
-		if resolvedProfile != nil {
-			mappingID = resolvedProfile.ProfileID
-			profileIDHint = resolvedProfile.ProfileVersion
-		} else if auditProfileID != "" {
-			mappingID = auditProfileID
-			profileIDHint = auditProfileVersion
-		}
-
-		auditPayload := rawAuditPayload
-		if len(auditPayload) == 0 {
-			auditPayload = decryptedPayload
-		}
-		rowIndex := 0
-		if sourceRowNum != nil {
-			rowIndex = *sourceRowNum
-		} else if extracted := extractSourceRowNumFromPayload(auditPayload); extracted != nil {
-			rowIndex = *extracted
-		}
-
-		fileName := ""
-		fileHash := ""
-		var totalRows int = 0
-
-		if in.FileName != nil {
-			fileName = *in.FileName
-		}
-		if in.FileContentHash != nil {
-			fileHash = *in.FileContentHash
-		}
-		if in.RowCountEstimate != nil {
-			totalRows = *in.RowCountEstimate
-		}
-
-		errInsert := db.InsertIngestRow(ctx, s.db,
-			*in.BatchID, in.TenantID.String(), mappingID, profileIDHint,
-			rowIndex, in.IdempotencyKey, status, errDetail, in.SourceSystem,
-			fileName, fileHash, auditPayload,
-		)
-		if errInsert != nil {
-			log.Printf("⚠️ Audit: failed to insert row audit for batch=%s row=%d: %v", *in.BatchID, rowIndex, errInsert)
-		}
-
-		acceptedCount := 0
-		failedCount := 0
-		duplicateCount := 0
-		errStats := s.db.QueryRowContext(ctx, `
-			SELECT
-				COUNT(*) FILTER (WHERE status = 'ACCEPTED'),
-				COUNT(*) FILTER (WHERE status = 'FAILED'),
-				COUNT(*) FILTER (WHERE status = 'DUPLICATE')
-			FROM intent_ingest_rows
-			WHERE batch_id = $1`,
-			*in.BatchID,
-		).Scan(&acceptedCount, &failedCount, &duplicateCount)
-
-		if errStats != nil {
-			log.Printf("⚠️ Audit: failed to query batch stats for batch=%s: %v", *in.BatchID, errStats)
-			return
-		}
-
-		processedRows := acceptedCount + failedCount + duplicateCount
-		hasTotalRows := totalRows > 0
-		if !hasTotalRows {
-			totalRows = processedRows
-		}
-
-		runStatus := "PROCESSING"
-		if hasTotalRows && processedRows >= totalRows {
-			runStatus = "COMPLETED"
-		}
-
-		errUpsert := db.UpsertIngestRun(ctx, s.db,
-			uuid.New().String(), *in.BatchID, in.TenantID.String(),
-			mappingID, profileIDHint, fileName, fileHash,
-			totalRows, acceptedCount, failedCount, duplicateCount,
-			runStatus,
-		)
-		if errUpsert != nil {
-			log.Printf("⚠️ Audit: failed to upsert run audit for batch=%s: %v", *in.BatchID, errUpsert)
-		}
-	}()
-
 	// -------- STEP 0: Transport guards --------
 
 	log.Printf("ProcessIncomingIntent: Source=%s EnvelopeID=%s", in.Source, in.EnvelopeID)
 
 	if in.Source == "WEBHOOK" {
 		log.Printf("ProcessIncomingIntent: Routing to processWebhook for EnvelopeID=%s", in.EnvelopeID)
-		return s.processWebhook(ctx, in)
+		webhookCanonical, webhookDlq, webhookErr := s.processWebhook(ctx, in)
+		retIn = in
+		retCanonical = webhookCanonical
+		retDlq = webhookDlq
+		retErr = webhookErr
+		return
 	}
 
 	batchIDStr := ""
@@ -1030,71 +1178,134 @@ func (s *IntentService) ProcessIncomingIntent(
 	}
 
 	if len(in.EncryptedPayload) == 0 {
-		return nil, &models.DLQEntry{
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
+		retDlq = &models.DLQEntry{
 			ReasonCode:  "EMPTY_PAYLOAD",
 			ErrorDetail: "payload content is empty",
 			DLQStatus:   models.ClassifyDLQ("EMPTY_PAYLOAD"),
 			BatchID:     batchIDStr,
 			TraceID:     in.TraceID.String(),
-		}, nil
+		}
+		return
 	}
 
 	if in.TraceID == uuid.Nil {
-		return nil, &models.DLQEntry{
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
+		retDlq = &models.DLQEntry{
 			ReasonCode:  "MISSING_TRACE_ID",
 			ErrorDetail: "trace_id is required but missing",
 			DLQStatus:   models.ClassifyDLQ("MISSING_TRACE_ID"),
 			BatchID:     batchIDStr,
 			TraceID:     in.TraceID.String(),
-		}, nil
+		}
+		return
 	}
 
 	if in.EnvelopeID == uuid.Nil {
-		return nil, &models.DLQEntry{
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
+		retDlq = &models.DLQEntry{
 			ReasonCode:  "MISSING_ENVELOPE_ID",
 			ErrorDetail: "envelope_id is required but missing",
 			DLQStatus:   models.ClassifyDLQ("MISSING_ENVELOPE_ID"),
 			BatchID:     batchIDStr,
 			TraceID:     in.TraceID.String(),
-		}, nil
+		}
+		return
 	}
 
 	if in.TenantID == uuid.Nil {
-		return nil, &models.DLQEntry{
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
+		retDlq = &models.DLQEntry{
 			ReasonCode:  "MISSING_TENANT_ID",
 			ErrorDetail: "tenant_id is required but missing",
 			DLQStatus:   models.ClassifyDLQ("MISSING_TENANT_ID"),
 			BatchID:     batchIDStr,
 			TraceID:     in.TraceID.String(),
-		}, nil
+		}
+		return
 	}
 
 	if in.ObjectRef == "" {
-		return nil, &models.DLQEntry{
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
+		retDlq = &models.DLQEntry{
 			ReasonCode:  "MISSING_OBJECT_REF",
 			ErrorDetail: "object_ref is required but missing",
 			DLQStatus:   models.ClassifyDLQ("MISSING_OBJECT_REF"),
 			BatchID:     batchIDStr,
 			TraceID:     in.TraceID.String(),
-		}, nil
+		}
+		return
 	}
 
 	// -------- STEP 5: Parse raw payload into domain model --------
 	decryptedPayload, err = vault.DecryptPayload(in.EncryptedPayload)
 	if err != nil {
 		log.Printf("⚠️ Payload decryption failed for EnvelopeID=%s: %v", in.EnvelopeID, err)
-		return nil, &models.DLQEntry{
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
+		retDlq = &models.DLQEntry{
 			Stage:       "SECURITY_DLQ",
 			ReasonCode:  "PAYLOAD_DECRYPTION_FAILED",
 			ErrorDetail: "payload decryption failed: " + err.Error(),
 			DLQStatus:   models.ClassifyDLQ("PAYLOAD_DECRYPTION_FAILED"),
 			BatchID:     batchIDStr,
 			TraceID:     in.TraceID.String(),
-		}, nil
+		}
+		return
 	}
 
 	rawAuditPayload = append([]byte(nil), decryptedPayload...)
-	sourceRowNum = extractSourceRowNumFromPayload(rawAuditPayload)
+	sourceRowRef := ""
+	if in.SourceRowRef != nil {
+		sourceRowRef = strings.TrimSpace(*in.SourceRowRef)
+	} else {
+		log.Printf("⚠️ processIncomingIntentInternal: source_row_ref is nil for envelopeID=%s — source_row_num will be nil", in.EnvelopeID)
+	}
+	rawRowHash := ""
+	if in.RawRowHash != nil {
+		rawRowHash = strings.TrimSpace(*in.RawRowHash)
+	}
+	artifactID := ""
+	if in.ArtifactID != uuid.Nil {
+		artifactID = in.ArtifactID.String()
+	}
+	artifactVersionID := strings.TrimSpace(in.ArtifactVersionID)
+	sourceRowNum = sourceRowNumFromRef(sourceRowRef)
 	auditProfileID = autoGenericProfileID(rawAuditPayload)
 	auditProfileVersion = "v1"
 
@@ -1103,37 +1314,61 @@ func (s *IntentService) ProcessIncomingIntent(
 	hexRawHash := hex.EncodeToString(rawHash[:])
 	if in.PayloadHash == "" {
 		log.Printf("⚠️ Missing raw payload hash for EnvelopeID=%s", in.EnvelopeID)
-		return nil, &models.DLQEntry{
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
+		retDlq = &models.DLQEntry{
 			Stage:       "SECURITY_DLQ",
 			ReasonCode:  "MISSING_RAW_PAYLOAD_HASH",
 			ErrorDetail: "payload_hash is required but missing",
 			DLQStatus:   models.ClassifyDLQ("MISSING_RAW_PAYLOAD_HASH"),
 			BatchID:     batchIDStr,
 			TraceID:     in.TraceID.String(),
-		}, nil
+		}
+		return
 	}
 
 	if len(in.PayloadHash) != 64 {
 		log.Printf("⚠️ Invalid raw payload hash length for EnvelopeID=%s (expected 64, got %d)", in.EnvelopeID, len(in.PayloadHash))
-		return nil, &models.DLQEntry{
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
+		retDlq = &models.DLQEntry{
 			Stage:       "SECURITY_DLQ",
 			ReasonCode:  "INVALID_RAW_PAYLOAD_HASH_LENGTH",
 			ErrorDetail: "invalid payload_hash length (expected 64 chars)",
 			DLQStatus:   models.ClassifyDLQ("INVALID_RAW_PAYLOAD_HASH_LENGTH"),
 			BatchID:     batchIDStr,
 			TraceID:     in.TraceID.String(),
-		}, nil
+		}
+		return
 	}
 	if in.PayloadHash != "" && hexRawHash != in.PayloadHash {
 		log.Printf("⚠️ Raw payload hash mismatch for EnvelopeID=%s", in.EnvelopeID)
-		return nil, &models.DLQEntry{
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
+		retDlq = &models.DLQEntry{
 			Stage:       "SECURITY_DLQ",
 			ReasonCode:  "RAW_PAYLOAD_INTEGRITY_FAILED",
 			ErrorDetail: "payload integrity validation failed: hash mismatch",
 			DLQStatus:   models.ClassifyDLQ("RAW_PAYLOAD_INTEGRITY_FAILED"),
 			BatchID:     batchIDStr,
 			TraceID:     in.TraceID.String(),
-		}, nil
+		}
+		return
 	}
 
 	in.SourceSystem = strings.ToUpper(strings.TrimSpace(in.SourceSystem))
@@ -1156,6 +1391,7 @@ func (s *IntentService) ProcessIncomingIntent(
 	// apply column_map to translate tenant headers → canonical JSON keys.
 	// This is the correct location for profile-driven normalization.
 	// The normalizer at Step 5.1 then runs as a fast-path (no-op for canonical JSON).
+	var profileUnmappedFields map[string]any
 	if in.SourceSystem != "" && in.SourceSystem != "UNKNOWN" {
 		artifactFamily := models.ArtifactFamilyLiveIntentJSON
 		if in.Source == "CSV" || in.Source == "XLSX" || in.Source == "BULK_FILE" {
@@ -1175,12 +1411,13 @@ func (s *IntentService) ProcessIncomingIntent(
 		} else if profile != nil {
 			resolvedProfile = profile
 			parser := NewGenericSourceParser()
-			mapped, mapErr := parser.ParseToCanonicalJSON(decryptedPayload, profile)
+			mapped, unmapped, mapErr := parser.ParseToCanonicalJSON(decryptedPayload, profile)
 			if mapErr != nil {
 				log.Printf("⚠️ [profile] ParseToCanonicalJSON failed envelope=%s: %v — continuing with raw payload",
 					in.EnvelopeID, mapErr)
 			} else {
 				decryptedPayload = mapped
+				profileUnmappedFields = unmapped
 				log.Printf("ℹ️ [profile] applied profile=%s source=%s envelope=%s",
 					profile.ProfileID, in.SourceSystem, in.EnvelopeID)
 			}
@@ -1191,7 +1428,7 @@ func (s *IntentService) ProcessIncomingIntent(
 	// -------- STEP 5.1: Header normalization (ETL 10.1 / 10.2 / 10.3) --------
 	// Normalize tenant-specific field names → Zord canonical JSON keys.
 	// If payload is already canonical, this is a no-op (fast path).
-	normResult, normErr := normalizer.Normalize(decryptedPayload, s.getTenantSynonyms(in.TenantID))
+	normResult, normErr := normalizer.Normalize(decryptedPayload, s.getTenantSynonyms(ctx, in.TenantID))
 	if normErr != nil {
 		log.Printf("⚠️ Normalization failed for EnvelopeID=%s: %v — falling back to raw payload", in.EnvelopeID, normErr)
 		// Do NOT DLQ — fall through with original payload (graceful degradation)
@@ -1205,15 +1442,26 @@ func (s *IntentService) ProcessIncomingIntent(
 
 	var parsed models.ParsedIncomingIntent
 	if err := json.Unmarshal(decryptedPayload, &parsed); err != nil {
-		return nil, &models.DLQEntry{
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
+		retDlq = &models.DLQEntry{
 			ReasonCode:  "INVALID_JSON_PAYLOAD",
 			ErrorDetail: "malformed JSON payload: " + err.Error(),
 			DLQStatus:   models.ClassifyDLQ("INVALID_JSON_PAYLOAD"),
 			BatchID:     batchIDStr,
 			TraceID:     in.TraceID.String(),
-		}, nil
+		}
+		return
 	}
 	parsed.SchemaVersion = "v1"
+	if sourceRowRef != "" {
+		parsed.SourceRowRef = sourceRowRef
+	}
 
 	// FIX: Idempotency Key Fallback
 	if in.IdempotencyKey == "" {
@@ -1227,6 +1475,10 @@ func (s *IntentService) ProcessIncomingIntent(
 	fieldsMap := make(map[string]models.NIRField)
 	gapCount := 0
 	lowConfCount := 0
+	// R-09: names of required fields that were missing, so a HARD_STRICT
+	// reject (below) can report exactly which fields the tenant needs to
+	// fix — REVIEW_STRICT/OBSERVE never read this, only the count.
+	var missingRequiredFieldNames []string
 
 	// Helper to add structured field
 	addFields := func(name string, value any, path string, required bool) {
@@ -1234,6 +1486,7 @@ func (s *IntentService) ProcessIncomingIntent(
 		if value == "" || value == nil {
 			if required {
 				gapCount++
+				missingRequiredFieldNames = append(missingRequiredFieldNames, name)
 			}
 			conf = 0.0
 		}
@@ -1250,15 +1503,36 @@ func (s *IntentService) ProcessIncomingIntent(
 		}
 	}
 
+	// requiredFor lets a tenant's mapping profile promote an otherwise-optional
+	// field to required (StrictRequiredFieldsJSON), driving the required-field-
+	// gap mechanism below: REVIEW_STRICT (and the default, unconfigured
+	// profile) flags for review; HARD_STRICT (R-09) hard-rejects instead. The
+	// 5 baseline fields above are always required regardless of profile —
+	// tenant policy can only ADD requirements on top of core structural
+	// safety, never remove them. OBSERVE mode records these fields for
+	// visibility but never flags or rejects.
+	requiredFor := func(name string, hardcodedDefault bool) bool {
+		if resolvedProfile == nil {
+			return hardcodedDefault
+		}
+		if resolvedProfile.ValidationMode == models.ValidationModeObserve {
+			return false
+		}
+		if resolvedProfile.IsFieldRequired(name) {
+			return true
+		}
+		return hardcodedDefault
+	}
+
 	addFields("intent_type", parsed.IntentType, "$.intent_type", true)
 	addFields("amount", parsed.Amount.Value, "$.amount.value", true)
 	addFields("currency", parsed.Amount.Currency, "$.amount.currency", true)
 	addFields("beneficiary_name", parsed.Beneficiary.Name, "$.beneficiary.name", true)
 	addFields("idempotency_key", parsed.IdempotencyKey, "$.idempotency_key", true)
-	addFields("client_batch_ref", parsed.ClientBatchRef, "$.client_batch_ref", false)
-	addFields("client_payout_ref", parsed.ClientPayoutRef, "$.client_payout_ref", false)
-	addFields("provider_hint", parsed.ProviderHint, "$.provider_hint", false)
-	addFields("intended_execution_at", parsed.IntendedExecutionAt, "$.intended_execution_at", false)
+	addFields("client_batch_ref", parsed.ClientBatchRef, "$.client_batch_ref", requiredFor("client_batch_ref", false))
+	addFields("client_payout_ref", parsed.ClientPayoutRef, "$.client_payout_ref", requiredFor("client_payout_ref", false))
+	addFields("provider_hint", parsed.ProviderHint, "$.provider_hint", requiredFor("provider_hint", false))
+	addFields("intended_execution_at", parsed.IntendedExecutionAt, "$.intended_execution_at", requiredFor("intended_execution_at", false))
 
 	fieldsJSON, _ := json.Marshal(fieldsMap)
 
@@ -1276,6 +1550,16 @@ func (s *IntentService) ProcessIncomingIntent(
 		profileVersion = parsed.SchemaVersion
 	}
 
+	profileHash := ""
+	if resolvedProfile != nil {
+		profileHash = resolvedProfile.ProfileHash
+	} else {
+		// No registered profile matched — still hash the field mappings this
+		// request actually used, so mapping_profile_hash is never blank just
+		// because there's no formal MappingProfile row.
+		profileHash = s.computeGenericMappingProfileHash(profileID, profileVersion, in.SourceSystem, "json", fieldsMap)
+	}
+
 	nir := &models.NormalizedIngestRecord{
 		NIRID:                   uuid.New(),
 		EnvelopeID:              in.EnvelopeID,
@@ -1290,6 +1574,17 @@ func (s *IntentService) ProcessIncomingIntent(
 		RequiredFieldGapCount:   gapCount,
 		LowConfidenceFieldCount: lowConfCount,
 		CreatedAt:               time.Now().UTC(),
+		MappingProfileHash:      profileHash,
+	}
+
+	// Fields the resolved mapping profile's column_map didn't account for are
+	// never dropped — they're preserved here for audit/lineage even though the
+	// normalizer sees profile-parsed JSON as already-canonical (WasNormalized=false)
+	// and so wouldn't otherwise report them.
+	if len(profileUnmappedFields) > 0 {
+		if unmappedBytes, err := json.Marshal(profileUnmappedFields); err == nil {
+			nir.UnmappedJSON = unmappedBytes
+		}
 	}
 
 	if normResult != nil && normResult.WasNormalized {
@@ -1356,9 +1651,22 @@ func (s *IntentService) ProcessIncomingIntent(
 
 	// -------- STEP 6.5: APPLY GOVERNANCE POLICY (NEW) --------
 	governance := s.ApplyPolicy(nir, parsed)
+
+	// R-09: HARD_STRICT is an explicit per-tenant opt-in (mapping_profiles.
+	// validation_mode, set via the admin mapping-profile API) that turns a
+	// profile-required-field gap into a hard reject instead of the
+	// REVIEW_STRICT/default hold-for-review path. It reuses the exact
+	// SemanticValid/POLICY_DLQ mechanism below rather than a separate reject
+	// path, so REVIEW_STRICT and OBSERVE tenants see zero behavior change.
+	hardStrictRejected := applyHardStrictReject(resolvedProfile, nir.RequiredFieldGapCount, missingRequiredFieldNames, &governance)
+
 	if !governance.SemanticValid {
 		log.Printf("⚠️ Semantic Policy Violation for EnvelopeID=%s: %v", in.EnvelopeID, governance.SemanticErrors)
-		policyDLQStatus := models.ClassifyDLQ("SEMANTIC_INVALID")
+		reasonCode := "SEMANTIC_INVALID"
+		if hardStrictRejected {
+			reasonCode = "HARD_STRICT_REQUIRED_FIELD_MISSING"
+		}
+		policyDLQStatus := models.ClassifyDLQ(reasonCode)
 
 		// Build a comprehensive error detail from all governance failure collections
 		var errorParts []string
@@ -1380,12 +1688,12 @@ func (s *IntentService) ProcessIncomingIntent(
 			TenantID:       in.TenantID.String(),
 			EnvelopeID:     in.EnvelopeID.String(),
 			Stage:          "POLICY_DLQ",
-			ReasonCode:     "SEMANTIC_INVALID",
+			ReasonCode:     reasonCode,
 			ErrorDetail:    errorDetail,
 			DLQStatus:      policyDLQStatus,
 			BatchID:        batchIDStr,
 			ClientBatchRef: batchIDStr,
-			SourceRowNum:   sourceRowNumFromRef(parsed.SourceRowRef),
+			SourceRowNum:   sourceRowNum,
 			IntentContext:  models.BuildIntentContext(policyDLQStatus, parsed),
 			TraceID:        in.TraceID.String(),
 			CreatedAt:      time.Now().UTC(),
@@ -1394,9 +1702,25 @@ func (s *IntentService) ProcessIncomingIntent(
 		savedDLQ, err := s.validator.DLQRepo().Save(ctx, dlqEntry)
 		if err != nil {
 			log.Printf("Failed to save POLICY_DLQ entry: %v", err)
-			return nil, &dlqEntry, nil
+			retIn = in
+			retProfile = resolvedProfile
+			retDecrypted = decryptedPayload
+			retRawAudit = rawAuditPayload
+			retAuditProfileID = auditProfileID
+			retAuditProfileVersion = auditProfileVersion
+			retSourceRowNum = sourceRowNum
+			retDlq = &dlqEntry
+			return
 		}
-		return nil, &savedDLQ, nil
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
+		retDlq = &savedDLQ
+		return
 	}
 
 	// FIX: Compute GovernanceHash early (UPDATED)
@@ -1409,6 +1733,11 @@ func (s *IntentService) ProcessIncomingIntent(
 	governanceHash := s.computeGovernanceHashInternal("VALID", string(governanceJSON), "v1", intentID)
 
 	parsed.PayloadHash = in.PayloadHash
+	if rawRowHash != "" {
+		parsed.RawRowHash = rawRowHash
+	}
+	parsed.ArtifactID = artifactID
+	parsed.ArtifactVersionID = artifactVersionID
 	parsed.FieldConfidenceSummary = nir.FieldConfidenceSummary
 	parsed.LowConfidenceFieldCount = nir.LowConfidenceFieldCount
 	parsed.RequiredFieldGapCount = nir.RequiredFieldGapCount
@@ -1422,11 +1751,23 @@ func (s *IntentService) ProcessIncomingIntent(
 		in.EnvelopeID.String(),
 	)
 	if err != nil {
-		return nil, nil, err
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
+		retErr = err
+		return
 	}
 
 	if existing != nil {
-		return existing, nil, nil
+		// Idempotency cache hit: return immediately, no DB write needed.
+		// Set retIn so the wrapper's defer can run audit correctly.
+		retIn = in
+		retCanonical = existing
+		return
 	}
 
 	// -------- STEP 6: VALIDATION --------
@@ -1444,15 +1785,40 @@ func (s *IntentService) ProcessIncomingIntent(
 		batchIDStr, // ← NEW
 	)
 	if err != nil {
-		return nil, nil, err
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
+		retErr = err
+		return
 	}
 
 	if dlq != nil {
-		return nil, dlq, nil
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
+		retDlq = dlq
+		return
 	}
 
 	if intent == nil {
-		return nil, nil, errors.New("validator returned nil intent")
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
+		retErr = err
+		retErr = errors.New("validator returned nil intent")
+		return
 	}
 
 	// -------- STEP 7: CANONICALIZATION --------
@@ -1464,13 +1830,24 @@ func (s *IntentService) ProcessIncomingIntent(
 	if dlq := guards.RunPreGuards(in, canonicalInput); dlq != nil {
 		dlq.TraceID = in.TraceID.String()
 		dlq.IntentContext = models.BuildIntentContext(dlq.DLQStatus, *intent)
-		return nil, dlq, nil
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
+		retDlq = dlq
+		return
 	}
 
 	// Governance hash computed early at step 6.5
 	canonicalInput.GovernanceHash = governanceHash
 	canonicalInput.IntentID = intentID // Ensure intent_id is passed to Kafka if needed
 	canonicalInput.PayloadHash = in.PayloadHash
+	canonicalInput.RawRowHash = rawRowHash
+	canonicalInput.ArtifactID = artifactID
+	canonicalInput.ArtifactVersionID = artifactVersionID
 	canonicalInput.FieldConfidenceSummary = nir.FieldConfidenceSummary
 	canonicalInput.LowConfidenceFieldCount = nir.LowConfidenceFieldCount
 	canonicalInput.RequiredFieldGapCount = nir.RequiredFieldGapCount
@@ -1499,7 +1876,15 @@ func (s *IntentService) ProcessIncomingIntent(
 		// -------- KAFKA FALLBACK --------
 
 		if s.tokenizeQueue == nil {
-			return nil, nil, err
+			retIn = in
+			retProfile = resolvedProfile
+			retDecrypted = decryptedPayload
+			retRawAudit = rawAuditPayload
+			retAuditProfileID = auditProfileID
+			retAuditProfileVersion = auditProfileVersion
+			retSourceRowNum = sourceRowNum
+			retErr = err
+			return
 		}
 
 		req := models.TokenizeRequestEvent{
@@ -1518,17 +1903,55 @@ func (s *IntentService) ProcessIncomingIntent(
 		err = s.tokenizeQueue.PublishTokenizeRequest(ctx, req)
 		if err != nil {
 			log.Printf("Kafka publish failed: %v", err)
-			return nil, nil, err
+			retIn = in
+			retProfile = resolvedProfile
+			retDecrypted = decryptedPayload
+			retRawAudit = rawAuditPayload
+			retAuditProfileID = auditProfileID
+			retAuditProfileVersion = auditProfileVersion
+			retSourceRowNum = sourceRowNum
+			retErr = err
+			return
 		}
 
 		log.Printf("Tokenization request queued in Kafka for EnvelopeID=%s", in.EnvelopeID)
 
 		// Stop pipeline for now
-		return nil, nil, nil
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
+		return
 	}
 
 	// Persist full token map in pii_tokens JSONB
 	piiJSON, _ := json.Marshal(tokenMap)
+
+	// Ledger item #18: record which requested PII fields actually came back
+	// tokenized (enclave provenance), not just the pass/fail bool that
+	// tokenization_status already carries. No secret values here — only field
+	// names — since this rides along on every read of the intent.
+	tokenizedFields := make([]string, 0, len(tokenMap))
+	requestedFields := make([]string, 0, len(tokenReq.PII))
+	for field, val := range tokenMap {
+		if val != "" {
+			tokenizedFields = append(tokenizedFields, field)
+		}
+	}
+	for field := range tokenReq.PII {
+		requestedFields = append(requestedFields, field)
+	}
+	sort.Strings(tokenizedFields)
+	sort.Strings(requestedFields)
+	tokenizationMetadataJSON, _ := json.Marshal(map[string]any{
+		"method":           "enclave_sync",
+		"requested_fields": requestedFields,
+		"tokenized_fields": tokenizedFields,
+		"tokenized_at":     time.Now().UTC(),
+	})
 
 	beneficiaryTokenized := map[string]any{
 		"instrument": map[string]any{
@@ -1549,7 +1972,11 @@ func (s *IntentService) ProcessIncomingIntent(
 
 	bFingerprint := s.computeBeneficiaryFingerprint(tokenMap)
 	timeBucket := time.Now().UTC().Format("2006-01-02")
-	bIdemKey := s.computeBusinessIdempotencyKey(in.TenantID.String(), bFingerprint, amount, canonicalInput.Amount.Currency, timeBucket)
+	bIdemKey := s.computeBusinessIdempotencyKey(
+		in.TenantID.String(), in.SourceSystem, canonicalInput.ClientPayoutRef,
+		bFingerprint, amount, canonicalInput.Amount.Currency,
+		canonicalInput.IntendedExecutionAt, canonicalInput.PurposeCode,
+	)
 
 	// UPDATED: Abnormal amount detection
 	var anomalies []string
@@ -1560,11 +1987,20 @@ func (s *IntentService) ProcessIncomingIntent(
 	// -------- STEP 8.7: Business Idempotency Registry Check (NEW) --------
 	registryDuplicate, err := s.repo.CheckIdempotencyRegistry(ctx, in.TenantID.String(), bIdemKey)
 	if err != nil {
-		return nil, nil, err
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
+		retErr = err
+		return
 	}
 
 	dupRisk := false
 	dupReason := "NONE"
+	comparedIntentID := ""
 	var registryEntry *models.BusinessIdempotencyEntry
 
 	if registryDuplicate != nil {
@@ -1573,6 +2009,7 @@ func (s *IntentService) ProcessIncomingIntent(
 		if dupReason == "" || dupReason == "NONE" {
 			dupReason = "SAME_BENEFICIARY_AMOUNT_TIME"
 		}
+		comparedIntentID = registryDuplicate.IntentID.String()
 	} else {
 		// Prepare registry entry for new intent
 		registryEntry = &models.BusinessIdempotencyEntry{
@@ -1586,6 +2023,19 @@ func (s *IntentService) ProcessIncomingIntent(
 			DuplicateReasonCode:    "NONE",
 			CreatedAt:              time.Now().UTC(),
 		}
+	}
+
+	// Strict duplicate signals (ledger item #11) take precedence over the
+	// semantic registry match above — a reused idempotency_key or
+	// client_payout_ref is a stronger signal than "similar-looking payment".
+	if strictID, serr := s.repo.FindIntentIDByIdempotencyKey(ctx, in.TenantID.String(), in.IdempotencyKey); serr == nil && strictID != "" {
+		dupRisk = true
+		dupReason = "SAME_IDEMPOTENCY_KEY"
+		comparedIntentID = strictID
+	} else if refID, serr := s.repo.FindIntentIDByClientPayoutRef(ctx, in.TenantID.String(), canonicalInput.ClientPayoutRef); serr == nil && refID != "" {
+		dupRisk = true
+		dupReason = "CLIENT_PAYOUT_REF_REUSED"
+		comparedIntentID = refID
 	}
 
 	var executionAt *time.Time
@@ -1613,8 +2063,11 @@ func (s *IntentService) ProcessIncomingIntent(
 		EnvelopeID:                 in.EnvelopeID.String(),
 		TenantID:                   in.TenantID.String(),
 		IdempotencyKey:             in.IdempotencyKey,
-		SalientHash:                "NA",
+		SalientHash:                reqFingerprint,
 		PayloadHash:                in.PayloadHash,
+		RawRowHash:                 rawRowHash,
+		ArtifactID:                 artifactID,
+		ArtifactVersionID:          artifactVersionID,
 		IntentType:                 canonicalInput.IntentType,
 		CanonicalVersion:           "v1",
 		SchemaVersion:              canonicalInput.SchemaVersion,
@@ -1646,6 +2099,7 @@ func (s *IntentService) ProcessIncomingIntent(
 		DuplicateReasonCode:        dupReason,
 		BatchID:                    in.BatchID,
 		SourceRowNum:               sourceRowNum,
+		SourceRowRef:               sourceRowRef,
 		ValidationAnomalies:        anomalies,
 	}
 
@@ -1675,13 +2129,16 @@ func (s *IntentService) ProcessIncomingIntent(
 	}
 
 	canonical := models.CanonicalIntent{
-		TraceID:        in.TraceID.String(),
-		IntentID:       intentID,
-		EnvelopeID:     in.EnvelopeID.String(),
-		TenantID:       in.TenantID.String(),
-		IdempotencyKey: in.IdempotencyKey,
-		SalientHash:    "NA",
-		PayloadHash:    in.PayloadHash,
+		TraceID:           in.TraceID.String(),
+		IntentID:          intentID,
+		EnvelopeID:        in.EnvelopeID.String(),
+		TenantID:          in.TenantID.String(),
+		IdempotencyKey:    in.IdempotencyKey,
+		SalientHash:       reqFingerprint,
+		PayloadHash:       in.PayloadHash,
+		RawRowHash:        rawRowHash,
+		ArtifactID:        artifactID,
+		ArtifactVersionID: artifactVersionID,
 
 		IntentType:       canonicalInput.IntentType,
 		CanonicalVersion: "v1",
@@ -1693,9 +2150,10 @@ func (s *IntentService) ProcessIncomingIntent(
 		IntendedExecutionAt: executionAt,
 		Constraints:         constraintsJSON,
 
-		BeneficiaryType: canonicalInput.Beneficiary.Instrument.Kind,
-		PIITokens:       piiJSON,
-		Beneficiary:     beneficiaryJSON,
+		BeneficiaryType:      canonicalInput.Beneficiary.Instrument.Kind,
+		PIITokens:            piiJSON,
+		Beneficiary:          beneficiaryJSON,
+		TokenizationMetadata: tokenizationMetadataJSON,
 
 		Status:                     "CREATED",
 		CreatedAt:                  time.Now().UTC(),
@@ -1712,6 +2170,7 @@ func (s *IntentService) ProcessIncomingIntent(
 		DuplicateRiskFlag:     dupRisk,
 		MappingProfileID:      nir.ProfileID,
 		MappingProfileVersion: nir.ProfileVersion,
+		MappingProfileHash:    nir.MappingProfileHash,
 		SourceSystem:          in.SourceSystem,
 		GovernanceHash:        governanceHash,
 
@@ -1738,12 +2197,15 @@ func (s *IntentService) ProcessIncomingIntent(
 		UpdatedAt:           func(t time.Time) *time.Time { return &t }(time.Now().UTC()),
 		BatchID:             in.BatchID,
 		SourceRowNum:        sourceRowNum,
+		SourceRowRef:        sourceRowRef,
 		ValidationAnomalies: anomalies,
 	}
+	canonical.CanonicalRowHash = s.computeCanonicalRowHash(&canonical)
+	canonical.TokenizedDataHash = s.computeTokenizedDataHash(canonical.TenantID, tokenMap)
+	canonical.RawRowEvidenceLeafHash, canonical.CanonicalRowEvidenceLeafHash = s.computeEvidenceLeafHashes(&canonical)
 
 	// -------- STEP 9.1: AGGREGATE GOVERNANCE REASONS --------
 	canonical.Governance = governance
-	canonical.GovernanceReasonCodesJSON = s.aggregateGovernanceReasons(&canonical, nir)
 
 	// UPDATED: Determine GovernanceState (VALID / INVALID / FLAGGED)
 	canonical.GovernanceState = "VALID"
@@ -1757,6 +2219,52 @@ func (s *IntentService) ProcessIncomingIntent(
 		canonical.GovernanceState = "FLAGGED"
 	}
 
+	// Batch-size policy limit (ledger item #10): a batch this large gets
+	// held for review rather than blocked outright, since we've never
+	// enforced this before and don't want day-one enforcement to reject a
+	// legitimate large batch from an existing tenant.
+	if in.RowCountEstimate != nil && *in.RowCountEstimate > guards.MaxBatchSize {
+		canonical.GovernanceState = "REQUIRES_REVIEW"
+		canonical.Governance.PolicyFlags = append(canonical.Governance.PolicyFlags, "BATCH_SIZE_EXCEEDS_LIMIT")
+	}
+
+	// Tenant daily-amount policy limit (R-05): atomic per-(tenant,
+	// business_date, currency) reservation, not a stale pre-read total.
+	// Locking the usage row inside one transaction — rather than reading a
+	// snapshot before this row is decided — is what makes this safe against
+	// two concurrent requests (or two rows in the same batch) both reading
+	// the same total and both passing: the second one to reach the lock
+	// always sees the first one's committed increment. A held (REQUIRES_
+	// REVIEW) amount is never added to accepted_amount — only ACCEPT does.
+	//
+	// Known limitation: an ACCEPT reservation commits before this row is
+	// actually persisted to payment_intents (repo.Save happens later, in
+	// the caller). If that later save fails, the reservation is not rolled
+	// back — the tenant's usage row reflects a slightly higher total than
+	// what's actually in payment_intents until the next request corrects
+	// course. A full compensating-transaction/saga wasn't built for this
+	// rare failure mode; none of R-05's acceptance tests exercise it.
+	businessDate := persistence.BusinessDateUTC(time.Now())
+	dailyLimitDecision, dailyTotalBefore, errDailyUsage := s.tenantDailyUsage.ReserveIfWithinLimit(
+		ctx, canonical.TenantID, businessDate, canonical.Currency,
+		canonical.Amount, decimal.NewFromInt(guards.TenantDailyLimit),
+	)
+	if errDailyUsage != nil {
+		// Fail safe, not fail open: R-05 exists because the old check could
+		// be silently bypassed. An usage-tracking failure holds for review
+		// rather than risking an unverified amount passing as ACCEPTED.
+		log.Printf("⚠️ tenant_daily_usage reservation failed, holding for review [tenant=%s currency=%s]: %v",
+			canonical.TenantID, canonical.Currency, errDailyUsage)
+		dailyLimitDecision = persistence.DailyLimitDecisionRequiresReview
+		dailyTotalBefore = decimal.Zero
+	}
+	if dailyLimitDecision == persistence.DailyLimitDecisionRequiresReview {
+		canonical.GovernanceState = "REQUIRES_REVIEW"
+		canonical.Governance.PolicyFlags = append(canonical.Governance.PolicyFlags, "TENANT_DAILY_LIMIT_EXCEEDED")
+	}
+
+	canonical.GovernanceReasonCodesJSON = s.aggregateGovernanceReasons(&canonical, nir)
+
 	// 🆕 Status Fields
 	govDec := "Pass"
 	if canonical.GovernanceState == "FLAGGED" || canonical.GovernanceState == "REQUIRES_REVIEW" {
@@ -1764,68 +2272,258 @@ func (s *IntentService) ProcessIncomingIntent(
 	}
 	canonical.GovernanceDecision = &govDec
 
+	// A row only ever reaches payment_intents once it has cleared governance,
+	// so the only lifecycle states reachable here today are ACCEPTED and
+	// FLAGGED_FOR_REVIEW. The remaining states in the CHECK constraint are
+	// reserved for later phases (policy engine, duplicate decisions, evidence,
+	// dispatch readiness) that don't persist a state transition yet.
+	canonical.IntentLifecycleState = "ACCEPTED"
+	if canonical.GovernanceState == "FLAGGED" || canonical.GovernanceState == "REQUIRES_REVIEW" {
+		canonical.IntentLifecycleState = "FLAGGED_FOR_REVIEW"
+	}
+
 	reqStatus := nir.RequiredFieldGapCount == 0
 	canonical.RequiredFieldsStatus = &reqStatus
 
 	tokStatus := true
 	canonical.TokenizationStatus = &tokStatus
 
-	// RE-COMPUTE hash if state changed from VALID to FLAGGED (FIX)
-	if canonical.GovernanceState != "VALID" {
-		canonical.GovernanceHash = s.computeGovernanceHash(&canonical)
-	}
+	// Finalize governance_decision_hash + input_facts_hash now that
+	// GovernanceState, DuplicateRiskFlag and Amount are all settled.
+	// dailyTotalBefore is the accepted total prior to this reservation —
+	// an audit fact about what the decision was based on, not the
+	// post-reservation total.
+	canonical.GovernanceHash = s.computeGovernanceHash(
+		&canonical,
+		canonicalInput.PurposeCode,
+		dailyTotalBefore.Mul(decimal.NewFromInt(100)).IntPart(),
+	)
 
-	// -------- STEP 10: OUTBOX + PERSISTENCE (ATOMIC DB) --------
+	retPolicyDecision = buildIntentPolicyDecision(
+		canonical.TenantID, canonical.IntentID, canonical.GovernanceState,
+		append(append([]string{}, canonical.Governance.SemanticErrors...), canonical.Governance.PolicyFlags...),
+		policyInputFacts(&canonical, in.RowCountEstimate),
+	)
+	canonical.PolicySource, canonical.PolicyVersion, canonical.PolicyHash =
+		retPolicyDecision.PolicySource, retPolicyDecision.PolicyVersion, retPolicyDecision.PolicyHash
 
+	retDuplicateDecision = buildDuplicateDecision(
+		canonical.TenantID, canonical.IntentID, dupReason, dupRiskScore, comparedIntentID,
+		bIdemKey, in.IdempotencyKey, canonicalInput.ClientPayoutRef,
+		policyInputFacts(&canonical, in.RowCountEstimate),
+	)
+
+	// -------- RETURN PREPARED VALUES --------
 	canonicalPayload, err := json.Marshal(canonical)
 	if err != nil {
-		log.Printf("⚠️ Failed to marshal canonical intent for EnvelopeID=%s: %v", in.EnvelopeID, err)
-		return nil, nil, err
+		log.Printf("⚠️ Failed to marshal canonical intent: %v", err)
+		retErr = err
+		return
 	}
 
 	outbox, err := CanonicalIntentToOutboxEvent(canonical, canonicalPayload, "intent.created.v1")
 	if err != nil {
-		log.Printf("⚠️ Failed to create outbox event for EnvelopeID=%s: %v", in.EnvelopeID, err)
-		return nil, nil, err
+		log.Printf("⚠️ Failed to create outbox event: %v", err)
+		retErr = err
+		return
 	}
 
-	saved, err := s.repo.Save(ctx, nir, canonical, outbox, registryEntry)
+	retIn = in
+	retProfile = resolvedProfile
+	retDecrypted = decryptedPayload
+	retRawAudit = rawAuditPayload
+	retAuditProfileID = auditProfileID
+	retAuditProfileVersion = auditProfileVersion
+	retSourceRowNum = sourceRowNum
+	retNir = nir
+	retCanonical = &canonical
+	retOutbox = &outbox
+	retRegistry = registryEntry
+	return
+}
+
+func (s *IntentService) ProcessIncomingIntent(
+	ctx context.Context,
+	event *models.Event,
+) (retCanonical *models.CanonicalIntent, retDlq *models.DLQEntry, retErr error) {
+
+	var in *models.IncomingIntent
+	var resolvedProfile *models.MappingProfile
+	var decryptedPayload []byte
+	var rawAuditPayload []byte
+	var auditProfileID string
+	var auditProfileVersion string
+	var sourceRowNum *int
+
+	defer func() {
+		if retDlq != nil && retDlq.SourceRowNum == nil && sourceRowNum != nil {
+			retDlq.SourceRowNum = sourceRowNum
+		}
+
+		if in == nil || in.BatchID == nil || *in.BatchID == "" {
+			return
+		}
+
+		if retErr != nil {
+			return
+		}
+
+		var status = "ACCEPTED"
+		var errDetail = ""
+		var mappingID = ""
+		var profileIDHint = ""
+
+		if retDlq != nil {
+			if retDlq.ReasonCode == "DUPLICATE_BUSINESS_KEY" || retDlq.ReasonCode == "DUPLICATE_IDEMPOTENCY_KEY" {
+				status = "DUPLICATE"
+			} else {
+				status = "FAILED"
+			}
+			errDetail = retDlq.ReasonCode
+		}
+
+		if resolvedProfile != nil {
+			mappingID = resolvedProfile.ProfileID
+			profileIDHint = resolvedProfile.ProfileVersion
+		} else if auditProfileID != "" {
+			mappingID = auditProfileID
+			profileIDHint = auditProfileVersion
+		}
+
+		auditPayload := rawAuditPayload
+		if len(auditPayload) == 0 {
+			auditPayload = decryptedPayload
+		}
+		rowIndex := 0
+		if sourceRowNum != nil {
+			rowIndex = *sourceRowNum
+		}
+
+		fileName := ""
+		fileHash := ""
+		var totalRows int = 0
+
+		if in.FileName != nil {
+			fileName = *in.FileName
+		}
+		if in.FileContentHash != nil {
+			fileHash = *in.FileContentHash
+		}
+		if in.RowCountEstimate != nil {
+			totalRows = *in.RowCountEstimate
+		}
+
+		runID, errRun := db.EnsureIngestRun(ctx, s.db, in.TenantID.String(), *in.BatchID)
+		if errRun != nil {
+			log.Printf("⚠️ Audit: failed to ensure ingest run for batch=%s: %v", *in.BatchID, errRun)
+			// Fall back to a fresh id so the row/run upserts below still have a
+			// valid UUID to write — best-effort audit, not worth failing the intent over.
+			runID = uuid.New().String()
+		}
+
+		errInsert := db.InsertIngestRow(ctx, s.db,
+			runID, *in.BatchID, in.TenantID.String(), mappingID, profileIDHint,
+			rowIndex, in.IdempotencyKey, status, errDetail, in.SourceSystem,
+			fileName, fileHash, auditPayload,
+		)
+		if errInsert != nil {
+			log.Printf("⚠️ Audit: failed to insert row audit for batch=%s row=%d: %v", *in.BatchID, rowIndex, errInsert)
+		}
+
+		acceptedCount := 0
+		failedCount := 0
+		duplicateCount := 0
+		errStats := s.db.QueryRowContext(ctx, `
+			SELECT
+				COUNT(*) FILTER (WHERE status = 'ACCEPTED'),
+				COUNT(*) FILTER (WHERE status = 'FAILED'),
+				COUNT(*) FILTER (WHERE status = 'DUPLICATE')
+			FROM intent_ingest_rows
+			WHERE tenant_id = $1 AND batch_id = $2`,
+			in.TenantID.String(), *in.BatchID,
+		).Scan(&acceptedCount, &failedCount, &duplicateCount)
+
+		if errStats != nil {
+			log.Printf("⚠️ Audit: failed to query batch stats for batch=%s: %v", *in.BatchID, errStats)
+			return
+		}
+
+		processedRows := acceptedCount + failedCount + duplicateCount
+		hasTotalRows := totalRows > 0
+		if !hasTotalRows {
+			totalRows = processedRows
+		}
+
+		runStatus := "PROCESSING"
+		if hasTotalRows && processedRows >= totalRows {
+			runStatus = "COMPLETED"
+		}
+
+		errUpsert := db.UpsertIngestRun(ctx, s.db,
+			runID, *in.BatchID, in.TenantID.String(),
+			mappingID, profileIDHint, fileName, fileHash,
+			totalRows, acceptedCount, failedCount, duplicateCount,
+			runStatus,
+		)
+		if errUpsert != nil {
+			log.Printf("⚠️ Audit: failed to upsert run audit for batch=%s: %v", *in.BatchID, errUpsert)
+		}
+	}()
+
+	var nir *models.NormalizedIngestRecord
+	var canonical *models.CanonicalIntent
+	var outbox *models.OutboxEvent
+	var registryEntry *models.BusinessIdempotencyEntry
+	var policyDecision *models.IntentPolicyDecision
+	var duplicateDecision *models.DuplicateDecision
+
+	in, resolvedProfile, decryptedPayload, rawAuditPayload, auditProfileID, auditProfileVersion, sourceRowNum,
+		nir, canonical, outbox, registryEntry, retDlq, retErr, policyDecision, duplicateDecision = s.processIncomingIntentInternal(ctx, event)
+	if retErr != nil {
+		return nil, nil, retErr
+	}
+	if retDlq != nil {
+		if in.Source == "WEBHOOK" {
+			// Webhook saves itself inside processWebhook
+			return nil, retDlq, nil
+		}
+		// DLQ entries are saved by the caller in main.go
+		return nil, retDlq, nil
+	}
+
+	if in.Source == "WEBHOOK" {
+		// Webhook has already been saved inside processWebhook
+		return canonical, nil, nil
+	}
+
+	// Idempotency cache hit: outbox is nil because no new intent was built.
+	// Return the existing canonical directly — no DB write.
+	if outbox == nil {
+		return canonical, nil, nil
+	}
+
+	saved, err := s.repo.Save(ctx, nir, *canonical, *outbox, registryEntry, policyDecision, duplicateDecision)
 	if err != nil {
 		log.Printf("⚠️ Repo.Save failed for EnvelopeID=%s: %v", in.EnvelopeID, err)
+		retErr = err
 		return nil, nil, err
 	}
 
-	// If Save detected a concurrent duplicate (ON CONFLICT DO NOTHING triggered),
-	// use the updated saved intent which has DuplicateRiskFlag=true set by the repo.
-	canonical = saved
-
-	// -------- STEP 11: WORM SNAPSHOT (S3) --------
-
+	canonicalVal := saved
 	version := 1
-
-	prevHash, err := s.repo.GetPreviousTenantCanonicalHash(
-		ctx,
-		saved.TenantID,
-		saved.IntentID,
-	)
+	prevHash, err := s.repo.GetPreviousTenantCanonicalHash(ctx, saved.TenantID, saved.IntentID)
 	if err != nil {
+		retErr = err
 		return nil, nil, err
 	}
 
 	canonicalBytes, err := json.Marshal(saved)
 	if err != nil {
+		retErr = err
 		return nil, nil, err
 	}
 
-	canonicalRef, hash, err := s.s3.StoreSnapshot(
-		ctx,
-		"canonical",
-		saved.TenantID,
-		saved.IntentID,
-		version,
-		canonicalBytes,
-		prevHash,
-	)
+	canonicalRef, hash, err := s.s3.StoreSnapshot(ctx, "canonical", saved.TenantID, saved.IntentID, version, canonicalBytes, prevHash)
 	if err != nil {
 		log.Printf("⚠️ S3 Canonical Snapshot failed: %v. Warning: WORM metadata will remain null.", err)
 		return &saved, nil, nil
@@ -1838,31 +2536,25 @@ func (s *IntentService) ProcessIncomingIntent(
 		log.Printf("⚠️ S3 NIR Snapshot failed: %v", err)
 	}
 
-	govBytes := []byte(`{"state":"` + canonical.GovernanceState + `"}`)
+	govBytes := []byte(`{"state":"` + canonicalVal.GovernanceState + `"}`)
 	govRef, _, err := s.s3.StoreSnapshot(ctx, "governance", saved.TenantID, saved.IntentID, version, govBytes, "")
 	if err != nil {
 		log.Printf("⚠️ S3 Governance Snapshot failed: %v", err)
 	}
 
-	// -------- STEP 12: UPDATE DB WITH WORM METADATA --------
+	saved.CanonicalHash = hash
+	newGovernanceHash := s.recomputeGovernanceDecisionHash(&saved)
 
-	err = s.repo.UpdateSnapshotRefs(
-		ctx,
-		saved.IntentID,
-		canonicalRef,
-		nirRef,
-		govRef,
-		hash,
-		prevHash,
-	)
+	err = s.repo.UpdateSnapshotRefs(ctx, saved.TenantID, saved.IntentID, canonicalRef, nirRef, govRef, hash, prevHash, newGovernanceHash)
 	if err != nil {
+		retErr = err
 		return nil, nil, err
 	}
 
 	saved.CanonicalSnapshotRef = canonicalRef
 	saved.NIRSnapshotRef = nirRef
 	saved.GovernanceSnapshotRef = govRef
-	saved.CanonicalHash = hash
+	saved.GovernanceHash = newGovernanceHash
 
 	if in.BatchID != nil && *in.BatchID != "" {
 		batchKey := fmt.Sprintf("%s|%s", in.TenantID.String(), *in.BatchID)
@@ -1875,6 +2567,242 @@ func (s *IntentService) ProcessIncomingIntent(
 	}
 
 	return &saved, nil, nil
+}
+
+func (s *IntentService) ProcessIncomingIntentsBatch(
+	ctx context.Context,
+	events []*models.Event,
+) ([]models.CanonicalIntent, []models.DLQEntry, error) {
+	if len(events) == 0 {
+		return nil, nil, nil
+	}
+
+	var batchItems []models.SaveBatchItem
+	var ingestRows []db.IngestRowItem
+
+	var firstIn *models.IncomingIntent
+	var resolvedMappingID string
+	var resolvedProfileVersion string
+
+	// All events in one call share the same batch upload, so a single stable
+	// run_id covers the whole batch — resolved once upfront rather than per row.
+	var batchRunID string
+	if events[0].BatchID != nil && *events[0].BatchID != "" {
+		if id, errRun := db.EnsureIngestRun(ctx, s.db, events[0].TenantID.String(), *events[0].BatchID); errRun != nil {
+			log.Printf("⚠️ ProcessIncomingIntentsBatch: failed to ensure ingest run for batch=%s: %v", *events[0].BatchID, errRun)
+			batchRunID = uuid.New().String()
+		} else {
+			batchRunID = id
+		}
+	}
+
+	// R-05: unlike batchRunID above, the daily-amount limit is deliberately
+	// NOT resolved once upfront here. Each row now reserves its own slice of
+	// the tenant's daily limit atomically inside processIncomingIntentInternal,
+	// so row N in this loop correctly sees rows 1..N-1's already-committed
+	// usage — a single stale total shared across the whole batch previously
+	// let every row individually look fine against the same starting number
+	// while collectively blowing through the limit.
+	for _, event := range events {
+		in, resolvedProfile, decryptedPayload, rawAuditPayload, auditProfileID, auditProfileVersion, sourceRowNum,
+			nir, canonical, outbox, registryEntry, dlq, err, policyDecision, duplicateDecision := s.processIncomingIntentInternal(ctx, event)
+		if err != nil {
+			log.Printf("⚠️ ProcessIncomingIntentsBatch: system error preparing intent: %v", err)
+			continue
+		}
+
+		if firstIn == nil && in != nil {
+			firstIn = in
+			if resolvedProfile != nil {
+				resolvedMappingID = resolvedProfile.ProfileID
+				resolvedProfileVersion = resolvedProfile.ProfileVersion
+			} else if auditProfileID != "" {
+				resolvedMappingID = auditProfileID
+				resolvedProfileVersion = auditProfileVersion
+			}
+		}
+
+		status := "ACCEPTED"
+		errDetail := ""
+		mappingID := ""
+		profileIDHint := ""
+
+		if dlq != nil {
+			if dlq.ReasonCode == "DUPLICATE_BUSINESS_KEY" || dlq.ReasonCode == "DUPLICATE_IDEMPOTENCY_KEY" {
+				status = "DUPLICATE"
+			} else {
+				status = "FAILED"
+			}
+			errDetail = dlq.ReasonCode
+			if dlq.SourceRowNum == nil && sourceRowNum != nil {
+				dlq.SourceRowNum = sourceRowNum
+			}
+		}
+
+		if resolvedProfile != nil {
+			mappingID = resolvedProfile.ProfileID
+			profileIDHint = resolvedProfile.ProfileVersion
+		} else if auditProfileID != "" {
+			mappingID = auditProfileID
+			profileIDHint = auditProfileVersion
+		}
+
+		auditPayload := rawAuditPayload
+		if len(auditPayload) == 0 {
+			auditPayload = decryptedPayload
+		}
+		rowIndex := 0
+		if sourceRowNum != nil {
+			rowIndex = *sourceRowNum
+		}
+
+		fileName := ""
+		fileHash := ""
+		if in != nil {
+			if in.FileName != nil {
+				fileName = *in.FileName
+			}
+			if in.FileContentHash != nil {
+				fileHash = *in.FileContentHash
+			}
+
+			ingestRows = append(ingestRows, db.IngestRowItem{
+				RunID:          batchRunID,
+				BatchID:        *in.BatchID,
+				TenantID:       in.TenantID.String(),
+				MappingID:      mappingID,
+				ProfileID:      profileIDHint,
+				RowIndex:       rowIndex,
+				IdempotencyKey: in.IdempotencyKey,
+				Status:         status,
+				ErrorDetail:    errDetail,
+				SourceSystem:   in.SourceSystem,
+				FileName:       fileName,
+				FileHash:       fileHash,
+				RawRowJSON:     auditPayload,
+			})
+		}
+
+		// Skip idempotency cache hits and webhook paths — outbox is nil, nothing to write.
+		if outbox != nil || dlq != nil {
+			batchItems = append(batchItems, models.SaveBatchItem{
+				Nir:               nir,
+				Intent:            canonical,
+				Outbox:            outbox,
+				RegistryEntry:     registryEntry,
+				DlqEntry:          dlq,
+				PolicyDecision:    policyDecision,
+				DuplicateDecision: duplicateDecision,
+			})
+		}
+	}
+
+	savedIntents, savedDLQs, err := s.repo.SaveBatch(ctx, batchItems)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ProcessIncomingIntentsBatch: SaveBatch failed: %w", err)
+	}
+
+	for _, saved := range savedIntents {
+		version := 1
+		prevHash, err := s.repo.GetPreviousTenantCanonicalHash(ctx, saved.TenantID, saved.IntentID)
+		if err != nil {
+			log.Printf("⚠️ Batch S3 Snapshot: failed to get previous hash for intent %s: %v", saved.IntentID, err)
+			continue
+		}
+
+		canonicalBytes, err := json.Marshal(saved)
+		if err != nil {
+			continue
+		}
+
+		canonicalRef, hash, err := s.s3.StoreSnapshot(ctx, "canonical", saved.TenantID, saved.IntentID, version, canonicalBytes, prevHash)
+		if err != nil {
+			log.Printf("⚠️ Batch S3 Canonical Snapshot failed: %v", err)
+			continue
+		}
+
+		var nirRef string
+		for _, item := range batchItems {
+			if item.Intent != nil && item.Intent.IntentID == saved.IntentID && item.Nir != nil {
+				nirBytes, _ := json.Marshal(item.Nir)
+				nirRef, _, _ = s.s3.StoreSnapshot(ctx, "nir", saved.TenantID, saved.IntentID, version, nirBytes, "")
+				break
+			}
+		}
+
+		govBytes := []byte(`{"state":"` + saved.GovernanceState + `"}`)
+		govRef, _, _ := s.s3.StoreSnapshot(ctx, "governance", saved.TenantID, saved.IntentID, version, govBytes, "")
+
+		saved.CanonicalHash = hash
+		newGovernanceHash := s.recomputeGovernanceDecisionHash(&saved)
+
+		err = s.repo.UpdateSnapshotRefs(ctx, saved.TenantID, saved.IntentID, canonicalRef, nirRef, govRef, hash, prevHash, newGovernanceHash)
+		if err != nil {
+			log.Printf("⚠️ Batch S3: UpdateSnapshotRefs failed for intent %s: %v", saved.IntentID, err)
+		}
+	}
+
+	if len(ingestRows) > 0 {
+		errAudit := db.InsertIngestRowsBatch(ctx, s.db, ingestRows)
+		if errAudit != nil {
+			log.Printf("⚠️ Batch Audit: failed to insert row audits: %v", errAudit)
+		}
+	}
+
+	if firstIn != nil && firstIn.BatchID != nil && *firstIn.BatchID != "" {
+		// Use the counts we actually just wrote as the ground truth.
+		// Do NOT re-query intent_ingest_rows here — that table may not yet reflect
+		// all rows (chunked inserts just finished) and would produce a stale count
+		// that UpdateBatchAggregateConfidence then uses to override canonicalized_count.
+		actualAccepted := len(savedIntents)
+		actualFailed := len(savedDLQs)
+		actualDuplicate := 0 // duplicates were handled inside SaveBatch (ON CONFLICT)
+
+		totalRows := actualAccepted + actualFailed + actualDuplicate
+		if firstIn.RowCountEstimate != nil && *firstIn.RowCountEstimate > totalRows {
+			// Trust the file's declared row count if higher (some rows may still be
+			// pending from a concurrent per-event path on the same batch).
+			totalRows = *firstIn.RowCountEstimate
+		}
+
+		fileName := ""
+		fileHash := ""
+		if firstIn.FileName != nil {
+			fileName = *firstIn.FileName
+		}
+		if firstIn.FileContentHash != nil {
+			fileHash = *firstIn.FileContentHash
+		}
+
+		runStatus := "COMPLETED"
+		if firstIn.RowCountEstimate != nil && *firstIn.RowCountEstimate > actualAccepted+actualFailed {
+			// Declared file size exceeds what we wrote — still more rows expected.
+			runStatus = "PROCESSING"
+		}
+
+		if batchRunID == "" {
+			batchRunID = uuid.New().String()
+		}
+		errUpsert := db.UpsertIngestRun(ctx, s.db,
+			batchRunID, *firstIn.BatchID, firstIn.TenantID.String(),
+			resolvedMappingID, resolvedProfileVersion, fileName, fileHash,
+			totalRows, actualAccepted, actualFailed, actualDuplicate,
+			runStatus,
+		)
+		if errUpsert != nil {
+			log.Printf("⚠️ Batch Audit: failed to upsert run audit for batch=%s: %v", *firstIn.BatchID, errUpsert)
+		}
+
+		batchKey := fmt.Sprintf("%s|%s", firstIn.TenantID.String(), *firstIn.BatchID)
+		_, err, _ := batchAggregateGroup.Do(batchKey, func() (interface{}, error) {
+			return s.repo.UpdateBatchAggregateConfidence(context.Background(), firstIn.TenantID.String(), *firstIn.BatchID)
+		})
+		if err != nil {
+			log.Printf("⚠️ Failed to update batch aggregate confidence for batch=%s: %v", *firstIn.BatchID, err)
+		}
+	}
+
+	return savedIntents, savedDLQs, nil
 }
 
 /* ---------------- ASYNC TOKENIZATION RESULT (KAFKA) ---------------- */
@@ -1898,6 +2826,22 @@ func (s *IntentService) ProcessTokenizeResult(
 	if err != nil {
 		return nil, err
 	}
+
+	// Ledger item #18: same provenance record as the sync enclave path, tagged
+	// with the async method — this result arrived via the Kafka tokenize-queue
+	// fallback, not a live enclave call.
+	tokenizedFields := make([]string, 0, len(tokenMap))
+	for field, val := range tokenMap {
+		if val != "" {
+			tokenizedFields = append(tokenizedFields, field)
+		}
+	}
+	sort.Strings(tokenizedFields)
+	tokenizationMetadataJSON, _ := json.Marshal(map[string]any{
+		"method":           "enclave_async_kafka",
+		"tokenized_fields": tokenizedFields,
+		"tokenized_at":     time.Now().UTC(),
+	})
 
 	beneficiaryTokenized := map[string]any{
 		"instrument": map[string]any{
@@ -1958,6 +2902,11 @@ func (s *IntentService) ProcessTokenizeResult(
 	lowConfCount := canonicalInput.LowConfidenceFieldCount
 	gapCount := canonicalInput.RequiredFieldGapCount
 
+	// No registered profile is resolved on this async/reconstructed path, so
+	// mapping_profile_hash is derived from the KAFKA_RECONSTRUCTED field
+	// mappings above — never left blank.
+	profileHash := s.computeGenericMappingProfileHash(profileID, profileVersion, event.SourceSystem, "json", fieldsMap)
+
 	nir := &models.NormalizedIngestRecord{
 		NIRID:                   uuid.New(),
 		EnvelopeID:              uuid.MustParse(event.EnvelopeID),
@@ -1968,10 +2917,12 @@ func (s *IntentService) ProcessTokenizeResult(
 		FieldsJSON:              fieldsJSON,
 		FieldConfidenceSummary:  fieldConfSummary,
 		UnmappedJSON:            json.RawMessage(`{}`),
+		MappingProfileHash:      profileHash,
 		MappingUncertainFlag:    false,
 		RequiredFieldGapCount:   gapCount,
 		LowConfidenceFieldCount: lowConfCount,
 		CreatedAt:               time.Now().UTC(),
+		// No resolvedProfile in this async (post-tokenization) flow, so no hash to snapshot.
 	}
 
 	// -------- COMPUTE SCORES & FINGERPRINT --------
@@ -1980,7 +2931,11 @@ func (s *IntentService) ProcessTokenizeResult(
 
 	bFingerprint := s.computeBeneficiaryFingerprint(tokenMap)
 	timeBucket := time.Now().UTC().Format("2006-01-02")
-	bIdemKey := s.computeBusinessIdempotencyKey(event.TenantID, bFingerprint, amount, canonicalInput.Amount.Currency, timeBucket)
+	bIdemKey := s.computeBusinessIdempotencyKey(
+		event.TenantID, event.SourceSystem, canonicalInput.ClientPayoutRef,
+		bFingerprint, amount, canonicalInput.Amount.Currency,
+		canonicalInput.IntendedExecutionAt, canonicalInput.PurposeCode,
+	)
 
 	// UPDATED: Abnormal amount detection
 	var anomalies []string
@@ -1996,6 +2951,7 @@ func (s *IntentService) ProcessTokenizeResult(
 
 	dupRisk := false
 	dupReason := "NONE"
+	comparedIntentID := ""
 	var registryEntry *models.BusinessIdempotencyEntry
 
 	if registryDuplicate != nil {
@@ -2004,6 +2960,7 @@ func (s *IntentService) ProcessTokenizeResult(
 		if dupReason == "" {
 			dupReason = "SAME_BENEFICIARY_AMOUNT_TIME"
 		}
+		comparedIntentID = registryDuplicate.IntentID.String()
 	} else {
 		// Prepare registry entry
 		registryEntry = &models.BusinessIdempotencyEntry{
@@ -2038,6 +2995,18 @@ func (s *IntentService) ProcessTokenizeResult(
 		idempotencyKey = canonicalInput.IdempotencyKey
 	}
 
+	// Strict duplicate signals take precedence over the semantic registry
+	// match above — see single-item path for rationale.
+	if strictID, serr := s.repo.FindIntentIDByIdempotencyKey(ctx, event.TenantID, idempotencyKey); serr == nil && strictID != "" {
+		dupRisk = true
+		dupReason = "SAME_IDEMPOTENCY_KEY"
+		comparedIntentID = strictID
+	} else if refID, serr := s.repo.FindIntentIDByClientPayoutRef(ctx, event.TenantID, canonicalInput.ClientPayoutRef); serr == nil && refID != "" {
+		dupRisk = true
+		dupReason = "CLIENT_PAYOUT_REF_REUSED"
+		comparedIntentID = refID
+	}
+
 	// FIX: Deterministic Request Fingerprint (Replacing KAFKA_TOKENIZED)
 	reqFingerprint := s.computeRequestFingerprint(
 		canonicalInput.Beneficiary.Name,
@@ -2054,8 +3023,11 @@ func (s *IntentService) ProcessTokenizeResult(
 		EnvelopeID:                 event.EnvelopeID,
 		TenantID:                   event.TenantID,
 		IdempotencyKey:             idempotencyKey,
-		SalientHash:                "NA",
+		SalientHash:                reqFingerprint,
 		PayloadHash:                canonicalInput.PayloadHash,
+		RawRowHash:                 canonicalInput.RawRowHash,
+		ArtifactID:                 canonicalInput.ArtifactID,
+		ArtifactVersionID:          canonicalInput.ArtifactVersionID,
 		IntentType:                 canonicalInput.IntentType,
 		CanonicalVersion:           "v1",
 		SchemaVersion:              canonicalInput.SchemaVersion,
@@ -2087,6 +3059,7 @@ func (s *IntentService) ProcessTokenizeResult(
 		DuplicateReasonCode:        dupReason,
 		BatchID:                    event.BatchID,
 		SourceRowNum:               sourceRowNum,
+		SourceRowRef:               canonicalInput.SourceRowRef,
 		ValidationAnomalies:        anomalies,
 	}
 
@@ -2116,6 +3089,7 @@ func (s *IntentService) ProcessTokenizeResult(
 		EnvelopeID:     event.EnvelopeID,
 		TenantID:       event.TenantID,
 		IdempotencyKey: idempotencyKey,
+		SalientHash:    reqFingerprint,
 
 		IntentType:       canonicalInput.IntentType,
 		CanonicalVersion: "v1",
@@ -2127,9 +3101,10 @@ func (s *IntentService) ProcessTokenizeResult(
 		IntendedExecutionAt: executionAt,
 		Constraints:         constraintsJSON,
 
-		BeneficiaryType: canonicalInput.Beneficiary.Instrument.Kind,
-		PIITokens:       piiJSON,
-		Beneficiary:     beneficiaryJSON,
+		BeneficiaryType:      canonicalInput.Beneficiary.Instrument.Kind,
+		PIITokens:            piiJSON,
+		Beneficiary:          beneficiaryJSON,
+		TokenizationMetadata: tokenizationMetadataJSON,
 
 		Status:                     "CREATED",
 		CreatedAt:                  time.Now().UTC(),
@@ -2146,6 +3121,7 @@ func (s *IntentService) ProcessTokenizeResult(
 		DuplicateRiskFlag:     dupRisk,
 		MappingProfileID:      nir.ProfileID,
 		MappingProfileVersion: nir.ProfileVersion, // Flowed from async NIR
+		MappingProfileHash:    nir.MappingProfileHash,
 		SourceSystem:          event.SourceSystem,
 		GovernanceHash:        event.Canonical.GovernanceHash,
 		// Service 2 fields
@@ -2171,8 +3147,12 @@ func (s *IntentService) ProcessTokenizeResult(
 		UpdatedAt:           func(t time.Time) *time.Time { return &t }(time.Now().UTC()),
 		BatchID:             event.BatchID,
 		SourceRowNum:        sourceRowNum,
+		SourceRowRef:        canonicalInput.SourceRowRef,
 		ValidationAnomalies: anomalies,
 	}
+	intent.CanonicalRowHash = s.computeCanonicalRowHash(&intent)
+	intent.TokenizedDataHash = s.computeTokenizedDataHash(intent.TenantID, tokenMap)
+	intent.RawRowEvidenceLeafHash, intent.CanonicalRowEvidenceLeafHash = s.computeEvidenceLeafHashes(&intent)
 
 	// -------- AGGREGATE GOVERNANCE REASONS --------
 	intent.Governance = governance
@@ -2197,14 +3177,34 @@ func (s *IntentService) ProcessTokenizeResult(
 	}
 	intent.GovernanceDecision = &govDec
 
+	// See single-item path for why only ACCEPTED/FLAGGED_FOR_REVIEW are reachable here.
+	intent.IntentLifecycleState = "ACCEPTED"
+	if intent.GovernanceState == "FLAGGED" || intent.GovernanceState == "REQUIRES_REVIEW" {
+		intent.IntentLifecycleState = "FLAGGED_FOR_REVIEW"
+	}
+
 	reqStatus := nir.RequiredFieldGapCount == 0
 	intent.RequiredFieldsStatus = &reqStatus
 
 	tokStatus := true
 	intent.TokenizationStatus = &tokStatus
 
-	// FIX: Compute deterministic governance_hash (UPDATED)
-	intent.GovernanceHash = s.computeGovernanceHash(&intent)
+	// Finalize governance_decision_hash + input_facts_hash. This async path
+	// doesn't track a running tenant daily total, so daily_total_minor is 0.
+	intent.GovernanceHash = s.computeGovernanceHash(&intent, canonicalInput.PurposeCode, 0)
+
+	policyDecision := buildIntentPolicyDecision(
+		intent.TenantID, intent.IntentID, intent.GovernanceState,
+		append(append([]string{}, intent.Governance.SemanticErrors...), intent.Governance.PolicyFlags...),
+		policyInputFacts(&intent, nil),
+	)
+	intent.PolicySource, intent.PolicyVersion, intent.PolicyHash = policyDecision.PolicySource, policyDecision.PolicyVersion, policyDecision.PolicyHash
+
+	duplicateDecision := buildDuplicateDecision(
+		intent.TenantID, intent.IntentID, dupReason, dupRiskScore, comparedIntentID,
+		bIdemKey, idempotencyKey, canonicalInput.ClientPayoutRef,
+		policyInputFacts(&intent, nil),
+	)
 
 	payload, err := json.Marshal(intent)
 	if err != nil {
@@ -2216,7 +3216,7 @@ func (s *IntentService) ProcessTokenizeResult(
 		return nil, err
 	}
 
-	saved, err := s.repo.Save(ctx, nir, intent, outbox, registryEntry)
+	saved, err := s.repo.Save(ctx, nir, intent, outbox, registryEntry, policyDecision, duplicateDecision)
 	if err != nil {
 		return nil, err
 	}
@@ -2277,20 +3277,25 @@ func (s *IntentService) ProcessTokenizeResult(
 		return nil, err
 	}
 
+	saved.CanonicalHash = hash
+	newGovernanceHash := s.recomputeGovernanceDecisionHash(&saved)
+
 	err = s.repo.UpdateSnapshotRefs(
 		ctx,
+		saved.TenantID,
 		saved.IntentID,
 		canonicalRef,
 		nirRef,
 		govRef,
 		hash,
 		prevHash,
+		newGovernanceHash,
 	)
 
 	saved.CanonicalSnapshotRef = canonicalRef
 	saved.NIRSnapshotRef = nirRef
 	saved.GovernanceSnapshotRef = govRef
-	saved.CanonicalHash = hash
+	saved.GovernanceHash = newGovernanceHash
 
 	if event.BatchID != nil && *event.BatchID != "" {
 		batchKey := fmt.Sprintf("%s|%s", event.TenantID, *event.BatchID)
@@ -2318,7 +3323,7 @@ func (s *IntentService) processWebhook(
 		EnvelopeID:     in.EnvelopeID.String(),
 		TenantID:       in.TenantID.String(),
 		IdempotencyKey: in.IdempotencyKey,
-		SalientHash:    "NA",
+		SalientHash:    in.IdempotencyKey,
 		IntentType:     "WEBHOOK",
 		SchemaVersion:  "v1",
 		Amount:         decimal.Zero,
@@ -2326,38 +3331,62 @@ func (s *IntentService) processWebhook(
 		Status:         "CREATED",
 		CreatedAt:      time.Now().UTC(),
 
-		IntendedExecutionAt: nil,
-		Constraints:         json.RawMessage("{}"),
-		PIITokens:           json.RawMessage("{}"),
-		Beneficiary:         json.RawMessage("{}"),
+		IntendedExecutionAt:  nil,
+		Constraints:          json.RawMessage("{}"),
+		PIITokens:            json.RawMessage("{}"),
+		Beneficiary:          json.RawMessage("{}"),
+		TokenizationMetadata: json.RawMessage(`{"method":"none","reason":"webhook path does not tokenize"}`),
 
-		ClientPayoutRef:       in.IdempotencyKey, // Fallback to idempotency key for webhooks if ref is missing
-		RequestFingerprint:    in.IdempotencyKey,
-		RoutingHintsJSON:      json.RawMessage(`{}`),
-		GovernanceState:       "WEBHOOK",
-		BusinessState:         "NEW",
-		DuplicateRiskFlag:     false,
-		MappingProfileID:      "WEBHOOK_PROFILE",
-		MappingProfileVersion: "WEBHOOK",
-		UpdatedAt:             func(t time.Time) *time.Time { return &t }(time.Now().UTC()),
+		ClientPayoutRef:           in.IdempotencyKey, // Fallback to idempotency key for webhooks if ref is missing
+		RequestFingerprint:        in.IdempotencyKey,
+		RoutingHintsJSON:          json.RawMessage(`{}`),
+		GovernanceReasonCodesJSON: json.RawMessage(`{}`),
+		ScoreBreakdownJSON:        json.RawMessage(`{}`),
+		ScoreReasonCodesJSON:      json.RawMessage(`{}`),
+		GovernanceState:           "WEBHOOK",
+		BusinessState:             "NEW",
+		IntentLifecycleState:      "RECEIVED", // webhook path skips mapping/validation/scoring today
+		DuplicateRiskFlag:         false,
+		MappingProfileID:          "WEBHOOK_PROFILE",
+		MappingProfileVersion:     "WEBHOOK",
+		MappingProfileHash:        s.computeGenericMappingProfileHash("WEBHOOK_PROFILE", "WEBHOOK", in.SourceSystem, "WEBHOOK", nil),
+		UpdatedAt:                 func(t time.Time) *time.Time { return &t }(time.Now().UTC()),
 	}
+	canonical.CanonicalRowHash = s.computeCanonicalRowHash(&canonical)
+	canonical.RawRowEvidenceLeafHash, canonical.CanonicalRowEvidenceLeafHash = s.computeEvidenceLeafHashes(&canonical)
 
 	payload := []byte("{}")
 
-	outbox := models.OutboxEvent{
-		TraceID:       canonical.TraceID,
-		EnvelopeID:    canonical.EnvelopeID,
-		TenantID:      canonical.TenantID,
-		BatchID:       canonical.BatchID,
-		AggregateType: "intent",
-		AggregateID:   uuid.MustParse(canonical.IntentID),
-		EventType:     "WEBHOOK_RECEIVED",
-		Payload:       payload,
-		Status:        "PENDING",
-		CreatedAt:     time.Now(),
+	// Built via the same helper the real intent path uses (instead of a
+	// hand-rolled struct literal) so this can't silently drift out of sync
+	// with payment_intents' NOT-NULL/JSON-typed columns the way it previously
+	// did — this literal used to omit Constraints/PIITokens/Beneficiary/
+	// RoutingHintsJSON/GovernanceReasonCodesJSON entirely, which would have
+	// failed the outbox INSERT on any real webhook.
+	outbox, err := CanonicalIntentToOutboxEvent(canonical, payload, "WEBHOOK_RECEIVED")
+	if err != nil {
+		return nil, nil, err
 	}
 
-	saved, err := s.repo.Save(ctx, nil, canonical, outbox, nil)
+	// Ledger item #19: the webhook path has no source fields to map, but it
+	// must still leave a lineage record rather than silently having none —
+	// this NIR explicitly documents why it's minimal instead of just omitting
+	// it, so a lineage query never has to guess whether a row is missing by
+	// accident or by design.
+	nir := &models.NormalizedIngestRecord{
+		NIRID:                  uuid.New(),
+		EnvelopeID:             in.EnvelopeID,
+		TenantID:               in.TenantID,
+		DetectedFormat:         "WEBHOOK",
+		ProfileID:              "WEBHOOK_PROFILE",
+		ProfileVersion:         "WEBHOOK",
+		FieldsJSON:             json.RawMessage(`{}`),
+		FieldConfidenceSummary: json.RawMessage(`{}`),
+		UnmappedJSON:           json.RawMessage(`{"skip_reason":"webhook path does not run mapping/validation/scoring"}`),
+		CreatedAt:              time.Now().UTC(),
+	}
+
+	saved, err := s.repo.Save(ctx, nir, canonical, outbox, nil, nil, nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -2371,9 +3400,72 @@ func (s *IntentService) aggregateGovernanceReasons(intent *models.CanonicalInten
 	return res
 }
 
-// FIX: New deterministic governance_hash computation (NEW)
-func (s *IntentService) computeGovernanceHash(intent *models.CanonicalIntent) string {
-	return s.computeGovernanceHashInternal(intent.GovernanceState, string(intent.GovernanceReasonCodesJSON), "v1", intent.IntentID)
+// computeGovernanceHash sets intent.GovernanceInputFactsHash and returns
+// governance_decision_hash per the hash spec: SHA-256(JCS_Canonicalize({
+// tenant_id, canonical_intent_hash, input_facts_hash, decision, reason_codes,
+// required_approval_level, risk_level})). policy_id/policy_version/
+// policy_hash are intentionally omitted — there is no real policy engine
+// backing them yet. canonical_intent_hash reads intent.CanonicalHash as
+// known at call time — for the sync path that's still "" (the WORM chain
+// hash isn't computed until after persistence), so this hash reflects the
+// governance decision made at persist time, not a final chain-anchored value.
+// beneficiaryChanged and previousPaymentCount have no upstream signal yet, so
+// they're always false/0 until that tracking exists.
+func (s *IntentService) computeGovernanceHash(intent *models.CanonicalIntent, purposeCode string, dailyTotalMinor int64) string {
+	inputFactsHash, err := canonicalizer.ComputeGovernanceInputFactsHash(canonicalizer.GovernanceInputFactsHashInput{
+		AmountMinor:            intent.Amount.Mul(decimal.NewFromInt(100)).IntPart(),
+		Currency:               intent.Currency,
+		BeneficiaryFingerprint: intent.BeneficiaryFingerprint,
+		PaymentRail:            intent.BeneficiaryType,
+		PurposeCode:            purposeCode,
+		BeneficiaryChanged:     false,
+		IsPossibleDuplicate:    intent.DuplicateRiskFlag,
+		DailyTotalMinor:        dailyTotalMinor,
+		PreviousPaymentCount:   0,
+	})
+	if err != nil {
+		log.Printf("⚠️ Failed to compute governance input_facts_hash for intent %s: %v", intent.IntentID, err)
+	}
+	intent.GovernanceInputFactsHash = inputFactsHash
+
+	reasonCodes := append(append([]string{}, intent.Governance.SemanticErrors...), intent.Governance.PolicyFlags...)
+
+	hash, err := canonicalizer.ComputeGovernanceDecisionHash(canonicalizer.GovernanceDecisionHashInput{
+		TenantID:            intent.TenantID,
+		CanonicalIntentHash: intent.CanonicalHash,
+		InputFactsHash:      inputFactsHash,
+		Decision:            intent.GovernanceState,
+		ReasonCodes:         reasonCodes,
+	})
+	if err != nil {
+		log.Printf("⚠️ Failed to compute governance_decision_hash for intent %s: %v", intent.IntentID, err)
+		return ""
+	}
+	return hash
+}
+
+// recomputeGovernanceDecisionHash recomputes governance_decision_hash using
+// intent.CanonicalHash as canonical_intent_hash. Call this once the WORM
+// chain hash is known (after S3 snapshot storage), so governance_hash ends up
+// anchored to the real canonical_intent_hash instead of the "" placeholder
+// computeGovernanceHash used at construction time. InputFactsHash is reused
+// as-is since it doesn't depend on canonical_hash. On error, returns the
+// intent's current GovernanceHash unchanged rather than blanking it out.
+func (s *IntentService) recomputeGovernanceDecisionHash(intent *models.CanonicalIntent) string {
+	reasonCodes := append(append([]string{}, intent.Governance.SemanticErrors...), intent.Governance.PolicyFlags...)
+
+	hash, err := canonicalizer.ComputeGovernanceDecisionHash(canonicalizer.GovernanceDecisionHashInput{
+		TenantID:            intent.TenantID,
+		CanonicalIntentHash: intent.CanonicalHash,
+		InputFactsHash:      intent.GovernanceInputFactsHash,
+		Decision:            intent.GovernanceState,
+		ReasonCodes:         reasonCodes,
+	})
+	if err != nil {
+		log.Printf("⚠️ Failed to recompute governance_decision_hash for intent %s: %v", intent.IntentID, err)
+		return intent.GovernanceHash
+	}
+	return hash
 }
 
 func (s *IntentService) computeGovernanceHashInternal(state, reasonsJSON, version, intentID string) string {
@@ -2400,27 +3492,16 @@ func canonicalPathToFieldName(path string) string {
 	}
 }
 
-func extractSourceRowNumFromPayload(payload []byte) *int {
-	if len(payload) == 0 {
-		return nil
-	}
-
-	var m map[string]any
-	if err := json.Unmarshal(payload, &m); err != nil {
-		return nil
-	}
-
-	ref, ok := m["source_row_ref"].(string)
-	if !ok {
-		return nil
-	}
-	return sourceRowNumFromRef(ref)
-}
-
+// sourceRowNumFromRef converts the source_row_ref string (a plain integer relayed
+// by zord-edge from the actual Excel/CSV file row number) into *int for storage.
+// Returns nil only when the string is empty or not a valid integer.
 func sourceRowNumFromRef(ref string) *int {
 	ref = strings.TrimSpace(ref)
-	var idx int
-	if _, err := fmt.Sscanf(ref, "row:%d", &idx); err != nil || idx <= 0 {
+	if ref == "" {
+		return nil
+	}
+	idx, err := strconv.Atoi(ref)
+	if err != nil {
 		return nil
 	}
 	return &idx

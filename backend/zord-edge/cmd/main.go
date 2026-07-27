@@ -15,13 +15,14 @@ import (
 	"zord-edge/db"
 	"zord-edge/handler"
 	"zord-edge/routes"
-	"zord-edge/storage"
-	"zord-edge/vault"
 	"zord-edge/services"
+	"zord-edge/storage"
 	"zord-edge/tracing"
+	"zord-edge/vault"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	"github.com/pressly/goose/v3"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
@@ -73,7 +74,14 @@ func main() {
 		log.Fatal("DB is nil after InitDB")
 	}
 
-	db.CreateTable()
+	goose.SetBaseFS(nil)
+	if err := goose.SetDialect("postgres"); err != nil {
+		log.Fatal("goose dialect error:", err)
+	}
+	if err := goose.Up(db.DB, "db/migrations"); err != nil {
+		log.Fatal("migrations failed:", err)
+	}
+
 	err := godotenv.Load()
 	if err != nil {
 		log.Println("No .env file found")

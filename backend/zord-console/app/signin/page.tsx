@@ -80,15 +80,7 @@ function SignInForm() {
       subtitle="Use your work email and password. Live payout command opens after login."
       footer={
         <p className="text-center text-[12px] leading-relaxed text-slate-400">
-          By continuing you agree to our{' '}
-          <Link href="/terms" className="font-medium text-[#2B55E8] hover:underline">
-            terms of use
-          </Link>{' '}
-          and{' '}
-          <Link href="/privacy" className="font-medium text-[#2B55E8] hover:underline">
-            privacy policy
-          </Link>
-          .
+          By continuing you agree to our terms of use and privacy policy.
         </p>
       }
     >

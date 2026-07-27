@@ -185,7 +185,7 @@ class MLService:
         so Go falls back cleanly — business logic is never blocked.
 
         When a finality_label is present in the payload (sent by Go after a batch
-        reaches FULLY_SETTLED or FAILED), the candidates are buffered for retrain.
+        reaches FULLY_SETTLED or PARTIALLY_SETTLED or FAILED), the candidates are buffered for retrain.
         """
         payload = req.payload
         raw_candidates: list[dict] = payload.get("candidates") or []
@@ -214,7 +214,7 @@ class MLService:
         )
 
         # Buffer for retrain when batch has reached finality (ground truth available)
-        if finality_label in ("FULLY_SETTLED", "FAILED") and assignments:
+        if finality_label in ("FULLY_SETTLED","FULLY_RECONCILED", "FAILED") and assignments:
             true_labels = [a["cluster_code"] for a in assignments]
             self._rca_model.maybe_retrain_async(
                 candidates=raw_candidates,

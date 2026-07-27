@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.25.0-alpine AS builder
+FROM golang:1.25.7-alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache git gcc musl-dev
@@ -28,6 +28,7 @@ WORKDIR /app
 
 # Copy binary from builder
 COPY --from=builder /app/main /app/main
+COPY --from=builder /app/db/migrations /app/db/migrations
 
 # Create directory for logs if needed
 RUN addgroup -S app && adduser -S app -G app \
