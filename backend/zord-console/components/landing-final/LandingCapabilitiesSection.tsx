@@ -34,14 +34,14 @@ export function LandingCapabilitiesSection() {
       <div className="mx-auto max-w-5xl">
         <LandingReveal className="flex flex-col items-center text-center">
           <p className="mb-6 inline-flex w-fit rounded-full border border-white/20 bg-white/10 backdrop-blur-sm px-4 py-1.5 text-[10px] font-semibold uppercase tracking-[0.15em] text-white/80">
-            WHY ZORD
+            DEPLOYMENT OPTIONS
           </p>
           <h2 className="max-w-[20ch] text-[2.5rem] font-semibold leading-[1.05] tracking-[-0.04em] text-white sm:text-[3.25rem] lg:text-[4rem]">
-            Built for modern capital.<br />
-            Not legacy systems.
+            Start with files.<br />
+            Scale to connected payment infrastructure.
           </h2>
           <p className="mt-6 max-w-2xl text-[15px] sm:text-base font-medium leading-relaxed text-white/70">
-            Connect exchanges, custodians, on-chain wallets, and data providers, all synchronized in one unified system for real-time visibility and control.
+            Validate Zord using existing payout and settlement records, then expand to APIs, webhooks and real-time event streams.
           </p>
         </LandingReveal>
 

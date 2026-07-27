@@ -7,9 +7,9 @@ export const landingHomeCopy = {
   hero: {
     slides: [
       {
-        eyebrow: 'Get started',
-        headlineLead: 'Move payouts with control,',
-        headlineTail: 'not guesswork',
+        eyebrow: 'PAYMENT INTEGRITY FOR GLOBAL ENTERPRISES',
+        headlineLead: 'Prove every payout from',
+        headlineTail: 'authorisation to settlement',
       },
     ],
   },
@@ -21,26 +21,26 @@ export const landingHomeCopy = {
     stages: [
       {
         step: '01',
-        label: 'Intent capture',
+        label: 'Capture the authorised obligation',
         detail: 'Capture payment instructions with amount, beneficiary, and batch context.',
-        footnote: 'Instruction file',
+        footnote: 'Payment obligation',
       },
       {
         step: '02',
-        label: 'Provider observation',
-        detail: 'Observe PSP outcomes, parse confidence, and connector performance, Zord does not dispatch payouts in V1.',
-        footnote: 'Connector performance',
+        label: 'Create the Payment Action Contract',
+        detail: 'Validate authority, beneficiary, duplicate risk, commercial terms and policy before sealing the instruction.',
+        footnote: 'Govern and seal',
       },
       {
         step: '03',
-        label: 'Bank confirmation',
-        detail: 'Track settlement files, bank movement, and match status without blind spots.',
+        label: 'Trace execution across systems',
+        detail: 'Connect bank, PSP, ledger, webhook and settlement signals to the original authorised contract.',
         footnote: H.journals.settlementJournal,
       },
       {
         step: '04',
-        label: 'Evidence export',
-        detail: 'Package intents, settlements, and audit evidence into Evidence Packs finance can close on.',
+        label: 'Prove the final outcome',
+        detail: 'Export a tamper-evident lifecycle record that another party can independently inspect and verify.',
         footnote: H.evidence.artifact,
       },
     ],
@@ -60,6 +60,6 @@ export const landingHomeCopy = {
     },
   ],
   finalCta: {
-    title: 'Move payouts with control, not guesswork',
+    title: 'See how an authorised payout becomes verifiable settlement',
   },
 } as const

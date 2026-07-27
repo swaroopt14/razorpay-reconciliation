@@ -20,7 +20,7 @@ export function SolutionsInfoSection() {
             <Layers className="h-3.5 w-3.5" strokeWidth={2.25} />
           </span>
           <p>
-            ZORD builds payout intelligence for operators, finance teams, and regulated money movement.
+            Zord connects authorised payment instructions with execution, settlement and final accounting outcomes.
           </p>
         </motion.div>
 
@@ -31,10 +31,10 @@ export function SolutionsInfoSection() {
           transition={{ duration: 0.6, delay: 0.06 }}
           className="mt-10 text-[2.35rem] font-semibold leading-[1.02] tracking-[-0.055em] text-[#111111] sm:text-5xl lg:text-[3.75rem]"
         >
-          We built rails to move money.
+          Your payments cross systems.
           <span className="mt-2 block">
-            It became{' '}
-            <span className="text-[#34D399]">native infrastructure.</span>
+            Zord preserves their {' '}
+            <span className="text-[#34D399]">integrity.</span>
           </span>
         </motion.h2>
 

@@ -63,8 +63,7 @@ export function ResourcesVideoHero() {
               <span className="block text-white">Roll out with confidence.</span>
             </h1>
             <p className="mt-6 max-w-2xl text-base leading-relaxed text-white sm:text-lg">
-              Everything teams need to evaluate, learn, and adopt ZORD, from the operating model to security,
-              pricing, and direct support.
+              Explore the payout lifecycle, Payment Action Contracts, exception handling, cross-border controls, evidence verification, integrations and security architecture.
             </p>
 
             <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">

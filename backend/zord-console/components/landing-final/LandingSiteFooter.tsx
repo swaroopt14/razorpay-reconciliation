@@ -52,9 +52,9 @@ const footerColumns = [
 ] as const
 
 const socialLinks = [
-  { label: 'YouTube', href: 'https://youtube.com', icon: YoutubeIcon },
-  { label: 'LinkedIn', href: 'https://linkedin.com', icon: LinkedinIcon },
-  { label: 'X', href: 'https://x.com', icon: XIcon },
+  { label: 'YouTube', href: 'https://www.youtube.com/@ArealisNetworks7', icon: YoutubeIcon },
+  { label: 'LinkedIn', href: 'https://www.linkedin.com/company/arealis-network/', icon: LinkedinIcon },
+  { label: 'X', href: 'https://x.com/Abhishek94239', icon: XIcon },
 ] as const
 
 const sectionLabelClass = (isLight: boolean) =>

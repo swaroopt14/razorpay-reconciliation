@@ -57,7 +57,7 @@ export function SolutionsWorkflowMarquee() {
       <div className="mb-6 px-5 text-center md:px-8">
         <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#9CA3AF]">All workflows</p>
         <p className="mx-auto mt-2 max-w-2xl text-[15px] leading-relaxed text-[#6B7280]">
-          Eleven rails across onboarding, payouts, and financial data, hover to pause, click any card to book a demo.
+          Explore workflows for enterprise, marketplace, lending, insurance and cross-border payout operations.
         </p>
       </div>
 

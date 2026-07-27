@@ -56,14 +56,14 @@ export function SolutionsVideoHero() {
             className="max-w-3xl"
           >
             <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/70">
-              ZORD Solutions
+              GLOBAL PAYMENT WORKFLOWS
             </p>
             <h1 className="mt-5 text-[2.6rem] font-semibold leading-[0.95] tracking-[-0.06em] text-white sm:text-6xl lg:text-[5.5rem]">
-              Financial infrastructure
-              <span className="block text-white">rooted in nature.</span>
+              Enterprise payout workflows 
+              <span className="block text-white">across systems and borders.</span>
             </h1>
             <p className="mt-6 max-w-2xl text-base leading-relaxed text-white sm:text-lg">
-              Every payout, identity, and data workflow your team needs, scan the catalog below, book a demo for rollout depth.
+              Explore how Zord governs supplier payouts, marketplace settlements, lending disbursements, payroll and cross-border payments from authorisation to final outcome.
             </p>
 
             <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -71,7 +71,7 @@ export function SolutionsVideoHero() {
                 href="mailto:Support@zordnet.com?subject=Explore%20Zord%20solutions"
                 className="inline-flex cursor-pointer items-center justify-center rounded-full bg-white px-7 py-3.5 text-[14px] font-semibold text-[#0A0A0A] transition hover:bg-white/92"
               >
-                Contact sales
+                Explore workflows
               </a>
               <Link
                 href="/"

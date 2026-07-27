@@ -45,7 +45,7 @@ export const learningPaths = [
 ] as const
 
 export const resourceHighlights = [
-  'One operating model across ops, finance, and engineering, not scattered docs.',
-  'Security, pricing, and implementation paths when teams are ready to go deeper.',
-  'Direct access to Arealis for demos, rollout, and technical fit questions.',
+  'Canonical obligation and source integrity.',
+  'Policy decision and versioned contract .',
+  'Execution lineage and settlement evidence .',
 ] as const

@@ -31,15 +31,15 @@ function BentoCard({
 
 function RailOverviewMock() {
   const rows = [
-    { label: 'Bank rails', metric: 'Multi-rail', detail: 'Live posture' },
-    { label: 'Connector health', metric: '24/7', detail: 'Observable' },
-    { label: 'Callback integrity', metric: 'Verified', detail: 'Per event' },
-    { label: 'Evidence packs', metric: 'Exportable', detail: 'Finance-ready' },
+    { label: 'Payout obligations', metric: 'Received', detail: 'Source captured' },
+    { label: 'Outcome signals', metric: 'Exact outcome', detail: 'Expected vs observed' },
+    { label: 'Payment exceptions', metric: 'Queued', detail: 'Human review required' },
+    { label: 'Evidence packs', metric: 'Proof-ready', detail: 'Evidence complete' },
   ]
 
   return (
     <div className="mt-6 rounded-[1.25rem] border border-black/[0.05] bg-white p-4 shadow-[0_8px_24px_rgba(0,0,0,0.04)] sm:p-5">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#9CA3AF]">Active rails overview</p>
+      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#9CA3AF]">PAYOUT LIFECYCLE OVERVIEW</p>
       <ul className="mt-4 space-y-3">
         {rows.map((row) => (
           <li

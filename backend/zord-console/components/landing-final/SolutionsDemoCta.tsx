@@ -21,10 +21,10 @@ export function SolutionsDemoCta() {
         </span>
 
         <h2 className="mt-8 text-[2rem] font-semibold leading-[1.08] tracking-[-0.05em] text-[#111111] sm:text-[2.65rem]">
-          Need rollout logic,
+          Ready to prove a payout ,
           <br />
           <span className="bg-[linear-gradient(90deg,#059669_0%,#34D399_50%,#10B981_100%)] bg-clip-text text-transparent">
-            proof paths, or integration depth?
+            from authorisation to settlement?
           </span>
         </h2>
 
