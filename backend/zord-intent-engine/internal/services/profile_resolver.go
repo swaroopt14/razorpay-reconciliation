@@ -215,7 +215,7 @@ func loadBuiltInMappingProfile(sourceSystem, artifactFamily string) *models.Mapp
 		SoftInferableFieldsJSON:  json.RawMessage("[]"),
 		FieldKindPolicyJSON:      json.RawMessage("{}"),
 		SensitiveFieldPolicyJSON: json.RawMessage("{}"),
-		ValidationMode:           models.ValidationModeStrict,
+		ValidationMode:           models.ValidationModeReviewStrict,
 		OutputEntityFamily:       models.OutputEntityIntent,
 		Status:                   "active",
 		CreatedBy:                "global_profiles.json",
@@ -423,7 +423,7 @@ func scanMappingProfile(row *sql.Row) (*models.MappingProfile, error) {
 		p.ProfileHash = p.ComputeProfileHash()
 	}
 	if p.ValidationMode == "" {
-		p.ValidationMode = models.ValidationModeStrict
+		p.ValidationMode = models.ValidationModeReviewStrict
 	}
 	return &p, nil
 }

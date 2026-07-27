@@ -10,10 +10,16 @@ import (
 	"github.com/google/uuid"
 )
 
+// R-09: STRICT was renamed to REVIEW_STRICT (identical behavior — hold for
+// review) because its old name promised hard rejection it never delivered.
+// REVIEW was functionally identical to STRICT and was folded into
+// REVIEW_STRICT too. HARD_STRICT is new: an explicit per-tenant opt-in
+// (set via the admin mapping-profile API) that hard-rejects a missing
+// required field instead of holding it for review.
 const (
-	ValidationModeStrict  = "STRICT"
-	ValidationModeReview  = "REVIEW"
-	ValidationModeObserve = "OBSERVE"
+	ValidationModeReviewStrict = "REVIEW_STRICT"
+	ValidationModeHardStrict   = "HARD_STRICT"
+	ValidationModeObserve      = "OBSERVE"
 )
 
 type AmountFormat string
@@ -89,8 +95,10 @@ type MappingProfile struct {
 	ProfileHash string `json:"profile_hash" db:"profile_hash"`
 
 	// ValidationMode controls how a profile-required field being missing
-	// affects the intent: STRICT/REVIEW flag for review (governance_state =
-	// FLAGGED); OBSERVE records the field for visibility only, never flags.
+	// affects the intent: REVIEW_STRICT (the default) flags for review
+	// (governance_state = FLAGGED/REQUIRES_REVIEW); HARD_STRICT hard-rejects
+	// to DLQ instead (reason_code = HARD_STRICT_REQUIRED_FIELD_MISSING);
+	// OBSERVE records the field for visibility only, never flags or rejects.
 	ValidationMode string `json:"validation_mode" db:"validation_mode"`
 
 	OutputEntityFamily string `json:"output_entity_family" db:"output_entity_family"`

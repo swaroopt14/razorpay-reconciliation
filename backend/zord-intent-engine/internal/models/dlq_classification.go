@@ -29,7 +29,11 @@ func ClassifyDLQ(reasonCode string) string {
         "UPI_WITH_IFSC_INVALID",
         "ROUTING_INCONSISTENT_UPI",
         "ROUTING_INCONSISTENT_BANK",
-        "SEMANTIC_INVALID":
+        "SEMANTIC_INVALID",
+        // R-09: HARD_STRICT mapping-mode reject — a profile-required field is
+        // missing/unmapped. Tenant-fixable (fix the file, resubmit), same
+        // bucket as SEMANTIC_INVALID, not a system fault.
+        "HARD_STRICT_REQUIRED_FIELD_MISSING":
         return DLQStatusManualReview
 
     // Validator stage names — structural or semantic validation failure
