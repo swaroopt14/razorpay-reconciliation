@@ -1,0 +1,32 @@
+# Allow all app services + ml-service to connect to Kafka
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kafka-access
+  namespace: zord
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: zord-kafka
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - zord-edge
+                  - zord-intent-engine
+                  - zord-relay
+                  - zord-outcome-engine
+                  - zord-evidence
+                  - zord-intelligence
+                  - zord-prompt-layer
+                  - zord-ml-service
+      ports:
+        - protocol: TCP
+          port: 9092
+        - protocol: TCP
+          port: 9093

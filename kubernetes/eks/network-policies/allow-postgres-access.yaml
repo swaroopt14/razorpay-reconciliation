@@ -1,0 +1,30 @@
+# Allow all app services to connect to PostgreSQL
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-access
+  namespace: zord
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: zord-postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - zord-edge
+                  - zord-intent-engine
+                  - zord-relay
+                  - zord-token-enclave
+                  - zord-outcome-engine
+                  - zord-evidence
+                  - zord-intelligence
+                  - zord-prompt-layer
+      ports:
+        - protocol: TCP
+          port: 5432

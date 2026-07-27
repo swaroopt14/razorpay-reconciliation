@@ -364,10 +364,12 @@ Paste this policy and replace the bucket names:
         "s3:DeleteObject"
       ],
       "Resource": [
-        "arn:aws:s3:::YOUR_EDGE_BUCKET/*",
-        "arn:aws:s3:::YOUR_INTENT_BUCKET/*",
-        "arn:aws:s3:::YOUR_OUTCOME_BUCKET/*",
-        "arn:aws:s3:::YOUR_EVIDENCE_BUCKET/*"
+        "arn:aws:s3:::zord-edge-ingress/*",
+        "arn:aws:s3:::zord-intent-engine-canonical/*",
+        "arn:aws:s3:::zord-intent-engine-nir/*",
+        "arn:aws:s3:::zord-intent-engine-governance/*",
+        "arn:aws:s3:::zord-outcome-engine-settlement-ingress/*",
+        "arn:aws:s3:::zord-evidence-vault/*"
       ]
     },
     {
@@ -376,10 +378,12 @@ Paste this policy and replace the bucket names:
         "s3:ListBucket"
       ],
       "Resource": [
-        "arn:aws:s3:::YOUR_EDGE_BUCKET",
-        "arn:aws:s3:::YOUR_INTENT_BUCKET",
-        "arn:aws:s3:::YOUR_OUTCOME_BUCKET",
-        "arn:aws:s3:::YOUR_EVIDENCE_BUCKET"
+        "arn:aws:s3:::zord-edge-ingress",
+        "arn:aws:s3:::zord-intent-engine-canonical",
+        "arn:aws:s3:::zord-intent-engine-nir",
+        "arn:aws:s3:::zord-intent-engine-governance",
+        "arn:aws:s3:::zord-outcome-engine-settlement-ingress",
+        "arn:aws:s3:::zord-evidence-vault"
       ]
     }
   ]
@@ -456,11 +460,11 @@ Example with real values:
       "Action": "sts:AssumeRoleWithWebIdentity",
       "Condition": {
         "StringLike": {
-          "oidc.eks.ap-south-1.amazonaws.com/id/09562C64F0660D8AD0F20E6745688055:sub": [
+          "oidc.eks.ap-south-1.amazonaws.com/id/9A5CD11C3046E11A959D16943D40D6C9:sub": [
             "system:serviceaccount:zord:zord-aws-access",
             "system:serviceaccount:api-gateway:zord-aws-access"
           ],
-          "oidc.eks.ap-south-1.amazonaws.com/id/09562C64F0660D8AD0F20E6745688055:aud": "sts.amazonaws.com"
+          "oidc.eks.ap-south-1.amazonaws.com/id/9A5CD11C3046E11A959D16943D40D6C9:aud": "sts.amazonaws.com"
         }
       }
     }
