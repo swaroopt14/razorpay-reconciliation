@@ -93,6 +93,37 @@ var expectedColumnTypes = map[string]map[string]string{
 		"total_confirmed_amount_minor": "numeric",
 		"total_variance_minor":         "numeric",
 	},
+	// Phase 3 refactor: the projection_state scope/source/retention metadata
+	// must exist before this code writes projections (migrations 008/009 in
+	// production; init.sql's ALTER block for dev volumes).
+	"projection_state": {
+		"scope_type":        "text",
+		"scope_ref":         "text",
+		"metric_key":        "text",
+		"window_type":       "text",
+		"projection_source": "text",
+		"value_hash":        "text",
+		"retention_class":   "text",
+		"expires_at":        "timestamp with time zone",
+	},
+	// Phase 5 refactor: policy/action/outbox hardening columns must exist
+	// before this code writes them (migrations 010-013 in production;
+	// init.sql's ALTER block for dev volumes). "Phase 5 (refactor)" here is
+	// this refactor's phase, unrelated to the codebase's own pre-existing
+	// "PHASE 5" approval-lifecycle feature naming (see init.sql's note).
+	"action_contracts": {
+		"policy_registry_id":  "uuid",
+		"scope_type":          "text",
+		"scope_ref":           "text",
+		"payload_hash":        "text",
+		"signature_algorithm": "text",
+	},
+	"actuation_outbox": {
+		"tenant_id":    "text",
+		"scope_type":   "text",
+		"payload_hash": "text",
+		"last_error":   "text",
+	},
 }
 
 // productionIndexes lists every index that must be created CONCURRENTLY on
@@ -115,6 +146,54 @@ var productionIndexes = []struct{ name, sql string }{
 		"idx_snapshots_latest",
 		`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_snapshots_latest
 		 ON intelligence_snapshots (tenant_id, snapshot_type, created_at DESC)`,
+	},
+	// ── Phase 3 refactor: projection_state scoped-metadata indexes ─────────
+	// Mirrored in db/migrations/008 (prod k8s Job) and init.sql (fresh DBs) —
+	// listed here so a live dev/prod table that somehow missed both still gets
+	// them without a write lock.
+	{
+		"uq_projection_v2",
+		`CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uq_projection_v2
+		 ON projection_state (tenant_id, scope_type, scope_ref, projection_family, metric_key,
+		                      window_type, window_start, projection_source, projection_version)`,
+	},
+	{
+		"idx_projection_scope_family_metric",
+		`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_projection_scope_family_metric
+		 ON projection_state (tenant_id, scope_type, scope_ref, projection_family, metric_key)`,
+	},
+	{
+		"idx_projection_family_window",
+		`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_projection_family_window
+		 ON projection_state (tenant_id, projection_family, window_end DESC)`,
+	},
+	{
+		"idx_projection_retention_expiry",
+		`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_projection_retention_expiry
+		 ON projection_state (retention_class, expires_at)
+		 WHERE expires_at IS NOT NULL`,
+	},
+	// ── Phase 5 (refactor): policy/action/outbox hardening indexes ─────────
+	// Mirrored in db/migrations/010-013 (prod k8s Job) and init.sql (fresh DBs).
+	{
+		"idx_ac_scope_type_ref",
+		`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ac_scope_type_ref
+		 ON action_contracts (tenant_id, scope_type, scope_ref, created_at DESC)`,
+	},
+	{
+		"idx_ac_policy_registry",
+		`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ac_policy_registry
+		 ON action_contracts (policy_registry_id)`,
+	},
+	{
+		"idx_outbox_tenant_scope",
+		`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_outbox_tenant_scope
+		 ON actuation_outbox (tenant_id, scope_type, scope_ref, created_at DESC)`,
+	},
+	{
+		"idx_policy_def_trigger",
+		`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_policy_def_trigger
+		 ON policy_definitions (policy_family, trigger_type, trigger_value, policy_source, policy_version)`,
 	},
 }
 

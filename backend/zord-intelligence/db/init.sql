@@ -76,8 +76,52 @@ CREATE TABLE IF NOT EXISTS projection_state (
     freshness_ts       TIMESTAMPTZ,
     -- The timestamp of the latest upstream event that updated this row.
 
+    -- ── PHASE 3 (refactor): scoped, source-aware metadata ──────────────────
+    -- Blueprint §6 Phase 3. Derivation contract lives in
+    -- db/migrations/009_projection_state_backfill.sql; Go writers must
+    -- produce identical values for new rows (asserted by projection_meta_test.go).
+    scope_type         TEXT,
+    -- 'TENANT' | 'BATCH' | 'INTENT' | 'CORRIDOR' | 'PSP' | 'SOURCE' | 'BANK'
+
+    scope_ref          TEXT,
+    -- tenant_id / batch_contracts_core.batch_contract_id (BATCH, per blueprint
+    -- §5.3) / corridor key / provider key / source system / bank id.
+    -- '__unbatched__' = explicit bucket for events with no batch reference.
+
+    metric_key         TEXT,
+    -- The metric portion of projection_key (e.g. 'total', 'success_rate').
+
+    window_type        TEXT,
+    -- 'ROLLING_24H' (daily buckets) | 'BATCH_LIFETIME' (2020→2099 row)
+    -- | 'EPHEMERAL' (rca.frag.* temp accumulation rows).
+
+    projection_source  TEXT,
+    -- Upstream event family that computed this row (attachment_decision,
+    -- settlement_observation, variance_record, ...). 'legacy' for backfilled
+    -- rows. On multi-source accumulator rows the FIRST writer's family sticks
+    -- (ON CONFLICT never updates it) — per-source row splitting is Phase 10.
+
+    projection_source_version TEXT,
+    -- Envelope event_version; 'legacy' until upstream ships real versions.
+
+    value_hash         TEXT,
+    -- sha256 hex of value_json::text — maintained by trg_projection_state_hashes.
+
+    source_refs_hash   TEXT,
+    -- sha256 hex of source_refs_json::text when present — same trigger.
+
+    retention_class    TEXT DEFAULT 'DERIVED_CACHE',
+    -- 'DERIVED_CACHE' (rebuildable, Phase 9 cleanup candidate)
+    -- | 'TEMP_FRAGMENT' (rca.frag.*, 10-minute TTL).
+
+    expires_at         TIMESTAMPTZ,
+    -- ROLLING_24H → window_end + 90 days; TEMP_FRAGMENT → computed_at + 10min;
+    -- NULL for BATCH_LIFETIME rows. No worker consumes this until Phase 9.
+
     -- UNIQUE constraint: only one row per tenant+key+window+version
-    -- This makes upsert (insert or update) safe to call multiple times
+    -- This makes upsert (insert or update) safe to call multiple times.
+    -- STILL the identity every ON CONFLICT targets — uq_projection_v2 (below)
+    -- is the blueprint's future identity, inert until the Phase 10 cutover.
     CONSTRAINT uq_projection
         UNIQUE (tenant_id, projection_key, window_start, projection_version)
 );
@@ -1443,3 +1487,423 @@ CREATE INDEX IF NOT EXISTS idx_intelligence_snapshots_rca_cluster
 CREATE INDEX IF NOT EXISTS idx_projection_state_rca_frag
     ON projection_state (tenant_id, projection_key text_pattern_ops)
     WHERE projection_key LIKE 'rca.frag.%';
+
+-- =============================================================================
+-- PHASE 1 (refactor): event_receipts — traceable idempotency ledger
+-- =============================================================================
+--
+-- Replaces processed_events as the idempotency gate. One row per (tenant,
+-- source, event). The event handler claims the row, applies all projection
+-- counter updates, and marks PROCESSED inside ONE transaction — a crash rolls
+-- everything back so Kafka redelivery can never double-count.
+--
+-- Failures are recorded as processing_status='FAILED' with error_code/detail
+-- (no DLQ topic in V1 — receipts-FAILED is the quarantine, per team decision).
+-- processed_events remains dual-written during the migration window.
+-- Mirrored in db/migrations/001_event_receipts.sql for the production k8s Job.
+
+CREATE TABLE IF NOT EXISTS event_receipts (
+    tenant_id         TEXT NOT NULL,
+    event_source      TEXT NOT NULL,
+    event_type        TEXT NOT NULL,
+    event_version     TEXT NOT NULL DEFAULT 'legacy',
+    event_id          TEXT NOT NULL,
+
+    payload_hash      TEXT,
+    scope_type        TEXT,
+    scope_ref         TEXT,
+
+    processing_status TEXT NOT NULL DEFAULT 'RECEIVED',
+    CHECK (processing_status IN ('RECEIVED', 'PROCESSING', 'PROCESSED', 'FAILED')),
+    attempt_count     INT  NOT NULL DEFAULT 0,
+
+    received_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    processed_at      TIMESTAMPTZ,
+    error_code        TEXT,
+    error_detail      TEXT,
+
+    PRIMARY KEY (tenant_id, event_source, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_receipts_failed
+    ON event_receipts (tenant_id, received_at DESC)
+    WHERE processing_status = 'FAILED';
+
+CREATE INDEX IF NOT EXISTS idx_event_receipts_received
+    ON event_receipts (received_at);
+
+-- =============================================================================
+-- PHASE 2 (refactor): batch identity + summary split
+-- =============================================================================
+--
+-- batch_contracts.batch_id TEXT PRIMARY KEY is only the client's own
+-- source-system batch label — NOT tenant-scoped, so two tenants choosing the
+-- same label silently merge/overwrite each other's row. batch_contracts_core
+-- adds a real, DB-enforced identity: UNIQUE(tenant_id, external_batch_id).
+--
+-- Additive only: batch_contracts is UNTOUCHED and stays the sole read source
+-- until Phase 4's automated shadow-diff proves these new tables correct.
+--
+-- This block reflects the FINAL shape after the blueprint-alignment pass
+-- (2026-07-14) — column names, the dropped duplicate fields, and the added
+-- tenant_id/source_system columns are as if built this way from day one.
+-- The actual history (original Phase 2 shape → gap-fix pass → this alignment
+-- pass) lives in db/migrations/003, 005, 007 for the production k8s Job,
+-- which applies each step in order against the real (already-shaped) prod DB.
+-- See REFACTOR_IMPLEMENTATION_GUIDE.md §I for the full spec.
+
+CREATE TABLE IF NOT EXISTS batch_contracts_core (
+    batch_contract_id   UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id           TEXT         NOT NULL,
+    external_batch_id   TEXT         NOT NULL,
+    source_reference    TEXT,
+    source_system       TEXT,
+    batch_currency      CHAR(3)      NOT NULL DEFAULT 'INR',
+
+    processing_status     TEXT NOT NULL DEFAULT 'PROCESSING',
+    reconciliation_status TEXT NOT NULL DEFAULT 'UNKNOWN',
+    review_status         TEXT NOT NULL DEFAULT 'NONE',
+    closure_status        TEXT NOT NULL DEFAULT 'OPEN',
+
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    last_updated_at     TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, external_batch_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_batch_contracts_core_tenant
+    ON batch_contracts_core (tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_batch_core_tenant_status
+    ON batch_contracts_core (tenant_id, reconciliation_status, closure_status, last_updated_at DESC);
+
+-- batch_reconciliation_summary: blueprint §2.1's clean fields (total_intent_count,
+-- matched_intended_amount_minor, matched_attachment_confidence, source_service/
+-- version/payload_hash, etc.) PLUS the P0 fields the live v1 API serves today
+-- that blueprint's schema never defined a home for (total_count/success_count/
+-- batch_finality_status/predicted_leakage_*/the intent-time ML feature columns).
+-- Two true duplicates were dropped in the alignment pass: match_confidence and
+-- observed_value_allocation_coverage — both were byte-identical copies of
+-- matched_attachment_confidence and observed_value_coverage respectively
+-- (same Go value at write time; clarification doc §12 gives the match_confidence
+-- → matched_attachment_confidence rename as its own worked example).
+CREATE TABLE IF NOT EXISTS batch_reconciliation_summary (
+    batch_contract_id            UUID         PRIMARY KEY REFERENCES batch_contracts_core(batch_contract_id),
+    tenant_id                    TEXT         NOT NULL,
+
+    total_count                  INT          NOT NULL DEFAULT 0,
+    success_count                INT          NOT NULL DEFAULT 0,
+    failed_count                 INT          NOT NULL DEFAULT 0,
+    pending_count                INT          NOT NULL DEFAULT 0,
+    reversed_count                INT          NOT NULL DEFAULT 0,
+    partial_recon_count          INT          NOT NULL DEFAULT 0,
+
+    total_intended_amount_minor  NUMERIC(20,2) NOT NULL DEFAULT 0,
+    total_confirmed_amount_minor NUMERIC(20,2) NOT NULL DEFAULT 0,
+    original_settled_amount_minor NUMERIC(20,2) NOT NULL DEFAULT 0,
+    total_variance_minor         NUMERIC(20,2) NOT NULL DEFAULT 0,
+
+    batch_finality_status        TEXT         NOT NULL DEFAULT 'PROCESSING',
+    CHECK (batch_finality_status IN (
+        'PROCESSING', 'FULLY_RECONCILED', 'PARTIALLY_RECONCILED',
+        'FAILED', 'REQUIRES_REVIEW', 'CLOSED'
+    )),
+
+    total_intent_count                 INT          NOT NULL DEFAULT 0,
+    matched_intent_count               INT          NOT NULL DEFAULT 0,
+    ambiguous_count                    INT          NOT NULL DEFAULT 0,
+    unresolved_intent_count            INT          NOT NULL DEFAULT 0,
+    conflicted_count                   INT          NOT NULL DEFAULT 0,
+    orphan_observation_count           INT          NOT NULL DEFAULT 0,
+    original_intended_amount_minor     NUMERIC(20,2) NOT NULL DEFAULT 0,
+    ambiguous_amount_minor             NUMERIC(20,2) NOT NULL DEFAULT 0,
+    unresolved_intended_amount_minor   NUMERIC(20,2) NOT NULL DEFAULT 0,
+    conflicted_amount_minor            NUMERIC(20,2) NOT NULL DEFAULT 0,
+    orphan_observed_amount_minor       NUMERIC(20,2) NOT NULL DEFAULT 0,
+    net_batch_delta_minor              NUMERIC(20,2) NOT NULL DEFAULT 0,
+    intent_count_coverage              NUMERIC(7,6)  NOT NULL DEFAULT 0,
+    intent_value_coverage              NUMERIC(7,6)  NOT NULL DEFAULT 0,
+    observed_count_allocation_coverage NUMERIC(10,6) NOT NULL DEFAULT 0,
+
+    intent_row_count                INT          NOT NULL DEFAULT 0,
+    intent_total_amount_minor       NUMERIC(20,2) NOT NULL DEFAULT 0,
+    intent_amount_square_sum        NUMERIC(30,2) NOT NULL DEFAULT 0,
+    intent_min_amount_minor         NUMERIC(20,2),
+    intent_max_amount_minor         NUMERIC(20,2),
+    client_payout_ref_present_count INT          NOT NULL DEFAULT 0,
+    batch_currency                  TEXT,
+    batch_source_system             TEXT,
+    batch_rail                      TEXT,
+    batch_intent_type               TEXT,
+    batch_provider_key              TEXT,
+    first_intent_created_at         TIMESTAMPTZ,
+    under_settlement_amount_minor   NUMERIC(20,2) NOT NULL DEFAULT 0,
+    predicted_leakage_rate          NUMERIC(10,6),
+    predicted_leakage_minor         NUMERIC(20,2),
+    predicted_leakage_model_id      TEXT,
+    predicted_at                    TIMESTAMPTZ,
+
+    currency                       CHAR(3)      NOT NULL DEFAULT 'INR',
+    matched_intended_amount_minor  NUMERIC(20,2),
+    total_observed_amount_minor    NUMERIC(20,2),
+    matched_observed_amount_minor  NUMERIC(20,2),
+    matched_pair_variance_minor    NUMERIC(20,2),
+    observed_value_coverage        NUMERIC(7,6) NOT NULL DEFAULT 0,
+    matched_attachment_confidence  NUMERIC(6,5),
+    matched_attachment_ambiguity   NUMERIC(6,5),
+    source_service                 TEXT NOT NULL DEFAULT 'zord-outcome-engine',
+    source_version                 TEXT NOT NULL DEFAULT 'legacy',
+    source_payload_hash            TEXT,
+
+    computed_at                  TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+-- batch_risk_summary: blueprint §2.2's clean money-risk fields PLUS the P0
+-- fields (ambiguity_score, defensibility_tier, the ref-coverage counters)
+-- that blueprint's schema doesn't define but the live v1 API serves today.
+CREATE TABLE IF NOT EXISTS batch_risk_summary (
+    batch_contract_id               UUID         PRIMARY KEY REFERENCES batch_contracts_core(batch_contract_id),
+    tenant_id                       TEXT         NOT NULL,
+
+    ambiguity_score                 NUMERIC(4,3),
+
+    defensibility_tier              TEXT,
+    CHECK (defensibility_tier IN ('STRONG', 'GOOD', 'WEAK', 'FRAGILE', NULL)),
+
+    unmatched_amount_minor          NUMERIC(20,2) NOT NULL DEFAULT 0,
+    reversal_exposure_minor         NUMERIC(20,2) NOT NULL DEFAULT 0,
+    orphan_amount_minor             NUMERIC(20,2) NOT NULL DEFAULT 0,
+    duplicate_risk_exposure_minor   NUMERIC(20,2) NOT NULL DEFAULT 0,
+    missing_ref_count               INT          NOT NULL DEFAULT 0,
+    unexplained_variance_minor      NUMERIC(20,2) NOT NULL DEFAULT 0,
+    whitelisted_deduction_minor     NUMERIC(20,2) NOT NULL DEFAULT 0,
+    settlement_ref_count            INT          NOT NULL DEFAULT 0,
+    bank_ref_present_count          INT          NOT NULL DEFAULT 0,
+    decision_ref_count              INT          NOT NULL DEFAULT 0,
+    client_ref_present_count        INT          NOT NULL DEFAULT 0,
+
+    currency                        CHAR(3)      NOT NULL DEFAULT 'INR',
+    short_settled_amount_minor      NUMERIC(20,2),
+    projection_source               TEXT NOT NULL DEFAULT 'legacy',
+    projection_source_version       TEXT NOT NULL DEFAULT 'legacy',
+    projection_version              INT  NOT NULL DEFAULT 1,
+    value_hash                      TEXT,
+
+    computed_at                     TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+-- Skeletons only (decision I-Q2) — Phase 8/10 add real columns via ALTER.
+CREATE TABLE IF NOT EXISTS batch_dispute_readiness_summary (
+    batch_contract_id UUID         PRIMARY KEY REFERENCES batch_contracts_core(batch_contract_id),
+    tenant_id          TEXT         NOT NULL,
+    computed_at        TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS batch_closure_summary (
+    batch_contract_id UUID         PRIMARY KEY REFERENCES batch_contracts_core(batch_contract_id),
+    tenant_id          TEXT         NOT NULL,
+    computed_at        TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS projection_consistency_violations (
+    violation_id        UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id            TEXT         NOT NULL,
+    projection_family    TEXT         NOT NULL,
+    metric_key           TEXT         NOT NULL,
+    expected_value       NUMERIC,
+    actual_value         NUMERIC,
+    difference           NUMERIC,
+    window_start         TIMESTAMPTZ,
+    window_end           TIMESTAMPTZ,
+    detected_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    status                TEXT         NOT NULL DEFAULT 'OPEN'
+);
+
+CREATE INDEX IF NOT EXISTS idx_consistency_violations_open
+    ON projection_consistency_violations (tenant_id, detected_at DESC)
+    WHERE status = 'OPEN';
+
+CREATE TABLE IF NOT EXISTS refactor_shadow_diffs (
+    diff_id           UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id          TEXT         NOT NULL,
+    scope_type         TEXT         NOT NULL,
+    scope_ref          TEXT         NOT NULL,
+    diff_family        TEXT         NOT NULL,
+    old_payload_hash   TEXT,
+    new_payload_hash   TEXT,
+    diff_json          JSONB,
+    severity           TEXT         NOT NULL,
+    detected_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    resolved_at        TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_shadow_diffs_unresolved
+    ON refactor_shadow_diffs (tenant_id, detected_at DESC)
+    WHERE resolved_at IS NULL;
+
+-- =============================================================================
+-- PHASE 3 (refactor): projection_state scoped, source-aware metadata
+-- =============================================================================
+--
+-- The columns are part of the CREATE TABLE definition above for fresh DBs;
+-- this ALTER block evolves stale dev volumes (same pattern as the Phase 5
+-- batch_contracts ALTERs earlier in this file). Production applies
+-- db/migrations/008 + 009 via the team's k8s Job BEFORE this code deploys —
+-- these statements are then safe no-ops.
+--
+-- Backfill of existing rows is migration 009 (chunked) — deliberately NOT
+-- replicated here: dev volumes run it once manually via psql (see
+-- REFACTOR_IMPLEMENTATION_GUIDE.md §J), keeping the boot path free of
+-- potentially long UPDATE loops.
+
+ALTER TABLE projection_state ADD COLUMN IF NOT EXISTS scope_type TEXT;
+ALTER TABLE projection_state ADD COLUMN IF NOT EXISTS scope_ref TEXT;
+ALTER TABLE projection_state ADD COLUMN IF NOT EXISTS metric_key TEXT;
+ALTER TABLE projection_state ADD COLUMN IF NOT EXISTS window_type TEXT;
+ALTER TABLE projection_state ADD COLUMN IF NOT EXISTS projection_source TEXT;
+ALTER TABLE projection_state ADD COLUMN IF NOT EXISTS projection_source_version TEXT;
+ALTER TABLE projection_state ADD COLUMN IF NOT EXISTS value_hash TEXT;
+ALTER TABLE projection_state ADD COLUMN IF NOT EXISTS source_refs_hash TEXT;
+ALTER TABLE projection_state ADD COLUMN IF NOT EXISTS retention_class TEXT DEFAULT 'DERIVED_CACHE';
+ALTER TABLE projection_state ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+
+-- value_hash / source_refs_hash maintenance — see migration 008 for rationale
+-- (a trigger is the only non-duplicative way to hash value_json, which every
+-- writer mutates through large nested jsonb_set expressions).
+CREATE OR REPLACE FUNCTION zpi_projection_state_hashes() RETURNS trigger AS $$
+BEGIN
+    NEW.value_hash := encode(sha256(convert_to(NEW.value_json::text, 'UTF8')), 'hex');
+    IF NEW.source_refs_json IS NOT NULL THEN
+        NEW.source_refs_hash := encode(sha256(convert_to(NEW.source_refs_json::text, 'UTF8')), 'hex');
+    END IF;
+    RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_projection_state_hashes ON projection_state;
+CREATE TRIGGER trg_projection_state_hashes
+    BEFORE INSERT OR UPDATE ON projection_state
+    FOR EACH ROW EXECUTE FUNCTION zpi_projection_state_hashes();
+
+-- Blueprint's future unique identity — inert until Phase 10 (the old, tighter
+-- uq_projection plus derived-column determinism makes violations impossible).
+-- Plain (non-CONCURRENT) here is safe: fresh/dev tables are small, and prod
+-- gets these via migration 008's CONCURRENTLY variants first (same precedent
+-- as idx_batch_tenant_amount above).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_projection_v2
+    ON projection_state (
+        tenant_id, scope_type, scope_ref, projection_family, metric_key,
+        window_type, window_start, projection_source, projection_version
+    );
+
+CREATE INDEX IF NOT EXISTS idx_projection_scope_family_metric
+    ON projection_state (tenant_id, scope_type, scope_ref, projection_family, metric_key);
+
+CREATE INDEX IF NOT EXISTS idx_projection_family_window
+    ON projection_state (tenant_id, projection_family, window_end DESC);
+
+CREATE INDEX IF NOT EXISTS idx_projection_retention_expiry
+    ON projection_state (retention_class, expires_at)
+    WHERE expires_at IS NOT NULL;
+
+-- =============================================================================
+-- PHASE 5 (refactor): policy/action/outbox hardening
+-- =============================================================================
+--
+-- NOTE ON NAMING: this codebase already has an UNRELATED, pre-existing
+-- "PHASE 5" label used throughout action_contracts/action_service.go/
+-- outbox_repo.go for the approval-lifecycle feature (contract_status,
+-- expires_at, policy_family, severity) that shipped before this refactor
+-- initiative existed. "PHASE 5 (refactor)" here always means THIS refactor's
+-- phase 5 (policy/action/outbox hardening, REFACTOR_IMPLEMENTATION_GUIDE.md
+-- §B) — never the approval-lifecycle feature. See guide §K for detail.
+--
+-- Mirrors db/migrations/010–013 (prod k8s Job) for fresh/dev DBs. Backfill of
+-- existing rows is migrations 011–013's UPDATE statements — deliberately NOT
+-- replicated here, same precedent as Phase 3's projection_state block above:
+-- dev volumes run the numbered migration files once manually via psql.
+
+CREATE TABLE IF NOT EXISTS policy_definitions (
+    policy_registry_id       UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id                TEXT,
+    policy_key               TEXT         NOT NULL,
+    policy_version           INT          NOT NULL,
+    policy_source            TEXT         NOT NULL DEFAULT 'zpi_seed',
+    policy_source_ref        TEXT,
+    policy_source_version    TEXT,
+    policy_family            TEXT,
+    scope_type               TEXT         NOT NULL,
+    trigger_type             TEXT         NOT NULL,
+    trigger_value            TEXT         NOT NULL,
+    dsl                      TEXT         NOT NULL,
+    policy_digest            TEXT         NOT NULL,
+    severity                 TEXT,
+    requires_manual_approval BOOLEAN      NOT NULL DEFAULT false,
+    created_at               TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, policy_key, policy_version, policy_source)
+);
+
+CREATE INDEX IF NOT EXISTS idx_policy_def_trigger
+    ON policy_definitions (policy_family, trigger_type, trigger_value, policy_source, policy_version);
+
+CREATE INDEX IF NOT EXISTS idx_policy_def_key
+    ON policy_definitions (tenant_id, policy_key, policy_version DESC);
+
+CREATE TABLE IF NOT EXISTS policy_activations (
+    policy_activation_id UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id            TEXT,
+    policy_registry_id   UUID         NOT NULL REFERENCES policy_definitions(policy_registry_id),
+    enabled              BOOLEAN      NOT NULL DEFAULT false,
+    effective_from       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    effective_to         TIMESTAMPTZ,
+    activated_by         TEXT,
+    created_at           TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_policy_activations_lookup
+    ON policy_activations (tenant_id, policy_registry_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_policy_activations_enabled
+    ON policy_activations (policy_registry_id, enabled, effective_from, effective_to)
+    WHERE enabled = true;
+
+-- action_contracts: in-place hardening (clarification §3 — PK acceptable).
+ALTER TABLE action_contracts ADD COLUMN IF NOT EXISTS policy_registry_id UUID REFERENCES policy_definitions(policy_registry_id);
+ALTER TABLE action_contracts ADD COLUMN IF NOT EXISTS policy_source TEXT;
+ALTER TABLE action_contracts ADD COLUMN IF NOT EXISTS policy_digest TEXT;
+ALTER TABLE action_contracts ADD COLUMN IF NOT EXISTS scope_type TEXT;
+ALTER TABLE action_contracts ADD COLUMN IF NOT EXISTS scope_ref TEXT;
+ALTER TABLE action_contracts ADD COLUMN IF NOT EXISTS trigger_event_id TEXT;
+ALTER TABLE action_contracts ADD COLUMN IF NOT EXISTS trigger_event_source TEXT;
+ALTER TABLE action_contracts ADD COLUMN IF NOT EXISTS trigger_event_type TEXT;
+ALTER TABLE action_contracts ADD COLUMN IF NOT EXISTS trigger_event_version TEXT;
+ALTER TABLE action_contracts ADD COLUMN IF NOT EXISTS input_facts_hash TEXT;
+ALTER TABLE action_contracts ADD COLUMN IF NOT EXISTS payload_hash TEXT;
+ALTER TABLE action_contracts ADD COLUMN IF NOT EXISTS payload_schema_version TEXT DEFAULT 'legacy';
+ALTER TABLE action_contracts ADD COLUMN IF NOT EXISTS mapping_profile_id TEXT;
+ALTER TABLE action_contracts ADD COLUMN IF NOT EXISTS mapping_profile_version TEXT;
+ALTER TABLE action_contracts ADD COLUMN IF NOT EXISTS mapping_profile_hash TEXT;
+ALTER TABLE action_contracts ADD COLUMN IF NOT EXISTS signature_algorithm TEXT;
+ALTER TABLE action_contracts ADD COLUMN IF NOT EXISTS signature_key_id TEXT;
+ALTER TABLE action_contracts ADD COLUMN IF NOT EXISTS signature_payload_hash TEXT;
+ALTER TABLE action_contracts ADD COLUMN IF NOT EXISTS canonicalization_version TEXT;
+ALTER TABLE action_contracts ADD COLUMN IF NOT EXISTS signed_at TIMESTAMPTZ;
+ALTER TABLE action_contracts ADD COLUMN IF NOT EXISTS signature_verification_status TEXT DEFAULT 'UNVERIFIED';
+
+CREATE INDEX IF NOT EXISTS idx_ac_scope_type_ref ON action_contracts (tenant_id, scope_type, scope_ref, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ac_policy_registry ON action_contracts (policy_registry_id);
+
+-- actuation_outbox: in-place hardening (clarification §3 — PK acceptable).
+ALTER TABLE actuation_outbox ADD COLUMN IF NOT EXISTS tenant_id TEXT;
+ALTER TABLE actuation_outbox ADD COLUMN IF NOT EXISTS scope_type TEXT;
+ALTER TABLE actuation_outbox ADD COLUMN IF NOT EXISTS scope_ref TEXT;
+ALTER TABLE actuation_outbox ADD COLUMN IF NOT EXISTS payload_hash TEXT;
+ALTER TABLE actuation_outbox ADD COLUMN IF NOT EXISTS payload_schema_version TEXT DEFAULT 'legacy';
+ALTER TABLE actuation_outbox ADD COLUMN IF NOT EXISTS last_error TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_outbox_tenant_scope ON actuation_outbox (tenant_id, scope_type, scope_ref, created_at DESC);
+
+-- Bug fix (found live 2026-07-16): observed_value_coverage was the only one
+-- of 4 sibling coverage columns on batch_reconciliation_summary without a
+-- NOT NULL DEFAULT 0 (migration 005 gap). Evolves stale live/dev volumes on
+-- boot — see migration 014 for the full incident writeup.
+UPDATE batch_reconciliation_summary SET observed_value_coverage = 0 WHERE observed_value_coverage IS NULL;
+ALTER TABLE batch_reconciliation_summary ALTER COLUMN observed_value_coverage SET DEFAULT 0;
+ALTER TABLE batch_reconciliation_summary ALTER COLUMN observed_value_coverage SET NOT NULL;

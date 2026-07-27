@@ -193,7 +193,7 @@ func (s *DefensibilityIntelligenceService) ComputeAndSave(
 	// This lets GET /v1/intelligence/batches/{id} return the correct tier
 	// without needing to join intelligence_snapshots.
 	if batchID != "" {
-		if err := s.batchRepo.SetDefensibilityTier(ctx, batchID, snap.DefensibilityTier); err != nil {
+		if err := s.batchRepo.SetDefensibilityTier(ctx, batchID, tenantID, snap.DefensibilityTier); err != nil {
 			// Non-fatal — the snapshot was already written
 			return fmt.Errorf("defensibility_svc: SetDefensibilityTier batch=%s: %w", batchID, err)
 		}

@@ -47,22 +47,50 @@ func NewActionContractRepo(pool *pgxpool.Pool) *ActionContractRepo {
 
 // insertSQL is the shared INSERT statement used by all insert paths.
 // PHASE 5: Includes contract_status, expires_at, policy_family, severity.
+// PHASE 5 (refactor): Includes policy lineage, scope classifier, trigger
+// lineage, integrity/signature hashes — see models.ActionContract for the
+// full field list. "PHASE 5 (refactor)" = this refactor's phase 5, distinct
+// from this file's own pre-existing "PHASE 5" naming (see that file's note).
 const insertSQL = `
 	INSERT INTO action_contracts
 		(action_id, tenant_id, policy_id, policy_version,
 		 scope_refs, input_refs_json, decision, confidence,
 		 payload_json, signature, idempotency_key,
 		 contract_status, expires_at, policy_family, severity,
-		 created_at)
+		 created_at,
+		 policy_registry_id, policy_source, policy_digest,
+		 scope_type, scope_ref,
+		 trigger_event_id, trigger_event_source, trigger_event_type, trigger_event_version,
+		 input_facts_hash, payload_hash, payload_schema_version,
+		 mapping_profile_id, mapping_profile_version, mapping_profile_hash,
+		 signature_algorithm, signature_key_id, signature_payload_hash,
+		 canonicalization_version, signed_at, signature_verification_status)
 	VALUES
 		($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
 		 $12, $13, $14, $15,
-		 $16)
+		 $16,
+		 $17, $18, $19,
+		 $20, $21,
+		 $22, $23, $24, $25,
+		 $26, $27, $28,
+		 $29, $30, $31,
+		 $32, $33, $34,
+		 $35, $36, $37)
 	ON CONFLICT (idempotency_key) DO NOTHING
 `
 
-// buildInsertArgs constructs the $1..$16 argument list for insertSQL.
-// Handles nil-ification of nullable string fields (policy_family, severity).
+// nilIfEmpty converts an empty string to a nil pointer so optional Phase 5
+// (refactor) columns store SQL NULL instead of an empty string — matching
+// the same idiom already used here for policy_family/severity.
+func nilIfEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// buildInsertArgs constructs the $1..$37 argument list for insertSQL.
+// Handles nil-ification of nullable string fields.
 func buildInsertArgs(ac models.ActionContract) ([]any, error) {
 	scopeJSON, err := json.Marshal(ac.ScopeRefs)
 	if err != nil {
@@ -97,6 +125,28 @@ func buildInsertArgs(ac models.ActionContract) ([]any, error) {
 		policyFamily,              // PHASE 5 — *string, nil → NULL
 		severity,                  // PHASE 5 — *string, nil → NULL
 		ac.CreatedAt,
+		// ── PHASE 5 (refactor) ──────────────────────────────────────────────
+		nilIfEmpty(ac.PolicyRegistryID),
+		nilIfEmpty(ac.PolicySource),
+		nilIfEmpty(ac.PolicyDigest),
+		nilIfEmpty(ac.ScopeType),
+		nilIfEmpty(ac.ScopeRef),
+		nilIfEmpty(ac.TriggerEventID),
+		nilIfEmpty(ac.TriggerEventSource),
+		nilIfEmpty(ac.TriggerEventType),
+		nilIfEmpty(ac.TriggerEventVersion),
+		nilIfEmpty(ac.InputFactsHash),
+		nilIfEmpty(ac.PayloadHash),
+		nilIfEmpty(ac.PayloadSchemaVersion),
+		ac.MappingProfileID, // already *string, nil by default (reserved, unpopulated)
+		ac.MappingProfileVersion,
+		ac.MappingProfileHash,
+		nilIfEmpty(ac.SignatureAlgorithm),
+		nilIfEmpty(ac.SignatureKeyID),
+		nilIfEmpty(ac.SignaturePayloadHash),
+		nilIfEmpty(ac.CanonicalizationVersion),
+		ac.SignedAt, // *time.Time, nil → NULL
+		nilIfEmpty(ac.SignatureVerificationStatus),
 	}, nil
 }
 
@@ -193,12 +243,22 @@ func (r *ActionContractRepo) MarkExpiredContracts(ctx context.Context) (int64, e
 
 // selectCols is the shared column list for all SELECT queries.
 // Keeping it in one place ensures all scan calls stay in sync.
+// PHASE 5 (refactor): policy_registry_id is cast to ::text — it's a UUID
+// column, but every other ID in this codebase is treated as a plain string,
+// so casting here avoids requiring the uuid type registered with pgx.
 const selectCols = `
 	action_id, tenant_id, policy_id, policy_version,
 	scope_refs::text, input_refs_json::text, decision, confidence,
 	payload_json::text, signature, idempotency_key,
 	contract_status, expires_at, policy_family, severity,
-	created_at
+	created_at,
+	policy_registry_id::text, policy_source, policy_digest,
+	scope_type, scope_ref,
+	trigger_event_id, trigger_event_source, trigger_event_type, trigger_event_version,
+	input_facts_hash, payload_hash, payload_schema_version,
+	mapping_profile_id, mapping_profile_version, mapping_profile_hash,
+	signature_algorithm, signature_key_id, signature_payload_hash,
+	canonicalization_version, signed_at, signature_verification_status
 `
 
 // GetByID returns a single ActionContract by its action_id.
@@ -440,6 +500,9 @@ func scanActionContractRows(rows pgx.Rows) ([]models.ActionContract, error) {
 // Accepts both row.Scan (QueryRow) and rows.Scan (Query loop).
 //
 // PHASE 5: Scans contract_status, expires_at, policy_family, severity.
+// PHASE 5 (refactor): Scans policy lineage, scope classifier, trigger
+// lineage, integrity/signature columns — all nullable (pre-Phase-5 rows have
+// NULL here; see migration 012's comment on what is/isn't recoverable).
 func scanActionContract(scan func(...any) error) (*models.ActionContract, error) {
 	var ac models.ActionContract
 	var decision string
@@ -447,6 +510,14 @@ func scanActionContract(scan func(...any) error) (*models.ActionContract, error)
 	var scopeRefsJSON string
 	var policyFamily *string // nullable — *string handles NULL cleanly
 	var severity *string     // nullable
+
+	// PHASE 5 (refactor) nullable scan destinations.
+	var policyRegistryID, policySource, policyDigest *string
+	var scopeType, scopeRef *string
+	var triggerEventID, triggerEventSource, triggerEventType, triggerEventVersion *string
+	var inputFactsHash, payloadHash, payloadSchemaVersion *string
+	var signatureAlgorithm, signatureKeyID, signaturePayloadHash *string
+	var canonicalizationVersion, signatureVerificationStatus *string
 
 	err := scan(
 		&ac.ActionID,
@@ -465,6 +536,13 @@ func scanActionContract(scan func(...any) error) (*models.ActionContract, error)
 		&policyFamily,   // PHASE 5
 		&severity,       // PHASE 5
 		&ac.CreatedAt,
+		&policyRegistryID, &policySource, &policyDigest,
+		&scopeType, &scopeRef,
+		&triggerEventID, &triggerEventSource, &triggerEventType, &triggerEventVersion,
+		&inputFactsHash, &payloadHash, &payloadSchemaVersion,
+		&ac.MappingProfileID, &ac.MappingProfileVersion, &ac.MappingProfileHash,
+		&signatureAlgorithm, &signatureKeyID, &signaturePayloadHash,
+		&canonicalizationVersion, &ac.SignedAt, &signatureVerificationStatus,
 	)
 	if err != nil {
 		if err.Error() == "no rows in result set" {
@@ -481,6 +559,57 @@ func scanActionContract(scan func(...any) error) (*models.ActionContract, error)
 	}
 	if severity != nil {
 		ac.Severity = *severity
+	}
+	if policyRegistryID != nil {
+		ac.PolicyRegistryID = *policyRegistryID
+	}
+	if policySource != nil {
+		ac.PolicySource = *policySource
+	}
+	if policyDigest != nil {
+		ac.PolicyDigest = *policyDigest
+	}
+	if scopeType != nil {
+		ac.ScopeType = *scopeType
+	}
+	if scopeRef != nil {
+		ac.ScopeRef = *scopeRef
+	}
+	if triggerEventID != nil {
+		ac.TriggerEventID = *triggerEventID
+	}
+	if triggerEventSource != nil {
+		ac.TriggerEventSource = *triggerEventSource
+	}
+	if triggerEventType != nil {
+		ac.TriggerEventType = *triggerEventType
+	}
+	if triggerEventVersion != nil {
+		ac.TriggerEventVersion = *triggerEventVersion
+	}
+	if inputFactsHash != nil {
+		ac.InputFactsHash = *inputFactsHash
+	}
+	if payloadHash != nil {
+		ac.PayloadHash = *payloadHash
+	}
+	if payloadSchemaVersion != nil {
+		ac.PayloadSchemaVersion = *payloadSchemaVersion
+	}
+	if signatureAlgorithm != nil {
+		ac.SignatureAlgorithm = *signatureAlgorithm
+	}
+	if signatureKeyID != nil {
+		ac.SignatureKeyID = *signatureKeyID
+	}
+	if signaturePayloadHash != nil {
+		ac.SignaturePayloadHash = *signaturePayloadHash
+	}
+	if canonicalizationVersion != nil {
+		ac.CanonicalizationVersion = *canonicalizationVersion
+	}
+	if signatureVerificationStatus != nil {
+		ac.SignatureVerificationStatus = *signatureVerificationStatus
 	}
 
 	if err := json.Unmarshal([]byte(scopeRefsJSON), &ac.ScopeRefs); err != nil {

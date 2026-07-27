@@ -1101,7 +1101,7 @@ func (s *RecommendationIntelligenceService) buildRemappingRecs(
 		}
 		// Only fire if we have enough data and quality is measurably weak
 		weakParse := prov.AvgParseConfidence > 0 && prov.AvgParseConfidence < 0.70
-		weakMapping := prov.AvgParseConfidence > 0 && prov.AvgParseConfidence < 0.70
+		weakMapping := prov.AvgMappingConfidence > 0 && prov.AvgMappingConfidence < 0.70
 		if !weakParse && !weakMapping {
 			continue
 		}
@@ -1109,9 +1109,9 @@ func (s *RecommendationIntelligenceService) buildRemappingRecs(
 		priority := "MEDIUM"
 		issue := "parse"
 		confScore := prov.AvgParseConfidence
-		if weakMapping && prov.AvgParseConfidence > prov.AvgParseConfidence {
+		if weakMapping && prov.AvgMappingConfidence < prov.AvgParseConfidence {
 			issue = "mapping"
-			confScore = prov.AvgParseConfidence
+			confScore = prov.AvgMappingConfidence
 		}
 		if weakParse && weakMapping {
 			issue = "parse and mapping"

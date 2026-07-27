@@ -128,11 +128,21 @@ func (r *ProjectionRepo) AtomicRecordAttachmentDecisionBothScopes(
 	isSuccessfulDecision bool,
 	tenantWindowStart, tenantWindowEnd time.Time,
 ) error {
-	tx, err := r.pool.Begin(ctx)
+	tx, owned, err := r.beginOrJoin(ctx)
 	if err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicRecordAttachmentDecisionBothScopes begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	if owned {
+		defer tx.Rollback(ctx)
+	}
+
+	// Phase 3: empty batch ids route to the __unbatched__ bucket (bug E1 fix)
+	// and real ones resolve to the batch_contracts_core UUID (blueprint Â§5.3),
+	// on the SAME tx so the resolve commits/rolls back with the writes.
+	batchID, batchScopeRef, err := resolveBatchScope(ctx, tx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
 
 	tenantKey := "ambiguity.summary"
 	batchKey := ambiguityBatchKey(batchID)
@@ -174,7 +184,9 @@ func (r *ProjectionRepo) AtomicRecordAttachmentDecisionBothScopes(
 		INSERT INTO projection_state
 			(tenant_id, projection_key, window_start, window_end,
 			 value_json, computed_at, projection_version,
-			 projection_family, entity_scope_type)
+			 projection_family, entity_scope_type,
+			 scope_type, scope_ref, metric_key, window_type,
+			 projection_source, projection_source_version, retention_class, expires_at)
 		VALUES ($1, $2, $3, $4,
 			jsonb_build_object(
 				'ambiguous_intent_count',       $5::int,
@@ -198,7 +210,9 @@ func (r *ProjectionRepo) AtomicRecordAttachmentDecisionBothScopes(
 				'successful_decision_count',    $14::int,
 				'decision_success_rate',        $14::float8
 			),
-			now(), 1, 'AMBIGUITY', '%s')
+			now(), 1, 'AMBIGUITY', '%[1]s',
+			'%[1]s', %[2]s, 'summary', '%[3]s',
+			'attachment_decision', $15, 'DERIVED_CACHE', %[4]s)
 		ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 		DO UPDATE SET
 			value_json = jsonb_set(
@@ -269,9 +283,10 @@ func (r *ProjectionRepo) AtomicRecordAttachmentDecisionBothScopes(
 		scoreMargin,
 		successfulIncr,
 	}
+	args = append(args, envelopeSourceVersion(ctx)) // $15 projection_source_version
 
 	tenantArgs := append([]any{tenantID, tenantKey, tenantWindowStart, tenantWindowEnd}, args...)
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT"), tenantArgs...); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "TENANT", "$1", "ROLLING_24H", "$4::timestamptz + interval '90 days'"), tenantArgs...); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicRecordAttachmentDecisionBothScopes tenant tenant=%s decision=%s: %w", tenantID, decisionType, err)
 	}
 	if err := recomputeAmbiguityRatesTx(ctx, tx, tenantID, tenantKey, tenantWindowStart); err != nil {
@@ -279,12 +294,16 @@ func (r *ProjectionRepo) AtomicRecordAttachmentDecisionBothScopes(
 	}
 
 	batchArgs := append([]any{tenantID, batchKey, BatchProjectionWindowStart, BatchProjectionWindowEnd}, args...)
-	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl, "BATCH"), batchArgs...); err != nil {
+	batchArgs = append(batchArgs, batchScopeRef) // $16 scope_ref (core UUID)
+	if _, err := tx.Exec(ctx, fmt.Sprintf(tpl,"BATCH", "$16", "BATCH_LIFETIME", "NULL"), batchArgs...); err != nil {
 		return fmt.Errorf("projection_repo_batch_scope.AtomicRecordAttachmentDecisionBothScopes batch tenant=%s batch=%s decision=%s: %w", tenantID, batchID, decisionType, err)
 	}
 	if err := recomputeAmbiguityRatesTx(ctx, tx, tenantID, batchKey, BatchProjectionWindowStart); err != nil {
 		return err
 	}
 
-	return tx.Commit(ctx)
+	if owned {
+		return tx.Commit(ctx)
+	}
+	return nil
 }

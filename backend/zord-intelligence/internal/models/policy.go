@@ -46,6 +46,18 @@ type Policy struct {
 	// When true: ActionContract is created with contract_status = PENDING_APPROVAL.
 	// A human must approve it in the dashboard before the outbox delivers it.
 	// Default false — all existing policies keep auto-executing as before.
+
+	// ── PHASE 5 (refactor): policy hardening ────────────────────────────────
+	// Read-only projections of the matching policy_definitions row (looked up
+	// via a correlated subquery in policy_repo.go, never written here — the
+	// definitions table is the write path, this struct only carries them
+	// through to action_service.go so new ActionContracts can stamp their
+	// lineage). Empty string if the dual-write hasn't landed yet for this
+	// policy (should not happen post-Phase-5, but the read path must never
+	// break policy evaluation over a missing audit-trail row).
+	PolicyRegistryID string `json:"policy_registry_id,omitempty" db:"policy_registry_id"`
+	PolicyDigest     string `json:"policy_digest,omitempty" db:"policy_digest"`
+	PolicySource     string `json:"policy_source,omitempty" db:"policy_source"`
 }
 
 // Decision is the list of valid actions ZPI can take.
