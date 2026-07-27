@@ -24,6 +24,7 @@ RUN apk add --no-cache wget ca-certificates \
 WORKDIR /app
 
 COPY --from=builder /out/zord-intelligence /app/zord-intelligence
+COPY --from=builder /src/db/migrations /app/db/migrations
 
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 USER 65532:65532

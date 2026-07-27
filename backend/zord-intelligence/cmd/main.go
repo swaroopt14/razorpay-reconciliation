@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
+	"github.com/pressly/goose/v3"
 	"github.com/shopspring/decimal"
 	"github.com/zord/zord-intelligence/config"
 	"github.com/zord/zord-intelligence/db"
@@ -86,10 +88,17 @@ func main() {
 	// ── Step 3: Connect to PostgreSQL ──────────────────────────────────────
 	pool := db.Connect(cfg)
 	defer pool.Close()
-	db.EnsureSchema(context.Background(), pool)
+
+	goose.SetBaseFS(nil)
+	if err := goose.SetDialect("postgres"); err != nil {
+		log.Fatal("goose dialect error:", err)
+	}
+	sqlDB := stdlib.OpenDBFromPool(pool)
+	if err := goose.Up(sqlDB, "db/migrations"); err != nil {
+		log.Fatal("migrations failed:", err)
+	}
+
 	db.ValidateSchema(context.Background(), pool)
-	db.EnsureBatchFinalityStatusVocabulary(context.Background(), pool)
-	db.EnsureProductionIndexes(context.Background(), pool)
 	syncIntelligenceMode(context.Background(), pool, string(cfg.IntelligenceMode))
 
 	// ── Step 4: Create repositories ───────────────────────────────────────

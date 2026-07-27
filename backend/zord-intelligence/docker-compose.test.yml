@@ -79,7 +79,7 @@ services:
     ports:
       - "5440:5432"
     volumes:
-      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+     # - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
       - zord_intelligence_test_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U zpi -d zord_intelligence"]
