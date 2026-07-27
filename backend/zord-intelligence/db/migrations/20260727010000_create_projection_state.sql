@@ -1,4 +1,6 @@
 -- +goose Up
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 CREATE TABLE projection_state (
 	id                 BIGSERIAL    PRIMARY KEY,
 	tenant_id          TEXT         NOT NULL,
@@ -61,14 +63,16 @@ CREATE INDEX idx_projection_state_rca_frag
 	ON projection_state (tenant_id, projection_key text_pattern_ops)
 	WHERE projection_key LIKE 'rca.frag.%';
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION zpi_projection_state_hashes() RETURNS trigger AS $$
 BEGIN
-	NEW.value_hash := encode(sha256(convert_to(NEW.value_json::text, 'UTF8')), 'hex');
+	NEW.value_hash := encode(digest(convert_to(NEW.value_json::text, 'UTF8'), 'sha256'), 'hex');
 	IF NEW.source_refs_json IS NOT NULL THEN
-		NEW.source_refs_hash := encode(sha256(convert_to(NEW.source_refs_json::text, 'UTF8')), 'hex');
+		NEW.source_refs_hash := encode(digest(convert_to(NEW.source_refs_json::text, 'UTF8'), 'sha256'), 'hex');
 	END IF;
 	RETURN NEW;
 END $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
 CREATE TRIGGER trg_projection_state_hashes
 	BEFORE INSERT OR UPDATE ON projection_state
