@@ -253,6 +253,14 @@ func (r *BatchContractRepo) GetCoreIDsByExternalIDs(ctx context.Context, tenantI
 // Defensibility intelligence service (Phase 4) once it has scored the batch.
 func (r *BatchContractRepo) Upsert(ctx context.Context, bc BatchContract) error {
 	bc.BatchFinalityStatus = models.NormalizeBatchFinalityStatus(bc.BatchFinalityStatus)
+	// Lock-ordering fix (deadlock found live 2026-07-27): acquire the per-batch
+	// advisory lock BEFORE touching batch_contracts. Every writer in this file
+	// must acquire it first, in this same relative order, or concurrent
+	// transactions on the same batch can deadlock (40P01) — see
+	// projection_meta.go's resolveBatchContractID comment for the full story.
+	if _, err := r.resolveOrCreate(ctx, bc.TenantID, bc.BatchID); err != nil {
+		return err
+	}
 	sql := `
 		INSERT INTO batch_contracts
 			(batch_id, tenant_id, source_reference,
@@ -493,6 +501,17 @@ func (r *BatchContractRepo) SetDefensibilityTier(
 	batchID, tenantID string,
 	tier string, // "STRONG" | "GOOD" | "WEAK" | "FRAGILE"
 ) error {
+	// Lock-ordering fix: acquire the advisory lock before touching
+	// batch_contracts, matching every other writer in this file.
+	var batchContractID *string
+	if tenantID != "" {
+		id, err := r.resolveOrCreate(ctx, tenantID, batchID)
+		if err != nil {
+			return err
+		}
+		batchContractID = &id
+	}
+
 	sql := `
 		UPDATE batch_contracts
 		SET    defensibility_tier = $2,
@@ -509,12 +528,8 @@ func (r *BatchContractRepo) SetDefensibilityTier(
 		// BatchSummaryUpdatedEvent arrives. This is not an error.
 		return nil
 	}
-	if tenantID == "" {
+	if batchContractID == nil {
 		return nil
-	}
-	batchContractID, err := r.resolveOrCreate(ctx, tenantID, batchID)
-	if err != nil {
-		return err
 	}
 	shadowSQL := `
 		INSERT INTO batch_risk_summary (batch_contract_id, tenant_id, defensibility_tier, computed_at)
@@ -523,7 +538,7 @@ func (r *BatchContractRepo) SetDefensibilityTier(
 			defensibility_tier = EXCLUDED.defensibility_tier,
 			computed_at        = now()
 	`
-	if _, err := r.q(ctx).Exec(ctx, shadowSQL, batchContractID, tenantID, tier); err != nil {
+	if _, err := r.q(ctx).Exec(ctx, shadowSQL, *batchContractID, tenantID, tier); err != nil {
 		return fmt.Errorf("batch_contract_repo.SetDefensibilityTier shadow batch_id=%s: %w", batchID, err)
 	}
 	return nil
@@ -1187,7 +1202,15 @@ func (r *BatchContractRepo) AtomicAccumulateIntentFeatures(
 		refPresent = 1
 	}
 	amountSquared := amountMinor.Mul(amountMinor)
-	_, err := r.q(ctx).Exec(ctx, `
+
+	// Lock-ordering fix: acquire the advisory lock before touching
+	// batch_contracts, matching every other writer in this file.
+	batchContractID, err := r.resolveOrCreate(ctx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
+
+	_, err = r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_contracts (
 			batch_id, tenant_id,
 			intent_row_count, intent_total_amount_minor, intent_amount_square_sum,
@@ -1229,10 +1252,6 @@ func (r *BatchContractRepo) AtomicAccumulateIntentFeatures(
 		return fmt.Errorf("batch_contract_repo.AtomicAccumulateIntentFeatures batch=%s: %w", batchID, err)
 	}
 
-	batchContractID, err := r.resolveOrCreate(ctx, tenantID, batchID)
-	if err != nil {
-		return err
-	}
 	_, err = r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_reconciliation_summary (
 			batch_contract_id, tenant_id,
@@ -1298,7 +1317,14 @@ func (r *BatchContractRepo) UpsertIntentSnapshot(
 		createdAt = time.Now().UTC()
 	}
 
-	_, err := r.q(ctx).Exec(ctx, `
+	// Lock-ordering fix: acquire the advisory lock before touching
+	// batch_contracts, matching every other writer in this file.
+	batchContractID, err := r.resolveOrCreate(ctx, bc.TenantID, bc.BatchID)
+	if err != nil {
+		return err
+	}
+
+	_, err = r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_contracts (
 			batch_id, tenant_id,
 			total_count, pending_count,
@@ -1399,10 +1425,6 @@ func (r *BatchContractRepo) UpsertIntentSnapshot(
 		return fmt.Errorf("batch_contract_repo.UpsertIntentSnapshot batch=%s: %w", bc.BatchID, err)
 	}
 
-	batchContractID, err := r.resolveOrCreate(ctx, bc.TenantID, bc.BatchID)
-	if err != nil {
-		return err
-	}
 	_, err = r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_reconciliation_summary (
 			batch_contract_id, tenant_id,
@@ -1506,7 +1528,15 @@ func (r *BatchContractRepo) SetLeakagePrediction(
 	if batchID == "" || tenantID == "" {
 		return nil
 	}
-	_, err := r.q(ctx).Exec(ctx, `
+
+	// Lock-ordering fix: acquire the advisory lock before touching
+	// batch_contracts, matching every other writer in this file.
+	batchContractID, err := r.resolveOrCreate(ctx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
+
+	_, err = r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_contracts (
 			batch_id, tenant_id, predicted_leakage_rate, predicted_leakage_minor, predicted_leakage_model_id, predicted_at
 		)
@@ -1522,10 +1552,6 @@ func (r *BatchContractRepo) SetLeakagePrediction(
 		return fmt.Errorf("batch_contract_repo.SetLeakagePrediction batch=%s: %w", batchID, err)
 	}
 
-	batchContractID, err := r.resolveOrCreate(ctx, tenantID, batchID)
-	if err != nil {
-		return err
-	}
 	_, err = r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_reconciliation_summary (
 			batch_contract_id, tenant_id, predicted_leakage_rate, predicted_leakage_minor, predicted_leakage_model_id, predicted_at, computed_at
@@ -1562,7 +1588,13 @@ func (r *BatchContractRepo) AtomicAddBatchUnmatchedAmount(
 	if batchID == "" || !amountMinor.IsPositive() {
 		return nil
 	}
-	_, err := r.q(ctx).Exec(ctx, `
+	// Lock-ordering fix: acquire the advisory lock before touching
+	// batch_contracts, matching every other writer in this file.
+	batchContractID, err := r.resolveOrCreate(ctx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
+	_, err = r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_contracts (batch_id, tenant_id, unmatched_amount_minor)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (batch_id) DO UPDATE SET
@@ -1572,18 +1604,16 @@ func (r *BatchContractRepo) AtomicAddBatchUnmatchedAmount(
 	if err != nil {
 		return fmt.Errorf("batch_contract_repo.AtomicAddBatchUnmatchedAmount batch=%s: %w", batchID, err)
 	}
-	return r.addRiskAmountShadow(ctx, batchID, tenantID, "unmatched_amount_minor", amountMinor)
+	return r.addRiskAmountShadow(ctx, batchContractID, tenantID, batchID, "unmatched_amount_minor", amountMinor)
 }
 
 // addRiskAmountShadow is the Phase 2 shadow write shared by the single-column
 // risk-amount increment methods (unmatched/reversal/orphan/duplicate-risk).
 // column is always a compile-time constant passed by the caller, never
-// user input, so building the SQL string with it is safe.
-func (r *BatchContractRepo) addRiskAmountShadow(ctx context.Context, batchID, tenantID, column string, amountMinor decimal.Decimal) error {
-	batchContractID, err := r.resolveOrCreate(ctx, tenantID, batchID)
-	if err != nil {
-		return err
-	}
+// user input, so building the SQL string with it is safe. batchContractID
+// must already be resolved by the caller (before its batch_contracts write,
+// per the lock-ordering rule) rather than resolved here.
+func (r *BatchContractRepo) addRiskAmountShadow(ctx context.Context, batchContractID, tenantID, batchID, column string, amountMinor decimal.Decimal) error {
 	sql := fmt.Sprintf(`
 		INSERT INTO batch_risk_summary (batch_contract_id, tenant_id, %s, computed_at)
 		VALUES ($1, $2, $3, now())
@@ -1607,7 +1637,13 @@ func (r *BatchContractRepo) AtomicAddBatchReversalExposure(
 	if batchID == "" || !amountMinor.IsPositive() {
 		return nil
 	}
-	_, err := r.q(ctx).Exec(ctx, `
+	// Lock-ordering fix: acquire the advisory lock before touching
+	// batch_contracts, matching every other writer in this file.
+	batchContractID, err := r.resolveOrCreate(ctx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
+	_, err = r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_contracts (batch_id, tenant_id, reversal_exposure_minor)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (batch_id) DO UPDATE SET
@@ -1617,7 +1653,7 @@ func (r *BatchContractRepo) AtomicAddBatchReversalExposure(
 	if err != nil {
 		return fmt.Errorf("batch_contract_repo.AtomicAddBatchReversalExposure batch=%s: %w", batchID, err)
 	}
-	return r.addRiskAmountShadow(ctx, batchID, tenantID, "reversal_exposure_minor", amountMinor)
+	return r.addRiskAmountShadow(ctx, batchContractID, tenantID, batchID, "reversal_exposure_minor", amountMinor)
 }
 
 // AtomicAddBatchOrphanAmount increments orphan_amount_minor for a batch.
@@ -1630,7 +1666,13 @@ func (r *BatchContractRepo) AtomicAddBatchOrphanAmount(
 	if batchID == "" || !amountMinor.IsPositive() {
 		return nil
 	}
-	_, err := r.q(ctx).Exec(ctx, `
+	// Lock-ordering fix: acquire the advisory lock before touching
+	// batch_contracts, matching every other writer in this file.
+	batchContractID, err := r.resolveOrCreate(ctx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
+	_, err = r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_contracts (batch_id, tenant_id, orphan_amount_minor)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (batch_id) DO UPDATE SET
@@ -1640,7 +1682,7 @@ func (r *BatchContractRepo) AtomicAddBatchOrphanAmount(
 	if err != nil {
 		return fmt.Errorf("batch_contract_repo.AtomicAddBatchOrphanAmount batch=%s: %w", batchID, err)
 	}
-	return r.addRiskAmountShadow(ctx, batchID, tenantID, "orphan_amount_minor", amountMinor)
+	return r.addRiskAmountShadow(ctx, batchContractID, tenantID, batchID, "orphan_amount_minor", amountMinor)
 }
 
 // AtomicAddBatchDuplicateRiskExposure increments duplicate_risk_exposure_minor.
@@ -1653,7 +1695,13 @@ func (r *BatchContractRepo) AtomicAddBatchDuplicateRiskExposure(
 	if batchID == "" || !amountMinor.IsPositive() {
 		return nil
 	}
-	_, err := r.q(ctx).Exec(ctx, `
+	// Lock-ordering fix: acquire the advisory lock before touching
+	// batch_contracts, matching every other writer in this file.
+	batchContractID, err := r.resolveOrCreate(ctx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
+	_, err = r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_contracts (batch_id, tenant_id, duplicate_risk_exposure_minor)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (batch_id) DO UPDATE SET
@@ -1663,7 +1711,7 @@ func (r *BatchContractRepo) AtomicAddBatchDuplicateRiskExposure(
 	if err != nil {
 		return fmt.Errorf("batch_contract_repo.AtomicAddBatchDuplicateRiskExposure batch=%s: %w", batchID, err)
 	}
-	return r.addRiskAmountShadow(ctx, batchID, tenantID, "duplicate_risk_exposure_minor", amountMinor)
+	return r.addRiskAmountShadow(ctx, batchContractID, tenantID, batchID, "duplicate_risk_exposure_minor", amountMinor)
 }
 
 // AtomicAddBatchVarianceBreakdown increments the explained/unexplained variance
@@ -1698,7 +1746,14 @@ func (r *BatchContractRepo) AtomicAddBatchVarianceBreakdown(
 		missingRefIncr = 1
 	}
 
-	_, err := r.q(ctx).Exec(ctx, `
+	// Lock-ordering fix: acquire the advisory lock before touching
+	// batch_contracts, matching every other writer in this file.
+	batchContractID, err := r.resolveOrCreate(ctx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
+
+	_, err = r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_contracts
 			(batch_id, tenant_id, whitelisted_deduction_minor, unexplained_variance_minor, under_settlement_amount_minor, missing_ref_count)
 		VALUES ($1, $2, $3, $4, $5, $6)
@@ -1713,10 +1768,6 @@ func (r *BatchContractRepo) AtomicAddBatchVarianceBreakdown(
 		return fmt.Errorf("batch_contract_repo.AtomicAddBatchVarianceBreakdown batch=%s: %w", batchID, err)
 	}
 
-	batchContractID, err := r.resolveOrCreate(ctx, tenantID, batchID)
-	if err != nil {
-		return err
-	}
 	if _, err := r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_risk_summary (batch_contract_id, tenant_id, whitelisted_deduction_minor, unexplained_variance_minor, missing_ref_count, computed_at)
 		VALUES ($1, $2, $3, $4, $5, now())
@@ -1751,7 +1802,13 @@ func (r *BatchContractRepo) AtomicIncrementBatchMissingRef(
 	if batchID == "" || count <= 0 {
 		return nil
 	}
-	_, err := r.q(ctx).Exec(ctx, `
+	// Lock-ordering fix: acquire the advisory lock before touching
+	// batch_contracts, matching every other writer in this file.
+	batchContractID, err := r.resolveOrCreate(ctx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
+	_, err = r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_contracts (batch_id, tenant_id, missing_ref_count)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (batch_id) DO UPDATE SET
@@ -1762,10 +1819,6 @@ func (r *BatchContractRepo) AtomicIncrementBatchMissingRef(
 		return fmt.Errorf("batch_contract_repo.AtomicIncrementBatchMissingRef batch=%s: %w", batchID, err)
 	}
 
-	batchContractID, err := r.resolveOrCreate(ctx, tenantID, batchID)
-	if err != nil {
-		return err
-	}
 	if _, err := r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_risk_summary (batch_contract_id, tenant_id, missing_ref_count, computed_at)
 		VALUES ($1, $2, $3, now())
@@ -1797,7 +1850,13 @@ func (r *BatchContractRepo) AtomicAddBatchBankRefStats(
 	if hasBankRef {
 		bankRefIncr = 1
 	}
-	_, err := r.q(ctx).Exec(ctx, `
+	// Lock-ordering fix: acquire the advisory lock before touching
+	// batch_contracts, matching every other writer in this file.
+	batchContractID, err := r.resolveOrCreate(ctx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
+	_, err = r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_contracts (batch_id, tenant_id, settlement_ref_count, bank_ref_present_count)
 		VALUES ($1, $2, 1, $3)
 		ON CONFLICT (batch_id) DO UPDATE SET
@@ -1809,10 +1868,6 @@ func (r *BatchContractRepo) AtomicAddBatchBankRefStats(
 		return fmt.Errorf("batch_contract_repo.AtomicAddBatchBankRefStats batch=%s: %w", batchID, err)
 	}
 
-	batchContractID, err := r.resolveOrCreate(ctx, tenantID, batchID)
-	if err != nil {
-		return err
-	}
 	if _, err := r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_risk_summary (batch_contract_id, tenant_id, settlement_ref_count, bank_ref_present_count, computed_at)
 		VALUES ($1, $2, 1, $3, now())
@@ -1845,7 +1900,13 @@ func (r *BatchContractRepo) AtomicAddBatchClientRefStats(
 	if hasClientRef {
 		clientRefIncr = 1
 	}
-	_, err := r.q(ctx).Exec(ctx, `
+	// Lock-ordering fix: acquire the advisory lock before touching
+	// batch_contracts, matching every other writer in this file.
+	batchContractID, err := r.resolveOrCreate(ctx, tenantID, batchID)
+	if err != nil {
+		return err
+	}
+	_, err = r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_contracts (batch_id, tenant_id, decision_ref_count, client_ref_present_count)
 		VALUES ($1, $2, 1, $3)
 		ON CONFLICT (batch_id) DO UPDATE SET
@@ -1857,10 +1918,6 @@ func (r *BatchContractRepo) AtomicAddBatchClientRefStats(
 		return fmt.Errorf("batch_contract_repo.AtomicAddBatchClientRefStats batch=%s: %w", batchID, err)
 	}
 
-	batchContractID, err := r.resolveOrCreate(ctx, tenantID, batchID)
-	if err != nil {
-		return err
-	}
 	if _, err := r.q(ctx).Exec(ctx, `
 		INSERT INTO batch_risk_summary (batch_contract_id, tenant_id, decision_ref_count, client_ref_present_count, computed_at)
 		VALUES ($1, $2, 1, $3, now())
