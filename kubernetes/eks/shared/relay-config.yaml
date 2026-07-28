@@ -36,6 +36,7 @@ data:
         auth_token: "dev-dummy-token-123"
         http_timeout: 15s
         default_topic: payments.ledger.events.v1
+        is_edge: true
       - name: outcome-engine
         base_url: http://zord-outcome-engine:8081
         auth_token: "dev-dummy-token-123"
