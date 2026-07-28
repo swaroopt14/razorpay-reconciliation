@@ -218,6 +218,9 @@ func main() {
 			return err
 		}
 
+		log.Printf("edge event consumed [event_id=%s event_type=%s trace_id=%s tenant_id=%s envelope_id=%s]",
+			event.EventID, event.EventType, event.TraceID, event.TenantID, event.EnvelopeID)
+
 		canonical, dlq, err := intentService.ProcessIncomingIntent(ctx, &event)
 		if err != nil {
 			log.Printf("System error processing intent: %v\n", err)
