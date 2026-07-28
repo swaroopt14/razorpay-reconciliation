@@ -194,6 +194,55 @@ func (p *KafkaPublisher) PublishEdgeEvent(ctx context.Context, event *model.Edge
 	return nil
 }
 
+func (p *KafkaPublisher) PublishIntentEvent(ctx context.Context, event *model.IntentOutboxEvent, topic string) error {
+	ctx, span := p.tracer.Start(ctx, "kafka.publish_intent_event",
+		trace.WithSpanKind(trace.SpanKindProducer),
+		trace.WithAttributes(
+			attribute.String("messaging.system", "kafka"),
+			attribute.String("messaging.destination", topic),
+			attribute.String("event.id", event.EventID),
+			attribute.String("tenant.id", event.TenantID),
+		),
+	)
+	defer span.End()
+
+	payload, err := json.Marshal(event)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "event marshal failed")
+		return poisonError(fmt.Errorf("marshalling event: %w", err))
+	}
+
+	if len(payload) > 1*1024*1024 {
+		err := poisonError(fmt.Errorf("event size %d bytes exceeds 1MiB limit", len(payload)))
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "message too large")
+		return err
+	}
+
+	headers := p.buildIntentHeaders(ctx, event)
+
+	msg := &sarama.ProducerMessage{
+		Topic:   topic,
+		Key:     sarama.StringEncoder(event.EventID),
+		Value:   sarama.ByteEncoder(payload),
+		Headers: headers,
+	}
+
+	partition, offset, err := p.producer.SendMessage(msg)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "produce failed")
+		return fmt.Errorf("kafka delivery failed: %w", err)
+	}
+
+	span.SetAttributes(
+		attribute.Int64("messaging.kafka.partition", int64(partition)),
+		attribute.Int64("messaging.kafka.offset", int64(offset)),
+	)
+	return nil
+}
+
 func (p *KafkaPublisher) PublishDLQItem(ctx context.Context, event *model.DLQItemEvent, topic string) error {
 	ctx, span := p.tracer.Start(ctx, "kafka.publish_dlq_item",
 		trace.WithSpanKind(trace.SpanKindProducer),
@@ -404,6 +453,23 @@ func (p *KafkaPublisher) buildEdgeHeaders(ctx context.Context, event *model.Edge
 		{Key: []byte("event_id"), Value: []byte(event.EventID)},
 		{Key: []byte("event_type"), Value: []byte(event.EventType)},
 		{Key: []byte("envelope_id"), Value: []byte(event.EnvelopeID)},
+	}
+
+	otel.GetTextMapPropagator().Inject(ctx, otelHeaderCarrier{headers: &headers})
+
+	return headers
+}
+
+func (p *KafkaPublisher) buildIntentHeaders(ctx context.Context, event *model.IntentOutboxEvent) []sarama.RecordHeader {
+	headers := []sarama.RecordHeader{
+		{Key: []byte("trace_id"), Value: []byte(event.TraceID)},
+		{Key: []byte("tenant_id"), Value: []byte(event.TenantID)},
+		{Key: []byte("event_id"), Value: []byte(event.EventID)},
+		{Key: []byte("event_type"), Value: []byte(event.EventType)},
+		{Key: []byte("envelope_id"), Value: []byte(event.EnvelopeID)},
+	}
+	if event.SchemaVersion != "" {
+		headers = append(headers, sarama.RecordHeader{Key: []byte("schema_version"), Value: []byte(event.SchemaVersion)})
 	}
 
 	otel.GetTextMapPropagator().Inject(ctx, otelHeaderCarrier{headers: &headers})

@@ -188,6 +188,63 @@ func (c *OutboxClient) LeaseEdge(
 	return &leaseResp, nil
 }
 
+// LeaseIntent calls GET /internal/outbox/lease and decodes the response into
+// zord-intent-engine's own event shape (model.IntentOutboxEvent) instead of
+// the shared generic OutboxEvent. Used only by the intent-engine worker.
+func (c *OutboxClient) LeaseIntent(
+	ctx context.Context,
+	limit int,
+	leaseTTLSeconds int,
+) (*model.IntentLeaseResponse, error) {
+	ctx, span := c.tracer.Start(ctx, "outbox.lease_intent",
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(
+			semconv.HTTPMethod("GET"),
+			attribute.String("upstream.service", c.serviceName),
+			attribute.Int("lease.limit", limit),
+		),
+	)
+	defer span.End()
+
+	u, err := url.Parse(c.baseURL + "/internal/outbox/lease")
+	if err != nil {
+		return nil, fmt.Errorf("parsing lease URL: %w", err)
+	}
+	q := u.Query()
+	q.Set("limit", strconv.Itoa(limit))
+	q.Set("lease_ttl_seconds", strconv.Itoa(leaseTTLSeconds))
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating lease request: %w", err)
+	}
+	c.setHeaders(req)
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("lease HTTP call failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if err := c.checkStatus(resp, "lease"); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+
+	var leaseResp model.IntentLeaseResponse
+	if err := c.decode(resp.Body, &leaseResp); err != nil {
+		return nil, fmt.Errorf("decoding lease response: %w", err)
+	}
+
+	span.SetAttributes(attribute.Int("lease.events_count", len(leaseResp.Events)))
+	return &leaseResp, nil
+}
+
 // Ack calls POST /internal/outbox/ack for a set of successfully published events.
 func (c *OutboxClient) Ack(ctx context.Context, leaseID string, eventIDs []string) (int64, error) {
 	ctx, span := c.tracer.Start(ctx, "outbox.ack",

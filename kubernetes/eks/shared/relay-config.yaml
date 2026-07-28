@@ -31,6 +31,7 @@ data:
         auth_token: "dev-dummy-token-123"
         http_timeout: 15s
         default_topic: payments.intent.events.v1
+        is_intent: true
       - name: edge
         base_url: http://zord-edge:8080
         auth_token: "dev-dummy-token-123"

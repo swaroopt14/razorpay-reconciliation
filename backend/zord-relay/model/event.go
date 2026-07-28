@@ -133,10 +133,11 @@ type AckNackResponse struct {
 // Both publish-failure DLQ and poison-event DLQ use this envelope.
 type DLQMessage struct {
 	// Original event — may be nil for extreme corruption cases.
-	// Exactly one of Event / EdgeEvent is set, depending on which worker
-	// produced this failure.
-	Event     *OutboxEvent     `json:"event,omitempty"`
-	EdgeEvent *EdgeOutboxEvent `json:"edge_event,omitempty"`
+	// Exactly one of Event / EdgeEvent / IntentEvent is set, depending on
+	// which worker produced this failure.
+	Event       *OutboxEvent       `json:"event,omitempty"`
+	EdgeEvent   *EdgeOutboxEvent   `json:"edge_event,omitempty"`
+	IntentEvent *IntentOutboxEvent `json:"intent_event,omitempty"`
 
 	// EventID is always set (regardless of which of the above is populated)
 	// so PublishDLQ can key the Kafka message without depending on event shape.
