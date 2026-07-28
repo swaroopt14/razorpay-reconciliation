@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,6 +14,7 @@ import (
 	"zord-edge/config"
 	"zord-edge/db"
 	"zord-edge/handler"
+	"zord-edge/logger"
 	"zord-edge/routes"
 	"zord-edge/services"
 	"zord-edge/storage"
@@ -54,6 +55,8 @@ func init() {
 }
 
 func main() {
+	logger.Init("zord-edge")
+
 	// Shutdown context — cancelled on SIGTERM/SIGINT.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -71,32 +74,44 @@ func main() {
 
 	config.InitDB()
 	if db.DB == nil {
-		log.Fatal("DB is nil after InitDB")
+		logger.Log.Error("database handle is nil after InitDB")
+		os.Exit(1)
 	}
 
 	goose.SetBaseFS(nil)
 	if err := goose.SetDialect("postgres"); err != nil {
-		log.Fatal("goose dialect error:", err)
+		logger.Log.Error("goose dialect setup failed",
+			slog.String("error", err.Error()))
+		os.Exit(1)
 	}
 	if err := goose.Up(db.DB, "db/migrations"); err != nil {
-		log.Fatal("migrations failed:", err)
+		logger.Log.Error("database migrations failed",
+			slog.String("error", err.Error()))
+		os.Exit(1)
 	}
 
 	err := godotenv.Load()
 	if err != nil {
-		log.Println("No .env file found")
+		logger.Log.Error("No .env file found")
 	}
 
 	bucket := os.Getenv("S3_BUCKET")
 	region := os.Getenv("AWS_REGION")
 
 	if bucket == "" || region == "" {
-		log.Fatal("S3_BUCKET or S3_REGION not set in environment")
+		logger.Log.Error("required S3 environment variables missing",
+			slog.String("S3_BUCKET", bucket),
+			slog.String("AWS_REGION", region))
+		os.Exit(1)
 	}
 
 	s3store, err := storage.NewS3Store(context.Background(), bucket, region)
 	if err != nil {
-		log.Fatal("Failed to init S3", err)
+		logger.Log.Error("S3 store initialization failed",
+			slog.String("bucket", bucket),
+			slog.String("region", region),
+			slog.String("error", err.Error()))
+		os.Exit(1)
 	}
 
 	h := &handler.Handler{
@@ -106,7 +121,9 @@ func main() {
 
 	err = vault.InitVaultKey(cfg.VaultKey)
 	if err != nil {
-		log.Fatal("failed to initialize vault key:", err)
+		logger.Log.Error("vault key initialization failed",
+			slog.String("error", err.Error()))
+		os.Exit(1)
 	}
 	signingKeyPath := os.Getenv("SIGNING_KEY_PATH")
 	if signingKeyPath == "" {
@@ -114,12 +131,17 @@ func main() {
 	}
 	err = vault.InitSigningKey(signingKeyPath)
 	if err != nil {
-		log.Fatal("failed to load signing key:", err)
+		logger.Log.Error("signing key load failed",
+			slog.String("path", signingKeyPath),
+			slog.String("error", err.Error()))
+		os.Exit(1)
 	}
 
 	// Initialize HS256 JWT signing secret (shared with Kong for gateway-level validation).
 	if err := services.InitJWTSigningSecret(); err != nil {
-		log.Fatal("failed to initialize JWT signing secret:", err)
+		logger.Log.Error("JWT signing secret initialization failed",
+			slog.String("error", err.Error()))
+		os.Exit(1)
 	}
 
 	routes.Routes(server, h)
@@ -142,7 +164,9 @@ func main() {
 	server.POST("/internal/outbox/ack", outboxHandler.Ack)
 	server.POST("/internal/outbox/nack", outboxHandler.Nack)
 
-	log.Println("Starting Zord Edge service on port 8080 with observability enabled")
+	logger.Log.Info("starting zord-edge service",
+		slog.String("addr", ":8080"),
+		slog.Bool("observability", true))
 	srv := &http.Server{
 		Addr:              ":8080",
 		Handler:           server,
@@ -155,7 +179,9 @@ func main() {
 	// Start server in a goroutine so it doesn't block.
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("Server failed to start: %v", err)
+			logger.Log.Error("server failed to start",
+				slog.String("error", err.Error()))
+			os.Exit(1)
 		}
 	}()
 
@@ -164,7 +190,7 @@ func main() {
 
 	// Restore default behavior on the interrupt signal and notify user of shutdown.
 	stop()
-	log.Println("Shutting down gracefully, press Ctrl+C again to force")
+	logger.Log.Info("shutting down gracefully, press Ctrl+C again to force")
 
 	// The context is used to inform the server it has 10 seconds to finish
 	// the request it is currently handling
@@ -172,10 +198,12 @@ func main() {
 	defer cancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Fatalf("Server forced to shutdown: %v", err)
+		logger.Log.Error("server forced to shutdown",
+			slog.String("error", err.Error()))
+		os.Exit(1)
 	}
 
-	log.Println("Server exiting")
+	logger.Log.Info("server exited cleanly")
 }
 
 // prometheusMiddleware adds Prometheus metrics collection

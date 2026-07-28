@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
-	"log"
+	"log/slog"
 	"os"
 
 	"zord-edge/db"
+	"zord-edge/logger"
 	"zord-edge/model"
 	"zord-edge/vault"
 
@@ -19,22 +20,22 @@ func RawIntent(ctx context.Context,
 
 	envelopeID, err := uuid.Parse(storageAck.EnvelopeId)
 	if err != nil {
-		log.Printf("Invalid EnvelopeId: %s", storageAck.EnvelopeId)
+		logger.Log.Error("invalid EnvelopeId", slog.String("envelope_id", storageAck.EnvelopeId), slog.String("error", err.Error()))
 		return err
 	}
 	artifactId, err := uuid.Parse(storageAck.ArtifactId)
 	if err != nil {
-		log.Printf("Invalid ArtifactId: %s", storageAck.ArtifactId)
+		logger.Log.Error("invalid ArtifactId", slog.String("artifact_id", storageAck.ArtifactId), slog.String("error", err.Error()))
 		return err
 	}
 	traceID, err := uuid.Parse(rawIntent.TraceID)
 	if err != nil {
-		log.Printf("Invalid TraceID: %s", rawIntent.TraceID)
+		logger.Log.Error("invalid TraceID", slog.String("trace_id", rawIntent.TraceID), slog.String("error", err.Error()))
 		return err
 	}
 	tenantID, err := uuid.Parse(rawIntent.TenantID)
 	if err != nil {
-		log.Printf("Invalid TenantId: %s", rawIntent.TenantID)
+		logger.Log.Error("invalid TenantId", slog.String("tenant_id", rawIntent.TenantID), slog.String("error", err.Error()))
 		return err
 	}
 	objectRef := storageAck.ObjectRef
