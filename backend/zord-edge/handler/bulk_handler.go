@@ -11,7 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"zord-edge/db"
+	"zord-edge/logger"
 	"zord-edge/model"
 	"zord-edge/services"
 	"zord-edge/vault"
@@ -44,12 +45,14 @@ func init() {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			minutes = n
 		} else {
-			log.Printf("[BulkHandler] WARNING: BULK_INGEST_JOB_TIMEOUT_MINUTES=%q is not a valid positive integer; using default %d minutes",
-				v, defaultBulkIngestJobTimeoutMinutes)
+			logger.Log.Warn("BULK_INGEST_JOB_TIMEOUT_MINUTES is not a valid positive integer; using default",
+				slog.String("invalid_value", v),
+				slog.Int("default_minutes", defaultBulkIngestJobTimeoutMinutes))
 		}
 	}
 	bulkIngestJobTimeout = time.Duration(minutes) * time.Minute
-	log.Printf("[BulkHandler] bulk ingest job timeout set to %v", bulkIngestJobTimeout)
+	logger.Log.Info("bulk ingest job timeout configured",
+		slog.Duration("timeout", bulkIngestJobTimeout))
 }
 
 type BulkResult struct {
@@ -183,12 +186,11 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		return
 	}
 
-	log.Printf(
-		"Bulk file stored | filename=%s size=%d hash=%s ",
-		file.Filename,
-		fileSizeBytes,
-		fileHash,
-	)
+	logger.Log.Info("bulk file stored",
+		slog.String("filename", file.Filename),
+		slog.Int64("size", fileSizeBytes),
+		slog.String("hash", fileHash),
+		slog.String("tenant_id", tenantID.String()))
 
 	// REQUIREMENT 12 PRESERVED: "file_data" contains the raw file bytes,
 	// identical to the original. This is the source-of-truth payload stored
@@ -264,13 +266,15 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 	switch {
 	case sourceSystem != "":
-		log.Printf("[BulkHandler] using profile-driven pass-through for source_system=%s tenant=%s",
-			sourceSystem, tenantID)
+		logger.Log.Info("using profile-driven pass-through",
+			slog.String("source_system", sourceSystem),
+			slog.String("tenant_id", tenantID.String()))
 
 	case tenantType == "TALLY" || tenantType == "SAP" || tenantType == "ERP" || tenantType == "QUICKBOOKS":
 		sourceSystem = tenantType
-		log.Printf("[BulkHandler] using profile-driven pass-through for source_system=%s tenant=%s",
-			sourceSystem, tenantID)
+		logger.Log.Info("using profile-driven pass-through",
+			slog.String("source_system", sourceSystem),
+			slog.String("tenant_id", tenantID.String()))
 
 	case tenantType != "":
 		parser, parserErr = services.GetParserByType(tenantType)
@@ -283,13 +287,14 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 			return
 		}
 		sourceSystem = "UNKNOWN"
-		log.Printf("[BulkHandler] using type-based parser type=%s tenant=%s",
-			tenantType, tenantID)
+		logger.Log.Info("using type-based parser",
+			slog.String("tenant_type", tenantType),
+			slog.String("tenant_id", tenantID.String()))
 
 	default:
 		sourceSystem = "UNKNOWN"
-		log.Printf("[BulkHandler] using profile-driven pass-through with source auto-detection tenant=%s",
-			tenantID)
+		logger.Log.Info("using profile-driven pass-through with source auto-detection",
+			slog.String("tenant_id", tenantID.String()))
 	}
 
 	profileIDForAudit := tenantType
@@ -446,7 +451,9 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 			}
 			fileRowNumber++
 			if err != nil {
-				log.Printf("CSV read error (skipping row): %v", err)
+				logger.Log.Warn("CSV parse error",
+					slog.Int("file_row", fileRowNumber),
+					slog.String("error", err.Error()))
 				continue
 			}
 			isEmpty := true
@@ -732,7 +739,9 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 			fileRowNumber++
 			row, err := dataRows.Columns()
 			if err != nil {
-				log.Printf("XLSX read error (skipping row): %v", err)
+				logger.Log.Warn("XLSX parse error",
+					slog.Int("file_row_number", fileRowNumber),
+					slog.String("error", err.Error()))
 				continue
 			}
 			isEmpty := true
@@ -937,7 +946,10 @@ func buildRowPayload(headers, row []string, rowNum int) ([]byte, error) {
 		if j < len(row) {
 			value = row[j]
 		} else {
-			log.Printf("buildRowPayload: row has %d cols, header expects %d, filling '%s' with empty string", len(row), len(headers), header)
+			logger.Log.Warn("row has fewer columns than headers, padding with empty string",
+				slog.Int("row_cols", len(row)),
+				slog.Int("header_cols", len(headers)),
+				slog.String("header", header))
 		}
 
 		keys := strings.Split(header, ".")
@@ -1008,7 +1020,10 @@ func (h *Handler) processBulkIntentRow(
 
 	encryptedPayload, err := vault.Encrypt(rawPayload)
 	if err != nil {
-		log.Printf("Error encrypting payload for bulk row, trace_id=%s: %v", traceID, err)
+		logger.Log.Error("failed to encrypt payload for bulk row",
+			slog.String("trace_id", traceID),
+			slog.String("tenant_id", tenantID.String()),
+			slog.String("error", err.Error()))
 		return nil, uuid.Nil, err
 	}
 
@@ -1065,11 +1080,16 @@ func (h *Handler) processBulkIntentRow(
 
 	storageAck, err := services.ProcessRawIntent(ctx, rawIntent, h.S3store, envelopeID, receivedAt)
 	if err != nil {
-		log.Printf("Error processing raw intent for bulk row, trace_id=%s: %v", traceID, err)
+		logger.Log.Error("failed to process raw intent for bulk row",
+			slog.String("trace_id", traceID),
+			slog.String("tenant_id", tenantID.String()),
+			slog.String("error", err.Error()))
 		return nil, uuid.Nil, err
 	}
 	if storageAck == nil {
-		log.Printf("S3 data is nil for bulk row, trace_id=%s", traceID)
+		logger.Log.Error("S3 storage returned nil ack for bulk row",
+			slog.String("trace_id", traceID),
+			slog.String("tenant_id", tenantID.String()))
 		return nil, uuid.Nil, fmt.Errorf("S3 store returned nil ack for trace_id=%s", traceID)
 	}
 	storageAck.ArtifactId = artifactID
@@ -1080,13 +1100,19 @@ func (h *Handler) processBulkIntentRow(
 
 	rawRowHash, err := services.ComputeRawRowHash(rawPayload)
 	if err != nil {
-		log.Printf("Error computing raw_row_hash for bulk row, trace_id=%s: %v", traceID, err)
+		logger.Log.Error("failed to compute raw_row_hash for bulk row",
+			slog.String("trace_id", traceID),
+			slog.String("tenant_id", tenantID.String()),
+			slog.String("error", err.Error()))
 		return nil, uuid.Nil, err
 	}
 	rawIntent.RawRowHash = rawRowHash
 
 	if err := services.RawIntent(ctx, rawIntent, storageAck); err != nil {
-		log.Printf("Error persisting raw intent for bulk row, trace_id=%s: %v", traceID, err)
+		logger.Log.Error("failed to persist raw intent for bulk row",
+			slog.String("trace_id", traceID),
+			slog.String("tenant_id", tenantID.String()),
+			slog.String("error", err.Error()))
 		return nil, uuid.Nil, err
 	}
 

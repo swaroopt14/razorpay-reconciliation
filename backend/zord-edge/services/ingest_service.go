@@ -4,8 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
+	"log/slog"
 
+	"zord-edge/logger"
 	"zord-edge/model"
 )
 
@@ -16,10 +17,11 @@ func SaveRawIntent(
 	envelope *model.IngressEnvelope,
 
 ) error {
-	//log.Printf("%+v\n", envelope)
+	//logger.Log.Debug("saving raw intent", slog.Any("envelope", envelope))
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		log.Printf("SaveRawIntent Trasaction Error: %v", err)
+		logger.Log.Error("SaveRawIntent: transaction begin failed",
+			slog.String("error", err.Error()))
 		return err
 	}
 
@@ -89,7 +91,10 @@ func SaveRawIntent(
 
 	res, err := tx.ExecContext(ctx, query, "COMPLETED", envelope.EnvelopeID, envelope.PrincipalID, envelope.SourceClass, envelope.TenantID, envelope.IdempotencyKey)
 	if err != nil {
-		log.Printf("Error updating idempotency key: %v", err)
+		logger.Log.Error("error updating idempotency key",
+			slog.String("tenant_id", envelope.TenantID.String()),
+			slog.String("idempotency_key", envelope.IdempotencyKey),
+			slog.String("error", err.Error()))
 		return err
 	}
 	rows, err := res.RowsAffected()
@@ -138,7 +143,10 @@ func SaveRawIntent(
 		envelope.SourceSystem,      // $28
 	)
 	if err != nil {
-		log.Printf("Failed to insert into ingress_outbox in transaction: %v", err)
+		logger.Log.Error("failed to insert into ingress_outbox in transaction",
+			slog.String("tenant_id", envelope.TenantID.String()),
+			slog.String("envelope_id", envelope.EnvelopeID.String()),
+			slog.String("error", err.Error()))
 		return err
 	}
 

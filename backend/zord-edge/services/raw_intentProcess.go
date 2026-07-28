@@ -2,9 +2,10 @@ package services
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
+	"zord-edge/logger"
 	"zord-edge/model"
 	"zord-edge/storage"
 )
@@ -26,7 +27,10 @@ func ProcessRawIntent(
 		rawIntent.TenantName,
 	)
 	if err != nil {
-		log.Println("S3 Upload Failed", err)
+		logger.Log.Error("S3 Upload Failed",
+			slog.String("tenant_id", rawIntent.TenantID),
+			slog.String("envelope_id", envelopeID),
+			slog.String("error", err.Error()))
 		return nil, err
 	}
 

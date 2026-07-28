@@ -3,13 +3,14 @@ package handler
 import (
 	"context"
 	"crypto/subtle"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"zord-edge/logger"
 	"zord-edge/services"
 
 	"github.com/gin-gonic/gin"
@@ -75,6 +76,10 @@ func (h *OutboxHandler) Lease(c *gin.Context) {
 
 	leaseID, leaseUntil, events, err := h.repo.LeaseOutboxBatch(ctx, limit, ttl, relayInstanceID(c.Request))
 	if err != nil {
+		logger.Log.Error("outbox lease failed",
+			slog.Int("limit", limit),
+			slog.Int("ttl", ttl),
+			slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to lease outbox events"})
 		return
 	}
@@ -114,6 +119,10 @@ func (h *OutboxHandler) Ack(c *gin.Context) {
 
 	updated, err := h.repo.AckOutboxBatch(c.Request.Context(), req.LeaseID, req.EventIDs)
 	if err != nil {
+		logger.Log.Error("outbox ack failed",
+			slog.String("lease_id", req.LeaseID),
+			slog.Int("event_count", len(req.EventIDs)),
+			slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to ack outbox events"})
 		return
 	}
@@ -149,6 +158,10 @@ func (h *OutboxHandler) Nack(c *gin.Context) {
 
 	updated, err := h.repo.NackOutboxBatch(c.Request.Context(), req.LeaseID, req.EventIDs)
 	if err != nil {
+		logger.Log.Error("outbox nack failed",
+			slog.String("lease_id", req.LeaseID),
+			slog.Int("event_count", len(req.EventIDs)),
+			slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to nack outbox events"})
 		return
 	}
@@ -171,19 +184,24 @@ func authorizeRelay(r *http.Request) bool {
 
 	// Fail closed — if token is not configured, deny all requests.
 	if expected == "" {
-		log.Printf("SECURITY: RELAY_AUTH_TOKEN is not set — rejecting request from %s", r.RemoteAddr)
+		logger.Log.Warn("RELAY_AUTH_TOKEN is not set, rejecting request",
+			slog.String("remote_addr", r.RemoteAddr))
 		return false
 	}
 
 	provided := strings.TrimSpace(r.Header.Get("X-Relay-Token"))
 	if provided == "" {
-		log.Printf("SECURITY: missing X-Relay-Token header from %s %s", r.RemoteAddr, r.URL.Path)
+		logger.Log.Warn("missing X-Relay-Token header",
+			slog.String("remote_addr", r.RemoteAddr),
+			slog.String("path", r.URL.Path))
 		return false
 	}
 
 	// Constant-time comparison prevents timing side-channel attacks.
 	if subtle.ConstantTimeCompare([]byte(expected), []byte(provided)) != 1 {
-		log.Printf("SECURITY: invalid relay auth token from %s %s", r.RemoteAddr, r.URL.Path)
+		logger.Log.Warn("invalid relay auth token",
+			slog.String("remote_addr", r.RemoteAddr),
+			slog.String("path", r.URL.Path))
 		return false
 	}
 

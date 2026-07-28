@@ -6,11 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"zord-edge/db"
+	"zord-edge/logger"
 	"zord-edge/model"
 	"zord-edge/services"
 	"zord-edge/vault"
@@ -43,8 +44,11 @@ func (h *Handler) WebhookHandler(c *gin.Context) {
 
 	tenantUUID, err := uuid.Parse(tenantIDStr)
 	if err != nil {
-		log.Printf("Webhook invalid tenant_id provider=%s connector_id=%s tenant=%s",
-			provider, connectorID, tenantIDStr)
+		logger.Log.Error("webhook invalid tenant_id in context",
+			slog.String("provider", provider),
+			slog.String("connector_id", connectorID),
+			slog.String("tenant_id_raw", tenantIDStr),
+			slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid tenant_id in context"})
 		return
 	}
@@ -97,8 +101,11 @@ func (h *Handler) WebhookHandler(c *gin.Context) {
 	// ── Encrypt payload ──
 	encryptedPayload, err := vault.Encrypt(rawPayload)
 	if err != nil {
-		log.Printf("Webhook encrypt failed provider=%s connector_id=%s trace_id=%s: %v",
-			provider, connectorID, traceID, err)
+		logger.Log.Error("webhook payload encryption failed",
+			slog.String("provider", provider),
+			slog.String("connector_id", connectorID),
+			slog.String("trace_id", traceID),
+			slog.String("error", err.Error()))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encrypt payload"})
 		return
 	}
@@ -144,8 +151,11 @@ func (h *Handler) WebhookHandler(c *gin.Context) {
 			return
 		}
 
-		log.Printf("Webhook idempotency persist failed provider=%s connector_id=%s trace_id=%s: %v",
-			provider, connectorID, traceID, err)
+		logger.Log.Error("webhook idempotency persist failed",
+			slog.String("provider", provider),
+			slog.String("connector_id", connectorID),
+			slog.String("trace_id", traceID),
+			slog.String("error", err.Error()))
 
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"ErrorCode":  "INTERNAL_SERVER_ERROR",
@@ -157,8 +167,12 @@ func (h *Handler) WebhookHandler(c *gin.Context) {
 
 	// ── Duplicate ──
 	if dupID != uuid.Nil {
-		log.Printf("Webhook duplicate event provider=%s connector_id=%s event_id=%s trace_id=%s",
-			provider, connectorID, idempotencyKey, traceID)
+		logger.Log.Info("webhook duplicate event detected",
+			slog.String("provider", provider),
+			slog.String("connector_id", connectorID),
+			slog.String("event_id", idempotencyKey),
+			slog.String("trace_id", traceID),
+			slog.String("envelope_id", dupID.String()))
 
 		c.JSON(http.StatusOK, gin.H{
 			"status":     "received",
@@ -179,8 +193,11 @@ func (h *Handler) WebhookHandler(c *gin.Context) {
 	// ── S3 ──
 	data, err := services.ProcessRawIntent(reqCtx, msg, h.S3store, envelopeID, receivedAt)
 	if err != nil {
-		log.Printf("Webhook ProcessRawIntent failed provider=%s connector_id=%s trace_id=%s: %v",
-			provider, connectorID, traceID, err)
+		logger.Log.Error("webhook raw intent processing failed",
+			slog.String("provider", provider),
+			slog.String("connector_id", connectorID),
+			slog.String("trace_id", traceID),
+			slog.String("error", err.Error()))
 
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"TraceID":   traceID,
@@ -191,8 +208,10 @@ func (h *Handler) WebhookHandler(c *gin.Context) {
 	}
 
 	if data == nil {
-		log.Printf("Webhook S3 data nil provider=%s connector_id=%s trace_id=%s",
-			provider, connectorID, traceID)
+		logger.Log.Error("webhook S3 storage returned nil ack",
+			slog.String("provider", provider),
+			slog.String("connector_id", connectorID),
+			slog.String("trace_id", traceID))
 
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"TraceID":   traceID,
@@ -208,8 +227,12 @@ func (h *Handler) WebhookHandler(c *gin.Context) {
 
 	// ── Persist ──
 	if err := services.RawIntent(reqCtx, msg, data); err != nil {
-		log.Printf("Webhook RawIntent persist failed provider=%s connector_id=%s trace_id=%s: %v",
-			provider, connectorID, traceID, err)
+		logger.Log.Error("webhook raw intent persist failed",
+			slog.String("provider", provider),
+			slog.String("connector_id", connectorID),
+			slog.String("trace_id", traceID),
+			slog.String("envelope_id", envelopeID),
+			slog.String("error", err.Error()))
 
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"TraceID":    traceID,
