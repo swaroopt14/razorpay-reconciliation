@@ -9,6 +9,7 @@ type IntentOutboxEvent struct {
 	EventID       string          `json:"event_id"`
 	EventType     string          `json:"event_type"`
 	TenantID      string          `json:"tenant_id"`
+	TraceID       string          `json:"trace_id"`
 	SchemaVersion string          `json:"schema_version"`
 	CreatedAt     time.Time       `json:"created_at"`
 	Payload       json.RawMessage `json:"payload"`

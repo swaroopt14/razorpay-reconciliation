@@ -37,6 +37,7 @@ services:
     auth_token: "dev-dummy-token-123"
     http_timeout: 15s
     default_topic: payments.intent.events.v1
+    is_intent: true
     # Per-service retry overrides (optional — defaults are production-safe).
     # max_retry_attempts: 20
     # retry_base_delay: 1s
@@ -61,6 +62,7 @@ services:
     auth_token: "dev-dummy-token-123"
     http_timeout: 15s
     default_topic: payments.ledger.events.v1
+    is_edge: true
 
   - name: outcome-engine
     base_url: http://zord-outcome-engine-service:8081

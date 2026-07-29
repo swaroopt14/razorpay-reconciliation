@@ -156,6 +156,376 @@ func (p *processor) process(ctx context.Context, event *model.OutboxEvent) proce
 	return processorResult{eventID: event.EventID, success: false, err: lastErr}
 }
 
+// processEdge is the edge-event equivalent of process(): validates, publishes
+// with retry, and routes to DLQ on failure — same flow, but typed to
+// model.EdgeOutboxEvent instead of the shared generic OutboxEvent.
+func (p *processor) processEdge(ctx context.Context, event *model.EdgeOutboxEvent) processorResult {
+	ctx, span := tracing.Tracer().Start(ctx, "processor.process_edge",
+		trace.WithAttributes(
+			attribute.String("event.id", event.EventID),
+			attribute.String("event.type", event.EventType),
+			attribute.String("tenant.id", event.TenantID),
+			attribute.String("service", p.serviceName),
+		),
+	)
+	defer span.End()
+
+	log := p.log.With(
+		zap.String("event_id", event.EventID),
+		zap.String("event_type", event.EventType),
+		zap.String("tenant_id", event.TenantID),
+		zap.String("trace_id", event.TraceID),
+	)
+
+	if err := validateEdgeEvent(event); err != nil {
+		log.Warn("poison edge event detected during validation", zap.Error(err))
+		p.routeEdgeToPoisonDLQ(ctx, event, err, model.ReasonCodeMissingRequiredField, 1)
+		return processorResult{eventID: event.EventID, isPoison: true, err: err}
+	}
+
+	topic := event.Topic
+	if topic == "" {
+		if t, ok := p.topicMap[event.EventType]; ok {
+			topic = t
+		} else {
+			topic = p.defaultTopic
+		}
+	}
+
+	firstAttemptAt := time.Now()
+	var lastErr error
+	var attemptCount int
+
+	retryErr := p.retryPolicy.Do(ctx,
+		func(ctx context.Context, attempt retry.Attempt) error {
+			attemptCount = attempt.Number
+			err := p.pub.PublishEdgeEvent(ctx, event, topic)
+			if err == nil {
+				return nil
+			}
+
+			if publisher.IsPoison(err) {
+				return &stopRetryError{cause: err, isPoison: true}
+			}
+
+			metrics.RetryTotal.WithLabelValues(p.serviceName).Inc()
+			lastErr = err
+
+			log.Warn("kafka publish failed, will retry",
+				zap.Int("attempt", attempt.Number),
+				zap.Int("max_attempts", p.retryPolicy.MaxAttempts),
+				zap.Error(err),
+			)
+			return err
+		},
+		func(attempt retry.Attempt, delay time.Duration) {
+			log.Info("retry backoff",
+				zap.Int("attempt", attempt.Number),
+				zap.Duration("backoff", delay),
+				zap.Error(attempt.LastError),
+			)
+		},
+	)
+
+	if retryErr == nil {
+		metrics.PublishTotal.WithLabelValues(p.serviceName, topic, "success").Inc()
+		log.Info("edge event published",
+			zap.String("event_type", event.EventType),
+			zap.String("event_id", event.EventID),
+			zap.String("topic", topic),
+			zap.Int("attempts", attemptCount),
+		)
+		return processorResult{eventID: event.EventID, success: true}
+	}
+
+	var stopErr *stopRetryError
+	if errors.As(retryErr, &stopErr) && stopErr.isPoison {
+		reasonCode := model.ReasonCodeInvalidPayload
+		if errors.Is(stopErr.cause, errMessageTooLarge) {
+			reasonCode = model.ReasonCodeMessageTooLarge
+		}
+		p.routeEdgeToPoisonDLQ(ctx, event, stopErr.cause, reasonCode, attemptCount)
+		return processorResult{eventID: event.EventID, isPoison: true, err: stopErr.cause}
+	}
+
+	metrics.PublishTotal.WithLabelValues(p.serviceName, topic, "error").Inc()
+	p.routeEdgeToPublishFailureDLQ(ctx, event, lastErr, attemptCount, firstAttemptAt)
+
+	return processorResult{eventID: event.EventID, success: false, err: lastErr}
+}
+
+func (p *processor) routeEdgeToPoisonDLQ(
+	ctx context.Context,
+	event *model.EdgeOutboxEvent,
+	cause error,
+	reasonCode string,
+	attempts int,
+) {
+	msg := &model.DLQMessage{
+		EdgeEvent:       event,
+		EventID:         event.EventID,
+		Error:           cause.Error(),
+		ReasonCode:      reasonCode,
+		ServiceName:     p.serviceName,
+		AttemptsCount:   attempts,
+		LastAttemptAt:   time.Now(),
+		FirstAttemptAt:  time.Now(),
+		RelayInstanceID: p.instanceID,
+	}
+	if err := p.pub.PublishDLQ(ctx, msg, publisher.DLQTypePoison); err != nil {
+		p.log.Error("CRITICAL: failed to publish edge event to poison DLQ",
+			zap.String("event_id", event.EventID),
+			zap.Error(err),
+		)
+	}
+	metrics.DLQTotal.WithLabelValues(p.serviceName, string(publisher.DLQTypePoison)).Inc()
+	p.log.Error("edge event routed to poison DLQ",
+		zap.String("event_id", event.EventID),
+		zap.String("reason_code", reasonCode),
+		zap.Error(cause),
+	)
+}
+
+func (p *processor) routeEdgeToPublishFailureDLQ(
+	ctx context.Context,
+	event *model.EdgeOutboxEvent,
+	cause error,
+	attempts int,
+	firstAttemptAt time.Time,
+) {
+	reasonCode := model.ReasonCodeKafkaMaxRetries
+	if cause != nil && isKafkaTimeout(cause) {
+		reasonCode = model.ReasonCodeKafkaTimeout
+	}
+
+	msg := &model.DLQMessage{
+		EdgeEvent:       event,
+		EventID:         event.EventID,
+		Error:           cause.Error(),
+		ReasonCode:      reasonCode,
+		ServiceName:     p.serviceName,
+		AttemptsCount:   attempts,
+		LastAttemptAt:   time.Now(),
+		FirstAttemptAt:  firstAttemptAt,
+		RelayInstanceID: p.instanceID,
+	}
+	if err := p.pub.PublishDLQ(ctx, msg, publisher.DLQTypePublishFailure); err != nil {
+		p.log.Error("CRITICAL: failed to publish edge event to publish-failure DLQ",
+			zap.String("event_id", event.EventID),
+			zap.Error(err),
+		)
+	}
+	metrics.DLQTotal.WithLabelValues(p.serviceName, string(publisher.DLQTypePublishFailure)).Inc()
+	p.log.Error("edge event routed to publish-failure DLQ after max retries",
+		zap.String("event_id", event.EventID),
+		zap.Int("attempts", attempts),
+		zap.String("reason_code", reasonCode),
+		zap.Error(cause),
+	)
+}
+
+// validateEdgeEvent performs the same structural validation as validateEvent,
+// scoped to model.EdgeOutboxEvent's fields.
+func validateEdgeEvent(e *model.EdgeOutboxEvent) error {
+	if e.EventID == "" {
+		return errMissingField("event_id")
+	}
+	if e.TenantID == "" {
+		return errMissingField("tenant_id")
+	}
+	if e.EventType == "" {
+		return errMissingField("event_type")
+	}
+	if len(e.Payload) == 0 || string(e.Payload) == "null" {
+		return errMissingField("payload")
+	}
+	return nil
+}
+
+// processIntent is the intent-event equivalent of process(): validates,
+// publishes with retry, and routes to DLQ on failure — same flow, but typed
+// to model.IntentOutboxEvent instead of the shared generic OutboxEvent.
+func (p *processor) processIntent(ctx context.Context, event *model.IntentOutboxEvent) processorResult {
+	ctx, span := tracing.Tracer().Start(ctx, "processor.process_intent",
+		trace.WithAttributes(
+			attribute.String("event.id", event.EventID),
+			attribute.String("event.type", event.EventType),
+			attribute.String("tenant.id", event.TenantID),
+			attribute.String("service", p.serviceName),
+		),
+	)
+	defer span.End()
+
+	log := p.log.With(
+		zap.String("event_id", event.EventID),
+		zap.String("event_type", event.EventType),
+		zap.String("tenant_id", event.TenantID),
+		zap.String("trace_id", event.TraceID),
+	)
+
+	if err := validateIntentEvent(event); err != nil {
+		log.Warn("poison intent event detected during validation", zap.Error(err))
+		p.routeIntentToPoisonDLQ(ctx, event, err, model.ReasonCodeMissingRequiredField, 1)
+		return processorResult{eventID: event.EventID, isPoison: true, err: err}
+	}
+
+	topic := ""
+	if t, ok := p.topicMap[event.EventType]; ok {
+		topic = t
+	} else {
+		topic = p.defaultTopic
+	}
+
+	firstAttemptAt := time.Now()
+	var lastErr error
+	var attemptCount int
+
+	retryErr := p.retryPolicy.Do(ctx,
+		func(ctx context.Context, attempt retry.Attempt) error {
+			attemptCount = attempt.Number
+			err := p.pub.PublishIntentEvent(ctx, event, topic)
+			if err == nil {
+				return nil
+			}
+
+			if publisher.IsPoison(err) {
+				return &stopRetryError{cause: err, isPoison: true}
+			}
+
+			metrics.RetryTotal.WithLabelValues(p.serviceName).Inc()
+			lastErr = err
+
+			log.Warn("kafka publish failed, will retry",
+				zap.Int("attempt", attempt.Number),
+				zap.Int("max_attempts", p.retryPolicy.MaxAttempts),
+				zap.Error(err),
+			)
+			return err
+		},
+		func(attempt retry.Attempt, delay time.Duration) {
+			log.Info("retry backoff",
+				zap.Int("attempt", attempt.Number),
+				zap.Duration("backoff", delay),
+				zap.Error(attempt.LastError),
+			)
+		},
+	)
+
+	if retryErr == nil {
+		metrics.PublishTotal.WithLabelValues(p.serviceName, topic, "success").Inc()
+		log.Info("intent event published",
+			zap.String("event_type", event.EventType),
+			zap.String("event_id", event.EventID),
+			zap.String("topic", topic),
+			zap.Int("attempts", attemptCount),
+		)
+		return processorResult{eventID: event.EventID, success: true}
+	}
+
+	var stopErr *stopRetryError
+	if errors.As(retryErr, &stopErr) && stopErr.isPoison {
+		reasonCode := model.ReasonCodeInvalidPayload
+		if errors.Is(stopErr.cause, errMessageTooLarge) {
+			reasonCode = model.ReasonCodeMessageTooLarge
+		}
+		p.routeIntentToPoisonDLQ(ctx, event, stopErr.cause, reasonCode, attemptCount)
+		return processorResult{eventID: event.EventID, isPoison: true, err: stopErr.cause}
+	}
+
+	metrics.PublishTotal.WithLabelValues(p.serviceName, topic, "error").Inc()
+	p.routeIntentToPublishFailureDLQ(ctx, event, lastErr, attemptCount, firstAttemptAt)
+
+	return processorResult{eventID: event.EventID, success: false, err: lastErr}
+}
+
+func (p *processor) routeIntentToPoisonDLQ(
+	ctx context.Context,
+	event *model.IntentOutboxEvent,
+	cause error,
+	reasonCode string,
+	attempts int,
+) {
+	msg := &model.DLQMessage{
+		IntentEvent:     event,
+		EventID:         event.EventID,
+		Error:           cause.Error(),
+		ReasonCode:      reasonCode,
+		ServiceName:     p.serviceName,
+		AttemptsCount:   attempts,
+		LastAttemptAt:   time.Now(),
+		FirstAttemptAt:  time.Now(),
+		RelayInstanceID: p.instanceID,
+	}
+	if err := p.pub.PublishDLQ(ctx, msg, publisher.DLQTypePoison); err != nil {
+		p.log.Error("CRITICAL: failed to publish intent event to poison DLQ",
+			zap.String("event_id", event.EventID),
+			zap.Error(err),
+		)
+	}
+	metrics.DLQTotal.WithLabelValues(p.serviceName, string(publisher.DLQTypePoison)).Inc()
+	p.log.Error("intent event routed to poison DLQ",
+		zap.String("event_id", event.EventID),
+		zap.String("reason_code", reasonCode),
+		zap.Error(cause),
+	)
+}
+
+func (p *processor) routeIntentToPublishFailureDLQ(
+	ctx context.Context,
+	event *model.IntentOutboxEvent,
+	cause error,
+	attempts int,
+	firstAttemptAt time.Time,
+) {
+	reasonCode := model.ReasonCodeKafkaMaxRetries
+	if cause != nil && isKafkaTimeout(cause) {
+		reasonCode = model.ReasonCodeKafkaTimeout
+	}
+
+	msg := &model.DLQMessage{
+		IntentEvent:     event,
+		EventID:         event.EventID,
+		Error:           cause.Error(),
+		ReasonCode:      reasonCode,
+		ServiceName:     p.serviceName,
+		AttemptsCount:   attempts,
+		LastAttemptAt:   time.Now(),
+		FirstAttemptAt:  firstAttemptAt,
+		RelayInstanceID: p.instanceID,
+	}
+	if err := p.pub.PublishDLQ(ctx, msg, publisher.DLQTypePublishFailure); err != nil {
+		p.log.Error("CRITICAL: failed to publish intent event to publish-failure DLQ",
+			zap.String("event_id", event.EventID),
+			zap.Error(err),
+		)
+	}
+	metrics.DLQTotal.WithLabelValues(p.serviceName, string(publisher.DLQTypePublishFailure)).Inc()
+	p.log.Error("intent event routed to publish-failure DLQ after max retries",
+		zap.String("event_id", event.EventID),
+		zap.Int("attempts", attempts),
+		zap.String("reason_code", reasonCode),
+		zap.Error(cause),
+	)
+}
+
+// validateIntentEvent performs the same structural validation as
+// validateEvent, scoped to model.IntentOutboxEvent's fields.
+func validateIntentEvent(e *model.IntentOutboxEvent) error {
+	if e.EventID == "" {
+		return errMissingField("event_id")
+	}
+	if e.TenantID == "" {
+		return errMissingField("tenant_id")
+	}
+	if e.EventType == "" {
+		return errMissingField("event_type")
+	}
+	if len(e.Payload) == 0 || string(e.Payload) == "null" {
+		return errMissingField("payload")
+	}
+	return nil
+}
+
 func (p *processor) routeToPoisonDLQ(
 	ctx context.Context,
 	event *model.OutboxEvent,
@@ -165,6 +535,7 @@ func (p *processor) routeToPoisonDLQ(
 ) {
 	msg := &model.DLQMessage{
 		Event:           event,
+		EventID:         event.EventID,
 		Error:           cause.Error(),
 		ReasonCode:      reasonCode,
 		ServiceName:     p.serviceName,
@@ -201,6 +572,7 @@ func (p *processor) routeToPublishFailureDLQ(
 
 	msg := &model.DLQMessage{
 		Event:           event,
+		EventID:         event.EventID,
 		Error:           cause.Error(),
 		ReasonCode:      reasonCode,
 		ServiceName:     p.serviceName,
