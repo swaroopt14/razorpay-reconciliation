@@ -292,7 +292,9 @@ func main() {
 	log.Println("main: background workers started (outbox + sla + policy-cron)")
 
 	// ── Step 13: Start Kafka consumers ────────────────────────────────────
-	kafkapkg.StartConsumers(ctx, cfg, kafkaIngestionHandler)
+	// producer is reused here (P0-02) so a permanently-failed inbound event
+	// can be published to cfg.TopicIntelligenceDLQ before its offset commits.
+	kafkapkg.StartConsumers(ctx, cfg, kafkaIngestionHandler, producer)
 	log.Println("main: kafka consumers started")
 
 	// ── Step 14: Start HTTP server ────────────────────────────────────────
@@ -344,6 +346,7 @@ func activeTopicsForMode(cfg *config.Config) []string {
 		cfg.TopicActuationRetry,
 		cfg.TopicActuationEvidence,
 		cfg.TopicActuationBatchPatch,
+		cfg.TopicIntelligenceDLQ, // P0-02: ZPI-owned output topic, provisioned regardless of grade
 		cfg.TopicMLRequest,
 		cfg.TopicMLResult,
 	}

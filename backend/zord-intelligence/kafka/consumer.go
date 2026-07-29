@@ -35,8 +35,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/segmentio/kafka-go"
 	"github.com/zord/zord-intelligence/config"
@@ -130,7 +132,12 @@ type SLATimerTickHandler interface {
 
 // StartConsumers builds the topic→handler map and starts the Kafka reader goroutine.
 // Call this once from main.go after all services are created.
-func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandler) {
+//
+// producer is the SAME Producer instance main.go already constructs for
+// outbox delivery — reused here (not a dedicated second producer) to
+// publish permanently-failed events to cfg.TopicIntelligenceDLQ before
+// their source offset is committed (corrective-action-report P0-02).
+func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandler, producer *Producer) {
 	brokers := strings.Split(cfg.KafkaBrokers, ",")
 
 	// topicHandlers maps each Kafka topic name to a function that:
@@ -426,7 +433,7 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 	topicCount := 0
 	for topic, fn := range topicHandlers {
 		t, f := topic, fn // capture loop variables before goroutine launch
-		go consumeSingleTopic(ctx, brokers, cfg.KafkaGroupID, t, f)
+		go consumeSingleTopic(ctx, brokers, cfg.KafkaGroupID, t, f, producer, cfg.TopicIntelligenceDLQ)
 		topicCount++
 	}
 
@@ -492,13 +499,18 @@ func (c KafkaGoHeaderCarrier) Keys() []string {
 // so all events for the same tenant land on the same partition and are processed
 // sequentially by this goroutine — no cross-tenant race conditions.
 //
-// CommitInterval: 0 (manual commit) — offset is committed only after a successful
-// handler call. A persistent handler error commits to advance past a poison message.
+// CommitInterval: 0 (manual commit) — offset is committed only after a
+// successful handler call OR (corrective-action-report P0-02) after a
+// permanently-failed event's durable DLQ record is confirmed published to
+// dlqTopic via producer. The offset is NEVER advanced while that DLQ
+// publish is still failing — see the retry loop below.
 func consumeSingleTopic(
 	ctx context.Context,
 	brokers []string,
 	groupID, topic string,
 	handle func(context.Context, kafka.Message) error,
+	producer *Producer,
+	dlqTopic string,
 ) {
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        brokers,
@@ -559,8 +571,45 @@ func consumeSingleTopic(
 			span.RecordError(err)
 			log.Printf("kafka: handler error topic=%s partition=%d offset=%d: %v",
 				msg.Topic, msg.Partition, msg.Offset, err)
-			// Commit even on handler error to avoid an infinite redelivery loop
-			// for poison messages (e.g. bad JSON from upstream).
+
+			// Bounded retry for transient failures (e.g. Postgres briefly
+			// unavailable) — event_receipt_repo.RunOnce only retries
+			// deadlock/serialization errors internally, not connection
+			// failures, so without this a brief outage would go straight to
+			// the DLQ instead of recovering. A genuine poison message (bad
+			// JSON) skips this — retrying identical bytes cannot help.
+			if !isUnmarshalError(err) {
+				for attempt, backoff := 2, time.Second; attempt <= 3 && err != nil; attempt, backoff = attempt+1, backoff*3 {
+					time.Sleep(backoff)
+					log.Printf("kafka: retrying handler topic=%s partition=%d offset=%d attempt=%d/3",
+						msg.Topic, msg.Partition, msg.Offset, attempt)
+					err = handle(msgCtx, msg)
+				}
+			}
+
+			if err != nil {
+				// Permanent failure: durably record it BEFORE advancing the
+				// offset (corrective-action-report P0-02). This blocks —
+				// deliberately — until the DLQ publish succeeds or the
+				// service is shutting down; not committing means Kafka will
+				// redeliver this same message on restart, which is correct.
+				rec := buildDLQRecord(msgCtx, msg, err)
+				for {
+					if perr := producer.Publish(ctx, dlqTopic, rec.TenantID, rec); perr != nil {
+						log.Printf("kafka: CRITICAL dlq publish failed, offset NOT advancing topic=%s partition=%d offset=%d: %v",
+							msg.Topic, msg.Partition, msg.Offset, perr)
+						if ctx.Err() != nil {
+							span.End()
+							return
+						}
+						time.Sleep(5 * time.Second)
+						continue
+					}
+					break
+				}
+				log.Printf("kafka: event sent to DLQ topic=%s dlq_topic=%s partition=%d offset=%d event_id=%s error_class=%s: %v",
+					msg.Topic, dlqTopic, msg.Partition, msg.Offset, rec.EventID, rec.ErrorClass, err)
+			}
 		}
 
 		if err := reader.CommitMessages(ctx, msg); err != nil {
@@ -572,4 +621,61 @@ func consumeSingleTopic(
 		log.Printf("kafka: processed topic=%s partition=%d offset=%d",
 			msg.Topic, msg.Partition, msg.Offset)
 	}
+}
+
+// isUnmarshalError reports whether err is a JSON decoding failure (a genuine
+// poison message) rather than a downstream handler/database error —
+// corrective-action-report P0-02's retry loop skips straight to the DLQ for
+// these, since retrying identical malformed bytes cannot succeed.
+func isUnmarshalError(err error) bool {
+	var syntaxErr *json.SyntaxError
+	var typeErr *json.UnmarshalTypeError
+	return errors.As(err, &syntaxErr) || errors.As(err, &typeErr)
+}
+
+// buildDLQRecord assembles the durable failure record for msg. TenantID is
+// read from msg.Key — every producer in this system uses tenant_id as the
+// partition key (see the ordering comment above consumeSingleTopic's call
+// site), so this is reliable even when the payload itself never got far
+// enough to unmarshal. EventID is recovered best-effort via a minimal,
+// topic-agnostic decode, working for both RelayEvent-enveloped topics and
+// the flat DLQItemEvent-shaped ones without touching any of the per-topic
+// closures in StartConsumers.
+func buildDLQRecord(msgCtx context.Context, msg kafka.Message, handlerErr error) models.IntelligenceDLQRecord {
+	meta := models.EnvelopeMetaFromContext(msgCtx)
+	errClass := models.DLQErrorClassHandler
+	if isUnmarshalError(handlerErr) {
+		errClass = models.DLQErrorClassUnmarshal
+	}
+	errMsg := handlerErr.Error()
+	const maxErrLen = 2000
+	if len(errMsg) > maxErrLen {
+		errMsg = errMsg[:maxErrLen]
+	}
+	return models.IntelligenceDLQRecord{
+		TenantID:     string(msg.Key),
+		SourceTopic:  msg.Topic,
+		Partition:    msg.Partition,
+		Offset:       msg.Offset,
+		EventID:      extractEventIDBestEffort(msg.Value),
+		EventType:    meta.EventType,
+		EventVersion: meta.EventVersion,
+		PayloadHash:  meta.PayloadHash,
+		Payload:      string(msg.Value),
+		ErrorClass:   errClass,
+		ErrorMessage: errMsg,
+		OccurredAt:   time.Now().UTC(),
+	}
+}
+
+// extractEventIDBestEffort tries to pull an "event_id" field out of raw
+// message bytes without knowing the topic's real shape. Returns "" on any
+// failure — this is metadata for the DLQ record, never used for control
+// flow, so a miss here is not fatal.
+func extractEventIDBestEffort(payload []byte) string {
+	var v struct {
+		EventID string `json:"event_id"`
+	}
+	_ = json.Unmarshal(payload, &v)
+	return v.EventID
 }

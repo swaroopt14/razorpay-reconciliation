@@ -80,6 +80,11 @@ type Config struct {
 	TopicActuationAlert      string
 	TopicActuationBatchPatch string
 
+	// TopicIntelligenceDLQ — corrective-action-report P0-02: a permanently
+	// failed inbound event (after retries) is durably published here BEFORE
+	// its source offset is committed, so it can never be silently dropped.
+	TopicIntelligenceDLQ string
+
 	// ── ML Service Topics ─────────────────────────────────────────
 	// Go publishes ML requests to TopicMLRequest; Python publishes
 	// results back to TopicMLResult.  The mlclient package manages
@@ -148,6 +153,7 @@ func Load() *Config {
 		TopicActuationEvidence:   getWithDefault("TOPIC_ACTUATION_EVIDENCE", "zpi.actuation.evidence"),
 		TopicActuationAlert:      getWithDefault("TOPIC_ACTUATION_ALERT", "zpi.actuation.alert"),
 		TopicActuationBatchPatch: getWithDefault("TOPIC_ACTUATION_BATCH_PATCH", "zpi.actuation.batch_patch"),
+		TopicIntelligenceDLQ:     getWithDefault("TOPIC_INTELLIGENCE_DLQ", "zord-intelligence.dlq.v1"),
 
 		// ── ML Service Topics ────────────────────────────────────────
 		TopicMLRequest:                  getWithDefault("TOPIC_ML_REQUEST", "ml.request.events"),

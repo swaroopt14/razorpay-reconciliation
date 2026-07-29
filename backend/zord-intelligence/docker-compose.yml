@@ -18,7 +18,12 @@ services:
 
       # App config
       - INTELLIGENCE_MODE=GRADE_A
-      - ENVIRONMENT=production
+      # This is the local/dev docker-compose stack, not a real production
+      # deployment (matches docker-compose.test.yml's existing convention).
+      # NewSignerForEnvironment (corrective-action-report P0-07) refuses to
+      # boot when ENVIRONMENT=production without a real KMS-backed signer,
+      # since only DevSigner exists today — keep this "development" here.
+      - ENVIRONMENT=development
 
       # Database URL
       - DATABASE_URL=postgres://zpi:zpi_secret@zord-intelligence-postgres:5432/zord_intelligence?sslmode=disable
