@@ -93,6 +93,7 @@ func (c *GeminiClient) Embed(text string, embeddingModel string, outputDimension
 	reqBody := embedRequest{
 		Model: modelPath,
 	}
+
 	if outputDimensionality > 0 {
 		reqBody.OutputDimensionality = outputDimensionality
 		reqBody.EmbedContentConfig = &embedContentConfig{
