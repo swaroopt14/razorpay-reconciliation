@@ -75,6 +75,15 @@ func main() {
 		log.Printf("⚠️ Failed to seed global mapping profiles: %v", err)
 	}
 
+	// 4.2.4: a stuck intent_ingest_runs row (writer crashed mid-batch) would
+	// otherwise sit in PROCESSING forever and never become leaseable by
+	// Relay. Safe to run on every replica — see SweepStuckIngestRuns.
+	go db.StartIngestRunSweeper(ctx, db.DB,
+		durationEnv("INGEST_RUN_SWEEP_INTERVAL", 5*time.Minute),
+		durationEnv("INGEST_RUN_STALE_AFTER", 30*time.Minute),
+		durationEnv("INGEST_RUN_TERMINAL_AFTER", 24*time.Hour),
+	)
+
 	brokers := strings.Split(os.Getenv("KAFKA_BROKERS"), ",")
 	topic := os.Getenv("KAFKA_TOPIC")
 	groupID := "intent-engine-group"
@@ -119,6 +128,7 @@ func main() {
 	}
 
 	tokenizeQueue := services.NewKafkaTokenizeQueue(producer)
+	tenantBusinessDateRepo := persistence.NewTenantBusinessDateRepo(db.DB)
 	intentService := services.NewIntentService(
 		intentValidator,
 		intentRepo,
@@ -126,6 +136,7 @@ func main() {
 		tokenizeQueue,
 		db.DB,
 		tenantDailyUsageRepo,
+		tenantBusinessDateRepo,
 	)
 
 	// -------- DLQ HTTP (READ-ONLY) --------
@@ -345,6 +356,21 @@ func main() {
 		Handler: otelhttp.NewHandler(mux, "http"),
 	}
 	log.Fatal(server.ListenAndServe())
+}
+
+// durationEnv reads a time.ParseDuration-formatted env var (e.g. "5m",
+// "30m", "24h"), falling back to def when unset or unparsable.
+func durationEnv(key string, def time.Duration) time.Duration {
+	val := os.Getenv(key)
+	if val == "" {
+		return def
+	}
+	d, err := time.ParseDuration(val)
+	if err != nil {
+		log.Printf("⚠️ invalid duration for %s=%q, using default %s: %v", key, val, def, err)
+		return def
+	}
+	return d
 }
 
 // newFailureRecorder builds a kafka.FailureRecorder (R-03) that durably
