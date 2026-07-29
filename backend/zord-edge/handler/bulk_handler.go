@@ -134,6 +134,9 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		return
 	}
 
+	filebyte := fileBuf.Bytes()
+	mimetype := http.DetectContentType(filebyte[:min(512, len(filebyte))])
+
 	fileHash := hex.EncodeToString(hasher.Sum(nil))
 	fileSizeBytes := int64(cw.total)
 	rowCountEstimate := cw.newlines - 1 // subtract header line, matches original
@@ -312,6 +315,17 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 	// ── CSV ───────────────────────────────────────────────────────────────────
 	case ".csv":
+		// MIME TYPE DETECTION
+		if !strings.HasPrefix(mimetype, "text/") {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":     "MIME_MISMATCH",
+				"message":  "file extention is .csv  but content is not plain text",
+				"detected": mimetype,
+			})
+			logger.Log.Warn("CSV MIME mismatch",
+				slog.String("detected", mimetype))
+			return
+		}
 		totalDataRows := rowCountEstimate
 
 		if totalDataRows < 1 {
@@ -464,6 +478,12 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 				}
 			}
 			if !isEmpty {
+				if rejection := CheckRowForFormulas(headers, row, fileRowNumber); rejection != nil {
+					resultsMu.Lock()
+					resultsMap[fileRowNumber] = *rejection
+					resultsMu.Unlock()
+					continue
+				}
 				allCSVRows = append(allCSVRows, bulkSourceRow{FileRowNumber: fileRowNumber, Values: row})
 			}
 		}
@@ -569,6 +589,16 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 	// ── Excel ─────────────────────────────────────────────────────────────────
 	case ".xlsx":
+		if mimetype != "application/zip" && mimetype != "application/octet-stream" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":     "MIME_MISMATCH",
+				"message":  "file extention is .xlsx but content does not appear to be a valid Excel file",
+				"detected": mimetype,
+			})
+			logger.Log.Warn("XLSX MIME mismatch",
+				slog.String("detected", mimetype))
+			return
+		}
 		f, err := excelize.OpenReader(src)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid excel file"})
@@ -752,6 +782,12 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 				}
 			}
 			if !isEmpty {
+				if rejection := CheckRowForFormulas(headers, row, fileRowNumber); rejection != nil {
+					resultsMu.Lock()
+					resultsMap[fileRowNumber] = *rejection
+					resultsMu.Unlock()
+					continue
+				}
 				allXLSXRows = append(allXLSXRows, bulkSourceRow{FileRowNumber: fileRowNumber, Values: row})
 			}
 		}
@@ -1118,4 +1154,33 @@ func (h *Handler) processBulkIntentRow(
 
 	ingestOK = true
 	return storageAck, uuid.Nil, nil
+}
+
+// ── Sanitization Helpers ────────────────────────────────────────────────────────
+
+func isCsvFormula(val string) bool {
+	trimmer := strings.TrimSpace(val)
+	if len(trimmer) == 0 {
+		return false
+	}
+	return trimmer[0] == '=' || trimmer[0] == '+' || trimmer[0] == '-' || trimmer[0] == '@'
+}
+
+func CheckRowForFormulas(headers, row []string, rowNum int) *BulkResult {
+	for i, val := range row {
+		if isCsvFormula(val) {
+			header := ""
+			if i < len(headers) {
+				header = headers[i]
+			}
+			return &BulkResult{
+				Row:    rowNum,
+				Status: "REJECTED",
+				Error:  fmt.Sprintf("formula injection detected in column %q", header),
+				// structured code for 3.1.4
+			}
+
+		}
+	}
+	return nil
 }
