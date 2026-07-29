@@ -55,7 +55,9 @@ type embedRequest struct {
 			Text string `json:"text"`
 		} `json:"parts"`
 	} `json:"content"`
-	EmbedContentConfig *embedContentConfig `json:"embedContentConfig,omitempty"`
+	// Send both fields
+	OutputDimensionality int                 `json:"outputDimensionality,omitempty"`
+	EmbedContentConfig   *embedContentConfig `json:"embedContentConfig,omitempty"`
 }
 
 type embedContentConfig struct {
@@ -92,6 +94,7 @@ func (c *GeminiClient) Embed(text string, embeddingModel string, outputDimension
 		Model: modelPath,
 	}
 	if outputDimensionality > 0 {
+		reqBody.OutputDimensionality = outputDimensionality
 		reqBody.EmbedContentConfig = &embedContentConfig{
 			OutputDimensionality: outputDimensionality,
 		}

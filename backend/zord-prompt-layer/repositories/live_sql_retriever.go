@@ -252,9 +252,9 @@ func (r *LiveSQLRetriever) ListVectorIndexTenantIDs(ctx context.Context, limit i
 		LIMIT $1
 	`)
 
-	collect(r.evidenceDB, "evidence.evidence_events", `
+	collect(r.evidenceDB, "evidence.evidence_packs", `
 		SELECT DISTINCT tenant_id
-		FROM evidence_events
+		FROM evidence_packs
 		WHERE tenant_id IS NOT NULL
 		LIMIT $1
 	`)
