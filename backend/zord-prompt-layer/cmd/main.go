@@ -74,6 +74,7 @@ func main() {
 			geminiClient,
 			pineconeClient,
 			cfg.GeminiEmbeddingModel,
+			cfg.GeminiEmbeddingDimension,
 			cfg.VectorQueryTopK,
 		)
 		vectorIndexer := repositories.NewVectorIndexer(
@@ -81,6 +82,7 @@ func main() {
 			geminiClient,
 			pineconeClient,
 			cfg.GeminiEmbeddingModel,
+			cfg.GeminiEmbeddingDimension,
 			cfg.VectorIndexIntervalSeconds,
 			cfg.VectorIndexBatchSize,
 			cfg.VectorIndexTimeoutSeconds,

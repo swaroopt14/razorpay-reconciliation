@@ -33,6 +33,7 @@ type AppConfig struct {
 	PineconeHost                string
 	PineconeNamespace           string
 	GeminiEmbeddingModel        string
+	GeminiEmbeddingDimension    int
 	VectorQueryTopK             int
 	VectorRequestTimeoutSeconds int
 	VectorIndexIntervalSeconds  int
@@ -107,7 +108,12 @@ func Load() AppConfig {
 			vectorTimeout = n
 		}
 	}
-
+	embeddingDimension := 768
+	if v := os.Getenv("GEMINI_EMBEDDING_DIMENSION"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			embeddingDimension = n
+		}
+	}
 	vectorIndexInterval := 300
 	if v := os.Getenv("VECTOR_INDEX_INTERVAL_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -153,7 +159,8 @@ func Load() AppConfig {
 		PineconeAPIKey:              os.Getenv("PINECONE_API_KEY"),
 		PineconeHost:                os.Getenv("PINECONE_HOST"),
 		PineconeNamespace:           get("PINECONE_NAMESPACE", "zord-prompt-layer"),
-		GeminiEmbeddingModel:        get("GEMINI_EMBEDDING_MODEL", "text-embedding-004"),
+		GeminiEmbeddingModel:        get("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001"),
+		GeminiEmbeddingDimension:    embeddingDimension,
 		VectorQueryTopK:             vectorTopK,
 		VectorRequestTimeoutSeconds: vectorTimeout,
 		VectorIndexIntervalSeconds:  vectorIndexInterval,

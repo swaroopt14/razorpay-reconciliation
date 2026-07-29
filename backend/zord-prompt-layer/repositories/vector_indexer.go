@@ -16,13 +16,14 @@ import (
 )
 
 type VectorIndexer struct {
-	liveRetriever  *LiveSQLRetriever
-	gemini         *client.GeminiClient
-	pinecone       *client.PineconeClient
-	embeddingModel string
-	interval       time.Duration
-	batchSize      int
-	timeout        time.Duration
+	liveRetriever      *LiveSQLRetriever
+	gemini             *client.GeminiClient
+	pinecone           *client.PineconeClient
+	embeddingModel     string
+	embeddingDimension int
+	interval           time.Duration
+	batchSize          int
+	timeout            time.Duration
 }
 
 func NewVectorIndexer(
@@ -30,6 +31,7 @@ func NewVectorIndexer(
 	gemini *client.GeminiClient,
 	pinecone *client.PineconeClient,
 	embeddingModel string,
+	embeddingDimension int,
 	intervalSeconds int,
 	batchSize int,
 	timeoutSeconds int,
@@ -44,17 +46,20 @@ func NewVectorIndexer(
 		timeoutSeconds = 60
 	}
 	if strings.TrimSpace(embeddingModel) == "" {
-		embeddingModel = "text-embedding-004"
+		embeddingModel = "gemini-embedding-001"
 	}
-
+	if embeddingDimension <= 0 {
+		embeddingDimension = 768
+	}
 	return &VectorIndexer{
-		liveRetriever:  liveRetriever,
-		gemini:         gemini,
-		pinecone:       pinecone,
-		embeddingModel: embeddingModel,
-		interval:       time.Duration(intervalSeconds) * time.Second,
-		batchSize:      batchSize,
-		timeout:        time.Duration(timeoutSeconds) * time.Second,
+		liveRetriever:      liveRetriever,
+		gemini:             gemini,
+		pinecone:           pinecone,
+		embeddingModel:     embeddingModel,
+		embeddingDimension: embeddingDimension,
+		interval:           time.Duration(intervalSeconds) * time.Second,
+		batchSize:          batchSize,
+		timeout:            time.Duration(timeoutSeconds) * time.Second,
 	}
 }
 
@@ -196,7 +201,7 @@ func (i *VectorIndexer) embedChunks(ctx context.Context, tenantID string, chunks
 			continue
 		}
 
-		values, err := i.gemini.Embed(text, i.embeddingModel)
+		values, err := i.gemini.Embed(text, i.embeddingModel, i.embeddingDimension)
 		if err != nil {
 			return nil, err
 		}

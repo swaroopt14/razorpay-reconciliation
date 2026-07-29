@@ -13,25 +13,30 @@ import (
 )
 
 type PineconeVectorRetriever struct {
-	gemini         *client.GeminiClient
-	pinecone       *client.PineconeClient
-	embeddingModel string
-	queryTopK      int
+	gemini             *client.GeminiClient
+	pinecone           *client.PineconeClient
+	embeddingModel     string
+	embeddingDimension int
+	queryTopK          int
 }
 
-func NewPineconeVectorRetriever(gemini *client.GeminiClient, pinecone *client.PineconeClient, embeddingModel string, queryTopK int) *PineconeVectorRetriever {
+func NewPineconeVectorRetriever(gemini *client.GeminiClient, pinecone *client.PineconeClient, embeddingModel string, embeddingDimension int, queryTopK int) *PineconeVectorRetriever {
 	if queryTopK <= 0 {
 		queryTopK = 5
 	}
 	if strings.TrimSpace(embeddingModel) == "" {
-		embeddingModel = "text-embedding-004"
+		embeddingModel = "gemini-embedding-001"
+	}
+	if embeddingDimension <= 0 {
+		embeddingDimension = 768
 	}
 
 	return &PineconeVectorRetriever{
-		gemini:         gemini,
-		pinecone:       pinecone,
-		embeddingModel: embeddingModel,
-		queryTopK:      queryTopK,
+		gemini:             gemini,
+		pinecone:           pinecone,
+		embeddingModel:     embeddingModel,
+		embeddingDimension: embeddingDimension,
+		queryTopK:          queryTopK,
 	}
 }
 
@@ -57,7 +62,7 @@ func (r *PineconeVectorRetriever) RetrieveVector(req dto.QueryRequest, topK int)
 	}
 
 	start := time.Now()
-	embedding, err := r.gemini.Embed(queryText, r.embeddingModel)
+	embedding, err := r.gemini.Embed(queryText, r.embeddingModel, r.embeddingDimension)
 	if err != nil {
 		return nil, fmt.Errorf("embedding failed: %w", err)
 	}

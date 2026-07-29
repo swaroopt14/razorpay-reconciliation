@@ -55,6 +55,11 @@ type embedRequest struct {
 			Text string `json:"text"`
 		} `json:"parts"`
 	} `json:"content"`
+	EmbedContentConfig *embedContentConfig `json:"embedContentConfig,omitempty"`
+}
+
+type embedContentConfig struct {
+	OutputDimensionality int `json:"outputDimensionality,omitempty"`
 }
 
 type embedResponse struct {
@@ -71,7 +76,7 @@ func geminiModelPath(model string) string {
 	return "models/" + model
 }
 
-func (c *GeminiClient) Embed(text string, embeddingModel string) ([]float64, error) {
+func (c *GeminiClient) Embed(text string, embeddingModel string, outputDimensionality int) ([]float64, error) {
 	if len(c.APIKeys) == 0 {
 		return nil, fmt.Errorf("missing GEMINI_API_KEY/GEMINI_API_KEYS")
 	}
@@ -85,6 +90,11 @@ func (c *GeminiClient) Embed(text string, embeddingModel string) ([]float64, err
 
 	reqBody := embedRequest{
 		Model: modelPath,
+	}
+	if outputDimensionality > 0 {
+		reqBody.EmbedContentConfig = &embedContentConfig{
+			OutputDimensionality: outputDimensionality,
+		}
 	}
 	reqBody.Content.Parts = []struct {
 		Text string `json:"text"`
@@ -133,6 +143,10 @@ func (c *GeminiClient) Embed(text string, embeddingModel string) ([]float64, err
 		}
 		if len(out.Embedding.Values) == 0 {
 			lastErr = fmt.Errorf("empty embedding response from gemini")
+			continue
+		}
+		if outputDimensionality > 0 && len(out.Embedding.Values) != outputDimensionality {
+			lastErr = fmt.Errorf("gemini embedding dimension mismatch: expected=%d actual=%d", outputDimensionality, len(out.Embedding.Values))
 			continue
 		}
 
