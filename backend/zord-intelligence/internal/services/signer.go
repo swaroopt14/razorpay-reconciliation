@@ -8,8 +8,10 @@ package services
 // any call site.
 //
 // SCOPE LOCKED (clarification §5, "Phase 1"): KMS interface, dev signer,
-// production fail-fast if unconfigured, signature metadata columns, internal
-// verification test. Explicitly OUT of scope here (clarification's "Phase 2"):
+// production fail-fast if unconfigured (implemented 2026-07-29 per
+// corrective-action-report P0-07 — see NewSignerForEnvironment), signature
+// metadata columns, internal verification test. Explicitly OUT of scope here
+// (clarification's "Phase 2"):
 // external verification endpoint, public key publishing/key registry,
 // auditor-facing verification bundle, key rotation playbook.
 //
@@ -21,6 +23,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -80,18 +83,21 @@ func (s *DevSigner) Verify(ctx context.Context, payloadHash string, signature st
 }
 
 // NewSignerForEnvironment picks the Signer implementation for the running
-// environment. Per clarification §5 ("Phase 1" scope): production must
-// fail fast rather than silently sign with the dev placeholder once a real
-// KMS-backed Signer exists to compare against. Today no KMS Signer has been
-// built yet (clarification's "Phase 2" of signing), so this only enforces
-// the shape of the rule — call it explicitly once a real backend lands so
-// "production" actually means something here, otherwise this always returns
-// DevSigner regardless of environment (documented, not a silent gap).
+// environment. Per clarification §5 ("Phase 1" scope) and corrective-action-
+// report P0-07: production must refuse to start in signed-action mode with
+// only a DevSigner available, rather than silently claiming to sign
+// financial actions with a digest that has no authenticity property. No
+// KMS-backed Signer exists yet (clarification's "Phase 2" of signing), so
+// there is nothing production can fall back to — this is an explicit
+// deployment blocker, not a config bug to work around.
 func NewSignerForEnvironment(environment string) Signer {
-	// TODO(signing-phase-2): once a KMS-backed Signer exists, fail fast here
-	// when environment == "production" and no KMS config is present, per
-	// clarification §5. Until then there is nothing to fail over to, so
-	// every environment gets DevSigner and that fact is logged at boot
-	// (see cmd/main.go) rather than hidden.
+	if environment == "production" {
+		log.Fatal("services.NewSignerForEnvironment: refusing to start in " +
+			"environment=production with only DevSigner available (corrective-action-report P0-07) " +
+			"— DevSigner is a plain SHA-256 integrity digest, not a cryptographic signature; " +
+			"configure a real KMS/Vault-backed Signer before deploying to production")
+	}
+	// Non-production: DevSigner is fine, and the boot log (cmd/main.go)
+	// already labels it as integrity-only / DEV_SHA256, never "signed".
 	return NewDevSigner()
 }

@@ -37,7 +37,7 @@ func TestActionContractRepo_Phase5FieldsRoundTrip(t *testing.T) {
 		Decision:       models.DecisionEscalate,
 		Confidence:     0.9,
 		PayloadJSON:    `{"severity":"HIGH"}`,
-		Signature:      "devsig:abc123",
+		IntegrityDigest: "devsig:abc123",
 		IdempotencyKey: uuid.New().String(),
 		ContractStatus: models.ContractStatusActive,
 		CreatedAt:      time.Now().UTC(),
@@ -125,7 +125,7 @@ func TestOutboxRepo_Phase5FieldsRoundTrip(t *testing.T) {
 		ActionID: actionID, TenantID: tenantID, PolicyID: "P_TEST_OUTBOX", PolicyVersion: 1,
 		ScopeRefs: models.ScopeRefs{IntentID: "int_1"}, InputRefsJSON: `{}`,
 		Decision: models.DecisionEscalate, Confidence: 1.0, PayloadJSON: `{}`,
-		Signature: "devsig:abc", IdempotencyKey: uuid.New().String(),
+		IntegrityDigest: "devsig:abc", IdempotencyKey: uuid.New().String(),
 		ContractStatus: models.ContractStatusActive, CreatedAt: time.Now().UTC(),
 		ScopeType: "INTENT", ScopeRef: "int_1",
 	}

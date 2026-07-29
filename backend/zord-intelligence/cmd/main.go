@@ -142,12 +142,12 @@ func main() {
 
 	// ── Step 6: Create services ────────────────────────────────────────────
 	// PHASE 5 (refactor): Signer abstraction for action_contract signatures
-	// (clarification §5). Only DevSigner exists today regardless of
-	// environment — see services.NewSignerForEnvironment's doc comment for
-	// why the "production fail-fast" rule isn't enforced yet (no KMS-backed
-	// Signer exists to compare against; team decision A.8).
+	// (clarification §5). Only DevSigner exists today (no KMS-backed Signer
+	// built yet) — NewSignerForEnvironment refuses to start in
+	// environment=production rather than silently using it there
+	// (corrective-action-report P0-07).
 	signer := services.NewSignerForEnvironment(cfg.Environment)
-	log.Printf("main: action-contract signer initialized (environment=%s, algorithm=dev-only)", cfg.Environment)
+	log.Printf("main: action-contract integrity digest initialized (environment=%s, algorithm=DEV_SHA256, NOT a cryptographic signature)", cfg.Environment)
 	actionService := services.NewActionService(actionRepo, outboxRepo, pool, signer)
 	policyService := services.NewPolicyService(policyRepo, projRepo, actionService)
 
