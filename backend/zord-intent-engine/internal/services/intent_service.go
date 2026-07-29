@@ -430,6 +430,19 @@ func (s *IntentService) computeCanonicalRowHash(intent *models.CanonicalIntent) 
 // canonicalizer.DeriveTenantScopedKey. No per-tenant key store exists yet.
 var tokenizedDataHashMasterSecret = os.Getenv("TOKENIZED_DATA_HASH_MASTER_SECRET")
 
+// InitTokenizedDataHashMasterSecret fails closed if the master secret is
+// unset. DeriveTenantScopedKey and the underlying HMAC accept an empty key
+// without error, so without this check a missing secret wouldn't crash
+// anything — it would silently derive tokenized_data_hash from a known
+// empty key, a value anyone could reproduce, defeating the point of a
+// tenant-scoped secret hash.
+func InitTokenizedDataHashMasterSecret() error {
+	if tokenizedDataHashMasterSecret == "" {
+		return errors.New("TOKENIZED_DATA_HASH_MASTER_SECRET environment variable is required")
+	}
+	return nil
+}
+
 // computeTokenizedDataHash returns tokenized_data_hash for the tenant-scoped
 // tokenized beneficiary fields in tokenMap. Missing token keys hash as null,
 // matching the hash spec.
