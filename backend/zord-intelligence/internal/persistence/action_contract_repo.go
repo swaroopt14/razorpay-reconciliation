@@ -55,7 +55,7 @@ const insertSQL = `
 	INSERT INTO action_contracts
 		(action_id, tenant_id, policy_id, policy_version,
 		 scope_refs, input_refs_json, decision, confidence,
-		 payload_json, signature, idempotency_key,
+		 payload_json, integrity_digest, idempotency_key,
 		 contract_status, expires_at, policy_family, severity,
 		 created_at,
 		 policy_registry_id, policy_source, policy_digest,
@@ -118,7 +118,7 @@ func buildInsertArgs(ac models.ActionContract) ([]any, error) {
 		string(ac.Decision),
 		ac.Confidence,
 		ac.PayloadJSON,
-		ac.Signature,
+		ac.IntegrityDigest,
 		ac.IdempotencyKey,
 		string(ac.ContractStatus), // PHASE 5
 		ac.ExpiresAt,              // PHASE 5 — *time.Time, nil → NULL
@@ -249,7 +249,7 @@ func (r *ActionContractRepo) MarkExpiredContracts(ctx context.Context) (int64, e
 const selectCols = `
 	action_id, tenant_id, policy_id, policy_version,
 	scope_refs::text, input_refs_json::text, decision, confidence,
-	payload_json::text, signature, idempotency_key,
+	payload_json::text, integrity_digest, idempotency_key,
 	contract_status, expires_at, policy_family, severity,
 	created_at,
 	policy_registry_id::text, policy_source, policy_digest,
@@ -529,7 +529,7 @@ func scanActionContract(scan func(...any) error) (*models.ActionContract, error)
 		&decision,
 		&ac.Confidence,
 		&ac.PayloadJSON,
-		&ac.Signature,
+		&ac.IntegrityDigest,
 		&ac.IdempotencyKey,
 		&contractStatus, // PHASE 5
 		&ac.ExpiresAt,   // PHASE 5 — *time.Time, pgx sets nil for NULL

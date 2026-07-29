@@ -16,8 +16,12 @@ package persistence
 //	committed by the consumer (no poison loop) — FAILED receipts are the
 //	V1 quarantine/retry queue (team decision: no DLQ topic).
 //
-// A payload_hash mismatch on a duplicate event_id is logged as a conflict
-// alert (same event id must always carry the same payload).
+// A payload_hash mismatch on a duplicate event_id is persisted to
+// event_receipt_conflicts (corrective-action-report P0-03) and the receipt
+// is marked CONFLICTED — a terminal state until an operator resolves it.
+// Neither the first-seen nor the conflicting payload's handler runs again
+// once a conflict is recorded (same event id must always carry the same
+// payload).
 
 import (
 	"context"
@@ -150,6 +154,8 @@ func (r *EventReceiptRepo) runOnceAttempt(
 	// the same event serialize on this row lock.
 	var status string
 	var storedHash *string
+	var receivedAt time.Time
+	var storedEventType, storedEventVersion string
 	claimSQL := `
 		INSERT INTO event_receipts
 			(tenant_id, event_source, event_type, event_version, event_id,
@@ -157,24 +163,36 @@ func (r *EventReceiptRepo) runOnceAttempt(
 		VALUES ($1, $2, $3, $4, $5, NULLIF($6,''), NULLIF($7,''), NULLIF($8,''), 'PROCESSING', 1)
 		ON CONFLICT (tenant_id, event_source, event_id) DO UPDATE
 			SET attempt_count = event_receipts.attempt_count + 1
-		RETURNING processing_status, payload_hash
+		RETURNING processing_status, payload_hash, received_at, event_type, event_version
 	`
 	if err := tx.QueryRow(ctx, claimSQL,
 		m.TenantID, m.EventSource, m.EventType, m.EventVersion, m.EventID,
 		m.PayloadHash, m.ScopeType, m.ScopeRef,
-	).Scan(&status, &storedHash); err != nil {
+	).Scan(&status, &storedHash, &receivedAt, &storedEventType, &storedEventVersion); err != nil {
 		return false, isRetryableTxError(err), fmt.Errorf("event_receipt_repo.RunOnce claim event_id=%s: %w", m.EventID, err)
 	}
 
-	// Conflict alert: same event identity, different payload bytes.
-	// The first-seen payload wins; the mismatch is loud for ops/security review.
+	// Conflict: same event identity, different payload bytes. Persist it as
+	// a queryable, blocking incident (corrective-action-report P0-03) rather
+	// than only logging — the first-seen payload's effects (if any) are left
+	// untouched, but this event id is never processed again until an
+	// operator resolves event_receipt_conflicts.
 	if storedHash != nil && *storedHash != "" && m.PayloadHash != "" && *storedHash != m.PayloadHash {
-		log.Printf("event_receipts: PAYLOAD HASH CONFLICT tenant=%s source=%s event_id=%s stored=%s incoming=%s",
+		if err := r.recordConflict(ctx, tx, m, *storedHash, storedEventType, storedEventVersion, receivedAt); err != nil {
+			return false, isRetryableTxError(err), err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return true, isRetryableTxError(err), fmt.Errorf("event_receipt_repo.RunOnce commit conflict event_id=%s: %w", m.EventID, err)
+		}
+		committed = true
+		log.Printf("event_receipts: ALERT payload hash conflict tenant=%s source=%s event_id=%s stored=%s incoming=%s — event_receipt_conflicts row recorded, event NOT processed",
 			m.TenantID, m.EventSource, m.EventID, *storedHash, m.PayloadHash)
+		return true, false, nil
 	}
 
-	if status == "PROCESSED" {
-		// Duplicate delivery — commit so the attempt bump is recorded.
+	if status == "PROCESSED" || status == "CONFLICTED" {
+		// Duplicate delivery of an already-completed or already-conflicted
+		// event — commit so the attempt bump is recorded, never rerun fn.
 		if err := tx.Commit(ctx); err != nil {
 			return true, isRetryableTxError(err), fmt.Errorf("event_receipt_repo.RunOnce commit duplicate event_id=%s: %w", m.EventID, err)
 		}
@@ -217,6 +235,48 @@ func (r *EventReceiptRepo) runOnceAttempt(
 	}
 	committed = true
 	return false, false, nil
+}
+
+// recordConflict persists a payload-hash mismatch into event_receipt_conflicts
+// and flips the receipt to CONFLICTED, both inside the caller's transaction.
+// A redelivery of the same conflicting event id bumps occurrence_count/
+// last_detected_at rather than creating a second incident row.
+func (r *EventReceiptRepo) recordConflict(ctx context.Context, tx DBTX, m EventMeta, storedHash, storedEventType, storedEventVersion string, firstSeenAt time.Time) error {
+	const conflictSQL = `
+		INSERT INTO event_receipt_conflicts
+			(tenant_id, event_source, event_id,
+			 stored_payload_hash, incoming_payload_hash,
+			 stored_event_type, incoming_event_type,
+			 stored_event_version, incoming_event_version,
+			 first_seen_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		ON CONFLICT (tenant_id, event_source, event_id) DO UPDATE
+			SET incoming_payload_hash  = EXCLUDED.incoming_payload_hash,
+			    incoming_event_type    = EXCLUDED.incoming_event_type,
+			    incoming_event_version = EXCLUDED.incoming_event_version,
+			    last_detected_at       = now(),
+			    occurrence_count       = event_receipt_conflicts.occurrence_count + 1
+	`
+	if _, err := tx.Exec(ctx, conflictSQL,
+		m.TenantID, m.EventSource, m.EventID,
+		storedHash, m.PayloadHash,
+		storedEventType, m.EventType,
+		storedEventVersion, m.EventVersion,
+		firstSeenAt,
+	); err != nil {
+		return fmt.Errorf("event_receipt_repo.recordConflict event_id=%s: %w", m.EventID, err)
+	}
+
+	const markConflictedSQL = `
+		UPDATE event_receipts
+		SET processing_status = 'CONFLICTED'
+		WHERE tenant_id = $1 AND event_source = $2 AND event_id = $3
+		  AND processing_status <> 'CONFLICTED'
+	`
+	if _, err := tx.Exec(ctx, markConflictedSQL, m.TenantID, m.EventSource, m.EventID); err != nil {
+		return fmt.Errorf("event_receipt_repo.recordConflict mark event_id=%s: %w", m.EventID, err)
+	}
+	return nil
 }
 
 // markProcessed flips the claimed receipt to PROCESSED inside the event tx.

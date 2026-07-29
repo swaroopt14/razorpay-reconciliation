@@ -203,7 +203,7 @@ func (s *ActionService) CreateAction(
 	if err != nil {
 		return fmt.Errorf("action_service.CreateAction sign: %w", err)
 	}
-	contract.Signature = sigResult.Signature
+	contract.IntegrityDigest = sigResult.Signature
 	contract.SignatureAlgorithm = sigResult.Algorithm
 	contract.SignatureKeyID = sigResult.KeyID
 	contract.SignaturePayloadHash = sigPayloadHash

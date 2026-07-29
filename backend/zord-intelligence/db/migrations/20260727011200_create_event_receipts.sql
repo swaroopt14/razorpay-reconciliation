@@ -9,7 +9,10 @@ CREATE TABLE event_receipts (
 	scope_type        TEXT,
 	scope_ref         TEXT,
 	processing_status TEXT NOT NULL DEFAULT 'RECEIVED',
-	CHECK (processing_status IN ('RECEIVED', 'PROCESSING', 'PROCESSED', 'FAILED')),
+	-- CONFLICTED added for corrective-action-report P0-03: a payload-hash
+	-- mismatch on a duplicate event_id is a terminal, ops-resolvable state,
+	-- not a plain FAILED (retryable) or PROCESSED (fully normal) outcome.
+	CHECK (processing_status IN ('RECEIVED', 'PROCESSING', 'PROCESSED', 'FAILED', 'CONFLICTED')),
 	attempt_count     INT  NOT NULL DEFAULT 0,
 	received_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
 	processed_at      TIMESTAMPTZ,

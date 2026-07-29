@@ -142,12 +142,12 @@ func main() {
 
 	// ── Step 6: Create services ────────────────────────────────────────────
 	// PHASE 5 (refactor): Signer abstraction for action_contract signatures
-	// (clarification §5). Only DevSigner exists today regardless of
-	// environment — see services.NewSignerForEnvironment's doc comment for
-	// why the "production fail-fast" rule isn't enforced yet (no KMS-backed
-	// Signer exists to compare against; team decision A.8).
+	// (clarification §5). Only DevSigner exists today (no KMS-backed Signer
+	// built yet) — NewSignerForEnvironment refuses to start in
+	// environment=production rather than silently using it there
+	// (corrective-action-report P0-07).
 	signer := services.NewSignerForEnvironment(cfg.Environment)
-	log.Printf("main: action-contract signer initialized (environment=%s, algorithm=dev-only)", cfg.Environment)
+	log.Printf("main: action-contract integrity digest initialized (environment=%s, algorithm=DEV_SHA256, NOT a cryptographic signature)", cfg.Environment)
 	actionService := services.NewActionService(actionRepo, outboxRepo, pool, signer)
 	policyService := services.NewPolicyService(policyRepo, projRepo, actionService)
 
@@ -292,7 +292,9 @@ func main() {
 	log.Println("main: background workers started (outbox + sla + policy-cron)")
 
 	// ── Step 13: Start Kafka consumers ────────────────────────────────────
-	kafkapkg.StartConsumers(ctx, cfg, kafkaIngestionHandler)
+	// producer is reused here (P0-02) so a permanently-failed inbound event
+	// can be published to cfg.TopicIntelligenceDLQ before its offset commits.
+	kafkapkg.StartConsumers(ctx, cfg, kafkaIngestionHandler, producer)
 	log.Println("main: kafka consumers started")
 
 	// ── Step 14: Start HTTP server ────────────────────────────────────────
@@ -344,6 +346,7 @@ func activeTopicsForMode(cfg *config.Config) []string {
 		cfg.TopicActuationRetry,
 		cfg.TopicActuationEvidence,
 		cfg.TopicActuationBatchPatch,
+		cfg.TopicIntelligenceDLQ, // P0-02: ZPI-owned output topic, provisioned regardless of grade
 		cfg.TopicMLRequest,
 		cfg.TopicMLResult,
 	}
