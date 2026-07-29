@@ -180,3 +180,84 @@ func (r *LiveSQLRetriever) resolveTenantID(input string) (string, error) {
 	}
 	return strings.ToLower(tenantID), nil
 }
+func (r *LiveSQLRetriever) ListVectorIndexTenantIDs(ctx context.Context, limit int) ([]string, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	seen := map[string]struct{}{}
+	out := make([]string, 0, limit)
+
+	collect := func(db *sql.DB, label string, query string) {
+		if db == nil || len(out) >= limit {
+			return
+		}
+
+		rows, err := db.QueryContext(ctx, query, limit)
+		if err != nil {
+			log.Printf("[prompt-layer][vector-index] tenant scan failed source=%s err=%v", label, err)
+			return
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			if len(out) >= limit {
+				return
+			}
+
+			var tenantID string
+			if err := rows.Scan(&tenantID); err != nil {
+				log.Printf("[prompt-layer][vector-index] tenant scan row failed source=%s err=%v", label, err)
+				continue
+			}
+
+			tenantID = strings.ToLower(strings.TrimSpace(tenantID))
+			if tenantID == "" || !uuidRegex.MatchString(tenantID) {
+				continue
+			}
+			if _, ok := seen[tenantID]; ok {
+				continue
+			}
+
+			seen[tenantID] = struct{}{}
+			out = append(out, tenantID)
+		}
+	}
+
+	collect(r.edgeDB, "edge.tenants", `
+		SELECT DISTINCT tenant_id::text
+		FROM tenants
+		WHERE tenant_id IS NOT NULL
+		LIMIT $1
+	`)
+
+	collect(r.intentDB, "intent.payment_intents", `
+		SELECT DISTINCT tenant_id::text
+		FROM payment_intents
+		WHERE tenant_id IS NOT NULL
+		LIMIT $1
+	`)
+
+	collect(r.outcomeDB, "outcome.batch_attachment_summaries", `
+		SELECT DISTINCT tenant_id::text
+		FROM batch_attachment_summaries
+		WHERE tenant_id IS NOT NULL
+		LIMIT $1
+	`)
+
+	collect(r.intelligenceDB, "intelligence.intelligence_snapshots", `
+		SELECT DISTINCT tenant_id
+		FROM intelligence_snapshots
+		WHERE tenant_id IS NOT NULL
+		LIMIT $1
+	`)
+
+	collect(r.evidenceDB, "evidence.evidence_events", `
+		SELECT DISTINCT tenant_id
+		FROM evidence_events
+		WHERE tenant_id IS NOT NULL
+		LIMIT $1
+	`)
+
+	return out, nil
+}
