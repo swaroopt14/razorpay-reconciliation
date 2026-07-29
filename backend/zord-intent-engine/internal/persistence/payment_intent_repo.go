@@ -1065,10 +1065,10 @@ func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, 
             AVG(duplicate_risk_score),
             AVG(schema_completeness_score),
             AVG(mapping_confidence_score),
-            SUM(CASE WHEN matchability_score < 40 THEN 1 ELSE 0 END),
-            SUM(CASE WHEN proof_readiness_score < 40 THEN 1 ELSE 0 END),
+            SUM(CASE WHEN matchability_score < 0.40 THEN 1 ELSE 0 END),
+            SUM(CASE WHEN proof_readiness_score < 0.40 THEN 1 ELSE 0 END),
             SUM(CASE WHEN duplicate_risk_flag = true THEN 1 ELSE 0 END),
-            COALESCE(SUM(CASE WHEN duplicate_risk_score >= 31 THEN (amount * 100)::BIGINT ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN duplicate_risk_score >= 0.31 THEN (amount * 100)::BIGINT ELSE 0 END), 0),
             MAX(tenant_id::TEXT),
             MAX(source_system),
             COALESCE(SUM(amount), 0),
@@ -1148,14 +1148,16 @@ func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, 
 	dupRiskRate := float64(dupRiskCount) / float64(received)
 	lowMatchRate := float64(lowMatchCount) / float64(received)
 
-	// avg_*_score columns are NUMERIC(5,2) storing 0–100 (see
-	// intent_service.go: "each sub-score is 0–100"), but batchScore below is
-	// a 0–1 composite (clamped and persisted as such). Normalize here instead
-	// of assuming the DB already stores 0–1 — that assumption was wrong and
-	// let these terms dominate the weighted sum by ~100x.
-	avgQ := safeFloat(avgQuality) / 100.0
-	avgM := safeFloat(avgMatchability) / 100.0
-	avgP := safeFloat(avgProof) / 100.0
+	// intent_quality_score / matchability_score / proof_readiness_score are
+	// persisted 0–1 (see IntentService.computeScores: the final schema/
+	// mapping/refQuality/matchability/proof/dupRisk/quality values are all
+	// divided by 100 before being assigned to the CanonicalIntent — compare
+	// the `iScore < 0.70` / `iScore < 0.5` checks against the very same
+	// IntentQualityScore field elsewhere in intent_service.go). AVG() over an
+	// already-0–1 column is already 0–1, so no rescale needed here.
+	avgQ := safeFloat(avgQuality)
+	avgM := safeFloat(avgMatchability)
+	avgP := safeFloat(avgProof)
 
 	batchScore := (canonRate*0.20 +
 		avgQ*0.20 +
