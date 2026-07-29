@@ -334,9 +334,15 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 			})
 			return
 		}
-		if totalDataRows >= 10000 {
+
+		maxrowstemp := os.Getenv("MAX_CSV_ROWS")
+		if maxrowstemp == "" {
+			logger.Log.Warn("MAX_CSV_ROWS not set; using default 10000")
+			maxrowstemp = "10000"
+		}
+		if maxrows, err := strconv.Atoi(maxrowstemp); err == nil && totalDataRows > maxrows {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "CSV limit exceeded (max 10000 rows)",
+				"error": fmt.Sprintf("CSV limit exceeded (max %d rows)", maxrows),
 			})
 			return
 		}
@@ -628,9 +634,14 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 			})
 			return
 		}
-		if totalRows > 10000 {
+		maxrowstemp := os.Getenv("MAX_CSV_ROWS")
+		if maxrowstemp == "" {
+			logger.Log.Warn("MAX_CSV_ROWS not set; using default 10000")
+			maxrowstemp = "10000"
+		}
+		if maxrows, err := strconv.Atoi(maxrowstemp); err == nil && totalDataRows > maxrows {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "CSV limit exceeded (max 10000 rows)",
+				"error": fmt.Sprintf("XLSX limit exceeded (max %d rows)", maxrows),
 			})
 			return
 		}
