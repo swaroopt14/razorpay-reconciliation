@@ -61,6 +61,10 @@ func main() {
 		log.Fatal("failed to initialize JWT signing secret:", err)
 	}
 
+	if err := services.InitTokenizedDataHashMasterSecret(); err != nil {
+		log.Fatal("failed to initialize tokenized data hash master secret:", err)
+	}
+
 	ctx := context.Background()
 
 	// Seed built-in mapping profiles (TALLY, SAP, etc.) from global_profiles.json

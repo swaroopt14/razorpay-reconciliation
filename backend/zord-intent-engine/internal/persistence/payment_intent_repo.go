@@ -1148,10 +1148,14 @@ func (r *PaymentIntentRepo) UpdateBatchAggregateConfidence(ctx context.Context, 
 	dupRiskRate := float64(dupRiskCount) / float64(received)
 	lowMatchRate := float64(lowMatchCount) / float64(received)
 
-	// Normalize avg scores to 0–1 for weighting (now stored as 0–1 in DB)
-	avgQ := safeFloat(avgQuality)
-	avgM := safeFloat(avgMatchability)
-	avgP := safeFloat(avgProof)
+	// avg_*_score columns are NUMERIC(5,2) storing 0–100 (see
+	// intent_service.go: "each sub-score is 0–100"), but batchScore below is
+	// a 0–1 composite (clamped and persisted as such). Normalize here instead
+	// of assuming the DB already stores 0–1 — that assumption was wrong and
+	// let these terms dominate the weighted sum by ~100x.
+	avgQ := safeFloat(avgQuality) / 100.0
+	avgM := safeFloat(avgMatchability) / 100.0
+	avgP := safeFloat(avgProof) / 100.0
 
 	batchScore := (canonRate*0.20 +
 		avgQ*0.20 +
