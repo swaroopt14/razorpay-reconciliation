@@ -13,6 +13,17 @@ type Publisher interface {
 	// Returns an error on failure. The caller is responsible for retry logic.
 	Publish(ctx context.Context, event *model.OutboxEvent, topic string) error
 
+	// PublishEdgeEvent sends a single zord-edge event (model.EdgeOutboxEvent)
+	// to its target Kafka topic. Kept separate from Publish so the edge event
+	// schema evolves independently of the shared generic OutboxEvent.
+	PublishEdgeEvent(ctx context.Context, event *model.EdgeOutboxEvent, topic string) error
+
+	// PublishIntentEvent sends a single zord-intent-engine event
+	// (model.IntentOutboxEvent) to its target Kafka topic. Kept separate from
+	// Publish so the intent event schema evolves independently of the shared
+	// generic OutboxEvent.
+	PublishIntentEvent(ctx context.Context, event *model.IntentOutboxEvent, topic string) error
+
 	// PublishDLQItem sends a single DLQItemEvent to its target Kafka topic.
 	PublishDLQItem(ctx context.Context, event *model.DLQItemEvent, topic string) error
 

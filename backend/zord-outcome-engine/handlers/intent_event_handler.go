@@ -17,6 +17,10 @@ func HandleIntentEvent(msg []byte) error {
 	if err := json.Unmarshal(msg, &event); err != nil {
 		return err
 	}
+
+	log.Printf("intent event consumed [event_id=%s event_type=%s trace_id=%s tenant_id=%s]",
+		event.EventID, event.EventType, event.TraceID, event.TenantID)
+
 	if !isIntentEvent(event.EventType) {
 		return nil
 	}

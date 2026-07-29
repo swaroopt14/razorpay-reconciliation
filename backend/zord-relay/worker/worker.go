@@ -113,6 +113,13 @@ func (w *Worker) Run(ctx context.Context) {
 // runCycle executes one full lease → publish → ack/nack cycle.
 // Returns the number of events processed (0 = empty batch).
 func (w *Worker) runCycle(ctx context.Context) int {
+	if w.svcCfg.IsEdge {
+		return w.runEdgeCycle(ctx)
+	}
+	if w.svcCfg.IsIntent {
+		return w.runIntentCycle(ctx)
+	}
+
 	ctx, span := tracing.Tracer().Start(ctx, "worker.poll_cycle",
 		trace.WithAttributes(attribute.String("service", w.svcCfg.Name)),
 	)
@@ -178,6 +185,158 @@ func (w *Worker) runCycle(ctx context.Context) int {
 	}
 
 	// --- Nack ---
+	if len(toNack) > 0 {
+		w.nack(ctx, leaseResp.LeaseID, toNack)
+	}
+
+	return len(leaseResp.Events)
+}
+
+// runEdgeCycle is the edge-event equivalent of runCycle: leases from
+// zord-edge's outbox into model.EdgeOutboxEvent instead of the shared
+// generic OutboxEvent, then publishes/acks/nacks the same way.
+func (w *Worker) runEdgeCycle(ctx context.Context) int {
+	ctx, span := tracing.Tracer().Start(ctx, "worker.poll_cycle_edge",
+		trace.WithAttributes(attribute.String("service", w.svcCfg.Name)),
+	)
+	defer span.End()
+
+	log := w.log
+
+	leaseResp, err := w.outbox.LeaseEdge(ctx, w.relayCfg.LeaseLimit, w.relayCfg.LeaseTTLSeconds)
+	if err != nil {
+		log.Error("edge lease call failed", zap.Error(err))
+		metrics.LeaseTotal.WithLabelValues(w.svcCfg.Name, "error").Inc()
+		return 0
+	}
+
+	if len(leaseResp.Events) == 0 {
+		metrics.LeaseTotal.WithLabelValues(w.svcCfg.Name, "empty").Inc()
+		metrics.BacklogGauge.WithLabelValues(w.svcCfg.Name).Set(0)
+		return 0
+	}
+
+	metrics.LeaseTotal.WithLabelValues(w.svcCfg.Name, "success").Inc()
+	metrics.LeaseBatchSize.WithLabelValues(w.svcCfg.Name).Observe(float64(len(leaseResp.Events)))
+	metrics.BacklogGauge.WithLabelValues(w.svcCfg.Name).Set(float64(len(leaseResp.Events)))
+	metrics.InFlightPublishes.WithLabelValues(w.svcCfg.Name).Add(float64(len(leaseResp.Events)))
+	defer metrics.InFlightPublishes.WithLabelValues(w.svcCfg.Name).Sub(float64(len(leaseResp.Events)))
+
+	log.Info("leased edge batch",
+		zap.Int("count", len(leaseResp.Events)),
+		zap.String("lease_id", leaseResp.LeaseID),
+	)
+
+	var (
+		toAck  []string
+		toNack []string
+	)
+
+	for i := range leaseResp.Events {
+		evt := &leaseResp.Events[i]
+
+		log.Info("edge event leased",
+			zap.String("event_type", evt.EventType),
+			zap.String("event_id", evt.EventID),
+			zap.String("trace_id", evt.TraceID),
+			zap.String("tenant_id", evt.TenantID),
+		)
+
+		result := w.proc.processEdge(ctx, evt)
+
+		switch {
+		case result.success:
+			toAck = append(toAck, result.eventID)
+		case result.isPoison:
+			toAck = append(toAck, result.eventID)
+			log.Warn("poison edge event acked from outbox and routed to DLQ",
+				zap.String("event_id", result.eventID),
+			)
+		default:
+			toNack = append(toNack, result.eventID)
+		}
+	}
+
+	if len(toAck) > 0 {
+		w.ack(ctx, leaseResp.LeaseID, toAck)
+	}
+
+	if len(toNack) > 0 {
+		w.nack(ctx, leaseResp.LeaseID, toNack)
+	}
+
+	return len(leaseResp.Events)
+}
+
+// runIntentCycle is the intent-event equivalent of runCycle: leases from
+// zord-intent-engine's outbox into model.IntentOutboxEvent instead of the
+// shared generic OutboxEvent, then publishes/acks/nacks the same way.
+func (w *Worker) runIntentCycle(ctx context.Context) int {
+	ctx, span := tracing.Tracer().Start(ctx, "worker.poll_cycle_intent",
+		trace.WithAttributes(attribute.String("service", w.svcCfg.Name)),
+	)
+	defer span.End()
+
+	log := w.log
+
+	leaseResp, err := w.outbox.LeaseIntent(ctx, w.relayCfg.LeaseLimit, w.relayCfg.LeaseTTLSeconds)
+	if err != nil {
+		log.Error("intent lease call failed", zap.Error(err))
+		metrics.LeaseTotal.WithLabelValues(w.svcCfg.Name, "error").Inc()
+		return 0
+	}
+
+	if len(leaseResp.Events) == 0 {
+		metrics.LeaseTotal.WithLabelValues(w.svcCfg.Name, "empty").Inc()
+		metrics.BacklogGauge.WithLabelValues(w.svcCfg.Name).Set(0)
+		return 0
+	}
+
+	metrics.LeaseTotal.WithLabelValues(w.svcCfg.Name, "success").Inc()
+	metrics.LeaseBatchSize.WithLabelValues(w.svcCfg.Name).Observe(float64(len(leaseResp.Events)))
+	metrics.BacklogGauge.WithLabelValues(w.svcCfg.Name).Set(float64(len(leaseResp.Events)))
+	metrics.InFlightPublishes.WithLabelValues(w.svcCfg.Name).Add(float64(len(leaseResp.Events)))
+	defer metrics.InFlightPublishes.WithLabelValues(w.svcCfg.Name).Sub(float64(len(leaseResp.Events)))
+
+	log.Info("leased intent batch",
+		zap.Int("count", len(leaseResp.Events)),
+		zap.String("lease_id", leaseResp.LeaseID),
+	)
+
+	var (
+		toAck  []string
+		toNack []string
+	)
+
+	for i := range leaseResp.Events {
+		evt := &leaseResp.Events[i]
+
+		log.Info("intent event leased",
+			zap.String("event_type", evt.EventType),
+			zap.String("event_id", evt.EventID),
+			zap.String("trace_id", evt.TraceID),
+			zap.String("tenant_id", evt.TenantID),
+		)
+
+		result := w.proc.processIntent(ctx, evt)
+
+		switch {
+		case result.success:
+			toAck = append(toAck, result.eventID)
+		case result.isPoison:
+			toAck = append(toAck, result.eventID)
+			log.Warn("poison intent event acked from outbox and routed to DLQ",
+				zap.String("event_id", result.eventID),
+			)
+		default:
+			toNack = append(toNack, result.eventID)
+		}
+	}
+
+	if len(toAck) > 0 {
+		w.ack(ctx, leaseResp.LeaseID, toAck)
+	}
+
 	if len(toNack) > 0 {
 		w.nack(ctx, leaseResp.LeaseID, toNack)
 	}

@@ -101,6 +101,15 @@ type ServiceConfig struct {
 	// IsBatch tells relay to use BatchClient/BatchWorker instead of OutboxClient/OutboxWorker
 	IsBatch bool `mapstructure:"is_batch"`
 
+	// IsEdge tells the worker to lease/publish using zord-edge's own event
+	// shape (model.EdgeOutboxEvent) instead of the shared generic OutboxEvent.
+	IsEdge bool `mapstructure:"is_edge"`
+
+	// IsIntent tells the worker to lease/publish using zord-intent-engine's
+	// own event shape (model.IntentOutboxEvent) instead of the shared
+	// generic OutboxEvent.
+	IsIntent bool `mapstructure:"is_intent"`
+
 	// Retry settings (Kafka-side) — override global if set.
 	MaxRetryAttempts int           `mapstructure:"max_retry_attempts"`
 	RetryBaseDelay   time.Duration `mapstructure:"retry_base_delay"`
