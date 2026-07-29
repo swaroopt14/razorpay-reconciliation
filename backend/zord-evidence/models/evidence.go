@@ -239,6 +239,9 @@ type EvidencePack struct {
 	SchemaVersions                    map[string]string `json:"schema_versions"`
 	Signatures                        []Signature       `json:"signatures"`
 	SupersedesPackID                  string            `json:"supersedes_pack_id,omitempty"`
+	SupersedesByPackID                string            `json:"superseded_by_pack_id,omitempty"`
+	RevisionReason                    string            `json:"revision_reason,omitempty"`
+	BasedOnVersions                   map[string]string `json:"based_on_versions,omitempty"`
 	PackCompletenessScore             float64           `json:"pack_completeness_score"`
 	LeafCount                         int               `json:"leaf_count"`
 	RequiredLeafCount                 int               `json:"required_leaf_count"`
@@ -347,6 +350,8 @@ type GenerateEvidenceRequest struct {
 	RulesetVersion    string            `json:"ruleset_version" binding:"required"`
 	SchemaVersions    map[string]string `json:"schema_versions" binding:"required"`
 	SupersedesPackID  string            `json:"supersedes_pack_id"`
+	RevisionReason    string            `json:"revision_reason,omitempty"`
+	BasedOnVersions   map[string]string `json:"based_on_versions,omitempty"`
 
 	// Traceability & governance fields.
 	PaymentInstructionReceived *time.Time `json:"payment_instruction_received,omitempty"`
@@ -380,6 +385,8 @@ type ReplayRequest struct {
 	TenantID        string            `json:"tenant_id" binding:"required"`
 	IntentID        string            `json:"intent_id" binding:"required"`
 	ContractID      string            `json:"contract_id"`
+	RevisionReason  string            `json:"revision_reason,omitempty"`
+	BasedOnVersions map[string]string `json:"based_on_versions,omitempty"`
 	Mode            string            `json:"mode" binding:"required"`
 	RulesetVersion  string            `json:"ruleset_version" binding:"required"`
 	MappingVersions map[string]string `json:"mapping_versions" binding:"required"`
@@ -433,6 +440,9 @@ type EvidencePackSummary struct {
 	MerkleRoot                        string  `json:"merkle_root"`
 	RulesetVersion                    string  `json:"ruleset_version"`
 	SupersedesPackID                  string  `json:"supersedes_pack_id,omitempty"`
+	SupersedesByPackID                string  `json:"superseded_by_pack_id,omitempty"`
+	RevisionReason                    string  `json:"revision_reason,omitempty"`
+	BasedOnVersions                   map[string]string `json:"based_on_versions,omitempty"`
 	PackCompletenessScore             float64 `json:"pack_completeness_score"`
 	LeafCount                         int     `json:"leaf_count"`
 	RequiredLeafCount                 int     `json:"required_leaf_count"`
