@@ -88,13 +88,19 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 	file, err := c.FormFile("file")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "file is required"})
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    "FILE_REQUIRED",
+			"message": "file is required",
+		})
 		return
 	}
 
 	src, err := file.Open()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "unable to open file"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    "FILE_OPEN_ERROR",
+			"message": "unable to open file",
+		})
 		return
 	}
 	defer src.Close()
@@ -130,7 +136,10 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 	// Drain the TeeReader — this is the single read pass over the file.
 	if _, err := io.Copy(io.Discard, tee); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read file"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    "FILE_READ_ERROR",
+			"message": "failed to read file",
+		})
 		return
 	}
 
@@ -143,7 +152,10 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 	// Reset file pointer so the format-specific parser (CSV/xlsx) starts at byte 0.
 	if _, err := src.Seek(0, io.SeekStart); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to reset file pointer"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    "FILE_SEEK_ERROR",
+			"message": "failed to reset file pointer",
+		})
 		return
 	}
 
@@ -164,12 +176,16 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 	if originalBatchID != "" {
 		exists, err := services.CheckBatchIDExists(c.Request.Context(), tenantID, finalBatchID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify batch_id uniqueness"})
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"code":    "BATCH_ID_VERIFICATION_FAILED",
+				"message": "failed to verify batch_id uniqueness",
+			})
 			return
 		}
 		if exists {
 			c.JSON(http.StatusConflict, gin.H{
-				"error": "batch_id must be unique for each tenant",
+				"code":    "BATCH_ID_ALREADY_EXISTS",
+				"message": "batch_id must be unique for each tenant",
 			})
 			return
 		}
@@ -184,7 +200,8 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 	forceReprocess := c.GetHeader("X-Zord-Force-Reprocess") == "true"
 	if forceReprocess && originalBatchID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Batch-ID header is required when X-Zord-Force-Reprocess is true",
+			"code":    "BATCH_ID_REQUIRED",
+			"message": "Batch-ID header is required when X-Zord-Force-Reprocess is true",
 		})
 		return
 	}
@@ -212,7 +229,8 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 	payloadBytes, err := json.Marshal(filePayload)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "failed to build file payload",
+			"code":    "PAYLOAD_MARSHAL_ERROR",
+			"message": "failed to build file payload",
 		})
 		return
 	}
@@ -244,7 +262,8 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 	data, err := services.ProcessRawIntent(context.Background(), fileMsg, h.S3store, artifactID, time.Now().UTC())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "failed to store bulk file envelope",
+			"code":    "S3_STORE_ERROR",
+			"message": "failed to store bulk file envelope",
 		})
 		return
 	}
@@ -283,9 +302,10 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		parser, parserErr = services.GetParserByType(tenantType)
 		if parserErr != nil {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{
-				"error":  "invalid tenant type",
-				"detail": parserErr.Error(),
-				"hint":   "Valid static parser types: BANK, NBFC, MERCHANT, VENDOR, GATEWAY",
+				"code":    "INVALID_TENANT_TYPE",
+				"message": "invalid tenant type",
+				"detail":  parserErr.Error(),
+				"hint":    "Valid static parser types: BANK, NBFC, MERCHANT, VENDOR, GATEWAY",
 			})
 			return
 		}
@@ -330,7 +350,8 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 		if totalDataRows < 1 {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "file must contain header and at least one row",
+				"code":    "FILE_EMPTY_OR_NO_DATA_RECORDS",
+				"message": "file must contain header and at least one row",
 			})
 			return
 		}
@@ -342,7 +363,10 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		}
 		if maxrows, err := strconv.Atoi(maxrowstemp); err == nil && totalDataRows > maxrows {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": fmt.Sprintf("CSV limit exceeded (max %d rows)", maxrows),
+				"code":    "FILE_ROW_LIMIT_EXCEEDED",
+				"message": "CSV limit exceeded",
+				"limit":   maxrows,
+				"actual":  totalDataRows,
 			})
 			return
 		}
@@ -457,7 +481,10 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		if err != nil {
 			close(jobs)
 			wg.Wait()
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid CSV file"})
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    "INVALID_CSV_FILE",
+				"message": "invalid CSV file",
+			})
 			return
 		}
 
@@ -607,7 +634,10 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		}
 		f, err := excelize.OpenReader(src)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid excel file"})
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    "INVALID_EXCEL_FILE",
+				"message": "invalid excel file",
+			})
 			return
 		}
 
@@ -616,7 +646,10 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		// Pre-scan: count rows (O(1) memory — no row data stored).
 		scanRows, err := f.Rows(sheet)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "unable to read sheet"})
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    "EXCEL_SHEET_READ_ERROR",
+				"message": "unable to read sheet",
+			})
 			return
 		}
 		totalRows := 0
@@ -630,7 +663,8 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 		if totalDataRows < 1 {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "file must contain header and at least one row",
+				"code":    "FILE_EMPTY_OR_NO_DATA_RECORDS",
+				"message": "file must contain header and at least one row",
 			})
 			return
 		}
@@ -641,7 +675,10 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		}
 		if maxrows, err := strconv.Atoi(maxrowstemp); err == nil && totalDataRows > maxrows {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": fmt.Sprintf("XLSX limit exceeded (max %d rows)", maxrows),
+				"code":    "FILE_ROW_LIMIT_EXCEEDED",
+				"message": "Excel limit exceeded",
+				"limit":   maxrows,
+				"actual":  totalDataRows,
 			})
 			return
 		}
@@ -754,7 +791,10 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		if err != nil {
 			close(jobs)
 			wg.Wait()
-			c.JSON(http.StatusBadRequest, gin.H{"error": "unable to read sheet"})
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    "EXCEL_SHEET_READ_ERROR",
+				"message": "unable to read sheet",
+			})
 			return
 		}
 		defer dataRows.Close()
@@ -762,14 +802,20 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		if !dataRows.Next() {
 			close(jobs)
 			wg.Wait()
-			c.JSON(http.StatusBadRequest, gin.H{"error": "unable to read sheet header"})
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    "EXCEL_HEADER_READ_ERROR",
+				"message": "unable to read sheet header",
+			})
 			return
 		}
 		headers, err := dataRows.Columns()
 		if err != nil {
 			close(jobs)
 			wg.Wait()
-			c.JSON(http.StatusBadRequest, gin.H{"error": "unable to read sheet header"})
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    "EXCEL_HEADER_READ_ERROR",
+				"message": "unable to read sheet header",
+			})
 			return
 		}
 
@@ -904,7 +950,8 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "unsupported file format (.csv or .xlsx only)",
+			"code":    "UNSUPPORTED_FILE_FORMAT",
+			"message": "unsupported file format (.csv or .xlsx only)",
 		})
 		return
 	}
@@ -938,7 +985,8 @@ func respondBulkResults(c *gin.Context, results []BulkResult, fileName, fileHash
 	// empty result set means all rows were skipped/empty, not a duplicate batch
 	if len(results) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "no processable rows found in file",
+			"code":    "NO_PROCESSABLE_ROWS",
+			"message": "no processable rows found in file",
 		})
 		return
 	}
