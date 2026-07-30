@@ -14,6 +14,31 @@ type Producer struct {
 	producer sarama.AsyncProducer
 }
 
+const (
+	VectorIndexRequestTopic = "zord.vector.index.request.v1"
+
+	VectorIndexEventRequested = "vector.index.requested"
+
+	VectorIndexOperationUpsert = "upsert"
+	VectorIndexOperationDelete = "delete"
+)
+
+type VectorIndexRequestEvent struct {
+	EventID         string            `json:"event_id"`
+	SchemaVersion   string            `json:"schema_version"`
+	EventType       string            `json:"event_type"`
+	SourceService   string            `json:"source_service"`
+	SourceEventType string            `json:"source_event_type"`
+	TenantID        string            `json:"tenant_id"`
+	EntityType      string            `json:"entity_type"`
+	EntityID        string            `json:"entity_id"`
+	BatchID         string            `json:"batch_id,omitempty"`
+	Operation       string            `json:"operation"`
+	OccurredAt      time.Time         `json:"occurred_at"`
+	ContentVersion  string            `json:"content_version,omitempty"`
+	Metadata        map[string]string `json:"metadata,omitempty"`
+}
+
 func NewProducer(brokers []string) (*Producer, error) {
 	config := sarama.NewConfig()
 
@@ -87,7 +112,9 @@ func (p *Producer) Publish(ctx context.Context, topic string, key string, payloa
 	p.producer.Input() <- msg
 	return nil
 }
-
+func (p *Producer) PublishVectorIndexRequest(ctx context.Context, event VectorIndexRequestEvent) error {
+	return p.Publish(ctx, VectorIndexRequestTopic, event.TenantID, event)
+}
 func (p *Producer) Close() error {
 
 	if p == nil || p.producer == nil {

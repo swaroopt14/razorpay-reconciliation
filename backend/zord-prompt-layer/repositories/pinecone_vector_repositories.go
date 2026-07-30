@@ -18,9 +18,10 @@ type PineconeVectorRetriever struct {
 	embeddingModel     string
 	embeddingDimension int
 	queryTopK          int
+	requestTimeout     time.Duration
 }
 
-func NewPineconeVectorRetriever(gemini *client.GeminiClient, pinecone *client.PineconeClient, embeddingModel string, embeddingDimension int, queryTopK int) *PineconeVectorRetriever {
+func NewPineconeVectorRetriever(gemini *client.GeminiClient, pinecone *client.PineconeClient, embeddingModel string, embeddingDimension int, queryTopK int, requestTimeoutSeconds int) *PineconeVectorRetriever {
 	if queryTopK <= 0 {
 		queryTopK = 5
 	}
@@ -30,6 +31,9 @@ func NewPineconeVectorRetriever(gemini *client.GeminiClient, pinecone *client.Pi
 	if embeddingDimension <= 0 {
 		embeddingDimension = 768
 	}
+	if requestTimeoutSeconds <= 0 {
+		requestTimeoutSeconds = 15
+	}
 
 	return &PineconeVectorRetriever{
 		gemini:             gemini,
@@ -37,6 +41,7 @@ func NewPineconeVectorRetriever(gemini *client.GeminiClient, pinecone *client.Pi
 		embeddingModel:     embeddingModel,
 		embeddingDimension: embeddingDimension,
 		queryTopK:          queryTopK,
+		requestTimeout:     time.Duration(requestTimeoutSeconds) * time.Second,
 	}
 }
 
@@ -45,11 +50,13 @@ func (r *PineconeVectorRetriever) RetrieveVector(req dto.QueryRequest, topK int)
 		return nil, nil
 	}
 	if !req.PlannerNeedsVector {
+		log.Printf("[prompt-layer][vector] skipped tenant=%s reason=planner_not_required", req.TenantID)
 		return nil, nil
 	}
 
 	queryText := buildVectorSearchText(req)
 	if strings.TrimSpace(queryText) == "" {
+		log.Printf("[prompt-layer][vector] skipped tenant=%s reason=empty_vector_query", req.TenantID)
 		return nil, nil
 	}
 
@@ -62,13 +69,15 @@ func (r *PineconeVectorRetriever) RetrieveVector(req dto.QueryRequest, topK int)
 	}
 
 	start := time.Now()
+	log.Printf("[prompt-layer][vector] query start tenant=%s top_k=%d timeout_seconds=%d", req.TenantID, effectiveTopK, int(r.requestTimeout.Seconds()))
+
+	ctx, cancel := context.WithTimeout(context.Background(), r.requestTimeout)
+	defer cancel()
+
 	embedding, err := r.gemini.Embed(queryText, r.embeddingModel, r.embeddingDimension)
 	if err != nil {
 		return nil, fmt.Errorf("embedding failed: %w", err)
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
 
 	matches, err := r.pinecone.Query(ctx, embedding, effectiveTopK, req.TenantID)
 	if err != nil {

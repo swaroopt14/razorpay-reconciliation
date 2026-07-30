@@ -115,6 +115,58 @@ func NewEvidenceService(
 	}
 }
 
+type vectorIndexPublisher interface {
+	PublishVectorIndexRequest(ctx context.Context, event kafka.VectorIndexRequestEvent) error
+}
+
+func (s *EvidenceService) emitVectorIndexRequest(pack *models.EvidencePack, sourceEventType string) {
+	if s == nil || s.publisher == nil || pack == nil {
+		return
+	}
+
+	publisher, ok := s.publisher.(vectorIndexPublisher)
+	if !ok {
+		return
+	}
+
+	tenantID := strings.TrimSpace(pack.TenantID)
+	entityID := strings.TrimSpace(pack.EvidencePackID)
+	batchID := strings.TrimSpace(pack.ClientBatchID)
+
+	if tenantID == "" || entityID == "" {
+		return
+	}
+
+	event := kafka.VectorIndexRequestEvent{
+		EventID:         uuid.NewString(),
+		SchemaVersion:   "v1",
+		EventType:       kafka.VectorIndexEventRequested,
+		SourceService:   "zord-evidence",
+		SourceEventType: sourceEventType,
+		TenantID:        tenantID,
+		EntityType:      "evidence_pack",
+		EntityID:        entityID,
+		BatchID:         batchID,
+		Operation:       kafka.VectorIndexOperationUpsert,
+		OccurredAt:      time.Now().UTC(),
+		ContentVersion:  "v1",
+		Metadata: map[string]string{
+			"pack_status": pack.PackStatus,
+			"mode":        pack.Mode,
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := publisher.PublishVectorIndexRequest(ctx, event); err != nil {
+		log.Printf("[evidence][vector-index] publish failed tenant=%s entity=evidence_pack id=%s err=%v", tenantID, entityID, err)
+		return
+	}
+
+	log.Printf("[evidence][vector-index] publish ok tenant=%s entity=evidence_pack id=%s", tenantID, entityID)
+}
+
 // HandleLeafUpdate persists incoming leaves on the Kafka fast path and delegates
 // readiness checks plus pack generation to the worker pool.
 //
@@ -983,6 +1035,7 @@ func (s *EvidenceService) GeneratePackInTx(ctx context.Context, packTx *sql.Tx, 
 	// When packTx is non-nil the caller holds an uncommitted advisory-lock tx;
 	// proof enrichment runs after Commit in processIntentJob.
 	if packTx == nil {
+		s.emitVectorIndexRequest(pack, "evidence_pack.generated.v1")
 		s.writeProofEnrichment(ctx, pack)
 	}
 
@@ -1190,6 +1243,7 @@ func (s *EvidenceService) GenerateBatchPackInTx(ctx context.Context, packTx *sql
 	log.Printf("evidence.service.generate_batch_pack save_ok pack=%s", packID)
 
 	if packTx == nil {
+		s.emitVectorIndexRequest(pack, "evidence_batch_pack.generated.v1")
 		s.writeProofEnrichment(ctx, pack)
 	}
 

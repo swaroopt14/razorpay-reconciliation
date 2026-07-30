@@ -25,6 +25,7 @@ import (
 	"zord-intent-engine/internal/canonicalizer"
 	"zord-intent-engine/internal/models"
 	"zord-intent-engine/internal/normalizer"
+	"zord-intent-engine/kafka"
 
 	// "zord-intent-engine/internal/pii"
 	"zord-intent-engine/internal/guards"
@@ -109,6 +110,14 @@ type IntentService struct {
 	tokenizeQueue    *KafkaTokenizeQueue
 	db               *sql.DB
 	tenantDailyUsage persistence.TenantDailyUsageRepository
+	vectorPublisher  VectorIndexPublisher
+}
+type VectorIndexPublisher interface {
+	PublishVectorIndexRequest(ctx context.Context, event kafka.VectorIndexRequestEvent) error
+}
+
+func (s *IntentService) SetVectorIndexPublisher(p VectorIndexPublisher) {
+	s.vectorPublisher = p
 }
 
 var enclaveHTTPClient = &http.Client{
@@ -205,6 +214,76 @@ func NewIntentService(
 		db:               db,
 		tenantDailyUsage: tenantDailyUsage,
 	}
+}
+func (s *IntentService) emitVectorIndexRequest(
+	sourceEventType string,
+	tenantID string,
+	entityType string,
+	entityID string,
+	batchID string,
+	metadata map[string]string,
+) {
+	if s == nil || s.vectorPublisher == nil {
+		return
+	}
+
+	tenantID = strings.TrimSpace(tenantID)
+	entityID = strings.TrimSpace(entityID)
+	batchID = strings.TrimSpace(batchID)
+
+	if tenantID == "" || entityID == "" {
+		return
+	}
+
+	if metadata == nil {
+		metadata = map[string]string{}
+	}
+
+	event := kafka.VectorIndexRequestEvent{
+		EventID:         uuid.NewString(),
+		SchemaVersion:   "v1",
+		EventType:       kafka.VectorIndexEventRequested,
+		SourceService:   "zord-intent-engine",
+		SourceEventType: sourceEventType,
+		TenantID:        tenantID,
+		EntityType:      entityType,
+		EntityID:        entityID,
+		BatchID:         batchID,
+		Operation:       kafka.VectorIndexOperationUpsert,
+		OccurredAt:      time.Now().UTC(),
+		ContentVersion:  "v1",
+		Metadata:        metadata,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := s.vectorPublisher.PublishVectorIndexRequest(ctx, event); err != nil {
+		log.Printf("[intent-engine][vector-index] publish failed tenant=%s entity=%s id=%s err=%v", tenantID, entityType, entityID, err)
+		return
+	}
+
+	log.Printf("[intent-engine][vector-index] publish ok tenant=%s entity=%s id=%s", tenantID, entityType, entityID)
+}
+
+func (s *IntentService) EmitDLQVectorIndexRequest(dlq models.DLQEntry) {
+	batchID := strings.TrimSpace(dlq.BatchID)
+	if batchID == "" {
+		batchID = strings.TrimSpace(dlq.ClientBatchRef)
+	}
+
+	s.emitVectorIndexRequest(
+		"intent_dlq.saved.v1",
+		dlq.TenantID,
+		"intent_dlq",
+		dlq.DLQID,
+		batchID,
+		map[string]string{
+			"stage":       dlq.Stage,
+			"reason_code": dlq.ReasonCode,
+			"dlq_status":  dlq.DLQStatus,
+		},
+	)
 }
 
 // ErrIntentNotHeld is returned by ApproveHeldIntent when the target intent's
@@ -2578,7 +2657,32 @@ func (s *IntentService) ProcessIncomingIntent(
 			log.Printf("⚠️ Failed to update batch aggregate confidence for batch=%s: %v", *in.BatchID, err)
 		}
 	}
+	batchID := ""
+	if in.BatchID != nil {
+		batchID = *in.BatchID
+	}
 
+	s.emitVectorIndexRequest(
+		"payment_intent.saved.v1",
+		saved.TenantID,
+		"payment_intent",
+		saved.IntentID,
+		batchID,
+		map[string]string{
+			"governance_state": saved.GovernanceState,
+		},
+	)
+
+	if batchID != "" {
+		s.emitVectorIndexRequest(
+			"intent_batch.updated.v1",
+			saved.TenantID,
+			"intent_batch",
+			batchID,
+			batchID,
+			nil,
+		)
+	}
 	return &saved, nil, nil
 }
 
@@ -2814,7 +2918,41 @@ func (s *IntentService) ProcessIncomingIntentsBatch(
 			log.Printf("⚠️ Failed to update batch aggregate confidence for batch=%s: %v", *firstIn.BatchID, err)
 		}
 	}
+	emittedBatches := map[string]bool{}
 
+	for _, saved := range savedIntents {
+		batchID := ""
+		if saved.BatchID != nil {
+			batchID = strings.TrimSpace(*saved.BatchID)
+		}
+
+		s.emitVectorIndexRequest(
+			"payment_intent.saved.v1",
+			saved.TenantID,
+			"payment_intent",
+			saved.IntentID,
+			batchID,
+			map[string]string{
+				"governance_state": saved.GovernanceState,
+			},
+		)
+
+		if batchID != "" && !emittedBatches[batchID] {
+			s.emitVectorIndexRequest(
+				"intent_batch.updated.v1",
+				saved.TenantID,
+				"intent_batch",
+				batchID,
+				batchID,
+				nil,
+			)
+			emittedBatches[batchID] = true
+		}
+	}
+
+	for _, dlq := range savedDLQs {
+		s.EmitDLQVectorIndexRequest(dlq)
+	}
 	return savedIntents, savedDLQs, nil
 }
 

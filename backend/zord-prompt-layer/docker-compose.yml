@@ -12,6 +12,10 @@ services:
       - REDIS_URL=redis://zord-prompt-layer-redis:6379/0
       - MEMORY_TTL_SECONDS=3600
       - MEMORY_MAX_TURNS=8
+      - VECTOR_INDEX_KAFKA_BROKERS=broker1:9092,broker2:9093,broker3:9094
+      - VECTOR_INDEX_KAFKA_TOPIC=zord.vector.index.request.v1
+      - VECTOR_INDEX_KAFKA_GROUP_ID=zord-prompt-layer-vector-indexer
+      - VECTOR_INDEX_KAFKA_MAX_RETRIES=3
     networks:
       - zord-network
     depends_on:

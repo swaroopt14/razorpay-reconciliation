@@ -127,6 +127,7 @@ func main() {
 		db.DB,
 		tenantDailyUsageRepo,
 	)
+	intentService.SetVectorIndexPublisher(producer)
 
 	// -------- DLQ HTTP (READ-ONLY) --------
 	dlqHandler := handlers.NewDLQHandler(dlqRepo)
@@ -246,9 +247,11 @@ func main() {
 				if dlq.BatchID == "" && event.BatchID != nil {
 					dlq.BatchID = *event.BatchID
 				}
-				_, err := dlqRepo.Save(ctx, *dlq)
+				savedDLQ, err := dlqRepo.Save(ctx, *dlq)
 				if err != nil {
 					log.Printf("Failed to save DLQ entry: %v", err)
+				} else {
+					intentService.EmitDLQVectorIndexRequest(savedDLQ)
 				}
 			}
 			return nil // Reject is a terminal state, return nil so message is marked

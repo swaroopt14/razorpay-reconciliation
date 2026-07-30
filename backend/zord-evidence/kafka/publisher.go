@@ -19,6 +19,31 @@ const (
 	EventPackReversalSupersed = "evidence.pack.reversal_superseded"
 )
 
+const (
+	VectorIndexRequestTopic = "zord.vector.index.request.v1"
+
+	VectorIndexEventRequested = "vector.index.requested"
+
+	VectorIndexOperationUpsert = "upsert"
+	VectorIndexOperationDelete = "delete"
+)
+
+type VectorIndexRequestEvent struct {
+	EventID         string            `json:"event_id"`
+	SchemaVersion   string            `json:"schema_version"`
+	EventType       string            `json:"event_type"`
+	SourceService   string            `json:"source_service"`
+	SourceEventType string            `json:"source_event_type"`
+	TenantID        string            `json:"tenant_id"`
+	EntityType      string            `json:"entity_type"`
+	EntityID        string            `json:"entity_id"`
+	BatchID         string            `json:"batch_id,omitempty"`
+	Operation       string            `json:"operation"`
+	OccurredAt      time.Time         `json:"occurred_at"`
+	ContentVersion  string            `json:"content_version,omitempty"`
+	Metadata        map[string]string `json:"metadata,omitempty"`
+}
+
 // PackEvent is the envelope published to evidence.packs topic.
 type PackEvent struct {
 	EventType      string    `json:"event_type"`
@@ -75,6 +100,21 @@ func (p *Publisher) Publish(_ context.Context, evt PackEvent) error {
 	msg := &sarama.ProducerMessage{
 		Topic: p.topic,
 		Key:   sarama.StringEncoder(key),
+		Value: sarama.ByteEncoder(body),
+	}
+	_, _, err = p.producer.SendMessage(msg)
+	return err
+}
+
+func (p *Publisher) PublishVectorIndexRequest(_ context.Context, event VectorIndexRequestEvent) error {
+	body, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("marshal vector index event: %w", err)
+	}
+
+	msg := &sarama.ProducerMessage{
+		Topic: VectorIndexRequestTopic,
+		Key:   sarama.StringEncoder(event.TenantID),
 		Value: sarama.ByteEncoder(body),
 	}
 	_, _, err = p.producer.SendMessage(msg)

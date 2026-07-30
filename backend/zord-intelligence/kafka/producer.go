@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/segmentio/kafka-go"
 )
@@ -26,6 +27,31 @@ import (
 // They just call producer.Publish() and we handle the details.
 type Producer struct {
 	writer *kafka.Writer
+}
+
+const (
+	VectorIndexRequestTopic = "zord.vector.index.request.v1"
+
+	VectorIndexEventRequested = "vector.index.requested"
+
+	VectorIndexOperationUpsert = "upsert"
+	VectorIndexOperationDelete = "delete"
+)
+
+type VectorIndexRequestEvent struct {
+	EventID         string            `json:"event_id"`
+	SchemaVersion   string            `json:"schema_version"`
+	EventType       string            `json:"event_type"`
+	SourceService   string            `json:"source_service"`
+	SourceEventType string            `json:"source_event_type"`
+	TenantID        string            `json:"tenant_id"`
+	EntityType      string            `json:"entity_type"`
+	EntityID        string            `json:"entity_id"`
+	BatchID         string            `json:"batch_id,omitempty"`
+	Operation       string            `json:"operation"`
+	OccurredAt      time.Time         `json:"occurred_at"`
+	ContentVersion  string            `json:"content_version,omitempty"`
+	Metadata        map[string]string `json:"metadata,omitempty"`
 }
 
 // NewProducer creates a Kafka producer connected to the given broker.
@@ -99,6 +125,10 @@ func (p *Producer) Publish(ctx context.Context, topic, key string, payload any) 
 
 	log.Printf("kafka: published to topic=%s key=%s bytes=%d", topic, key, len(value))
 	return nil
+}
+
+func (p *Producer) PublishVectorIndexRequest(ctx context.Context, event VectorIndexRequestEvent) error {
+	return p.Publish(ctx, VectorIndexRequestTopic, event.TenantID, event)
 }
 
 // Close flushes any pending messages and closes the connection.

@@ -191,6 +191,7 @@ func main() {
 
 	// ── Step 6: Create Kafka producer ──────────────────────────────────────
 	producer := kafkapkg.NewProducer(cfg.KafkaBrokers)
+	persistence.SetVectorIndexPublisher(producer)
 	defer func() {
 		if err := producer.Close(); err != nil {
 			log.Printf("main: producer close error: %v", err)
