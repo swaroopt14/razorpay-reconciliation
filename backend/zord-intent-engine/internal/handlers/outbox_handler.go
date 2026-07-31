@@ -166,11 +166,27 @@ func relayInstanceID(r *http.Request) string {
     }
     return "relay"
 }
+// relayAuthTokens parses RELAY_AUTH_TOKEN as a comma-separated list so a
+// secret rotation can run two valid tokens side by side (deploy the new
+// token here first, roll callers over to it, then remove the old one) rather
+// than requiring a single atomic cutover across every caller of these
+// routes. A single-token value keeps working unchanged.
+func relayAuthTokens() []string {
+    raw := strings.Split(os.Getenv("RELAY_AUTH_TOKEN"), ",")
+    tokens := make([]string, 0, len(raw))
+    for _, t := range raw {
+        if t = strings.TrimSpace(t); t != "" {
+            tokens = append(tokens, t)
+        }
+    }
+    return tokens
+}
+
 func authorizeRelay(r *http.Request) bool {
-    expected := strings.TrimSpace(os.Getenv("RELAY_AUTH_TOKEN"))
-    // Fail closed — if token is not configured, deny all requests.
+    expected := relayAuthTokens()
+    // Fail closed — if no token is configured, deny all requests.
     // This prevents accidental open access if the secret is missing.
-    if expected == "" {
+    if len(expected) == 0 {
         log.Printf("SECURITY: RELAY_AUTH_TOKEN is not set — rejecting request from %s", r.RemoteAddr)
         return false
     }
@@ -179,10 +195,13 @@ func authorizeRelay(r *http.Request) bool {
         log.Printf("SECURITY: missing X-Relay-Token header from %s %s", r.RemoteAddr, r.URL.Path)
         return false
     }
-    // Constant-time comparison prevents timing side-channel attacks.
-    if subtle.ConstantTimeCompare([]byte(expected), []byte(provided)) != 1 {
-        log.Printf("SECURITY: invalid relay auth token from %s %s", r.RemoteAddr, r.URL.Path)
-        return false
+    // Constant-time comparison against every configured token prevents
+    // timing side-channel attacks while still allowing rotation.
+    for _, candidate := range expected {
+        if subtle.ConstantTimeCompare([]byte(candidate), []byte(provided)) == 1 {
+            return true
+        }
     }
-    return true
+    log.Printf("SECURITY: invalid relay auth token from %s %s", r.RemoteAddr, r.URL.Path)
+    return false
 }

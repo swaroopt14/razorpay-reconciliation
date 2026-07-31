@@ -30,11 +30,24 @@ func jsonOrNull(b []byte) interface{} {
 // real run_id — previously every caller generated a throwaway uuid.New()
 // that UpsertIngestRun's ON CONFLICT silently discarded on every call after
 // the first, so run_id was never actually usable as a join key.
+// ingestRunRecoverableStatusCase self-heals a run previously swept to
+// FAILED_RETRYABLE/PARTIAL_FAILED back to PROCESSING once real progress
+// resumes (a new row lands, or EnsureIngestRun is called again for the same
+// batch). FAILED_FINAL is deliberately excluded — that state means the
+// sweeper has already given up on automatic recovery for this run.
+const ingestRunRecoverableStatusCase = `CASE
+		WHEN intent_ingest_runs.status IN ('FAILED_RETRYABLE', 'PARTIAL_FAILED') THEN 'PROCESSING'
+		ELSE intent_ingest_runs.status
+	END`
+
 func EnsureIngestRun(ctx context.Context, db *sql.DB, tenantID, batchID string) (string, error) {
-	const q = `
-		INSERT INTO intent_ingest_runs (run_id, tenant_id, batch_id, status)
-		VALUES (gen_random_uuid(), $1, $2, 'PROCESSING')
-		ON CONFLICT (tenant_id, batch_id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id
+	q := `
+		INSERT INTO intent_ingest_runs (run_id, tenant_id, batch_id, status, last_heartbeat_at)
+		VALUES (gen_random_uuid(), $1, $2, 'PROCESSING', now())
+		ON CONFLICT (tenant_id, batch_id) DO UPDATE SET
+		    tenant_id = EXCLUDED.tenant_id,
+		    last_heartbeat_at = now(),
+		    status = ` + ingestRunRecoverableStatusCase + `
 		RETURNING run_id`
 
 	var runID string
@@ -47,31 +60,46 @@ func EnsureIngestRun(ctx context.Context, db *sql.DB, tenantID, batchID string) 
 // UpsertIngestRun inserts or updates an intent_ingest_runs row at the end of
 // a bulk ingest. It uses ON CONFLICT on (tenant_id, batch_id) to update run stats
 // atomically, since batch_id alone is client-supplied and not globally unique.
+// lastErrorCode/lastErrorDetail are best-effort (pass "" when the run has no
+// failure to record yet) and only overwrite the previous value when
+// non-empty, so a later successful row doesn't erase why an earlier one
+// failed. status is never allowed to overwrite a FAILED_FINAL run — that
+// state means the sweeper already gave up on automatic recovery, so only an
+// explicit operator action should move it, not ordinary row processing.
 func UpsertIngestRun(
 	ctx context.Context,
 	db *sql.DB,
 	runID, batchID, tenantID, mappingID, profileID, fileName, fileHash string,
 	total, accepted, failed, duplicate int,
 	status string,
+	lastErrorCode, lastErrorDetail string,
 ) error {
-	const q = `
+	q := `
 		INSERT INTO intent_ingest_runs
 		    (run_id, batch_id, tenant_id, mapping_id, profile_id, file_name, file_hash,
-		     total_rows, accepted_rows, failed_rows, duplicate_rows, status, completed_at)
+		     total_rows, accepted_rows, failed_rows, duplicate_rows, status,
+		     last_error_code, last_error_detail, last_heartbeat_at, completed_at)
 		VALUES ($1, $2, $3, NULLIF($4,''), NULLIF($5,''), NULLIF($6,''), NULLIF($7,''),
-		        $8, $9, $10, $11, $12, now())
+		        $8, $9, $10, $11, $12, NULLIF($13,''), NULLIF($14,''), now(), now())
 		ON CONFLICT (tenant_id, batch_id) DO UPDATE SET
-		    mapping_id     = EXCLUDED.mapping_id,
-		    total_rows     = EXCLUDED.total_rows,
-		    accepted_rows  = EXCLUDED.accepted_rows,
-		    failed_rows    = EXCLUDED.failed_rows,
-		    duplicate_rows = EXCLUDED.duplicate_rows,
-		    status         = EXCLUDED.status,
-		    completed_at   = now()`
+		    mapping_id        = EXCLUDED.mapping_id,
+		    total_rows        = EXCLUDED.total_rows,
+		    accepted_rows     = EXCLUDED.accepted_rows,
+		    failed_rows       = EXCLUDED.failed_rows,
+		    duplicate_rows    = EXCLUDED.duplicate_rows,
+		    status            = CASE
+		        WHEN intent_ingest_runs.status = 'FAILED_FINAL' THEN intent_ingest_runs.status
+		        ELSE EXCLUDED.status
+		    END,
+		    last_error_code   = COALESCE(EXCLUDED.last_error_code, intent_ingest_runs.last_error_code),
+		    last_error_detail = COALESCE(EXCLUDED.last_error_detail, intent_ingest_runs.last_error_detail),
+		    last_heartbeat_at = now(),
+		    completed_at      = now()`
 
 	_, err := db.ExecContext(ctx, q,
 		runID, batchID, tenantID, mappingID, profileID, fileName, fileHash,
 		total, accepted, failed, duplicate, status,
+		lastErrorCode, lastErrorDetail,
 	)
 	if err != nil {
 		return fmt.Errorf("UpsertIngestRun: %w", err)
