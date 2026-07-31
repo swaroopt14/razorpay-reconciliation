@@ -175,6 +175,10 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 			e.TenantID = re.TenantID
 			e.TraceID = re.TraceID
 			e.ContractID = re.ContractID
+			e.EventType = re.EventType
+			e.EventVersion = re.EventVersion
+			e.SchemaVersion = re.SchemaVersion
+			e.SourceService = re.SourceService
 			if re.ClientBatchID != "" {
 				e.ClientBatchRef = re.ClientBatchID
 			}

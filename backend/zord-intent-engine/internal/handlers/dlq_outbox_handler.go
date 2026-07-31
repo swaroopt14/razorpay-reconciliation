@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 	"zord-intent-engine/internal/persistence"
+	"zord-intent-engine/internal/services"
 
 	"github.com/google/uuid"
 )
@@ -76,6 +77,16 @@ func (h *DLQOutboxHandler) Lease(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "failed to lease dlq events", http.StatusInternalServerError)
 		return
+	}
+
+	// Stamp the standard cross-service envelope fields (event_type,
+	// event_version, schema_version, source_service) that aren't DLQ DB
+	// columns — they're constant per producer/lane, not per-row data.
+	for i := range entries {
+		entries[i].EventType = services.EventTypeIntentManualReviewV1
+		entries[i].EventVersion = services.EventVersionV1
+		entries[i].SchemaVersion = services.SchemaVersionV1
+		entries[i].SourceService = services.SourceServiceName
 	}
 
 	writeJSON(w, http.StatusOK, dlqLeaseResponse{

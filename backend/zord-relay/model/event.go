@@ -192,6 +192,16 @@ type DLQItemEvent struct {
 	SourceRowNum   *int            `json:"source_row_num,omitempty"`
 	IntentContext  json.RawMessage `json:"intent_context,omitempty"`
 	TraceID        string          `json:"trace_id,omitempty"`
+
+	// EventType / EventVersion / SchemaVersion / SourceService are the
+	// standard cross-service event envelope fields, stamped by
+	// zord-intent-engine's DLQ lease handler. PublishDLQItem below copies
+	// them into the flat Kafka payload it publishes on payments.intent.dlq.
+	EventType     string `json:"event_type,omitempty"`
+	EventVersion  string `json:"event_version,omitempty"`
+	SchemaVersion string `json:"schema_version,omitempty"`
+	SourceService string `json:"source_service,omitempty"`
+
 	LeaseID        string          `json:"lease_id,omitempty"`
 	LeasedBy       string          `json:"leased_by,omitempty"`
 	LeaseUntil     *time.Time      `json:"lease_until,omitempty"`

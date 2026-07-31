@@ -284,15 +284,19 @@ func (p *KafkaPublisher) PublishDLQItem(ctx context.Context, event *model.DLQIte
 	}
 
 	mappedEvent := map[string]interface{}{
-		"event_id":      event.DLQID,
-		"tenant_id":     event.TenantID,
-		"trace_id":      event.TraceID,
-		"occurred_at":   event.CreatedAt,
-		"intent_id":     intentID,
-		"batch_id":      event.BatchID,
-		"source_system": sourceSystem,
-		"amount":        amount,
-		"reason_code":   event.ReasonCode,
+		"event_id":       event.DLQID,
+		"event_type":     event.EventType,
+		"event_version":  event.EventVersion,
+		"schema_version": event.SchemaVersion,
+		"tenant_id":      event.TenantID,
+		"trace_id":       event.TraceID,
+		"source_service": event.SourceService,
+		"occurred_at":    event.CreatedAt,
+		"intent_id":      intentID,
+		"batch_id":       event.BatchID,
+		"source_system":  sourceSystem,
+		"amount":         amount,
+		"reason_code":    event.ReasonCode,
 	}
 
 	payload, err := json.Marshal(mappedEvent)

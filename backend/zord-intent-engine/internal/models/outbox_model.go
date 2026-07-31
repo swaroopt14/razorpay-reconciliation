@@ -29,6 +29,15 @@ type OutboxEvent struct {
 	IntentID          string    `json:"intent_id"`
 	EventType         string    `json:"event_type" db:"event_type"`
 
+	// EventVersion and SourceService are part of the standard cross-service
+	// event envelope (event_id, event_type, event_version, schema_version,
+	// trace_id, tenant_id, source_service). They are constant per producer
+	// rather than per-row data, so they are stamped in the outbox lease
+	// handler (internal/handlers/outbox_handler.go) rather than persisted
+	// as their own DB columns.
+	EventVersion  string `json:"event_version,omitempty"`
+	SourceService string `json:"source_service,omitempty"`
+
 	SchemaVersion string          `json:"schema_version" db:"schema_version"`
 	Amount        decimal.Decimal `json:"amount" db:"amount"`
 	Currency      string          `json:"currency" db:"currency"`

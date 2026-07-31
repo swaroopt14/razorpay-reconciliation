@@ -10,6 +10,7 @@ import (
     "strings"
     "time"
     "zord-intent-engine/internal/persistence"
+    "zord-intent-engine/internal/services"
     "github.com/google/uuid"
 )
 type OutboxHandler struct {
@@ -75,6 +76,13 @@ func (h *OutboxHandler) Lease(w http.ResponseWriter, r *http.Request) {
     if err != nil {
         http.Error(w, "failed to lease outbox events", http.StatusInternalServerError)
         return
+    }
+    // Stamp the standard cross-service envelope fields (event_version,
+    // source_service) that aren't outbox DB columns — they're constant per
+    // producer, not per-row data.
+    for i := range events {
+        events[i].EventVersion = services.EventVersionV1
+        events[i].SourceService = services.SourceServiceName
     }
     writeJSON(w, http.StatusOK, leaseResponse{
         LeaseID:    leaseID,

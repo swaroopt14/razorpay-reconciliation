@@ -26,6 +26,9 @@ type RelayEvent struct {
 	AggregateID            string          `json:"aggregate_id"`
 	ContractID             string          `json:"contract_id,omitempty"`
 	EventType              string          `json:"event_type"`
+	EventVersion           string          `json:"event_version,omitempty"`
+	SchemaVersion          string          `json:"schema_version,omitempty"`
+	SourceService          string          `json:"source_service,omitempty"`
 	Payload                json.RawMessage `json:"payload"`
 	TraceID                string          `json:"trace_id"`
 	DuplicateRiskFlag      bool            `json:"duplicate_risk_flag"`
@@ -46,6 +49,10 @@ type RelayEvent struct {
 
 type IntentCreatedEvent struct {
 	EventID                string     `json:"event_id"`
+	EventType              string     `json:"event_type"`
+	EventVersion           string     `json:"event_version"`
+	SchemaVersion          string     `json:"schema_version"`
+	SourceService          string     `json:"source_service"`
 	TenantID               string     `json:"tenant_id"`
 	IntentID               string     `json:"intent_id"`
 	ContractID             string     `json:"contract_id"`
@@ -711,10 +718,14 @@ type GovernanceDecisionCreatedEvent struct {
 // DLQItemEvent represents a single payment intent row that was routed to
 // manual review due to a validation or quality failure.
 type DLQItemEvent struct {
-	EventID    string    `json:"event_id"`
-	TenantID   string    `json:"tenant_id"`
-	TraceID    string    `json:"trace_id"`
-	OccurredAt time.Time `json:"occurred_at"`
+	EventID       string    `json:"event_id"`
+	EventType     string    `json:"event_type"`
+	EventVersion  string    `json:"event_version"`
+	SchemaVersion string    `json:"schema_version"`
+	SourceService string    `json:"source_service"`
+	TenantID      string    `json:"tenant_id"`
+	TraceID       string    `json:"trace_id"`
+	OccurredAt    time.Time `json:"occurred_at"`
 
 	// ── Intent reference ──────────────────────────────────────────────────────
 	IntentID string `json:"intent_id"` // the intent that was flagged
