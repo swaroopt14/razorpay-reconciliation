@@ -83,11 +83,28 @@ type DLQIntentContext struct {
     IdempotencyKey  string `json:"idempotency_key"`
     IntentID        string `json:"intent_id,omitempty"`
     SourceSystem    string `json:"source_system,omitempty"`
+
+    // StrictMode (4.2.8) is set only for a HARD_STRICT required-field-gap
+    // reject — see StrictModeExplanation. nil for every other DLQ reason.
+    StrictMode *StrictModeExplanation `json:"strict_mode,omitempty"`
 }
 
 // BuildIntentContext builds the intent_context JSON from a ParsedIncomingIntent.
 // Returns nil if the status is DLQ_TERMINAL — context is only stored for manual review.
 func BuildIntentContext(status string, parsed ParsedIncomingIntent) json.RawMessage {
+    return buildIntentContext(status, parsed, nil)
+}
+
+// BuildIntentContextWithStrictMode is BuildIntentContext plus a
+// StrictModeExplanation (4.2.8) — used by the HARD_STRICT reject path so the
+// same explanation that would have gone into Governance.RequiredFieldGapDecision
+// for a REVIEW_STRICT hold is still visible on the DLQ row when the outcome
+// is a hard reject instead.
+func BuildIntentContextWithStrictMode(status string, parsed ParsedIncomingIntent, strictMode StrictModeExplanation) json.RawMessage {
+    return buildIntentContext(status, parsed, &strictMode)
+}
+
+func buildIntentContext(status string, parsed ParsedIncomingIntent, strictMode *StrictModeExplanation) json.RawMessage {
     if status != DLQStatusManualReview {
         return nil
     }
@@ -98,6 +115,7 @@ func BuildIntentContext(status string, parsed ParsedIncomingIntent) json.RawMess
         IdempotencyKey:  parsed.IdempotencyKey,
         IntentID:        parsed.IntentID,
         SourceSystem:    parsed.SourceSystem,
+        StrictMode:      strictMode,
     }
     b, _ := json.Marshal(ctx)
     return b

@@ -21,6 +21,11 @@ func CanonicalIntentToOutboxEvent(
 		return models.OutboxEvent{}, err
 	}
 
+	if !IsSupportedOutboxEventType(eventType) {
+		log.Printf("SECURITY: refusing to publish unsupported outbox event type/version: %q", eventType)
+		return models.OutboxEvent{}, &ErrUnsupportedEventType{EventType: eventType}
+	}
+
 	return models.OutboxEvent{
 		TraceID:           intent.TraceID,
 		EnvelopeID:        intent.EnvelopeID,
