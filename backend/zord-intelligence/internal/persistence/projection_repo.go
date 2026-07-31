@@ -2626,6 +2626,13 @@ func (r *ProjectionRepo) AtomicIncrementDefensibilityEvidencePack(	ctx context.C
 //	— requires all three
 //
 // NULLIF prevents divide-by-zero during startup before any intents arrive.
+//
+// Bug fix (found live 2026-07-31 via the P1-04 ratio self-consistency
+// checker, metric_registry.go): see recomputeDefensibilityRatesTx's doc
+// comment (projection_repo_batch_scope_defensibility.go) for the full
+// explanation — each term inside audit_ready_pct/dispute_ready_pct's sum is
+// now individually COALESCEd to 0 so a genuinely-missing JSON field
+// contributes 0 instead of nullifying the whole numerator.
 func (r *ProjectionRepo) recomputeDefensibilityRates(
 	ctx context.Context,
 	tenantID, key string,
@@ -2672,8 +2679,8 @@ func (r *ProjectionRepo) recomputeDefensibilityRates(
 				to_jsonb(
 					COALESCE(
 						(
-							(value_json->>'with_evidence_pack')::numeric +
-							(value_json->>'with_governance_decision')::numeric
+							COALESCE((value_json->>'with_evidence_pack')::numeric, 0) +
+							COALESCE((value_json->>'with_governance_decision')::numeric, 0)
 						) /
 						NULLIF((value_json->>'total_intents')::numeric * 2, 0),
 						0
@@ -2684,9 +2691,9 @@ func (r *ProjectionRepo) recomputeDefensibilityRates(
 			to_jsonb(
 				COALESCE(
 					(
-						(value_json->>'with_evidence_pack')::numeric +
-						(value_json->>'with_governance_decision')::numeric +
-						(value_json->>'with_replay_equivalence')::numeric
+						COALESCE((value_json->>'with_evidence_pack')::numeric, 0) +
+						COALESCE((value_json->>'with_governance_decision')::numeric, 0) +
+						COALESCE((value_json->>'with_replay_equivalence')::numeric, 0)
 					) /
 					NULLIF((value_json->>'total_intents')::numeric * 3, 0),
 					0

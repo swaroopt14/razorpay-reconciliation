@@ -200,11 +200,25 @@ func (r *BatchContractRepo) CompareBatchOldVsNew(ctx context.Context, tenantID, 
 	// P0 fields (frozen v1 batch object per P0_FIELD_INVENTORY.md §2.9) must
 	// have 0 mismatches per the cutover rule — every field compared here is
 	// P0, so any mismatch is CRITICAL.
+	//
+	// P1-08: ON CONFLICT upserts on the (tenant, scope, family, old/new hash)
+	// fingerprint instead of inserting a new row every worker tick — the
+	// same mismatch recurring every 15 minutes is one open incident, not a
+	// new one each time. A genuinely different mismatch (different hash
+	// pair) still creates its own row. Recurrence after a manual resolution
+	// reopens the incident (resolved_at cleared) rather than silently
+	// staying "resolved" while still happening.
 	diffJSON := fmt.Sprintf(`{"old":%s,"new":%s}`, string(oldJSON), string(newJSON))
 	_, err = r.q(ctx).Exec(ctx, `
 		INSERT INTO refactor_shadow_diffs
 			(tenant_id, scope_type, scope_ref, diff_family, old_payload_hash, new_payload_hash, diff_json, severity)
 		VALUES ($1, 'BATCH', $2, 'batch_contracts', $3, $4, $5::jsonb, 'CRITICAL')
+		ON CONFLICT (tenant_id, scope_type, scope_ref, diff_family, old_payload_hash, new_payload_hash) DO UPDATE
+			SET last_detected_at = now(),
+			    occurrence_count = refactor_shadow_diffs.occurrence_count + 1,
+			    resolved_at      = NULL,
+			    diff_json        = EXCLUDED.diff_json,
+			    severity         = EXCLUDED.severity
 	`, tenantID, externalBatchID, oldHashHex, newHashHex, diffJSON)
 	if err != nil {
 		return false, fmt.Errorf("batch_shadow_diff.CompareBatchOldVsNew insert diff batch=%s: %w", externalBatchID, err)

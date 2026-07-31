@@ -5,6 +5,11 @@ package services
 // buildSignaturePayloadHash. No DB required — these are pure functions over
 // their inputs, package-internal (white-box) so the private functions are
 // directly reachable.
+//
+// P1-05/P1-06 (corrective-action-report): buildIdempotencyKey and
+// buildSignaturePayloadHash now hash a canonical JSON struct instead of a
+// pipe-delimited string, take scopeRefsHash (the full scope) instead of
+// scope_type/scope_ref, and return an error alongside the hash.
 
 import (
 	"testing"
@@ -68,9 +73,24 @@ func TestDeriveScope_Precedence(t *testing.T) {
 	}
 }
 
+// baseScopeHash is a stand-in scope_refs_hash for tests that don't care
+// about scope content itself, only that the key changes when it does.
+const baseScopeHash = "scopeHashINTENTint1"
+
+func mustBuildIdempotencyKey(t *testing.T, tenantID, policyID string, policyVersion int, policySource, policyDigest,
+	scopeRefsHash, triggerEventID, triggerEventVersion, inputFactsHash, payloadHash string) string {
+	t.Helper()
+	key, err := buildIdempotencyKey(tenantID, policyID, policyVersion, policySource, policyDigest,
+		scopeRefsHash, triggerEventID, triggerEventVersion, inputFactsHash, payloadHash)
+	if err != nil {
+		t.Fatalf("buildIdempotencyKey: %v", err)
+	}
+	return key
+}
+
 func TestBuildIdempotencyKey_Deterministic(t *testing.T) {
-	key1 := buildIdempotencyKey("tnt_A", "P_SLA_BREACH", 1, "zpi_seed", "digest123", "INTENT", "int_1", "trig_1", "legacy", "hashABC")
-	key2 := buildIdempotencyKey("tnt_A", "P_SLA_BREACH", 1, "zpi_seed", "digest123", "INTENT", "int_1", "trig_1", "legacy", "hashABC")
+	key1 := mustBuildIdempotencyKey(t, "tnt_A", "P_SLA_BREACH", 1, "zpi_seed", "digest123", baseScopeHash, "trig_1", "legacy", "inputHashABC", "hashABC")
+	key2 := mustBuildIdempotencyKey(t, "tnt_A", "P_SLA_BREACH", 1, "zpi_seed", "digest123", baseScopeHash, "trig_1", "legacy", "inputHashABC", "hashABC")
 	if key1 != key2 {
 		t.Fatalf("buildIdempotencyKey not deterministic: %q != %q", key1, key2)
 	}
@@ -80,18 +100,16 @@ func TestBuildIdempotencyKey_Deterministic(t *testing.T) {
 }
 
 func TestBuildIdempotencyKey_DifferingInputsDifferentKeys(t *testing.T) {
-	base := func() string {
-		return buildIdempotencyKey("tnt_A", "P_SLA_BREACH", 1, "zpi_seed", "digest123", "INTENT", "int_1", "trig_1", "legacy", "hashABC")
-	}
-	baseline := base()
+	baseline := mustBuildIdempotencyKey(t, "tnt_A", "P_SLA_BREACH", 1, "zpi_seed", "digest123", baseScopeHash, "trig_1", "legacy", "inputHashABC", "hashABC")
 
 	variants := map[string]string{
-		"different tenant":       buildIdempotencyKey("tnt_B", "P_SLA_BREACH", 1, "zpi_seed", "digest123", "INTENT", "int_1", "trig_1", "legacy", "hashABC"),
-		"different policy":       buildIdempotencyKey("tnt_A", "P_OTHER", 1, "zpi_seed", "digest123", "INTENT", "int_1", "trig_1", "legacy", "hashABC"),
-		"different version":      buildIdempotencyKey("tnt_A", "P_SLA_BREACH", 2, "zpi_seed", "digest123", "INTENT", "int_1", "trig_1", "legacy", "hashABC"),
-		"different scope_ref":    buildIdempotencyKey("tnt_A", "P_SLA_BREACH", 1, "zpi_seed", "digest123", "INTENT", "int_2", "trig_1", "legacy", "hashABC"),
-		"different trigger":      buildIdempotencyKey("tnt_A", "P_SLA_BREACH", 1, "zpi_seed", "digest123", "INTENT", "int_1", "trig_2", "legacy", "hashABC"),
-		"different payload_hash": buildIdempotencyKey("tnt_A", "P_SLA_BREACH", 1, "zpi_seed", "digest123", "INTENT", "int_1", "trig_1", "legacy", "hashXYZ"),
+		"different tenant":            mustBuildIdempotencyKey(t, "tnt_B", "P_SLA_BREACH", 1, "zpi_seed", "digest123", baseScopeHash, "trig_1", "legacy", "inputHashABC", "hashABC"),
+		"different policy":            mustBuildIdempotencyKey(t, "tnt_A", "P_OTHER", 1, "zpi_seed", "digest123", baseScopeHash, "trig_1", "legacy", "inputHashABC", "hashABC"),
+		"different version":           mustBuildIdempotencyKey(t, "tnt_A", "P_SLA_BREACH", 2, "zpi_seed", "digest123", baseScopeHash, "trig_1", "legacy", "inputHashABC", "hashABC"),
+		"different scope_refs_hash":   mustBuildIdempotencyKey(t, "tnt_A", "P_SLA_BREACH", 1, "zpi_seed", "digest123", "scopeHashINTENTint2", "trig_1", "legacy", "inputHashABC", "hashABC"),
+		"different trigger":           mustBuildIdempotencyKey(t, "tnt_A", "P_SLA_BREACH", 1, "zpi_seed", "digest123", baseScopeHash, "trig_2", "legacy", "inputHashABC", "hashABC"),
+		"different input_facts_hash":  mustBuildIdempotencyKey(t, "tnt_A", "P_SLA_BREACH", 1, "zpi_seed", "digest123", baseScopeHash, "trig_1", "legacy", "inputHashXYZ", "hashABC"),
+		"different payload_hash":      mustBuildIdempotencyKey(t, "tnt_A", "P_SLA_BREACH", 1, "zpi_seed", "digest123", baseScopeHash, "trig_1", "legacy", "inputHashABC", "hashXYZ"),
 	}
 	for name, v := range variants {
 		if v == baseline {
@@ -100,18 +118,37 @@ func TestBuildIdempotencyKey_DifferingInputsDifferentKeys(t *testing.T) {
 	}
 }
 
+// Delimiter characters embedded in a value must never make two distinct
+// inputs collide — the exact failure mode pipe-delimited concatenation had
+// and canonical JSON fixes (corrective-action-report P1-05 acceptance test).
+func TestBuildIdempotencyKey_DelimiterCharactersDoNotCollide(t *testing.T) {
+	// "a|b" as one scope hash vs "a" and "b" split across two fields — with
+	// naive pipe concatenation these could produce the same raw string.
+	key1 := mustBuildIdempotencyKey(t, "tnt_A", "P_X", 1, "src", "dig", "a|b", "trig", "legacy", "inputs", "payload")
+	key2 := mustBuildIdempotencyKey(t, "tnt_A", "P_X", 1, "src", "dig", "a", "b|trig", "legacy", "inputs", "payload")
+	if key1 == key2 {
+		t.Fatalf("buildIdempotencyKey collided across a delimiter boundary: %q", key1)
+	}
+}
+
 func TestBuildSignaturePayloadHash_Deterministic(t *testing.T) {
 	created := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
 	ac := models.ActionContract{
 		TenantID: "tnt_A", ActionID: "act_1", PolicyID: "P_X", PolicyVersion: 1,
 		PolicySource: "zpi_seed", PolicyDigest: "digestABC",
-		ScopeType: "INTENT", ScopeRef: "int_1",
+		ScopeRefsHash:  baseScopeHash,
 		InputFactsHash: "inputHash", PayloadHash: "payloadHash",
 		Decision: models.DecisionEscalate, Confidence: 0.75,
 		CreatedAt: created,
 	}
-	h1 := buildSignaturePayloadHash(ac)
-	h2 := buildSignaturePayloadHash(ac)
+	h1, err := buildSignaturePayloadHash(ac)
+	if err != nil {
+		t.Fatalf("buildSignaturePayloadHash: %v", err)
+	}
+	h2, err := buildSignaturePayloadHash(ac)
+	if err != nil {
+		t.Fatalf("buildSignaturePayloadHash: %v", err)
+	}
 	if h1 != h2 {
 		t.Fatalf("buildSignaturePayloadHash not deterministic: %q != %q", h1, h2)
 	}
@@ -120,7 +157,24 @@ func TestBuildSignaturePayloadHash_Deterministic(t *testing.T) {
 	// the signature tamper-evident.
 	tampered := ac
 	tampered.Confidence = 0.99
-	if buildSignaturePayloadHash(tampered) == h1 {
+	h3, err := buildSignaturePayloadHash(tampered)
+	if err != nil {
+		t.Fatalf("buildSignaturePayloadHash: %v", err)
+	}
+	if h3 == h1 {
 		t.Errorf("buildSignaturePayloadHash did not change after tampering with Confidence")
+	}
+
+	// Changing the scope (a different secondary scope ref, same primary
+	// scope type/ref) must also change the hash — this is the exact gap
+	// P1-06 closes.
+	scopeChanged := ac
+	scopeChanged.ScopeRefsHash = "scopeHashINTENTint2"
+	h4, err := buildSignaturePayloadHash(scopeChanged)
+	if err != nil {
+		t.Fatalf("buildSignaturePayloadHash: %v", err)
+	}
+	if h4 == h1 {
+		t.Errorf("buildSignaturePayloadHash did not change after changing ScopeRefsHash")
 	}
 }

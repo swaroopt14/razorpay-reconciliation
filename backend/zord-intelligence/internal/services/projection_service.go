@@ -120,6 +120,7 @@ func (s *ProjectionService) eventMeta(ctx context.Context, tenantID, eventID, sc
 	return persistence.EventMeta{
 		TenantID:     tenantID,
 		EventSource:  env.EventSource,
+		SourceTopic:  env.SourceTopic,
 		EventType:    env.EventType,
 		EventVersion: env.EventVersion,
 		EventID:      eventID,

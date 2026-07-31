@@ -36,6 +36,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -554,20 +555,48 @@ func consumeSingleTopic(
 			),
 		)
 
-		// PHASE 1 REFACTOR: attach envelope metadata (payload hash + topic +
-		// source/version) so handlers can claim an event_receipts row before
-		// writing any projection counters. event_source/event_version do not
-		// exist on the upstream envelope yet — models.EnvelopeMetaFromContext
-		// defaults them; nothing here blocks on their absence.
+		// PHASE 1 REFACTOR / P1-01: attach envelope metadata (payload hash +
+		// source topic + domain event type/version) so handlers can claim an
+		// event_receipts row before writing any projection counters.
+		// SourceTopic is always the Kafka topic (transport identity).
+		// EventType/EventVersion are read out of the envelope payload itself
+		// (zord-relay's OutboxEvent already carries real event_type/
+		// schema_version fields — see envelope_meta.go's package doc) via a
+		// best-effort partial decode, since the typed RelayEvent unmarshal
+		// only happens inside each topic's handler closure below. Falls back
+		// to the topic name / "legacy" for the two flat, non-enveloped
+		// topics that carry neither field.
 		hash := sha256.Sum256(msg.Value)
+		domainEventType, schemaVersion := extractEnvelopeFieldsBestEffort(msg.Value)
+		if domainEventType == "" {
+			domainEventType = msg.Topic
+		}
+		eventVersion := schemaVersion
+		if eventVersion == "" {
+			eventVersion = models.DefaultEventVersion
+		}
 		msgCtx = models.ContextWithEnvelopeMeta(msgCtx, models.EnvelopeMeta{
 			EventSource:  models.DefaultEventSource,
-			EventType:    msg.Topic,
-			EventVersion: models.DefaultEventVersion,
+			SourceTopic:  msg.Topic,
+			EventType:    domainEventType,
+			EventVersion: eventVersion,
 			PayloadHash:  hex.EncodeToString(hash[:]),
 		})
 
-		if err := handle(msgCtx, msg); err != nil {
+		// Unknown major schema version: route straight to the DLQ without
+		// ever calling the handler — an unrecognized version means this
+		// build cannot safely interpret the payload (corrective-action-report
+		// P1-01), the same "don't guess, quarantine it" principle as a
+		// poison/unmarshal-error message. Reuses the `err` already declared
+		// by FetchMessage above (always nil here — the fetch-error branch
+		// continues the loop before reaching this point).
+		if !models.IsKnownSchemaVersion(eventVersion) {
+			err = fmt.Errorf("%w: schema_version=%q topic=%s", errUnsupportedSchemaVersion, eventVersion, msg.Topic)
+		} else {
+			err = handle(msgCtx, msg)
+		}
+
+		if err != nil {
 			span.RecordError(err)
 			log.Printf("kafka: handler error topic=%s partition=%d offset=%d: %v",
 				msg.Topic, msg.Partition, msg.Offset, err)
@@ -577,8 +606,9 @@ func consumeSingleTopic(
 			// deadlock/serialization errors internally, not connection
 			// failures, so without this a brief outage would go straight to
 			// the DLQ instead of recovering. A genuine poison message (bad
-			// JSON) skips this — retrying identical bytes cannot help.
-			if !isUnmarshalError(err) {
+			// JSON) or an unsupported schema version skips this — retrying
+			// identical bytes/version cannot help either case.
+			if !isUnmarshalError(err) && !errors.Is(err, errUnsupportedSchemaVersion) {
 				for attempt, backoff := 2, time.Second; attempt <= 3 && err != nil; attempt, backoff = attempt+1, backoff*3 {
 					time.Sleep(backoff)
 					log.Printf("kafka: retrying handler topic=%s partition=%d offset=%d attempt=%d/3",
@@ -633,6 +663,29 @@ func isUnmarshalError(err error) bool {
 	return errors.As(err, &syntaxErr) || errors.As(err, &typeErr)
 }
 
+// errUnsupportedSchemaVersion is the sentinel wrapped into the synthetic
+// error consumeSingleTopic raises when a message's schema_version is not in
+// models.SupportedSchemaVersions (corrective-action-report P1-01). Like a
+// poison message, retrying cannot help — the event goes straight to the DLQ.
+var errUnsupportedSchemaVersion = errors.New("unsupported schema version")
+
+// extractEnvelopeFieldsBestEffort tries to pull the domain event_type and
+// schema_version out of raw message bytes without knowing the topic's real
+// shape — same best-effort, topic-agnostic idiom as extractEventIDBestEffort
+// below, used because the typed RelayEvent unmarshal only happens inside
+// each topic's own handler closure in StartConsumers, not here. Both fields
+// come back "" for the two flat, non-RelayEvent-enveloped topics
+// (dlq.event, payments.intent.dlq); the caller falls back to the topic name
+// and DefaultEventVersion in that case.
+func extractEnvelopeFieldsBestEffort(payload []byte) (eventType, schemaVersion string) {
+	var v struct {
+		EventType     string `json:"event_type"`
+		SchemaVersion string `json:"schema_version"`
+	}
+	_ = json.Unmarshal(payload, &v)
+	return v.EventType, v.SchemaVersion
+}
+
 // buildDLQRecord assembles the durable failure record for msg. TenantID is
 // read from msg.Key — every producer in this system uses tenant_id as the
 // partition key (see the ordering comment above consumeSingleTopic's call
@@ -644,8 +697,11 @@ func isUnmarshalError(err error) bool {
 func buildDLQRecord(msgCtx context.Context, msg kafka.Message, handlerErr error) models.IntelligenceDLQRecord {
 	meta := models.EnvelopeMetaFromContext(msgCtx)
 	errClass := models.DLQErrorClassHandler
-	if isUnmarshalError(handlerErr) {
+	switch {
+	case isUnmarshalError(handlerErr):
 		errClass = models.DLQErrorClassUnmarshal
+	case errors.Is(handlerErr, errUnsupportedSchemaVersion):
+		errClass = models.DLQErrorClassUnsupportedVersion
 	}
 	errMsg := handlerErr.Error()
 	const maxErrLen = 2000

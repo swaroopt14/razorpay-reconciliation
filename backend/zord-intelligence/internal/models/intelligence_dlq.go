@@ -20,7 +20,7 @@ type IntelligenceDLQRecord struct {
 	Partition    int       `json:"partition"`
 	Offset       int64     `json:"offset"`
 	EventID      string    `json:"event_id,omitempty"` // best-effort; empty if unrecoverable from the raw payload
-	EventType    string    `json:"event_type"`         // = source topic today; see P1-01 for real separation
+	EventType    string    `json:"event_type"`         // domain event type (P1-01); falls back to SourceTopic if the envelope carries none
 	EventVersion string    `json:"event_version"`
 	PayloadHash  string    `json:"payload_hash"`
 	Payload      string    `json:"payload"` // raw message value as a JSON string
@@ -31,6 +31,7 @@ type IntelligenceDLQRecord struct {
 
 // DLQ error classes.
 const (
-	DLQErrorClassUnmarshal = "UNMARSHAL_ERROR"
-	DLQErrorClassHandler   = "HANDLER_ERROR"
+	DLQErrorClassUnmarshal          = "UNMARSHAL_ERROR"
+	DLQErrorClassHandler            = "HANDLER_ERROR"
+	DLQErrorClassUnsupportedVersion = "UNSUPPORTED_SCHEMA_VERSION" // corrective-action-report P1-01
 )

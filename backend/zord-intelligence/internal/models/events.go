@@ -26,6 +26,7 @@ type RelayEvent struct {
 	AggregateID            string          `json:"aggregate_id"`
 	ContractID             string          `json:"contract_id,omitempty"`
 	EventType              string          `json:"event_type"`
+	SchemaVersion          string          `json:"schema_version,omitempty"`
 	Payload                json.RawMessage `json:"payload"`
 	TraceID                string          `json:"trace_id"`
 	DuplicateRiskFlag      bool            `json:"duplicate_risk_flag"`
