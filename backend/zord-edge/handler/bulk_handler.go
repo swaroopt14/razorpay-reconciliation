@@ -166,9 +166,13 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 	batchIDHeader := c.GetHeader("Batch-ID")
 	originalBatchID := batchIDHeader
-	// if batchIDHeader == "" {
-	// 	batchIDHeader = uuid.Must(uuid.NewV7()).String()
-	// }
+	if batchIDHeader == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    "BATCH_ID_REQUIRED",
+			"message": "Batch-ID header is required",
+		})
+		return
+	}
 	artifactID := uuid.Must(uuid.NewV7()).String()
 	artifactVersionId := "ART_V1"
 	finalBatchID := &batchIDHeader
