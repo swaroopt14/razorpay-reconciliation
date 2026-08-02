@@ -118,13 +118,6 @@ type VectorIndexPublisher interface {
 
 func (s *IntentService) SetVectorIndexPublisher(p VectorIndexPublisher) {
 	s.vectorPublisher = p
-	validator          *validator.Validator
-	repo               CanonicalIntentRepository
-	s3                 *storage.S3Store
-	tokenizeQueue      *KafkaTokenizeQueue
-	db                 *sql.DB
-	tenantDailyUsage   persistence.TenantDailyUsageRepository
-	tenantBusinessDate persistence.TenantBusinessDateRepository
 }
 
 var enclaveHTTPClient = &http.Client{
