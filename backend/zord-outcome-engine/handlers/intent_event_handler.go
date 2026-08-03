@@ -54,8 +54,8 @@ func HandleIntentEvent(msg []byte) error {
 		return err
 	}
 
-	log.Printf("intent event consumed [event_id=%s event_type=%s trace_id=%s tenant_id=%s]",
-		event.EventID, event.EventType, event.TraceID, event.TenantID)
+	log.Printf("intent event consumed [event_id=%s event_type=%s trace_id=%s tenant_id=%s schema_version=%s]",
+		event.EventID, event.EventType, event.TraceID, event.TenantID, event.SchemaVersion)
 
 	normalized := strings.ToLower(strings.TrimSpace(event.EventType))
 	if !strings.HasPrefix(normalized, "intent.") {
