@@ -81,6 +81,7 @@ func (h *OutboxHandler) Lease(w http.ResponseWriter, r *http.Request) {
     // source_service) that aren't outbox DB columns — they're constant per
     // producer, not per-row data.
     for i := range events {
+        events[i].SchemaVersion=services.SchemaVersionV1
         events[i].EventVersion = services.EventVersionV1
         events[i].SourceService = services.SourceServiceName
     }
