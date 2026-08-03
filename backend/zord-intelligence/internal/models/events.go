@@ -313,10 +313,14 @@ type SLATimerTickEvent struct {
 // CanonicalSettlementCreatedEvent represents one parsed settlement observation
 // from a bank or PSP settlement file.
 type CanonicalSettlementCreatedEvent struct {
-	EventID    string    `json:"event_id"`
-	TenantID   string    `json:"tenant_id"`
-	TraceID    string    `json:"trace_id"`
-	OccurredAt time.Time `json:"occurred_at"` // when this event was emitted
+	EventID       string    `json:"event_id"`
+	EventType     string    `json:"event_type"`
+	EventVersion  string    `json:"event_version"`
+	SchemaVersion string    `json:"schema_version"`
+	TenantID      string    `json:"tenant_id"`
+	TraceID       string    `json:"trace_id"`
+	SourceService string    `json:"source_service"`
+	OccurredAt    time.Time `json:"occurred_at"` // when this event was emitted
 
 	// ── Settlement observation identity ──────────────────────────────────────
 	SettlementID string `json:"settlement_id"` // ZPI-internal ID: "sobs_" + uuid
@@ -412,10 +416,14 @@ type CanonicalSettlementCreatedEvent struct {
 // AttachmentDecisionCreatedEvent represents Service 5C's decision about
 // which payout intent a settlement observation belongs to.
 type AttachmentDecisionCreatedEvent struct {
-	EventID    string    `json:"event_id"`
-	TenantID   string    `json:"tenant_id"`
-	TraceID    string    `json:"trace_id"`
-	OccurredAt time.Time `json:"occurred_at"`
+	EventID       string    `json:"event_id"`
+	EventType     string    `json:"event_type"`
+	EventVersion  string    `json:"event_version"`
+	SchemaVersion string    `json:"schema_version"`
+	SourceService string    `json:"source_service"`
+	TenantID      string    `json:"tenant_id"`
+	TraceID       string    `json:"trace_id"`
+	OccurredAt    time.Time `json:"occurred_at"`
 
 	// ── Decision identity ─────────────────────────────────────────────────────
 	DecisionID      string `json:"attachment_decision_id"`
@@ -495,10 +503,14 @@ type AttachmentDecisionCreatedEvent struct {
 // VarianceRecordCreatedEvent represents a financial mismatch between
 // what was intended and what was actually settled.
 type VarianceRecordCreatedEvent struct {
-	EventID    string    `json:"event_id"`
-	TenantID   string    `json:"tenant_id"`
-	TraceID    string    `json:"trace_id"`
-	OccurredAt time.Time `json:"occurred_at"`
+	EventID       string    `json:"event_id"`
+	EventType     string    `json:"event_type"`
+	EventVersion  string    `json:"event_version"`
+	SchemaVersion string    `json:"schema_version"`
+	SourceService string    `json:"source_service"`
+	TenantID      string    `json:"tenant_id"`
+	TraceID       string    `json:"trace_id"`
+	OccurredAt    time.Time `json:"occurred_at"`
 
 	// ── Variance identity ─────────────────────────────────────────────────────
 	VarianceID   string `json:"variance_id"`   // "var_" + uuid
@@ -568,10 +580,14 @@ type VarianceRecordCreatedEvent struct {
 
 // BatchSummaryUpdatedEvent represents the current aggregate state of a batch.
 type BatchSummaryUpdatedEvent struct {
-	EventID    string    `json:"event_id"`
-	TenantID   string    `json:"tenant_id"`
-	TraceID    string    `json:"trace_id"`
-	OccurredAt time.Time `json:"occurred_at"`
+	EventID       string    `json:"event_id"`
+	EventType     string    `json:"event_type"`
+	EventVersion  string    `json:"event_version"`
+	SchemaVersion string    `json:"schema_version"`
+	SourceService string    `json:"source_service"`
+	TenantID      string    `json:"tenant_id"`
+	TraceID       string    `json:"trace_id"`
+	OccurredAt    time.Time `json:"occurred_at"`
 
 	// ── Batch identity ────────────────────────────────────────────────────────
 	BatchID         string `json:"batch_id"`         // e.g. "PAYROLL-2026-04-01"

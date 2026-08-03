@@ -1019,8 +1019,8 @@ func (s *ProjectionService) HandleSettlementCreated(
 
 	log.Printf("[canonical.settlement.created] RECEIVED event_id=%s tenant=%s settlement=%s batch=%s provider=%s bank=%s rail=%s amount=%s status=%s",
 		e.EventID, e.TenantID, e.SettlementID, e.BatchID, e.ProviderID, e.BankID, e.PaymentRail, e.SettledAmountMinor, e.StatusObservation)
-	log.Printf("HandleSettlementCreated: tenant=%s event_id=%s trace_id=%s occurred_at=%s settlement_id=%s batch_id=%s payment_rail=%s source_type=%s source_strength=%s provider_id=%s source_system_id=%s bank_id=%s parse_conf=%.2f amount=%s currency=%s date=%s utr=%s rrn=%s bank_ref=%s provider_ref=%s client_ref=%s richness=%.2f readiness=%.2f status=%s ingest_run_id=%s",
-		e.TenantID, e.EventID, e.TraceID, e.OccurredAt,
+	log.Printf("HandleSettlementCreated: tenant=%s event_id=%s trace_id=%s source_service=%s event_version=%s schema_version=%s event_type=%s occurred_at=%s settlement_id=%s batch_id=%s payment_rail=%s source_type=%s source_strength=%s provider_id=%s source_system_id=%s bank_id=%s parse_conf=%.2f amount=%s currency=%s date=%s utr=%s rrn=%s bank_ref=%s provider_ref=%s client_ref=%s richness=%.2f readiness=%.2f status=%s ingest_run_id=%s",
+		e.TenantID, e.EventID, e.TraceID, e.SourceService, e.EventVersion, e.SchemaVersion, e.EventType, e.OccurredAt,
 		e.SettlementID, e.BatchID, e.PaymentRail, e.SourceType, e.SourceStrength, e.ProviderID, e.SourceSystemID, e.BankID, e.ParseConfidence,
 		e.SettledAmountMinor, e.Currency, e.SettlementDate,
 		e.UTR, e.RRN, e.BankRef, e.ProviderRef, e.ClientRef,
@@ -1242,8 +1242,8 @@ func (s *ProjectionService) HandleAttachmentDecision(
 		return nil
 	}
 
-	log.Printf("[attachment.decision.created] RECEIVED event_id=%s tenant=%s decision=%s intent=%s batch=%s confidence=%.2f candidate_set=%d provider_id=%s client_refernce=%s",
-		e.EventID, e.TenantID, e.DecisionType, e.IntentID, e.BatchID, e.ConfidenceScore, e.CandidateSetSize, e.ProviderID, e.ClientReference)
+	log.Printf("[attachment.decision.created] RECEIVED event_id=%s event_type=%s event_version=%s schema_version=%s source_service=%s tenant=%s decision=%s intent=%s batch=%s confidence=%.2f candidate_set=%d provider_id=%s client_reference=%s",
+		e.EventID, e.EventType, e.EventVersion, e.SchemaVersion, e.SourceService, e.TenantID, e.DecisionType, e.IntentID, e.BatchID, e.ConfidenceScore, e.CandidateSetSize, e.ProviderID, e.ClientReference)
 
 	window := todayWindow(e.OccurredAt)
 	supportingCarriers := supportingCarrierNames(e.SupportingCarriers)
@@ -1539,8 +1539,8 @@ func (s *ProjectionService) HandleVarianceRecord(
 		return nil
 	}
 
-	log.Printf("[variance.record.created] RECEIVED event_id=%s tenant=%s variance=%s type=%s amount=%s batch=%s intent=%s whitelisted=%v provider_id=%s",
-		e.EventID, e.TenantID, e.VarianceID, e.VarianceType, e.VarianceAmountMinor, e.BatchID, e.IntentID, e.IsWhitelisted, e.ProviderID)
+	log.Printf("[variance.record.created] RECEIVED event_id=%s event_type=%s event_version=%s schema_version=%s source_service=%s tenant=%s variance=%s type=%s amount=%s batch=%s intent=%s whitelisted=%v provider_id=%s",
+		e.EventID, e.EventType, e.EventVersion, e.SchemaVersion, e.SourceService, e.TenantID, e.VarianceID, e.VarianceType, e.VarianceAmountMinor, e.BatchID, e.IntentID, e.IsWhitelisted, e.ProviderID)
 
 	window := todayWindow(e.OccurredAt)
 	batchIDForAttribution := e.BatchID
@@ -1742,8 +1742,8 @@ func (s *ProjectionService) HandleBatchSummaryUpdated(
 	}
 	e.BatchFinalityStatus = models.NormalizeBatchFinalityStatus(e.BatchFinalityStatus)
 
-	log.Printf("[batch.summary.updated] RECEIVED event_id=%s tenant=%s batch=%s status=%s total=%d intended=%s ambiguity=%.2f original_settled=%s ambiguous_count=%d ambiguous_amount=%s conflicted_count=%d conflicted_amount=%s unresolved_count=%d unresolved_intended_amount=%s",
-		e.EventID, e.TenantID, e.BatchID, e.BatchFinalityStatus, e.TotalCount, e.TotalIntendedAmountMinor, e.AmbiguityScore, e.OriginalSettledAmountMinor,
+	log.Printf("[batch.summary.updated] RECEIVED event_id=%s event_type=%s event_version=%s schema_version=%s source_service=%s tenant=%s batch=%s status=%s total=%d intended=%s ambiguity=%.2f original_settled=%s ambiguous_count=%d ambiguous_amount=%s conflicted_count=%d conflicted_amount=%s unresolved_count=%d unresolved_intended_amount=%s",
+		e.EventID, e.EventType, e.EventVersion, e.SchemaVersion, e.SourceService, e.TenantID, e.BatchID, e.BatchFinalityStatus, e.TotalCount, e.TotalIntendedAmountMinor, e.AmbiguityScore, e.OriginalSettledAmountMinor,
 		e.AmbiguousCount, e.AmbiguousAmount, e.ConflictedCount, e.ConflictedAmount, e.UnresolvedCount, e.UnresolvedIntendedAmount)
 
 	log.Printf(
@@ -2208,4 +2208,3 @@ func deriveLeakageProviderAndRail(corridorID, providerHint, sourceSystem string)
 	}
 	return providerKey, rail
 }
-
