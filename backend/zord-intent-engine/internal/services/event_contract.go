@@ -10,6 +10,24 @@ import "fmt"
 // Relay/Outcome as if it were v1.
 const EventTypeCanonicalIntentCreatedV1 = "intent.created.v1"
 
+// EventTypeIntentManualReviewV1 is the event_type stamped onto per-row DLQ
+// items published on payments.intent.dlq (see internal/handlers/dlq_outbox_handler.go).
+// It is not part of supportedOutboxEventTypes because the DLQ lane is a
+// separate outbox table from the canonical-intent one and isn't subject to
+// the same allow-list gate.
+const EventTypeIntentManualReviewV1 = "intent.manual_review.v1"
+
+// EventVersionV1 / SchemaVersionV1 are the version strings stamped onto every
+// outbox and DLQ event this producer publishes today.
+const EventVersionV1 = "1"
+const SchemaVersionV1 = "v1"
+
+// SourceServiceName identifies this producer in the standard cross-service
+// event envelope (event_id, event_type, event_version, schema_version,
+// trace_id, tenant_id, source_service) carried through Relay to consumers
+// such as zord-intelligence.
+const SourceServiceName = "zord-intent-engine"
+
 // supportedOutboxEventTypes is the allow-list of event_type/version
 // combinations this producer may publish to the Service 2 outbox. There is
 // no separate minor-version axis today: the full string (including its

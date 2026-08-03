@@ -173,8 +173,8 @@ func (s *ProjectionService) HandleIntentCreated(
 	}
 	e.CorridorID = corridorID // defaulted corridor used by SeedTimer/logging below
 
-	log.Printf("[intent.created] RECEIVED event_id=%s tenant=%s intent=%s source=%s amount=%s corridor=%s dup_risk=%v batchId=%v",
-		e.EventID, e.TenantID, e.IntentID, e.SourceSystem, e.Amount, e.CorridorID, e.DuplicateRiskFlag, e.ClientBatchRef)
+	log.Printf("[intent.created] RECEIVED event_id=%s event_type=%s event_version=%s schema_version=%s trace_id=%s tenant=%s source_service=%s intent=%s source=%s amount=%s corridor=%s dup_risk=%v batchId=%v",
+		e.EventID, e.EventType, e.EventVersion, e.SchemaVersion, e.TraceID, e.TenantID, e.SourceService, e.IntentID, e.SourceSystem, e.Amount, e.CorridorID, e.DuplicateRiskFlag, e.ClientBatchRef)
 
 	window := todayWindow(e.CreatedAt)
 
@@ -812,8 +812,8 @@ func (s *ProjectionService) HandleDLQItem(
 		return nil
 	}
 
-	log.Printf("[payments.intent.dlq] RECEIVED event_id=%s tenant=%s intent=%s batch=%s source=%s amount=%s reason=%s",
-		e.EventID, e.TenantID, e.IntentID, e.BatchID, e.SourceSystem, e.AmountMinor, e.ReasonCode)
+	log.Printf("[payments.intent.dlq] RECEIVED event_id=%s event_type=%s event_version=%s schema_version=%s trace_id=%s tenant=%s source_service=%s intent=%s batch=%s source=%s amount=%s reason=%s",
+		e.EventID, e.EventType, e.EventVersion, e.SchemaVersion, e.TraceID, e.TenantID, e.SourceService, e.IntentID, e.BatchID, e.SourceSystem, e.AmountMinor, e.ReasonCode)
 
 	window := todayWindow(e.OccurredAt)
 
