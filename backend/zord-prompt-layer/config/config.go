@@ -39,6 +39,10 @@ type AppConfig struct {
 	VectorIndexIntervalSeconds  int
 	VectorIndexBatchSize        int
 	VectorIndexTimeoutSeconds   int
+	VectorIndexKafkaBrokers     []string
+	VectorIndexKafkaTopic       string
+	VectorIndexKafkaGroupID     string
+	VectorIndexKafkaMaxRetries  int
 }
 
 func parseCSVKeys(v string) []string {
@@ -134,6 +138,12 @@ func Load() AppConfig {
 			vectorIndexTimeout = n
 		}
 	}
+	vectorIndexKafkaMaxRetries := 3
+	if v := os.Getenv("VECTOR_INDEX_KAFKA_MAX_RETRIES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			vectorIndexKafkaMaxRetries = n
+		}
+	}
 	return AppConfig{
 		ServiceName: get("SERVICE_NAME", "zord-prompt-layer"),
 		HTTPPort:    get("HTTP_PORT", "8086"),
@@ -166,5 +176,9 @@ func Load() AppConfig {
 		VectorIndexIntervalSeconds:  vectorIndexInterval,
 		VectorIndexBatchSize:        vectorIndexBatchSize,
 		VectorIndexTimeoutSeconds:   vectorIndexTimeout,
+		VectorIndexKafkaBrokers:     parseCSVKeys(get("VECTOR_INDEX_KAFKA_BROKERS", "zord-kafka:9092")),
+		VectorIndexKafkaTopic:       get("VECTOR_INDEX_KAFKA_TOPIC", "zord.vector.index.request.v1"),
+		VectorIndexKafkaGroupID:     get("VECTOR_INDEX_KAFKA_GROUP_ID", "zord-prompt-layer-vector-indexer"),
+		VectorIndexKafkaMaxRetries:  vectorIndexKafkaMaxRetries,
 	}
 }

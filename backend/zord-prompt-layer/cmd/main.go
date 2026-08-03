@@ -76,7 +76,9 @@ func main() {
 			cfg.GeminiEmbeddingModel,
 			cfg.GeminiEmbeddingDimension,
 			cfg.VectorQueryTopK,
+			cfg.VectorRequestTimeoutSeconds,
 		)
+
 		vectorIndexer := repositories.NewVectorIndexer(
 			liveRetriever,
 			geminiClient,
@@ -87,8 +89,19 @@ func main() {
 			cfg.VectorIndexBatchSize,
 			cfg.VectorIndexTimeoutSeconds,
 		)
-		vectorIndexer.Start(context.Background())
-		log.Printf("[prompt-layer][vector] pinecone query retriever enabled host=%s namespace=%s top_k=%d", cfg.PineconeHost, cfg.PineconeNamespace, cfg.VectorQueryTopK)
+
+		vectorConsumer := repositories.NewVectorIndexConsumer(
+			repositories.VectorIndexConsumerConfig{
+				Brokers:    cfg.VectorIndexKafkaBrokers,
+				Topic:      cfg.VectorIndexKafkaTopic,
+				GroupID:    cfg.VectorIndexKafkaGroupID,
+				MaxRetries: cfg.VectorIndexKafkaMaxRetries,
+			},
+			vectorIndexer,
+		)
+		vectorConsumer.Start(context.Background())
+
+		log.Printf("[prompt-layer][vector] pinecone query retriever enabled host=%s namespace=%s top_k=%d timeout_seconds=%d", cfg.PineconeHost, cfg.PineconeNamespace, cfg.VectorQueryTopK, cfg.VectorRequestTimeoutSeconds)
 	} else {
 		log.Printf("[prompt-layer][vector] pinecone query retriever not configured; using sql-only retrieval")
 	}

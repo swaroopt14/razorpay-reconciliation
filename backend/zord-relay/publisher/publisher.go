@@ -30,6 +30,10 @@ type Publisher interface {
 	// PublishBatchCompleted sends a single BatchCanonicalizationCompletedEvent to its target Kafka topic.
 	PublishBatchCompleted(ctx context.Context, event *model.BatchCanonicalizationCompletedEvent, topic string) error
 
+	// PublishVectorIndexRequest sends a lightweight indexing request event for
+	// prompt-layer vector indexing. It must not contain raw sensitive payloads.
+	PublishVectorIndexRequest(ctx context.Context, event *model.VectorIndexRequestEvent, topic string) error
+
 	// PublishDLQ sends a DLQMessage to the appropriate DLQ topic.
 	// dlqType must be either DLQTypePublishFailure or DLQTypePoison.
 	PublishDLQ(ctx context.Context, msg *model.DLQMessage, dlqType DLQType) error

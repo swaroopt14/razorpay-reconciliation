@@ -11,14 +11,14 @@ import (
 // service schemas. Field mapping is handled in the outbox client per service.
 type OutboxEvent struct {
 	// --- Identity ---
-	EventID    string `json:"event_id"`    // PK from upstream outbox
-	EnvelopeID string `json:"envelope_id"` // logical grouping ID
-	TraceID    string `json:"trace_id"`
-	TenantID   string `json:"tenant_id"`
-	ArtifactID string `json:"artifact_id,omitempty"`
+	EventID           string `json:"event_id"`    // PK from upstream outbox
+	EnvelopeID        string `json:"envelope_id"` // logical grouping ID
+	TraceID           string `json:"trace_id"`
+	TenantID          string `json:"tenant_id"`
+	ArtifactID        string `json:"artifact_id,omitempty"`
 	ArtifactVersionID string `json:"artifact_version_id,omitempty"`
-	ObjectRef  string `json:"object_ref"`
-	Source     string `json:"source"`
+	ObjectRef         string `json:"object_ref"`
+	Source            string `json:"source"`
 
 	// --- Routing ---
 	Topic          string `json:"topic"`           // Kafka topic; may come from outbox row or config
@@ -254,3 +254,30 @@ type BatchLeaseResponse struct {
 	Events     []BatchCanonicalizationCompletedEvent `json:"events"`
 }
 
+const (
+	VectorIndexRequestTopic = "zord.vector.index.request.v1"
+
+	VectorIndexEventRequested = "vector.index.requested"
+
+	VectorIndexOperationUpsert = "upsert"
+	VectorIndexOperationDelete = "delete"
+)
+
+// VectorIndexRequestEvent is the lightweight Kafka contract consumed later by
+// zord-prompt-layer's vector index worker. It carries only pointers, never raw
+// sensitive payloads.
+type VectorIndexRequestEvent struct {
+	EventID         string            `json:"event_id"`
+	SchemaVersion   string            `json:"schema_version"`
+	EventType       string            `json:"event_type"`
+	SourceService   string            `json:"source_service"`
+	SourceEventType string            `json:"source_event_type"`
+	TenantID        string            `json:"tenant_id"`
+	EntityType      string            `json:"entity_type"`
+	EntityID        string            `json:"entity_id"`
+	BatchID         string            `json:"batch_id,omitempty"`
+	Operation       string            `json:"operation"`
+	OccurredAt      time.Time         `json:"occurred_at"`
+	ContentVersion  string            `json:"content_version,omitempty"`
+	Metadata        map[string]string `json:"metadata,omitempty"`
+}

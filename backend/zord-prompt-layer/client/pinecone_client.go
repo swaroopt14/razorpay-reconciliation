@@ -33,6 +33,10 @@ type pineconeUpsertRequest struct {
 	Vectors   []PineconeVector `json:"vectors"`
 	Namespace string           `json:"namespace,omitempty"`
 }
+type pineconeDeleteRequest struct {
+	Namespace string         `json:"namespace,omitempty"`
+	Filter    map[string]any `json:"filter,omitempty"`
+}
 
 type pineconeUpsertResponse struct {
 	UpsertedCount int `json:"upsertedCount"`
@@ -176,4 +180,42 @@ func (c *PineconeClient) Upsert(ctx context.Context, vectors []PineconeVector) (
 	}
 
 	return out.UpsertedCount, nil
+}
+func (c *PineconeClient) DeleteByFilter(ctx context.Context, filter map[string]any) error {
+	if !c.Enabled() {
+		return fmt.Errorf("pinecone client not configured")
+	}
+	if len(filter) == 0 {
+		return fmt.Errorf("pinecone delete filter is required")
+	}
+
+	body := pineconeDeleteRequest{
+		Namespace: c.Namespace,
+		Filter:    filter,
+	}
+
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Host+"/vectors/delete", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Api-Key", c.APIKey)
+
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("pinecone delete failed: status=%d body=%s", resp.StatusCode, string(raw))
+	}
+
+	return nil
 }

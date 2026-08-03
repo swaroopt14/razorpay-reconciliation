@@ -35,17 +35,23 @@ func (r *HybridEvidenceRetriever) Retrieve(req dto.QueryRequest, intentID, trace
 		return nil, err
 	}
 
-	if r.vector == nil || !req.PlannerNeedsVector {
+	if r.vector == nil {
+		log.Printf("[prompt-layer][vector] skipped tenant=%s reason=not_configured", req.TenantID)
+		return primaryChunks, nil
+	}
+	if !req.PlannerNeedsVector {
+		log.Printf("[prompt-layer][vector] skipped tenant=%s reason=planner_not_required sql_chunks=%d", req.TenantID, len(primaryChunks))
 		return primaryChunks, nil
 	}
 
 	vectorChunks, err := r.vector.RetrieveVector(req, topK)
 	if err != nil {
-		log.Printf("[prompt-layer][vector] retrieval skipped tenant=%s err=%v", req.TenantID, err)
+		log.Printf("[prompt-layer][vector] retrieval failed tenant=%s sql_fallback=true err=%v", req.TenantID, err)
 		return primaryChunks, nil
 	}
 
 	if len(vectorChunks) == 0 {
+		log.Printf("[prompt-layer][vector] no matches tenant=%s sql_chunks=%d", req.TenantID, len(primaryChunks))
 		return primaryChunks, nil
 	}
 

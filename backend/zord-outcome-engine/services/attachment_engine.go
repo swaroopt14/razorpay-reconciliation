@@ -52,6 +52,7 @@ import (
 	"time"
 
 	"zord-outcome-engine/db"
+	"zord-outcome-engine/kafka"
 	"zord-outcome-engine/models"
 
 	"github.com/google/uuid"
@@ -61,6 +62,60 @@ import (
 
 // AttachmentEngine is the main service struct for Service 5C.
 type AttachmentEngine struct{}
+type VectorIndexPublisher interface {
+	PublishVectorIndexRequest(ctx context.Context, event kafka.VectorIndexRequestEvent) error
+}
+
+var vectorIndexPublisher VectorIndexPublisher
+
+func SetVectorIndexPublisher(p VectorIndexPublisher) {
+	vectorIndexPublisher = p
+}
+
+func emitOutcomeBatchSummaryVectorIndex(batchSummary models.BatchAttachmentSummary) {
+	if vectorIndexPublisher == nil {
+		return
+	}
+
+	tenantID := strings.TrimSpace(batchSummary.TenantID.String())
+	entityID := strings.TrimSpace(batchSummary.BatchAttachmentSummaryID.String())
+	batchID := ""
+	if batchSummary.BatchID != nil {
+		batchID = strings.TrimSpace(*batchSummary.BatchID)
+	}
+
+	if tenantID == "" || entityID == "" {
+		return
+	}
+
+	event := kafka.VectorIndexRequestEvent{
+		EventID:         uuid.NewString(),
+		SchemaVersion:   "v1",
+		EventType:       kafka.VectorIndexEventRequested,
+		SourceService:   "zord-outcome-engine",
+		SourceEventType: "batch_attachment_summary.saved.v1",
+		TenantID:        tenantID,
+		EntityType:      "outcome_batch_summary",
+		EntityID:        entityID,
+		BatchID:         batchID,
+		Operation:       kafka.VectorIndexOperationUpsert,
+		OccurredAt:      time.Now().UTC(),
+		ContentVersion:  "v1",
+		Metadata: map[string]string{
+			"batch_status": batchSummary.BatchAttachmentStatus,
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := vectorIndexPublisher.PublishVectorIndexRequest(ctx, event); err != nil {
+		log.Printf("[outcome-engine][vector-index] publish failed tenant=%s entity=outcome_batch_summary id=%s err=%v", tenantID, entityID, err)
+		return
+	}
+
+	log.Printf("[outcome-engine][vector-index] publish ok tenant=%s entity=outcome_batch_summary id=%s", tenantID, entityID)
+}
 
 // nonAttachableGovernanceStates lists governance states for which no attachment
 // attempt should be made. The intent is already terminal.
@@ -231,9 +286,9 @@ func (e *AttachmentEngine) runAttachment(
 	obsDecisionTypes := make(map[uuid.UUID][]string)
 
 	var (
-		allDecisions          []models.AttachmentDecision
-		allVariances          []models.VarianceRecord
-		allCandidates         []models.AttachmentCandidate
+		allDecisions  []models.AttachmentDecision
+		allVariances  []models.VarianceRecord
+		allCandidates []models.AttachmentCandidate
 		// FIX #2: renamed from totalIntendedAmount to matchedIntendedAmount.
 		// This accumulator only grows when a winner observation is found.
 		// It is the correct numerator for IntentValueCoverage.
@@ -1467,8 +1522,8 @@ func computeBatchSummary(
 		OriginalSettledAmount:    originalObservationAmount,
 		// FIX #2: TotalIntendedAmount now stores only the matched portion, used
 		// for matched-pair analytics.  OriginalIntendedAmount is the full sum.
-		TotalIntendedAmount:   matchedIntendedAmountParam,
-		TotalObservationCount: len(obsAmountMap),
+		TotalIntendedAmount:    matchedIntendedAmountParam,
+		TotalObservationCount:  len(obsAmountMap),
 		OrphanObservationCount: len(allOrphans),
 		CreatedAt:              time.Now().UTC(),
 		UpdatedAt:              time.Now().UTC(),
@@ -1661,13 +1716,16 @@ func execTxChunkedInsert[T any](
 // persistAttachmentOutputs writes all job outputs in a single transaction.
 //
 // FIX #1:  outboxRows and leafRows are inserted inside the same transaction so
-//          event emission is atomic with decision/variance persistence.
+//
+//	event emission is atomic with decision/variance persistence.
 //
 // FIX #3:  Stale reverse-scan records (unresolved/ambiguous/conflicted/orphan)
-//          are deleted before re-inserting so replays produce a clean state.
+//
+//	are deleted before re-inserting so replays produce a clean state.
 //
 // FIX #6:  Advisory lock acquired via pg_try_advisory_xact_lock inside the
-//          transaction — works on any pool connection, auto-released at commit.
+//
+//	transaction — works on any pool connection, auto-released at commit.
 func persistAttachmentOutputs(
 	ctx context.Context,
 	job *models.AttachmentJob,
@@ -2019,6 +2077,7 @@ func persistAttachmentOutputs(
 	job.UnresolvedCount = unresolved
 	job.ConflictedCount = conflicted
 	job.CompletedAt = &completedAt
+	emitOutcomeBatchSummaryVectorIndex(batchSummary)
 	return nil
 }
 

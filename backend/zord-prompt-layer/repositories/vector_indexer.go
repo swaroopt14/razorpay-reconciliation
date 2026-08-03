@@ -10,9 +10,7 @@ import (
 	"time"
 
 	"zord-prompt-layer/client"
-	"zord-prompt-layer/dto"
 	"zord-prompt-layer/model"
-	"zord-prompt-layer/utils"
 )
 
 type VectorIndexer struct {
@@ -63,110 +61,105 @@ func NewVectorIndexer(
 	}
 }
 
-func (i *VectorIndexer) Start(ctx context.Context) {
+func (i *VectorIndexer) HandleVectorIndexRequest(ctx context.Context, event VectorIndexRequestEvent) error {
 	if i == nil || i.liveRetriever == nil || i.gemini == nil || i.pinecone == nil || !i.pinecone.Enabled() {
-		log.Printf("[prompt-layer][vector-index] not configured; scheduled indexing disabled")
-		return
+		return fmt.Errorf("vector indexer not configured")
 	}
 
-	go func() {
-		log.Printf("[prompt-layer][vector-index] scheduler started interval=%s batch_size=%d timeout=%s", i.interval, i.batchSize, i.timeout)
+	tenantID := strings.ToLower(strings.TrimSpace(event.TenantID))
+	if tenantID == "" || !uuidRegex.MatchString(tenantID) {
+		return fmt.Errorf("invalid tenant_id")
+	}
 
-		i.runSafely(ctx)
+	operation := strings.TrimSpace(event.Operation)
+	switch operation {
+	case VectorIndexOperationDelete:
+		return i.deleteEventVectors(ctx, event)
 
-		ticker := time.NewTicker(i.interval)
-		defer ticker.Stop()
+	case VectorIndexOperationUpsert:
+		return i.upsertEventVectors(ctx, event)
 
-		for {
-			select {
-			case <-ctx.Done():
-				log.Printf("[prompt-layer][vector-index] scheduler stopped")
-				return
-			case <-ticker.C:
-				i.runSafely(ctx)
-			}
-		}
-	}()
-}
-
-func (i *VectorIndexer) runSafely(parent context.Context) {
-	ctx, cancel := context.WithTimeout(parent, i.timeout)
-	defer cancel()
-
-	if err := i.IndexOnce(ctx); err != nil {
-		log.Printf("[prompt-layer][vector-index] run failed err=%v", err)
+	default:
+		return fmt.Errorf("unsupported vector index operation=%q", operation)
 	}
 }
-
-func (i *VectorIndexer) IndexOnce(ctx context.Context) error {
+func (i *VectorIndexer) upsertEventVectors(ctx context.Context, event VectorIndexRequestEvent) error {
 	start := time.Now()
 
-	tenants, err := i.liveRetriever.ListVectorIndexTenantIDs(ctx, i.batchSize)
+	tenantID := strings.ToLower(strings.TrimSpace(event.TenantID))
+	chunks, err := i.liveRetriever.BuildVectorIndexChunks(ctx, event)
 	if err != nil {
 		return err
 	}
 
-	if len(tenants) == 0 {
-		log.Printf("[prompt-layer][vector-index] no tenants found")
+	chunks = sanitizeVectorIndexChunks(tenantID, chunks)
+	if len(chunks) == 0 {
+		log.Printf("[prompt-layer][vector-index] event indexed no chunks tenant=%s entity=%s id=%s", tenantID, event.EntityType, event.EntityID)
 		return nil
 	}
 
-	totalChunks := 0
-	totalUpserted := 0
-
-	for _, tenantID := range tenants {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		chunks, err := i.safeTenantChunks(ctx, tenantID)
-		if err != nil {
-			log.Printf("[prompt-layer][vector-index] tenant retrieval failed tenant=%s err=%v", tenantID, err)
-			continue
-		}
-
-		if len(chunks) == 0 {
-			log.Printf("[prompt-layer][vector-index] no safe chunks tenant=%s", tenantID)
-			continue
-		}
-
-		vectors, err := i.embedChunks(ctx, tenantID, chunks)
-		if err != nil {
-			log.Printf("[prompt-layer][vector-index] embedding failed tenant=%s err=%v", tenantID, err)
-			continue
-		}
-
-		upserted, err := i.pinecone.Upsert(ctx, vectors)
-		if err != nil {
-			log.Printf("[prompt-layer][vector-index] upsert failed tenant=%s err=%v", tenantID, err)
-			continue
-		}
-
-		totalChunks += len(chunks)
-		totalUpserted += upserted
-
-		log.Printf("[prompt-layer][vector-index] tenant indexed tenant=%s chunks=%d upserted=%d", tenantID, len(chunks), upserted)
+	vectors, err := i.embedEventChunks(ctx, event, chunks)
+	if err != nil {
+		return err
 	}
 
-	log.Printf("[prompt-layer][vector-index] run complete tenants=%d chunks=%d upserted=%d duration_ms=%d", len(tenants), totalChunks, totalUpserted, time.Since(start).Milliseconds())
+	upserted, err := i.pinecone.Upsert(ctx, vectors)
+	if err != nil {
+		return err
+	}
+
+	log.Printf(
+		"[prompt-layer][vector-index] event upserted tenant=%s source=%s entity=%s id=%s chunks=%d upserted=%d duration_ms=%d",
+		tenantID,
+		event.SourceService,
+		event.EntityType,
+		event.EntityID,
+		len(chunks),
+		upserted,
+		time.Since(start).Milliseconds(),
+	)
+
 	return nil
 }
 
-func (i *VectorIndexer) safeTenantChunks(ctx context.Context, tenantID string) ([]model.RetrievedChunk, error) {
-	req := dto.QueryRequest{
-		TenantID: tenantID,
-		Query:    "tenant-wide operational audit covering payment instructions, settlement outcomes, unmatched value, short-settled value, proof readiness, failures, duplicate protection, RCA signals, and next actions",
-		TopK:     i.batchSize,
+func (i *VectorIndexer) deleteEventVectors(ctx context.Context, event VectorIndexRequestEvent) error {
+	start := time.Now()
+
+	tenantID := strings.ToLower(strings.TrimSpace(event.TenantID))
+	entityType := strings.ToLower(strings.TrimSpace(event.EntityType))
+	entityID := strings.TrimSpace(event.EntityID)
+
+	filter := map[string]any{
+		"tenant_id": map[string]any{
+			"$eq": tenantID,
+		},
+		"entity_type": map[string]any{
+			"$eq": entityType,
+		},
+		"entity_id": map[string]any{
+			"$eq": entityID,
+		},
 	}
 
-	chunks, err := i.liveRetriever.Retrieve(req, "", "", i.batchSize, utils.QueryScope{})
-	if err != nil {
-		return nil, err
+	if err := i.pinecone.DeleteByFilter(ctx, filter); err != nil {
+		return err
 	}
 
+	log.Printf(
+		"[prompt-layer][vector-index] event deleted tenant=%s source=%s entity=%s id=%s duration_ms=%d",
+		tenantID,
+		event.SourceService,
+		event.EntityType,
+		event.EntityID,
+		time.Since(start).Milliseconds(),
+	)
+
+	return nil
+}
+
+func sanitizeVectorIndexChunks(tenantID string, chunks []model.RetrievedChunk) []model.RetrievedChunk {
 	safe := make([]model.RetrievedChunk, 0, len(chunks))
+
 	for _, chunk := range chunks {
 		text := strings.TrimSpace(chunk.Text)
 		if text == "" {
@@ -183,10 +176,14 @@ func (i *VectorIndexer) safeTenantChunks(ctx context.Context, tenantID string) (
 		safe = append(safe, chunk)
 	}
 
-	return safe, nil
+	return safe
 }
 
-func (i *VectorIndexer) embedChunks(ctx context.Context, tenantID string, chunks []model.RetrievedChunk) ([]client.PineconeVector, error) {
+func (i *VectorIndexer) embedEventChunks(ctx context.Context, event VectorIndexRequestEvent, chunks []model.RetrievedChunk) ([]client.PineconeVector, error) {
+	tenantID := strings.ToLower(strings.TrimSpace(event.TenantID))
+	entityType := strings.ToLower(strings.TrimSpace(event.EntityType))
+	entityID := strings.TrimSpace(event.EntityID)
+
 	vectors := make([]client.PineconeVector, 0, len(chunks))
 
 	for _, chunk := range chunks {
@@ -207,13 +204,19 @@ func (i *VectorIndexer) embedChunks(ctx context.Context, tenantID string, chunks
 		}
 
 		vectors = append(vectors, client.PineconeVector{
-			ID:     stableVectorID(tenantID, chunk.SourceType, text),
+			ID:     stableEventVectorID(event, chunk.SourceType, text),
 			Values: values,
 			Metadata: map[string]any{
-				"tenant_id":   tenantID,
-				"source_type": chunk.SourceType,
-				"text":        text,
-				"indexed_at":  time.Now().UTC().Format(time.RFC3339),
+				"tenant_id":         tenantID,
+				"source_type":       chunk.SourceType,
+				"source_service":    strings.TrimSpace(event.SourceService),
+				"source_event_type": strings.TrimSpace(event.SourceEventType),
+				"entity_type":       entityType,
+				"entity_id":         entityID,
+				"batch_id":          strings.TrimSpace(event.BatchID),
+				"content_version":   strings.TrimSpace(event.ContentVersion),
+				"text":              text,
+				"indexed_at":        time.Now().UTC().Format(time.RFC3339),
 			},
 		})
 	}
@@ -236,10 +239,13 @@ func buildIndexDocumentText(chunk model.RetrievedChunk) string {
 	return fmt.Sprintf("Source: %s\n%s", source, text)
 }
 
-func stableVectorID(tenantID, sourceType, text string) string {
+func stableEventVectorID(event VectorIndexRequestEvent, sourceType, text string) string {
 	raw := strings.Join([]string{
-		strings.ToLower(strings.TrimSpace(tenantID)),
+		strings.ToLower(strings.TrimSpace(event.TenantID)),
+		strings.ToLower(strings.TrimSpace(event.EntityType)),
+		strings.TrimSpace(event.EntityID),
 		strings.ToLower(strings.TrimSpace(sourceType)),
+		strings.TrimSpace(event.ContentVersion),
 		strings.TrimSpace(text),
 	}, "|")
 
