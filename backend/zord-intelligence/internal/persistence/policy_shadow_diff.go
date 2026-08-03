@@ -93,10 +93,18 @@ func (r *PolicyRepo) ComparePolicyOldVsNew(ctx context.Context, policyID string)
 		tenantID = "__global__"
 	}
 
+	// P1-08: same dedup upsert as batch_shadow_diff.go — see that file's
+	// comment for the full rationale.
 	_, err = r.pool.Exec(ctx, `
 		INSERT INTO refactor_shadow_diffs
 			(tenant_id, scope_type, scope_ref, diff_family, old_payload_hash, new_payload_hash, diff_json, severity)
 		VALUES ($1, 'TENANT', $2, 'policy_registry', $3, $4, $5::jsonb, 'WARNING')
+		ON CONFLICT (tenant_id, scope_type, scope_ref, diff_family, old_payload_hash, new_payload_hash) DO UPDATE
+			SET last_detected_at = now(),
+			    occurrence_count = refactor_shadow_diffs.occurrence_count + 1,
+			    resolved_at      = NULL,
+			    diff_json        = EXCLUDED.diff_json,
+			    severity         = EXCLUDED.severity
 	`, tenantID, policyID, hex.EncodeToString(oldHash[:]), hex.EncodeToString(newHash[:]), diffJSON)
 	if err != nil {
 		return false, fmt.Errorf("policy_shadow_diff.ComparePolicyOldVsNew insert diff id=%s: %w", policyID, err)

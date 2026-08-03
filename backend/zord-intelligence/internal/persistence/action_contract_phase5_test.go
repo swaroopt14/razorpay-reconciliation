@@ -171,7 +171,7 @@ func TestOutboxRepo_Phase5FieldsRoundTrip(t *testing.T) {
 	}
 
 	// MarkFailed must persist the error message into last_error.
-	if err := outboxRepo.MarkFailed(ctx, entry.EventID, "kafka: connection refused"); err != nil {
+	if _, err := outboxRepo.MarkFailed(ctx, entry.EventID, "kafka: connection refused"); err != nil {
 		t.Fatalf("MarkFailed: %v", err)
 	}
 	var lastError *string

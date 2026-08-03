@@ -96,6 +96,10 @@ const insertOutboxSQL = `
 //
 // "Ready" means:
 //   - Outbox status is PENDING or FAILED
+//   - dead_lettered_at is NULL (P1-07: once the DLQ hand-off for a terminally
+//     failed entry succeeds, it must stop being redelivered forever — status
+//     stays 'FAILED' as the queryable marker, but dead_lettered_at is the
+//     actual "stop retrying" signal)
 //   - next_retry_at is in the past
 //   - The linked ActionContract has contract_status IN ('ACTIVE', 'APPROVED')
 //
@@ -112,10 +116,11 @@ func (r *OutboxRepo) FetchPending(ctx context.Context, limit int) ([]models.Actu
 		SELECT o.event_id, o.action_id, o.event_type, o.payload::text,
 		       o.status, o.attempts, o.next_retry_at, o.sent_at, o.created_at,
 		       COALESCE(o.tenant_id, ''), COALESCE(o.scope_type, ''), COALESCE(o.scope_ref, ''),
-		       COALESCE(o.payload_hash, '')
+		       COALESCE(o.payload_hash, ''), COALESCE(o.last_error, '')
 		FROM   actuation_outbox o
 		JOIN   action_contracts  ac ON ac.action_id = o.action_id
 		WHERE  o.status          IN ('PENDING', 'FAILED')
+		  AND  o.dead_lettered_at IS NULL
 		  AND  o.next_retry_at   <= now()
 		  AND  ac.contract_status IN ('ACTIVE', 'APPROVED')
 		ORDER  BY o.next_retry_at ASC
@@ -135,7 +140,7 @@ func (r *OutboxRepo) FetchPending(ctx context.Context, limit int) ([]models.Actu
 		if err := rows.Scan(
 			&e.EventID, &e.ActionID, &e.EventType, &e.Payload,
 			&status, &e.Attempts, &e.NextRetryAt, &e.SentAt, &e.CreatedAt,
-			&e.TenantID, &e.ScopeType, &e.ScopeRef, &e.PayloadHash, // PHASE 5 (refactor)
+			&e.TenantID, &e.ScopeType, &e.ScopeRef, &e.PayloadHash, &e.LastError, // PHASE 5 (refactor) + P1-07
 		); err != nil {
 			return nil, fmt.Errorf("outbox_repo.FetchPending scan: %w", err)
 		}
@@ -164,7 +169,9 @@ func (r *OutboxRepo) MarkSent(ctx context.Context, eventID string) error {
 }
 
 // MarkFailed increments the attempt counter and schedules the next retry
-// using exponential backoff.
+// using exponential backoff. Returns terminal=true when this call just
+// pushed (or kept) the entry at status='FAILED' — the caller (outbox_worker.go)
+// uses this to trigger the P1-07 dead-letter hand-off.
 //
 // BACKOFF SCHEDULE:
 //
@@ -177,8 +184,9 @@ func (r *OutboxRepo) MarkSent(ctx context.Context, eventID string) error {
 // PHASE 5 (refactor): lastErr is persisted into last_error — the Kafka
 // publish error was already available at the call site (outbox_worker.go's
 // deliver()) but previously only logged, never stored.
-func (r *OutboxRepo) MarkFailed(ctx context.Context, eventID string, lastErr string) error {
-	_, err := r.pool.Exec(ctx, `
+func (r *OutboxRepo) MarkFailed(ctx context.Context, eventID string, lastErr string) (terminal bool, err error) {
+	var status string
+	err = r.pool.QueryRow(ctx, `
 		UPDATE actuation_outbox
 		SET
 			attempts      = attempts + 1,
@@ -193,9 +201,26 @@ func (r *OutboxRepo) MarkFailed(ctx context.Context, eventID string, lastErr str
 			END,
 			last_error = $2
 		WHERE event_id = $1
-	`, eventID, nilIfEmpty(lastErr))
+		RETURNING status
+	`, eventID, nilIfEmpty(lastErr)).Scan(&status)
 	if err != nil {
-		return fmt.Errorf("outbox_repo.MarkFailed event=%s: %w", eventID, err)
+		return false, fmt.Errorf("outbox_repo.MarkFailed event=%s: %w", eventID, err)
+	}
+	return status == string(models.OutboxStatusFailed), nil
+}
+
+// MarkDeadLettered sets dead_lettered_at once the P1-07 DLQ publish for a
+// terminally-failed entry is confirmed. FetchPending excludes rows with
+// dead_lettered_at set, so this is the actual "stop retrying forever" signal
+// — status stays 'FAILED' as the human-readable terminal marker.
+func (r *OutboxRepo) MarkDeadLettered(ctx context.Context, eventID string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE actuation_outbox
+		SET dead_lettered_at = now()
+		WHERE event_id = $1
+	`, eventID)
+	if err != nil {
+		return fmt.Errorf("outbox_repo.MarkDeadLettered event=%s: %w", eventID, err)
 	}
 	return nil
 }

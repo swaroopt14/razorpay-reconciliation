@@ -347,6 +347,7 @@ func activeTopicsForMode(cfg *config.Config) []string {
 		cfg.TopicActuationEvidence,
 		cfg.TopicActuationBatchPatch,
 		cfg.TopicIntelligenceDLQ, // P0-02: ZPI-owned output topic, provisioned regardless of grade
+		cfg.TopicOutboxDLQ,       // P1-07: ZPI-owned output topic, provisioned regardless of grade
 		cfg.TopicMLRequest,
 		cfg.TopicMLResult,
 	}

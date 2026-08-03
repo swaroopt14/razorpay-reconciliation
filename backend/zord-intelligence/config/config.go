@@ -85,6 +85,12 @@ type Config struct {
 	// its source offset is committed, so it can never be silently dropped.
 	TopicIntelligenceDLQ string
 
+	// TopicOutboxDLQ — corrective-action-report P1-07: an actuation_outbox
+	// entry that exhausts its 5 delivery attempts is durably published here
+	// BEFORE the row's dead_lettered_at is set, mirroring TopicIntelligenceDLQ's
+	// discipline for the outbound side.
+	TopicOutboxDLQ string
+
 	// ── ML Service Topics ─────────────────────────────────────────
 	// Go publishes ML requests to TopicMLRequest; Python publishes
 	// results back to TopicMLResult.  The mlclient package manages
@@ -154,6 +160,7 @@ func Load() *Config {
 		TopicActuationAlert:      getWithDefault("TOPIC_ACTUATION_ALERT", "zpi.actuation.alert"),
 		TopicActuationBatchPatch: getWithDefault("TOPIC_ACTUATION_BATCH_PATCH", "zpi.actuation.batch_patch"),
 		TopicIntelligenceDLQ:     getWithDefault("TOPIC_INTELLIGENCE_DLQ", "zord-intelligence.dlq.v1"),
+		TopicOutboxDLQ:           getWithDefault("TOPIC_OUTBOX_DLQ", "zord-intelligence.outbox-dlq.v1"),
 
 		// ── ML Service Topics ────────────────────────────────────────
 		TopicMLRequest:                  getWithDefault("TOPIC_ML_REQUEST", "ml.request.events"),

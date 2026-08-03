@@ -119,6 +119,15 @@ type ActionContract struct {
 	// BATCH > CORRIDOR > INTENT > CONTRACT > TENANT (see action_service.go's
 	// deriveScope) — additive alongside ScopeRefs, never replaces it.
 
+	ScopeRefsHash string `json:"scope_refs_hash,omitempty" db:"scope_refs_hash"`
+	// corrective-action-report P1-06: canonical-JSON SHA-256 of the FULL
+	// ScopeRefs object (all populated dimensions — batch/intent/contract/
+	// corridor/tenant), not just the single precedence-selected ScopeType/
+	// ScopeRef pair above. Bound into IdempotencyKey and SignaturePayloadHash
+	// (P1-05) so two actions that share a primary scope but differ in a
+	// secondary scope ref (e.g. same batch, different corridor) never
+	// collide into the same idempotency key or signed payload.
+
 	TriggerEventSource  string `json:"trigger_event_source,omitempty" db:"trigger_event_source"`
 	TriggerEventType    string `json:"trigger_event_type,omitempty" db:"trigger_event_type"`
 	TriggerEventVersion string `json:"trigger_event_version,omitempty" db:"trigger_event_version"`

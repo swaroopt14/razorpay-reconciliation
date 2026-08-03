@@ -18,8 +18,14 @@ package persistence
 // AtomicRecordCarrierCompleteness, AtomicRecordEvidenceLeafCoverage — neither
 // of which has a BothScopes twin per this task's scope) are intentionally
 // excluded, since batch-side values for those fields stay at zero by design.
-// Derived rate/average fields (percentages, AvgX) are excluded too — they are
-// non-additive and recomputed independently at each scope.
+//
+// Derived rate/average fields (percentages, AvgX) are NOT tenant-vs-batch
+// additive-compared — a batch's rate can legitimately differ from the
+// tenant's overall rate (corrective-action-report P1-04). They ARE checked,
+// via metric_registry.go's RATIO/WEIGHTED_AVERAGE self-consistency check:
+// does each row's own persisted derived value match its own recomputed
+// numerator/denominator? See computeLeakageSums/computeAmbiguitySums/
+// computeDefensibilitySums below.
 
 import (
 	"context"
@@ -48,11 +54,19 @@ func (r *ProjectionRepo) VerifyBatchTenantConsistency(
 	return nil
 }
 
-// queryAllValueJSONByKey returns value_json for every row matching an exact
-// projection_key, across all window_start buckets.
-func (r *ProjectionRepo) queryAllValueJSONByKey(ctx context.Context, tenantID, key string) ([]string, error) {
+// projectionRow is one projection_state row's value plus enough identity
+// (scope_ref) to name which row a P1-04 ratio self-consistency violation
+// came from.
+type projectionRow struct {
+	ScopeRef  string
+	ValueJSON string
+}
+
+// queryAllValueJSONByKey returns every row matching an exact projection_key,
+// across all window_start buckets.
+func (r *ProjectionRepo) queryAllValueJSONByKey(ctx context.Context, tenantID, key string) ([]projectionRow, error) {
 	rows, err := r.q(ctx).Query(ctx, `
-		SELECT value_json FROM projection_state
+		SELECT COALESCE(scope_ref, ''), value_json FROM projection_state
 		WHERE tenant_id = $1 AND projection_key = $2
 	`, tenantID, key)
 	if err != nil {
@@ -60,22 +74,22 @@ func (r *ProjectionRepo) queryAllValueJSONByKey(ctx context.Context, tenantID, k
 	}
 	defer rows.Close()
 
-	var result []string
+	var result []projectionRow
 	for rows.Next() {
-		var v string
-		if err := rows.Scan(&v); err != nil {
+		var row projectionRow
+		if err := rows.Scan(&row.ScopeRef, &row.ValueJSON); err != nil {
 			return nil, fmt.Errorf("consistency_check.queryAllValueJSONByKey scan key=%s: %w", key, err)
 		}
-		result = append(result, v)
+		result = append(result, row)
 	}
 	return result, rows.Err()
 }
 
-// queryAllValueJSONByPrefix returns value_json for every row whose
-// projection_key starts with the given prefix.
-func (r *ProjectionRepo) queryAllValueJSONByPrefix(ctx context.Context, tenantID, prefix string) ([]string, error) {
+// queryAllValueJSONByPrefix returns every row whose projection_key starts
+// with the given prefix.
+func (r *ProjectionRepo) queryAllValueJSONByPrefix(ctx context.Context, tenantID, prefix string) ([]projectionRow, error) {
 	rows, err := r.q(ctx).Query(ctx, `
-		SELECT value_json FROM projection_state
+		SELECT COALESCE(scope_ref, ''), value_json FROM projection_state
 		WHERE tenant_id = $1 AND projection_key LIKE $2
 	`, tenantID, prefix+"%")
 	if err != nil {
@@ -83,51 +97,78 @@ func (r *ProjectionRepo) queryAllValueJSONByPrefix(ctx context.Context, tenantID
 	}
 	defer rows.Close()
 
-	var result []string
+	var result []projectionRow
 	for rows.Next() {
-		var v string
-		if err := rows.Scan(&v); err != nil {
+		var row projectionRow
+		if err := rows.Scan(&row.ScopeRef, &row.ValueJSON); err != nil {
 			return nil, fmt.Errorf("consistency_check.queryAllValueJSONByPrefix scan prefix=%s: %w", prefix, err)
 		}
-		result = append(result, v)
+		result = append(result, row)
 	}
 	return result, rows.Err()
 }
 
 // computeLeakageSums reads every LEAKAGE tenant/batch row for tenantID and
-// returns the summed tenant-scope and batch-scope values, ready to compare.
+// returns the summed tenant-scope and batch-scope values, ready to compare,
+// plus any P1-04 RATIO/WEIGHTED_AVERAGE self-consistency violations found
+// along the way (see metric_registry.go — checked per-row, before folding
+// into the additive sums, since an average must never itself be summed).
 // Shared by verifyLeakageConsistency (fail-fast, tests) and
 // FindConsistencyViolations (collect-all, the scheduled job).
-func (r *ProjectionRepo) computeLeakageSums(ctx context.Context, tenantID string) (tenantSum, batchSum models.LeakageValue, err error) {
+func (r *ProjectionRepo) computeLeakageSums(ctx context.Context, tenantID string) (tenantSum, batchSum models.LeakageValue, ratioViolations []ConsistencyViolation, err error) {
 	tenantRows, err := r.queryAllValueJSONByKey(ctx, tenantID, "leakage.total")
 	if err != nil {
-		return tenantSum, batchSum, err
+		return tenantSum, batchSum, nil, err
 	}
 	batchRows, err := r.queryAllValueJSONByPrefix(ctx, tenantID, "leakage.batch.")
 	if err != nil {
-		return tenantSum, batchSum, err
+		return tenantSum, batchSum, nil, err
 	}
-	for _, raw := range tenantRows {
+	for _, row := range tenantRows {
 		var v models.LeakageValue
-		if err := json.Unmarshal([]byte(raw), &v); err != nil {
-			return tenantSum, batchSum, fmt.Errorf("consistency_check.computeLeakageSums unmarshal tenant row tenant=%s: %w", tenantID, err)
+		if err := json.Unmarshal([]byte(row.ValueJSON), &v); err != nil {
+			return tenantSum, batchSum, nil, fmt.Errorf("consistency_check.computeLeakageSums unmarshal tenant row tenant=%s: %w", tenantID, err)
 		}
 		addLeakageValue(&tenantSum, v)
+		ratioViolations = append(ratioViolations, checkLeakageRatios(v, "TENANT", row.ScopeRef)...)
 	}
-	for _, raw := range batchRows {
+	for _, row := range batchRows {
 		var v models.LeakageValue
-		if err := json.Unmarshal([]byte(raw), &v); err != nil {
-			return tenantSum, batchSum, fmt.Errorf("consistency_check.computeLeakageSums unmarshal batch row tenant=%s: %w", tenantID, err)
+		if err := json.Unmarshal([]byte(row.ValueJSON), &v); err != nil {
+			return tenantSum, batchSum, nil, fmt.Errorf("consistency_check.computeLeakageSums unmarshal batch row tenant=%s: %w", tenantID, err)
 		}
 		addLeakageValue(&batchSum, v)
+		ratioViolations = append(ratioViolations, checkLeakageRatios(v, "BATCH", row.ScopeRef)...)
 	}
-	return tenantSum, batchSum, nil
+	return tenantSum, batchSum, ratioViolations, nil
+}
+
+// checkLeakageRatios runs every registered leakageRatioMetrics entry against
+// one decoded row and returns a violation for each mismatch.
+func checkLeakageRatios(v models.LeakageValue, scopeLabel, scopeRef string) []ConsistencyViolation {
+	var out []ConsistencyViolation
+	for _, m := range leakageRatioMetrics {
+		if ok, expected, stored := checkRatioMetric(m, v); !ok {
+			out = append(out, ConsistencyViolation{
+				ProjectionFamily: "LEAKAGE",
+				MetricKey:        fmt.Sprintf("%s[%s:%s]", m.Name, scopeLabel, scopeRef),
+				ExpectedValue:    decimal.NewFromFloat(expected),
+				ActualValue:      decimal.NewFromFloat(stored),
+			})
+		}
+	}
+	return out
 }
 
 func (r *ProjectionRepo) verifyLeakageConsistency(ctx context.Context, tenantID string) error {
-	tenantSum, batchSum, err := r.computeLeakageSums(ctx, tenantID)
+	tenantSum, batchSum, ratioViolations, err := r.computeLeakageSums(ctx, tenantID)
 	if err != nil {
 		return err
+	}
+	if len(ratioViolations) > 0 {
+		v := ratioViolations[0]
+		return fmt.Errorf("leakage ratio self-consistency mismatch tenant=%s metric=%s expected=%s stored=%s",
+			tenantID, v.MetricKey, v.ExpectedValue.String(), v.ActualValue.String())
 	}
 
 	checks := []struct {
@@ -196,37 +237,60 @@ func addLeakageValue(sum *models.LeakageValue, v models.LeakageValue) {
 	sum.OverSettlementCount += v.OverSettlementCount
 }
 
-// computeAmbiguitySums is the AMBIGUITY-family twin of computeLeakageSums.
-func (r *ProjectionRepo) computeAmbiguitySums(ctx context.Context, tenantID string) (tenantSum, batchSum models.AmbiguityValue, err error) {
+// computeAmbiguitySums is the AMBIGUITY-family twin of computeLeakageSums,
+// including the same per-row P1-04 ratio self-consistency check.
+func (r *ProjectionRepo) computeAmbiguitySums(ctx context.Context, tenantID string) (tenantSum, batchSum models.AmbiguityValue, ratioViolations []ConsistencyViolation, err error) {
 	tenantRows, err := r.queryAllValueJSONByKey(ctx, tenantID, "ambiguity.summary")
 	if err != nil {
-		return tenantSum, batchSum, err
+		return tenantSum, batchSum, nil, err
 	}
 	batchRows, err := r.queryAllValueJSONByPrefix(ctx, tenantID, "ambiguity.batch.")
 	if err != nil {
-		return tenantSum, batchSum, err
+		return tenantSum, batchSum, nil, err
 	}
-	for _, raw := range tenantRows {
+	for _, row := range tenantRows {
 		var v models.AmbiguityValue
-		if err := json.Unmarshal([]byte(raw), &v); err != nil {
-			return tenantSum, batchSum, fmt.Errorf("consistency_check.computeAmbiguitySums unmarshal tenant row tenant=%s: %w", tenantID, err)
+		if err := json.Unmarshal([]byte(row.ValueJSON), &v); err != nil {
+			return tenantSum, batchSum, nil, fmt.Errorf("consistency_check.computeAmbiguitySums unmarshal tenant row tenant=%s: %w", tenantID, err)
 		}
 		addAmbiguityValue(&tenantSum, v)
+		ratioViolations = append(ratioViolations, checkAmbiguityRatios(v, "TENANT", row.ScopeRef)...)
 	}
-	for _, raw := range batchRows {
+	for _, row := range batchRows {
 		var v models.AmbiguityValue
-		if err := json.Unmarshal([]byte(raw), &v); err != nil {
-			return tenantSum, batchSum, fmt.Errorf("consistency_check.computeAmbiguitySums unmarshal batch row tenant=%s: %w", tenantID, err)
+		if err := json.Unmarshal([]byte(row.ValueJSON), &v); err != nil {
+			return tenantSum, batchSum, nil, fmt.Errorf("consistency_check.computeAmbiguitySums unmarshal batch row tenant=%s: %w", tenantID, err)
 		}
 		addAmbiguityValue(&batchSum, v)
+		ratioViolations = append(ratioViolations, checkAmbiguityRatios(v, "BATCH", row.ScopeRef)...)
 	}
-	return tenantSum, batchSum, nil
+	return tenantSum, batchSum, ratioViolations, nil
+}
+
+func checkAmbiguityRatios(v models.AmbiguityValue, scopeLabel, scopeRef string) []ConsistencyViolation {
+	var out []ConsistencyViolation
+	for _, m := range ambiguityRatioMetrics {
+		if ok, expected, stored := checkRatioMetric(m, v); !ok {
+			out = append(out, ConsistencyViolation{
+				ProjectionFamily: "AMBIGUITY",
+				MetricKey:        fmt.Sprintf("%s[%s:%s]", m.Name, scopeLabel, scopeRef),
+				ExpectedValue:    decimal.NewFromFloat(expected),
+				ActualValue:      decimal.NewFromFloat(stored),
+			})
+		}
+	}
+	return out
 }
 
 func (r *ProjectionRepo) verifyAmbiguityConsistency(ctx context.Context, tenantID string) error {
-	tenantSum, batchSum, err := r.computeAmbiguitySums(ctx, tenantID)
+	tenantSum, batchSum, ratioViolations, err := r.computeAmbiguitySums(ctx, tenantID)
 	if err != nil {
 		return err
+	}
+	if len(ratioViolations) > 0 {
+		v := ratioViolations[0]
+		return fmt.Errorf("ambiguity ratio self-consistency mismatch tenant=%s metric=%s expected=%s stored=%s",
+			tenantID, v.MetricKey, v.ExpectedValue.String(), v.ActualValue.String())
 	}
 
 	decimalChecks := []struct {
@@ -299,37 +363,61 @@ func addAmbiguityValue(sum *models.AmbiguityValue, v models.AmbiguityValue) {
 	sum.SuccessfulDecisionCount += v.SuccessfulDecisionCount
 }
 
-// computeDefensibilitySums is the DEFENSIBILITY-family twin of computeLeakageSums.
-func (r *ProjectionRepo) computeDefensibilitySums(ctx context.Context, tenantID string) (tenantSum, batchSum models.DefensibilityValue, err error) {
+// computeDefensibilitySums is the DEFENSIBILITY-family twin of
+// computeLeakageSums, including the same per-row P1-04 ratio
+// self-consistency check.
+func (r *ProjectionRepo) computeDefensibilitySums(ctx context.Context, tenantID string) (tenantSum, batchSum models.DefensibilityValue, ratioViolations []ConsistencyViolation, err error) {
 	tenantRows, err := r.queryAllValueJSONByKey(ctx, tenantID, "defensibility.summary")
 	if err != nil {
-		return tenantSum, batchSum, err
+		return tenantSum, batchSum, nil, err
 	}
 	batchRows, err := r.queryAllValueJSONByPrefix(ctx, tenantID, "defensibility.batch.")
 	if err != nil {
-		return tenantSum, batchSum, err
+		return tenantSum, batchSum, nil, err
 	}
-	for _, raw := range tenantRows {
+	for _, row := range tenantRows {
 		var v models.DefensibilityValue
-		if err := json.Unmarshal([]byte(raw), &v); err != nil {
-			return tenantSum, batchSum, fmt.Errorf("consistency_check.computeDefensibilitySums unmarshal tenant row tenant=%s: %w", tenantID, err)
+		if err := json.Unmarshal([]byte(row.ValueJSON), &v); err != nil {
+			return tenantSum, batchSum, nil, fmt.Errorf("consistency_check.computeDefensibilitySums unmarshal tenant row tenant=%s: %w", tenantID, err)
 		}
 		addDefensibilityValue(&tenantSum, v)
+		ratioViolations = append(ratioViolations, checkDefensibilityRatios(v, "TENANT", row.ScopeRef)...)
 	}
-	for _, raw := range batchRows {
+	for _, row := range batchRows {
 		var v models.DefensibilityValue
-		if err := json.Unmarshal([]byte(raw), &v); err != nil {
-			return tenantSum, batchSum, fmt.Errorf("consistency_check.computeDefensibilitySums unmarshal batch row tenant=%s: %w", tenantID, err)
+		if err := json.Unmarshal([]byte(row.ValueJSON), &v); err != nil {
+			return tenantSum, batchSum, nil, fmt.Errorf("consistency_check.computeDefensibilitySums unmarshal batch row tenant=%s: %w", tenantID, err)
 		}
 		addDefensibilityValue(&batchSum, v)
+		ratioViolations = append(ratioViolations, checkDefensibilityRatios(v, "BATCH", row.ScopeRef)...)
 	}
-	return tenantSum, batchSum, nil
+	return tenantSum, batchSum, ratioViolations, nil
+}
+
+func checkDefensibilityRatios(v models.DefensibilityValue, scopeLabel, scopeRef string) []ConsistencyViolation {
+	var out []ConsistencyViolation
+	for _, m := range defensibilityRatioMetrics {
+		if ok, expected, stored := checkRatioMetric(m, v); !ok {
+			out = append(out, ConsistencyViolation{
+				ProjectionFamily: "DEFENSIBILITY",
+				MetricKey:        fmt.Sprintf("%s[%s:%s]", m.Name, scopeLabel, scopeRef),
+				ExpectedValue:    decimal.NewFromFloat(expected),
+				ActualValue:      decimal.NewFromFloat(stored),
+			})
+		}
+	}
+	return out
 }
 
 func (r *ProjectionRepo) verifyDefensibilityConsistency(ctx context.Context, tenantID string) error {
-	tenantSum, batchSum, err := r.computeDefensibilitySums(ctx, tenantID)
+	tenantSum, batchSum, ratioViolations, err := r.computeDefensibilitySums(ctx, tenantID)
 	if err != nil {
 		return err
+	}
+	if len(ratioViolations) > 0 {
+		v := ratioViolations[0]
+		return fmt.Errorf("defensibility ratio self-consistency mismatch tenant=%s metric=%s expected=%s stored=%s",
+			tenantID, v.MetricKey, v.ExpectedValue.String(), v.ActualValue.String())
 	}
 
 	intChecks := []struct {
@@ -421,23 +509,26 @@ type ConsistencyViolation struct {
 func (r *ProjectionRepo) FindConsistencyViolations(ctx context.Context, tenantID string) ([]ConsistencyViolation, error) {
 	var out []ConsistencyViolation
 
-	leakTenant, leakBatch, err := r.computeLeakageSums(ctx, tenantID)
+	leakTenant, leakBatch, leakRatioViolations, err := r.computeLeakageSums(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
 	out = append(out, diffLeakage(leakTenant, leakBatch)...)
+	out = append(out, leakRatioViolations...)
 
-	ambTenant, ambBatch, err := r.computeAmbiguitySums(ctx, tenantID)
+	ambTenant, ambBatch, ambRatioViolations, err := r.computeAmbiguitySums(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
 	out = append(out, diffAmbiguity(ambTenant, ambBatch)...)
+	out = append(out, ambRatioViolations...)
 
-	defTenant, defBatch, err := r.computeDefensibilitySums(ctx, tenantID)
+	defTenant, defBatch, defRatioViolations, err := r.computeDefensibilitySums(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
 	out = append(out, diffDefensibility(defTenant, defBatch)...)
+	out = append(out, defRatioViolations...)
 
 	return out, nil
 }
