@@ -7,10 +7,11 @@ import (
 	"log"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/lib/pq"
 	"zord-outcome-engine/db"
 	"zord-outcome-engine/models"
+
+	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 // SettlementOutboxService manages the emission of durable events for settlement lifecycle.
@@ -94,8 +95,12 @@ func (s *SettlementOutboxService) EmitForJob(
 
 		payload := map[string]interface{}{
 			"event_id":             eventID.String(),
+			"event_type":           "canonical.settlement.created",
+			"event_version":        "1",
+			"schema_version":       "v1",
 			"tenant_id":            eventTenantID.String(),
 			"trace_id":             eventTraceID,
+			"source_service":       "zord-outcome-engine",
 			"occurred_at":          time.Now().UTC().Format(time.RFC3339),
 			"settlement_id":        obs.SettlementObservationID,
 			"batch_id":             obs.ClientBatchID,
