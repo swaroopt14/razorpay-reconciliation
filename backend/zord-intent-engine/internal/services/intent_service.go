@@ -104,13 +104,14 @@ const (
 var batchAggregateGroup singleflight.Group
 
 type IntentService struct {
-	validator        *validator.Validator
-	repo             CanonicalIntentRepository
-	s3               *storage.S3Store
-	tokenizeQueue    *KafkaTokenizeQueue
-	db               *sql.DB
-	tenantDailyUsage persistence.TenantDailyUsageRepository
-	vectorPublisher  VectorIndexPublisher
+	validator          *validator.Validator
+	repo               CanonicalIntentRepository
+	s3                 *storage.S3Store
+	tokenizeQueue      *KafkaTokenizeQueue
+	db                 *sql.DB
+	tenantDailyUsage   persistence.TenantDailyUsageRepository
+	tenantBusinessDate persistence.TenantBusinessDateRepository
+	vectorPublisher    VectorIndexPublisher
 }
 type VectorIndexPublisher interface {
 	PublishVectorIndexRequest(ctx context.Context, event kafka.VectorIndexRequestEvent) error
