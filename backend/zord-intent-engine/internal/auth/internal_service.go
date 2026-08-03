@@ -7,10 +7,9 @@ import (
 	"strings"
 )
 
-// ScopeIntentReadCrossTenant is required to call /internal/intents/count and
-// /internal/intents/by-envelope — both read intent data with no tenant
-// filter, across every tenant, so they demand a stronger credential than an
-// end-user session.
+// ScopeIntentReadCrossTenant is required to call /internal/dlq/count, which
+// reads DLQ data with no tenant filter, across every tenant, so it demands a
+// stronger credential than an end-user session.
 const ScopeIntentReadCrossTenant = "intent.read.cross_tenant"
 
 // InternalServicePrincipal is the verified identity of a same-cluster
@@ -35,12 +34,20 @@ func (p InternalServicePrincipal) HasScope(scope string) bool {
 // authenticated via INTERNAL_SERVICE_TOKEN. Kept as a map so a second
 // internal caller with its own token/scope set can be added later without
 // reshaping RequireInternalScope.
+//
+// INTERNAL_SERVICE_TOKEN accepts a comma-separated list so a rotation can
+// run the old and new token side by side — deploy the new value here first,
+// roll the caller over to it, then drop the old one — instead of needing a
+// single atomic cutover. Every listed token maps to the same principal.
 func internalServiceTokens() map[string]InternalServicePrincipal {
 	tokens := map[string]InternalServicePrincipal{}
-	if v := strings.TrimSpace(os.Getenv("INTERNAL_SERVICE_TOKEN")); v != "" {
-		tokens[v] = InternalServicePrincipal{
-			ServiceID: "zord-console",
-			Scopes:    []string{ScopeIntentReadCrossTenant},
+	raw := strings.Split(os.Getenv("INTERNAL_SERVICE_TOKEN"), ",")
+	for _, v := range raw {
+		if v = strings.TrimSpace(v); v != "" {
+			tokens[v] = InternalServicePrincipal{
+				ServiceID: "zord-console",
+				Scopes:    []string{ScopeIntentReadCrossTenant},
+			}
 		}
 	}
 	return tokens
@@ -93,9 +100,8 @@ func RequireInternalScope(requiredScope string, next http.HandlerFunc) http.Hand
 }
 
 // logInternalAccess records caller service, granted scopes, the scope this
-// route required, the request target (query string — carries envelope_id
-// for /internal/intents/by-envelope) and outcome status, per R-02's audit
-// requirement. request_id is best-effort: these routes bypass Kong (whose
+// route required, the request target (query string) and outcome status, per
+// R-02's audit requirement. request_id is best-effort: these routes bypass Kong (whose
 // correlation-id plugin stamps X-Request-Id on gateway-routed traffic), so
 // direct internal-network callers may not carry one.
 func logInternalAccess(r *http.Request, serviceID string, scopes []string, requiredScope string, status int) {

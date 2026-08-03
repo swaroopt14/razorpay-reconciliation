@@ -103,12 +103,13 @@ const (
 var batchAggregateGroup singleflight.Group
 
 type IntentService struct {
-	validator        *validator.Validator
-	repo             CanonicalIntentRepository
-	s3               *storage.S3Store
-	tokenizeQueue    *KafkaTokenizeQueue
-	db               *sql.DB
-	tenantDailyUsage persistence.TenantDailyUsageRepository
+	validator          *validator.Validator
+	repo               CanonicalIntentRepository
+	s3                 *storage.S3Store
+	tokenizeQueue      *KafkaTokenizeQueue
+	db                 *sql.DB
+	tenantDailyUsage   persistence.TenantDailyUsageRepository
+	tenantBusinessDate persistence.TenantBusinessDateRepository
 }
 
 var enclaveHTTPClient = &http.Client{
@@ -196,15 +197,28 @@ func NewIntentService(
 	q *KafkaTokenizeQueue,
 	db *sql.DB,
 	tenantDailyUsage persistence.TenantDailyUsageRepository,
+	tenantBusinessDate persistence.TenantBusinessDateRepository,
 ) *IntentService {
 	return &IntentService{
-		validator:        v,
-		repo:             r,
-		s3:               s3,
-		tokenizeQueue:    q,
-		db:               db,
-		tenantDailyUsage: tenantDailyUsage,
+		validator:          v,
+		repo:               r,
+		s3:                 s3,
+		tokenizeQueue:      q,
+		db:                 db,
+		tenantDailyUsage:   tenantDailyUsage,
+		tenantBusinessDate: tenantBusinessDate,
 	}
+}
+
+// resolveBusinessDate returns tenantID's business_date for now, via the
+// per-tenant timezone configured in tenant_business_date_config (4.2.7),
+// falling back to persistence.BusinessDateUTC when no resolver is wired —
+// defensive only; NewIntentService always supplies one in production.
+func (s *IntentService) resolveBusinessDate(ctx context.Context, tenantID string) string {
+	if s.tenantBusinessDate == nil {
+		return persistence.BusinessDateUTC(time.Now())
+	}
+	return s.tenantBusinessDate.ResolveBusinessDate(ctx, tenantID, time.Now())
 }
 
 // ErrIntentNotHeld is returned by ApproveHeldIntent when the target intent's
@@ -227,13 +241,14 @@ func (s *IntentService) ApproveHeldIntent(ctx context.Context, tenantID, intentI
 		return "", ErrIntentNotHeld
 	}
 
-	businessDate := persistence.BusinessDateUTC(time.Now())
+	businessDate := s.resolveBusinessDate(ctx, tenantID)
 	decision, _, err := s.tenantDailyUsage.ReserveIfWithinLimit(
-		ctx, tenantID, businessDate, currency, amount, decimal.NewFromInt(guards.TenantDailyLimit),
+		ctx, tenantID, businessDate, currency, amount, guards.DailyLimitForCurrency(currency),
 	)
 	if err != nil {
 		return "", fmt.Errorf("approve held intent: daily usage reservation: %w", err)
 	}
+	recordDailyLimitApproval(ctx, tenantID, intentID, currency, businessDate, decision)
 	if decision != persistence.DailyLimitDecisionAccept {
 		// Still over today's limit — remains FLAGGED_FOR_REVIEW, no change.
 		return decision, nil
@@ -1673,6 +1688,21 @@ func (s *IntentService) processIncomingIntentInternal(
 	// path, so REVIEW_STRICT and OBSERVE tenants see zero behavior change.
 	hardStrictRejected := applyHardStrictReject(resolvedProfile, nir.RequiredFieldGapCount, missingRequiredFieldNames, &governance)
 
+	// 4.2.8: attach an explainability record whenever a mapping-profile
+	// required-field gap drove this decision — HARD_STRICT reject (surfaced
+	// on the DLQ entry's intent_context below) or REVIEW_STRICT hold
+	// (surfaced on the row itself via GovernanceReasonCodesJSON).
+	if nir.RequiredFieldGapCount > 0 {
+		gapDecision := models.StrictModeDecisionReviewStrictHeld
+		gapReasonCode := "REQUIRED_FIELD_GAPS"
+		if hardStrictRejected {
+			gapDecision = models.StrictModeDecisionHardStrictRejected
+			gapReasonCode = "HARD_STRICT_REQUIRED_FIELD_MISSING"
+		}
+		explanation := models.BuildStrictModeExplanation(gapDecision, gapReasonCode, resolvedProfile, parsed.SourceRowRef, missingRequiredFieldNames)
+		governance.RequiredFieldGapDecision = &explanation
+	}
+
 	if !governance.SemanticValid {
 		log.Printf("⚠️ Semantic Policy Violation for EnvelopeID=%s: %v", in.EnvelopeID, governance.SemanticErrors)
 		reasonCode := "SEMANTIC_INVALID"
@@ -1697,6 +1727,11 @@ func (s *IntentService) processIncomingIntentInternal(
 			errorDetail = "semantic policy validation failed"
 		}
 
+		intentContext := models.BuildIntentContext(policyDLQStatus, parsed)
+		if hardStrictRejected && governance.RequiredFieldGapDecision != nil {
+			intentContext = models.BuildIntentContextWithStrictMode(policyDLQStatus, parsed, *governance.RequiredFieldGapDecision)
+		}
+
 		dlqEntry := models.DLQEntry{
 			TenantID:       in.TenantID.String(),
 			EnvelopeID:     in.EnvelopeID.String(),
@@ -1707,7 +1742,7 @@ func (s *IntentService) processIncomingIntentInternal(
 			BatchID:        batchIDStr,
 			ClientBatchRef: batchIDStr,
 			SourceRowNum:   sourceRowNum,
-			IntentContext:  models.BuildIntentContext(policyDLQStatus, parsed),
+			IntentContext:  intentContext,
 			TraceID:        in.TraceID.String(),
 			CreatedAt:      time.Now().UTC(),
 		}
@@ -2257,23 +2292,26 @@ func (s *IntentService) processIncomingIntentInternal(
 	// what's actually in payment_intents until the next request corrects
 	// course. A full compensating-transaction/saga wasn't built for this
 	// rare failure mode; none of R-05's acceptance tests exercise it.
-	businessDate := persistence.BusinessDateUTC(time.Now())
+	businessDate := s.resolveBusinessDate(ctx, canonical.TenantID)
+	dailyLimit := guards.DailyLimitForCurrency(canonical.Currency)
 	dailyLimitDecision, dailyTotalBefore, errDailyUsage := s.tenantDailyUsage.ReserveIfWithinLimit(
 		ctx, canonical.TenantID, businessDate, canonical.Currency,
-		canonical.Amount, decimal.NewFromInt(guards.TenantDailyLimit),
+		canonical.Amount, dailyLimit,
 	)
-	if errDailyUsage != nil {
+	reservationErrored := errDailyUsage != nil
+	if reservationErrored {
 		// Fail safe, not fail open: R-05 exists because the old check could
 		// be silently bypassed. An usage-tracking failure holds for review
 		// rather than risking an unverified amount passing as ACCEPTED.
-		log.Printf("⚠️ tenant_daily_usage reservation failed, holding for review [tenant=%s currency=%s]: %v",
-			canonical.TenantID, canonical.Currency, errDailyUsage)
+		recordDailyLimitReservationFailure(ctx, canonical.TenantID, canonical.Currency, businessDate, canonical.Amount, errDailyUsage)
 		dailyLimitDecision = persistence.DailyLimitDecisionRequiresReview
 		dailyTotalBefore = decimal.Zero
+	} else {
+		recordDailyLimitReservation(ctx, canonical.TenantID, canonical.Currency, businessDate, dailyLimitDecision, canonical.Amount)
 	}
 	if dailyLimitDecision == persistence.DailyLimitDecisionRequiresReview {
 		canonical.GovernanceState = "REQUIRES_REVIEW"
-		canonical.Governance.PolicyFlags = append(canonical.Governance.PolicyFlags, "TENANT_DAILY_LIMIT_EXCEEDED")
+		canonical.Governance.PolicyFlags = append(canonical.Governance.PolicyFlags, DailyLimitPolicyFlagFor(reservationErrored))
 	}
 
 	canonical.GovernanceReasonCodesJSON = s.aggregateGovernanceReasons(&canonical, nir)
@@ -2334,7 +2372,7 @@ func (s *IntentService) processIncomingIntentInternal(
 		return
 	}
 
-	outbox, err := CanonicalIntentToOutboxEvent(canonical, canonicalPayload, "intent.created.v1")
+	outbox, err := CanonicalIntentToOutboxEvent(canonical, canonicalPayload, EventTypeCanonicalIntentCreatedV1)
 	if err != nil {
 		log.Printf("⚠️ Failed to create outbox event: %v", err)
 		retErr = err
@@ -2472,11 +2510,17 @@ func (s *IntentService) ProcessIncomingIntent(
 			runStatus = "COMPLETED"
 		}
 
+		runLastErrorCode := ""
+		if status == "FAILED" {
+			runLastErrorCode = errDetail
+		}
+
 		errUpsert := db.UpsertIngestRun(ctx, s.db,
 			runID, *in.BatchID, in.TenantID.String(),
 			mappingID, profileIDHint, fileName, fileHash,
 			totalRows, acceptedCount, failedCount, duplicateCount,
 			runStatus,
+			runLastErrorCode, runLastErrorCode,
 		)
 		if errUpsert != nil {
 			log.Printf("⚠️ Audit: failed to upsert run audit for batch=%s: %v", *in.BatchID, errUpsert)
@@ -2796,11 +2840,17 @@ func (s *IntentService) ProcessIncomingIntentsBatch(
 		if batchRunID == "" {
 			batchRunID = uuid.New().String()
 		}
+		runLastErrorCode := ""
+		if len(savedDLQs) > 0 {
+			runLastErrorCode = savedDLQs[len(savedDLQs)-1].ReasonCode
+		}
+
 		errUpsert := db.UpsertIngestRun(ctx, s.db,
 			batchRunID, *firstIn.BatchID, firstIn.TenantID.String(),
 			resolvedMappingID, resolvedProfileVersion, fileName, fileHash,
 			totalRows, actualAccepted, actualFailed, actualDuplicate,
 			runStatus,
+			runLastErrorCode, runLastErrorCode,
 		)
 		if errUpsert != nil {
 			log.Printf("⚠️ Batch Audit: failed to upsert run audit for batch=%s: %v", *firstIn.BatchID, errUpsert)
@@ -3224,7 +3274,7 @@ func (s *IntentService) ProcessTokenizeResult(
 		return nil, err
 	}
 
-	outbox, err := CanonicalIntentToOutboxEvent(intent, payload, "intent.created.v1")
+	outbox, err := CanonicalIntentToOutboxEvent(intent, payload, EventTypeCanonicalIntentCreatedV1)
 	if err != nil {
 		return nil, err
 	}
@@ -3376,7 +3426,12 @@ func (s *IntentService) processWebhook(
 	// did — this literal used to omit Constraints/PIITokens/Beneficiary/
 	// RoutingHintsJSON/GovernanceReasonCodesJSON entirely, which would have
 	// failed the outbox INSERT on any real webhook.
-	outbox, err := CanonicalIntentToOutboxEvent(canonical, payload, "WEBHOOK_RECEIVED")
+	//
+	// eventType is the same canonical-intent-v1 type every other producer
+	// call site uses (previously a bespoke "WEBHOOK_RECEIVED" literal that
+	// Relay/Outcome never recognized, so webhook-originated intents never
+	// reached Service 5 as a normal canonical intent).
+	outbox, err := CanonicalIntentToOutboxEvent(canonical, payload, EventTypeCanonicalIntentCreatedV1)
 	if err != nil {
 		return nil, nil, err
 	}

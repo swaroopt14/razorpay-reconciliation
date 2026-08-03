@@ -11,6 +11,14 @@ type Governance struct {
 	RoutingConsistent    bool     `json:"routing_consistent"`
 	ExecutionWindowValid bool     `json:"execution_window_valid"`
 	PolicyFlags          []string `json:"policy_flags"`
+
+	// RequiredFieldGapDecision (4.2.8) is set whenever a mapping-profile
+	// required-field gap produced a REVIEW_STRICT hold — HARD_STRICT rejects
+	// never reach payment_intents, so their equivalent explanation is
+	// attached to the DLQ entry's intent_context instead (see
+	// BuildIntentContext / StrictModeExplanation). nil whenever there was no
+	// required-field gap at all.
+	RequiredFieldGapDecision *StrictModeExplanation `json:"required_field_gap_decision,omitempty"`
 }
 
 type Scores struct {

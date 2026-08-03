@@ -27,6 +27,11 @@ type IntentOutboxEvent struct {
 	IntentID          string `json:"intent_id"`
 	EventType         string `json:"event_type"`
 
+	// EventVersion / SourceService are part of the standard cross-service
+	// event envelope stamped by zord-intent-engine's outbox lease handler.
+	EventVersion  string `json:"event_version,omitempty"`
+	SourceService string `json:"source_service,omitempty"`
+
 	SchemaVersion string          `json:"schema_version"`
 	Amount        decimal.Decimal `json:"amount"`
 	Currency      string          `json:"currency"`
