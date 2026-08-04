@@ -157,4 +157,34 @@ var (
 		Name:      "relay_outbox_pending",
 		Help:      "Current count of PENDING rows in relay_outbox.",
 	})
+
+	// ── Payload hash verification metrics (P0 6.1.2) ────────────────────────
+
+	// PayloadHashConflictTotal counts every payload_hash mismatch event.
+	// This counter feeds the high-severity operational alert:
+	//   increase(relay_payload_hash_conflict_total[5m]) > 0 → SEV1 / PagerDuty.
+	// The "decision" label says whether we NACKed (re-queue) or ACKed as
+	// permanent conflict (gave up after MaxConflictRetries).
+	PayloadHashConflictTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "relay",
+		Name:      "payload_hash_conflict_total",
+		Help:      "Payload hash verification mismatches. Alert on this (SEV1): any non-zero increase in 5m window.",
+	}, []string{"service", "decision"}) // decision: nack | ack_permanent
+
+	// PayloadHashVerifiedTotal counts happy-path hash verifications so the
+	// conflict ratio can be computed (conflicts / total_verified).
+	PayloadHashVerifiedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "relay",
+		Name:      "payload_hash_verified_total",
+		Help:      "Events whose payload hash was verified successfully. Denominator for conflict-rate calculation.",
+	}, []string{"service"})
+
+	// PayloadHashSkippedTotal counts events whose payload_hash was empty and
+	// therefore skipped (strict=false). Flip strict=true once all upstreams
+	// guarantee the field to make this counter go to zero.
+	PayloadHashSkippedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "relay",
+		Name:      "payload_hash_skipped_total",
+		Help:      "Events with empty payload_hash that were skipped (strict=false). Trend should go to 0 over time.",
+	}, []string{"service"})
 )

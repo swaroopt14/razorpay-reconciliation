@@ -46,6 +46,19 @@ type RelayConfig struct {
 
 	// ShutdownTimeout is how long we wait for in-flight work to finish on SIGTERM.
 	ShutdownTimeout time.Duration `mapstructure:"shutdown_timeout"`
+
+	// StrictPayloadHash controls how empty payload_hash is handled.
+	//   false (default): empty payload_hash → skip verification, warn log,
+	//                    counter bump. Allows upstreams to ship without hashing.
+	//   true:            empty payload_hash → treat as mismatch + conflict record.
+	// Flip to true once all upstreams guarantee payload_hash is populated.
+	StrictPayloadHash bool `mapstructure:"strict_payload_hash"`
+
+	// MaxConflictRetries is how many times we NACK a mismatching event before
+	// giving up and ACKing it out of the upstream outbox (with a permanent
+	// conflict record in relay_payload_conflicts). Guards against infinite
+	// NACK loops on genuinely corrupt upstream rows. Default 3.
+	MaxConflictRetries int `mapstructure:"max_conflict_retries"`
 }
 
 // KafkaConfig holds all Kafka connection and auth settings.
