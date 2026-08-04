@@ -1,19 +1,13 @@
 'use client'
 
 import Link from 'next/link'
-import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { clampPage } from '../_lib/clampPage'
 import { EntityLogo } from '../entity-logo'
-import {
-  BankingInformationTokensBlock,
-} from '../intent-journal/IntentDrawerSections'
-import type { IntentDetail } from '@/services/payout-command/intent-journal-types'
 import { getProdIntentDetail } from '@/services/payout-command/prod-api/getProdIntentDetail'
-import { buildLiveIntentDetailFromRowAndApi } from '@/services/payout-command/liveJournalIntentDetail'
-import { formatJournalMoney } from '../intent-journal/formatJournalMoney'
 import { JournalBatchSelectionProvider } from '../intent-journal/context/JournalBatchSelectionContext'
-import { IntentJournalHeroBanner } from '../intent-journal/components/IntentJournalHeroBanner'
-import { IntentJournalBatchSidebar } from '../intent-journal/components/IntentJournalBatchSidebar'
+import { IntentJournalOverview } from '../intent-journal/components/IntentJournalOverview'
+import { IntentJournalBatchDetail } from '../intent-journal/components/IntentJournalBatchDetail'
 import {
   IntentJournalActivityPanel,
   type IntentJournalActivityViewModel,
@@ -28,36 +22,21 @@ import { useJournalSidebarBatches } from '../intent-journal/hooks/useJournalSide
 import { useJournalIntentRows } from '../intent-journal/hooks/useJournalIntentRows'
 import { useJournalFailureRows } from '../intent-journal/hooks/useJournalFailureRows'
 import { useJournalBatchMetrics } from '../intent-journal/hooks/useJournalBatchMetrics'
-import { downloadCsv, failuresToCsv, intentsToCsv, downloadFailuresCsv } from '../intent-journal/journalExport'
-import { LIVE_JOURNAL_POLL_MS } from '../intent-journal/journalConstants'
+import { downloadCsv, failuresToCsv, intentsToCsv } from '../intent-journal/journalExport'
+import { countSealEligible, sumBlockedValue } from '../intent-journal/mappers/enrichIntentSpec76'
+import { intentJournalCopy } from '../intent-journal/copy/intentJournalCopy'
 import type { PaymentIntentRecord } from '@/services/payout-command/prod-api/getProdIntentEngineBatches'
-import type { IntelligenceBatchRow } from '@/services/payout-command/prod-api/intelligenceTypes'
 import type { ApiProdIntentDetailPayload } from '@/services/payout-command/prod-api/prodApiTypes'
 import { payoutBatchCommandCenterHref } from '@/services/payout-command/batchCommandCenterHref'
+import { useDemoBatchReady } from '@/services/payout-command/demo/demoBatchReadiness'
+import { setActiveDemoBatchId } from '@/services/payout-command/demo/ycDemoConstants'
 import { markSandboxSetupStep, openSandboxSetupPanel } from '@/services/payout-command/sandbox-setup-guide'
+import { AwaitingUploadsEmptyState } from '../demo/AwaitingUploadsEmptyState'
 import { useEnvironment } from '@/services/auth/EnvironmentProvider'
-import { dockItems } from '@/services/payout-command/model'
 import { useRegisterPayoutPageActions } from '../layout/PayoutPageActionsContext'
-import {
-  COMMAND_CENTER_KPI_CARD,
-  COMMAND_CENTER_LABEL_GREEN,
-  HOME_BODY_IMPERIAL,
-  HOME_BODY_IMPERIAL_SM,
-  HOME_INSIGHT_PROSE,
-  HOME_INSIGHT_PROSE_STRONG,
-  HOME_TITLE_BLACK,
-} from '../command-center/homeCommandCenterTokens'
-import { CommandCenterCardGlow } from '../command-center/CommandCenterCardGlow'
+import { HOME_BODY_IMPERIAL_SM } from '../command-center/homeCommandCenterTokens'
 import { JOURNAL_PAGE_BG } from '../journal/JournalCommandCenterPrimitives'
 import { JOURNAL_DM_SANS } from '../journal/journalFonts'
-import { IntentEngineDetailPanel } from '../intent-journal/IntentEngineDetailPanel'
-const JOURNAL_FILTER_LABEL =
-  'mb-1 block text-[11px] font-semibold uppercase tracking-[0.08em] text-[#888888]'
-
-/** Cool blue-grey shell (replaces warm beige #f4f4f1 family). */
-const JOURNAL_PANEL_BG = 'bg-[#f1f5f9]'
-const JOURNAL_SUBTLE_BG = 'bg-slate-50'
-const JOURNAL_BORDER = 'border-slate-200/90'
 
 type TabKey = 'transactions' | 'failures'
 type IntentStatus = 'Ready to Process' | 'Confirmed' | 'Pending' | 'Needs Review' | 'In Progress'
@@ -89,6 +68,14 @@ type IntentRow = {
   confidenceLabel: string
   infoSummary: string
   rawIntent?: PaymentIntentRecord
+  lifecycleStage?: string
+  policyStatus?: string
+  sourceIntegrity?: string
+  riskState?: string
+  actionContract?: string
+  changeSignal?: string
+  sealEligible?: boolean
+  readinessReason?: string
 }
 
 type FailureRow = {
@@ -99,7 +86,7 @@ type FailureRow = {
   amount: number
   method: 'Bank Transfer' | 'LSM' | 'NACH'
   paymentPartner: string
-  /** Connector column subtitle — stage / reason from DLQ payload. */
+  /** Connector column subtitle - stage / reason from DLQ payload. */
   connectorSubtitle: string
   failureReason: string
   failureStage: 'Validation' | 'Dispatch' | 'Processing' | 'Settlement'
@@ -133,7 +120,7 @@ const DISPATCH_OPTIONS: Array<'All' | IntentRow['method']> = ['All', 'Bank Trans
 const AMOUNT_RANGE_OPTIONS = [
   'All',
   'Under ₹10,000',
-  '₹10,000 – ₹1,00,000',
+  '₹10,000 - ₹1,00,000',
   'Over ₹1,00,000',
 ] as const
 type AmountRangeFilter = (typeof AMOUNT_RANGE_OPTIONS)[number]
@@ -156,11 +143,11 @@ function intentInDateRange(lastUpdated: string, preset: DateRangePreset): boolea
 function matchesIntentAmountRange(amount: number, range: AmountRangeFilter): boolean {
   if (range === 'All') return true
   if (range === 'Under ₹10,000') return amount < 10_000
-  if (range === '₹10,000 – ₹1,00,000') return amount >= 10_000 && amount <= 100_000
+  if (range === '₹10,000 - ₹1,00,000') return amount >= 10_000 && amount <= 100_000
   return amount > 100_000
 }
 
-const ROW_SIZE_OPTIONS = [25, 50, 100, 200] as const
+const ROW_SIZE_OPTIONS = [20, 50, 100, 200] as const
 
 const JOURNAL_NO_BATCHES_DISMISS_KEY = 'zord:intent-journal-no-batches-notice'
 const JOURNAL_SANDBOX_SETUP_DISMISS_KEY = 'zord:intent-journal-sandbox-setup-notice'
@@ -190,7 +177,7 @@ function reopenJournalNotice(storageKey: string) {
   }
 }
 
-/** Stripe-style dismissible notice — black shell + green Recommended chip (home / dispatch parity). */
+/** Stripe-style dismissible notice - black shell + green Recommended chip (home / dispatch parity). */
 function JournalRecommendedBlackCard({
   eyebrow,
   title,
@@ -290,12 +277,21 @@ function intentHaystack(row: IntentRow) {
     row.batchId,
     row.requestId,
     row.reference,
+    row.zordId,
+    row.beneficiaryName ?? '',
     row.tenantId,
     row.provider,
     row.currency ?? '',
     row.intendedExecutionAt,
     row.confidenceLabel,
     row.infoSummary,
+    row.readinessReason ?? '',
+    row.lifecycleStage ?? '',
+    row.policyStatus ?? '',
+    row.sourceIntegrity ?? '',
+    row.riskState ?? '',
+    row.actionContract ?? '',
+    row.changeSignal ?? '',
     row.method,
     row.status,
     row.match,
@@ -330,11 +326,30 @@ function failureHaystack(row: FailureRow) {
 
 export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: string } = {}) {
   const { mode } = useEnvironment()
+  const { ready: demoBatchReady, readiness: demoBatchReadiness } = useDemoBatchReady(undefined, {
+    requireUploads: true,
+  })
   const batchCommandCenterHref = payoutBatchCommandCenterHref(mode === 'sandbox')
-  /** Same `/api/prod/intelligence/*` + `/api/prod/intents*` + DLQ polling as live — sandbox is not local-only. */
+  /** Same `/api/prod/intelligence/*` + `/api/prod/intents*` + DLQ polling as live - sandbox is not local-only. */
   const journalUsesBackendFeed = mode === 'live' || mode === 'sandbox'
 
   const [selectedBatchId, setSelectedBatchId] = useState(() => initialBatchId?.trim() ?? '')
+  /**
+   * List page vs dedicated batch page - never stack intents under the batch list.
+   * Always land on the batch-selection overview; a batch page only opens on explicit selection.
+   */
+  const [journalView, setJournalView] = useState<'overview' | 'batch'>('overview')
+  const [sealedRequestIds, setSealedRequestIds] = useState<Set<string>>(() => new Set())
+  const [journalNotice, setJournalNotice] = useState<string | null>(null)
+  const [filterBlocked, setFilterBlocked] = useState(false)
+
+  useEffect(() => {
+    try {
+      setFilterBlocked(new URLSearchParams(window.location.search).get('filter') === 'blocked')
+    } catch {
+      setFilterBlocked(false)
+    }
+  }, [])
 
   const {
     tenantId: liveTenantId,
@@ -368,8 +383,25 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
   const dlqPagination = failureFeed.pagination
   const liveDetailLoading = intentFeed.loading || failureFeed.loading
 
-  const selectBatch = useCallback((batchId: string) => {
+  const openBatch = useCallback((batchId: string) => {
+    // Persist so the menu bar keeps the same batch across Spec routes.
+    setActiveDemoBatchId(batchId)
     setSelectedBatchId(batchId)
+    setJournalView('batch')
+    if (typeof window !== 'undefined') {
+      try {
+        const url = new URL(window.location.href)
+        url.searchParams.set('batch_id', batchId)
+        url.searchParams.set('client_batch_id', batchId)
+        window.history.replaceState({}, '', `${url.pathname}?${url.searchParams.toString()}`)
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [])
+
+  const backToBatches = useCallback(() => {
+    setJournalView('overview')
   }, [])
 
   const [failureReviewId, setFailureReviewId] = useState<string | null>(null)
@@ -415,7 +447,7 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
   const [failureStageFilter, setFailureStageFilter] = useState<'All' | FailureRow['failureStage']>('All')
   const [amountRangeFilter, setAmountRangeFilter] = useState<AmountRangeFilter>('All')
 
-  const [rowsPerPage, setRowsPerPage] = useState<(typeof ROW_SIZE_OPTIONS)[number]>(50)
+  const [rowsPerPage, setRowsPerPage] = useState<(typeof ROW_SIZE_OPTIONS)[number]>(20)
   const [page, setPage] = useState(1)
   const [jumpPage, setJumpPage] = useState('1')
   const [failurePage, setFailurePage] = useState(1)
@@ -452,7 +484,7 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
     }
   }, [journalUsesBackendFeed, tenantReady, expandedId])
 
-  // Dispatch modal — smart routing on use-case + connector history
+  // Dispatch modal - smart routing on use-case + connector history
   const [dispatchModalOpen, setDispatchModalOpen] = useState(false)
   const [dispatchUseCase, setDispatchUseCase] = useState<UseCase>('salary')
   const [dispatchBanner, setDispatchBanner] = useState<{
@@ -465,8 +497,26 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
 
   const sidebarBatchList = useMemo(() => {
     if (!journalUsesBackendFeed) return []
-    return liveBatchList
-  }, [journalUsesBackendFeed, liveBatchList])
+    if (mode !== 'sandbox') return liveBatchList
+    // Sandbox: one batch only - the unlocked upload batch (Batch 001 story).
+    if (!demoBatchReady) return []
+    const focusId = demoBatchReadiness?.batchId?.trim()
+    if (focusId) {
+      const only = liveBatchList.filter((b) => b.batchId === focusId)
+      if (only.length > 0) return only
+    }
+    return liveBatchList.slice(0, 1)
+  }, [journalUsesBackendFeed, liveBatchList, mode, demoBatchReady, demoBatchReadiness?.batchId])
+
+  /** Sandbox demo: open the single unlocked batch once (Batch 001 story). */
+  useEffect(() => {
+    if (mode !== 'sandbox' || !demoBatchReady) return
+    const only = sidebarBatchList[0]
+    if (!only || selectedBatchId.trim()) return
+    setSelectedBatchId(only.batchId)
+    setJournalView('batch')
+    setActiveDemoBatchId(only.batchId)
+  }, [mode, demoBatchReady, sidebarBatchList, selectedBatchId])
 
   const failureFeedLoading = failureFeed.loading
   const selectedDlqTotal: number | null = journalUsesBackendFeed
@@ -482,7 +532,7 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
       : null
     : null
 
-  // Sidebar list filters — intelligence batches from `GET /v1/intelligence/batches`.
+  // Sidebar list filters - intelligence batches from `GET /v1/intelligence/batches`.
   const filteredBatches = useMemo(() => {
     if (batchFilter === 'All Batches') return sidebarBatchList
     if (batchFilter === 'Recent') return sidebarBatchList.slice(0, 10)
@@ -500,7 +550,7 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
     return sidebarBatchList.filter((b) => resolveBatchHealthStatus(b) === 'Stable')
   }, [batchFilter, sidebarBatchList, selectedBatchId, selectedMetricsBatch])
 
-  /** Resolved from intelligence batch list only — no synthetic batch row. */
+  /** Resolved from intelligence batch list only - no synthetic batch row. */
   const selectedBatch: BatchRecord | null =
     selectedBatchId.trim() === ''
       ? null
@@ -544,10 +594,24 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
   const safeSidebarPage = Math.min(sidebarPage, sidebarTotalPages)
   const sidebarPageRows = filteredBatches.slice((safeSidebarPage - 1) * SIDEBAR_PAGE_SIZE, safeSidebarPage * SIDEBAR_PAGE_SIZE)
 
+  const enrichedIntents = useMemo(() => {
+    return intents.map((row) => {
+      if (!sealedRequestIds.has(row.requestId)) return row
+      return {
+        ...row,
+        lifecycleStage: 'Sealed',
+        actionContract: 'Sealed',
+        sealEligible: false,
+        readinessReason: 'Sealed - versioned Action Contract created; source obligation unchanged.',
+        infoSummary: 'Sealed - versioned Action Contract created; source obligation unchanged.',
+      }
+    })
+  }, [intents, sealedRequestIds])
+
   const filteredIntents = useMemo(() => {
     const sidebarBid = journalUsesBackendFeed && selectedBatch ? selectedBatch.batchId : ''
     const scopeBatch = sidebarBid !== ''
-    return intents.filter((row) => {
+    return enrichedIntents.filter((row) => {
       const q = tableSearch.trim().toLowerCase()
       const bySearch = !q || intentHaystack(row).includes(q)
       const bySidebarBatch = !scopeBatch || row.batchId === sidebarBid
@@ -558,11 +622,26 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
       const byStatus = intentStatusFilter === 'All' || row.status === intentStatusFilter
       const byDate = intentInDateRange(row.lastUpdated, dateRange)
       const byAmount = matchesIntentAmountRange(row.amount, amountRangeFilter)
-      return bySearch && bySidebarBatch && byBatchFilter && byConnector && byDispatch && byStatus && byDate && byAmount
+      const byBlocked =
+        !filterBlocked ||
+        row.lifecycleStage === 'Blocked' ||
+        row.policyStatus === 'Block' ||
+        row.riskState === 'Beneficiary change'
+      return (
+        bySearch &&
+        bySidebarBatch &&
+        byBatchFilter &&
+        byConnector &&
+        byDispatch &&
+        byStatus &&
+        byDate &&
+        byAmount &&
+        byBlocked
+      )
     })
   }, [
     journalUsesBackendFeed,
-    intents,
+    enrichedIntents,
     selectedBatch,
     tableSearch,
     filterBatchId,
@@ -571,7 +650,70 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
     intentStatusFilter,
     dateRange,
     amountRangeFilter,
+    filterBlocked,
   ])
+
+  /**
+    * KPIs:
+    * - Batch page → filtered intent rows for that batch
+    * - List page → aggregate of batches (no intent table on this page)
+    */
+  const overviewSummary = useMemo(() => {
+    if (journalView === 'batch' && selectedBatchId) {
+      const rows = filteredIntents
+      const instructionCount = rows.length
+      const intendedValue = rows.reduce((s, r) => s + (Number.isFinite(r.amount) ? r.amount : 0), 0)
+      const blockedValueSum = sumBlockedValue(rows)
+      const blockedN = rows.filter(
+        (r) => r.lifecycleStage === 'Blocked' || r.policyStatus === 'Block',
+      ).length
+      const needsReviewCount = rows.filter(
+        (r) => r.lifecycleStage === 'Needs review' || r.status === 'Needs Review',
+      ).length
+      const sealN = countSealEligible(rows)
+      const readinessPct =
+        instructionCount > 0 ? Math.round((sealN / instructionCount) * 100) : null
+      return {
+        intendedValue,
+        instructionCount,
+        blockedValue: blockedValueSum,
+        blockedCount: blockedN,
+        needsReviewCount,
+        sealEligibleCount: sealN,
+        readinessPctLabel: readinessPct != null ? `${readinessPct}%` : '-',
+        scopeLabel: `This batch · ${instructionCount} intent rows`,
+      }
+    }
+    const list = filteredBatches
+    const instructionCount = list.reduce((s, b) => s + (b.transactions || 0), 0)
+    const intendedValue = list.reduce((s, b) => s + (b.totalValue || 0), 0)
+    return {
+      intendedValue,
+      instructionCount,
+      blockedValue: 0,
+      blockedCount: 0,
+      needsReviewCount: needsAttentionCount,
+      sealEligibleCount: 0,
+      readinessPctLabel: '-',
+      scopeLabel: `${list.length} batches · open a batch for intent rows`,
+    }
+  }, [journalView, filteredIntents, selectedBatchId, filteredBatches, needsAttentionCount])
+
+  const sealEligibleCount = overviewSummary.sealEligibleCount
+
+  const sealEligibleIntents = useCallback(() => {
+    const eligible = enrichedIntents.filter((r) => r.sealEligible)
+    if (eligible.length === 0) {
+      setJournalNotice(intentJournalCopy.seal.none)
+      return
+    }
+    setSealedRequestIds((prev) => {
+      const next = new Set(prev)
+      for (const row of eligible) next.add(row.requestId)
+      return next
+    })
+    setJournalNotice(intentJournalCopy.seal.success(eligible.length))
+  }, [enrichedIntents])
 
   const filteredFailures = useMemo(() => {
     const sidebarBid = journalUsesBackendFeed && selectedBatch ? selectedBatch.batchId : ''
@@ -783,27 +925,11 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
     <JournalBatchSelectionProvider value={selectionValue}>
       <>
       <div
-        className={`h-[calc(100vh-8rem)] overflow-hidden ${JOURNAL_PAGE_BG} ${JOURNAL_DM_SANS} text-[13px] font-normal leading-relaxed tracking-[0] text-slate-900 antialiased`}
+        className={`min-h-0 ${JOURNAL_PAGE_BG} ${JOURNAL_DM_SANS} pb-10 text-[13px] font-normal leading-relaxed tracking-[0] text-slate-900 antialiased`}
       >
-      <div className="grid h-full grid-cols-[272px,minmax(0,1fr)]">
-        <IntentJournalBatchSidebar
-          batches={batches}
-          batchFilter={batchFilter}
-          setBatchFilter={setBatchFilter}
-          setSidebarPage={setSidebarPage}
-          journalUsesBackendFeed={journalUsesBackendFeed}
-          sidebarPageRows={sidebarPageRows}
-          selectedBatchId={selectedBatchId}
-          selectBatch={selectBatch}
-          selectedEngineIntentTotal={selectedEngineIntentTotal}
-          safeSidebarPage={safeSidebarPage}
-          sidebarTotalPages={sidebarTotalPages}
-          needsAttentionCount={needsAttentionCount}
-          selectedMetricsBatch={selectedMetricsBatch}
-        />
-
-        <main className="flex h-full min-w-0 flex-col overflow-hidden">
-          <div className="flex-1 overflow-y-auto p-4 sm:p-5">
+      <div className="flex min-w-0 flex-col">
+        <main className="flex min-w-0 flex-col">
+          <div className="mx-auto w-full max-w-[1120px] p-4 sm:p-6">
             {journalUsesBackendFeed && !tenantReady ? (
               <p className={`mb-4 rounded-xl border border-slate-200/90 bg-slate-50 px-3.5 py-2.5 ${HOME_BODY_IMPERIAL_SM}`}>
                 Resolving your workspace…
@@ -811,155 +937,233 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
             ) : null}
 
             {journalUsesBackendFeed && feedError ? (
-              <p className="mb-4 rounded-xl border border-amber-200/90 bg-amber-50 px-3.5 py-2.5 text-[14px] text-amber-950">
+              <p className="mb-4 rounded-xl border border-[#0B1324]/20/90 bg-[#F1F5F9] px-3.5 py-2.5 text-[14px] text-[#0B1324]">
                 {feedError}
               </p>
             ) : null}
 
-
-            {journalUsesBackendFeed &&
-            liveFeedLoaded &&
-            liveBatchList.length === 0 &&
-            noBatchesNoticeDismissed &&
-            mode !== 'sandbox' ? (
-              <button
-                type="button"
-                onClick={() => {
-                  reopenJournalNotice(JOURNAL_NO_BATCHES_DISMISS_KEY)
-                  setNoBatchesNoticeDismissed(false)
-                }}
-                className="mb-4 inline-flex items-center gap-1.5 rounded-lg border border-[#E5E5E5] bg-white px-3 py-2 text-[13px] font-medium text-[#000000] shadow-sm transition hover:bg-slate-50"
-              >
-                Show batch ingest tip
-              </button>
-            ) : null}
-
-            {showNoBatchesNotice ? (
-              <JournalRecommendedBlackCard
-                eyebrow="Batches"
-                title="No batches yet"
-                body="Upload a payment file from Batch Command Center to get started."
-                onDismiss={() => {
-                  dismissJournalNotice(JOURNAL_NO_BATCHES_DISMISS_KEY)
-                  setNoBatchesNoticeDismissed(true)
-                }}
-              />
-            ) : null}
-
-            {sandboxJournalEmpty && sandboxSetupNoticeDismissed ? (
-              <button
-                type="button"
-                onClick={() => {
-                  reopenJournalNotice(JOURNAL_SANDBOX_SETUP_DISMISS_KEY)
-                  setSandboxSetupNoticeDismissed(false)
-                }}
-                className="mb-4 inline-flex items-center gap-1.5 rounded-lg border border-[#E5E5E5] bg-white px-3 py-2 text-[13px] font-medium text-[#000000] shadow-sm transition hover:bg-slate-50"
-              >
-                Show sandbox setup
-              </button>
-            ) : null}
-
-            {showSandboxSetupNotice ? (
-              <JournalRecommendedBlackCard
-                eyebrow="Getting started"
-                title="Start with a payout file upload"
-                bodyBold
-                body="Upload your payment instructions, then add the bank or payment-partner confirmation when it's ready. Once both are in, this journal shows your live batches and payment progress — nothing staged for demo."
-                onDismiss={() => {
-                  dismissJournalNotice(JOURNAL_SANDBOX_SETUP_DISMISS_KEY)
-                  setSandboxSetupNoticeDismissed(true)
-                }}
-              >
-                <Link
-                  href={batchCommandCenterHref}
-                  className="inline-flex items-center justify-center rounded-xl bg-white px-4 py-2.5 text-[14px] font-semibold text-[#0A0A0A] transition hover:bg-white/90"
-                >
-                  Go to Create payout
-                </Link>
-                <button
-                  type="button"
-                  className="rounded-xl border border-white/25 bg-transparent px-4 py-2.5 text-[14px] font-medium text-white/90 transition hover:bg-white/10"
-                  onClick={() => openSandboxSetupPanel()}
-                >
-                  Setup guide
-                </button>
-              </JournalRecommendedBlackCard>
-            ) : null}
-
-            {/* ── Persistent dispatch success banner ─────────────────────── */}
-            {dispatchBanner ? (
-              <div className="mb-4 flex items-center gap-3 rounded-[12px] border border-white/20 bg-[#000000] px-4 py-2.5 text-white shadow-[0_0_28px_rgba(0,0,0,0.35)] ring-1 ring-white/15">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white text-[#000000]">
-                  <svg className="h-3.5 w-3.5" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden>
-                    <path d="M3 6.5 5.2 8.7 9.5 4" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </span>
-                <div className="flex min-w-0 flex-1 items-center gap-2">
-                  <EntityLogo name={dispatchBanner.target.name} kind={dispatchBanner.target.type} size={20} />
-                  <div className="min-w-0">
-                    <p className="text-[15px] font-semibold text-white">
-                      Batch {dispatchBanner.batchId} dispatched to {dispatchBanner.target.name}
-                      <span className="ml-1 font-mono text-[14px] font-normal text-white/70">· {USE_CASE_RAIL[dispatchBanner.useCase]}</span>
-                    </p>
-                    <p className="text-[14px] text-white/60">
-                      just now · {dispatchBanner.intents.toLocaleString('en-US')} intents queued · awaiting settlement signal
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setDispatchBanner(null)}
-                  className="rounded-md border border-white/30 bg-black px-2 py-1 text-[14px] font-semibold text-white transition hover:bg-neutral-900"
-                >
-                  Undo
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDispatchBanner(null)}
-                  aria-label="Dismiss"
-                  className="text-[19px] leading-none text-white/70 hover:text-white"
-                >
-                  ×
-                </button>
-              </div>
-            ) : null}
-            {selectedBatch ? (
+            {journalView === 'overview' ? (
               <>
-                <IntentJournalHeroBanner
-                  onExportIntents={() => {
-                    downloadCsv(
-                      `intent-journal-payment-instructions${selectedBatchId ? `-${selectedBatchId}` : ''}.csv`,
-                      intentsToCsv(filteredIntents),
-                    )
-                  }}
-                  onExportReviewItems={() => {
-                    downloadCsv(
-                      `intent-journal-review-items${selectedBatchId ? `-${selectedBatchId}` : ''}.csv`,
-                      failuresToCsv(filteredFailures),
-                    )
-                  }}
-                  intentExportCount={filteredIntents.length}
-                  reviewExportCount={filteredFailures.length}
-                  exportDisabled={false}
-                />
+                {journalUsesBackendFeed &&
+                liveFeedLoaded &&
+                liveBatchList.length === 0 &&
+                noBatchesNoticeDismissed &&
+                mode !== 'sandbox' ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      reopenJournalNotice(JOURNAL_NO_BATCHES_DISMISS_KEY)
+                      setNoBatchesNoticeDismissed(false)
+                    }}
+                    className="mb-4 inline-flex items-center gap-1.5 rounded-lg border border-[#E5E5E5] bg-white px-3 py-2 text-[13px] font-medium text-[#000000] shadow-sm transition hover:bg-slate-50"
+                  >
+                    Show batch ingest tip
+                  </button>
+                ) : null}
 
-                <IntentJournalActivityPanel vm={activityVm} isSandboxRoute={mode === 'sandbox'} />
+                {showNoBatchesNotice ? (
+                  <JournalRecommendedBlackCard
+                    eyebrow="Batches"
+                    title="No batches yet"
+                    body="Upload a payment file from Batch Command Center to get started."
+                    onDismiss={() => {
+                      dismissJournalNotice(JOURNAL_NO_BATCHES_DISMISS_KEY)
+                      setNoBatchesNoticeDismissed(true)
+                    }}
+                  />
+                ) : null}
+
+                {sandboxJournalEmpty && sandboxSetupNoticeDismissed ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      reopenJournalNotice(JOURNAL_SANDBOX_SETUP_DISMISS_KEY)
+                      setSandboxSetupNoticeDismissed(false)
+                    }}
+                    className="mb-4 inline-flex items-center gap-1.5 rounded-lg border border-[#E5E5E5] bg-white px-3 py-2 text-[13px] font-medium text-[#000000] shadow-sm transition hover:bg-slate-50"
+                  >
+                    Show sandbox setup
+                  </button>
+                ) : null}
+
+                {showSandboxSetupNotice ? (
+                  <JournalRecommendedBlackCard
+                    eyebrow="Getting started"
+                    title="Start with a payout file upload"
+                    bodyBold
+                    body="Upload your payment instructions, then add the bank or payment-partner confirmation when it’s ready. Once both are in, this journal shows your live batches and payment progress — nothing staged for demo."
+                    onDismiss={() => {
+                      dismissJournalNotice(JOURNAL_SANDBOX_SETUP_DISMISS_KEY)
+                      setSandboxSetupNoticeDismissed(true)
+                    }}
+                  >
+                    <Link
+                      href={batchCommandCenterHref}
+                      className="inline-flex items-center justify-center rounded-xl bg-white px-4 py-2.5 text-[14px] font-semibold text-[#0A0A0A] transition hover:bg-white/90"
+                    >
+                      Go to Create payout
+                    </Link>
+                    <button
+                      type="button"
+                      className="rounded-xl border border-white/25 bg-transparent px-4 py-2.5 text-[14px] font-medium text-white/90 transition hover:bg-white/10"
+                      onClick={() => openSandboxSetupPanel()}
+                    >
+                      Setup guide
+                    </button>
+                  </JournalRecommendedBlackCard>
+                ) : null}
+
+                <IntentJournalOverview
+                  summary={overviewSummary}
+                  batches={sidebarPageRows}
+                  batchFilter={batchFilter}
+                  setBatchFilter={(f) => {
+                    setBatchFilter(f)
+                    setSidebarPage(1)
+                  }}
+                  onOpenBatch={openBatch}
+                  page={safeSidebarPage}
+                  totalPages={sidebarTotalPages}
+                  onPageChange={setSidebarPage}
+                  actions={{
+                    onSealEligible: () =>
+                      setJournalNotice('Open a batch first, then seal eligible instructions.'),
+                    onValidate: () =>
+                      setJournalNotice('Open a batch to validate its payment instructions.'),
+                    onOpenReview: () => {
+                      const first = sidebarPageRows[0]
+                      if (first) {
+                        openBatch(first.batchId)
+                        setActiveTab('failures')
+                      } else {
+                        setJournalNotice('No batches to review yet.')
+                      }
+                    },
+                    sealEligibleCount: 0,
+                  }}
+                />
+              </>
+            ) : selectedBatch && !demoBatchReady ? (
+              <div className="space-y-4">
+                <button
+                  type="button"
+                  onClick={backToBatches}
+                  className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[#2563EB] hover:underline"
+                >
+                  ← Back to batches
+                </button>
+                <AwaitingUploadsEmptyState
+                  title="Batch detail unlocks after both uploads"
+                  readiness={demoBatchReadiness}
+                />
+              </div>
+            ) : selectedBatch ? (
+              <>
+                {dispatchBanner ? (
+                  <div className="mb-4 flex items-center gap-3 rounded-[12px] border border-white/20 bg-[#000000] px-4 py-2.5 text-white shadow-[0_0_28px_rgba(0,0,0,0.35)] ring-1 ring-white/15">
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white text-[#000000]">
+                      <svg className="h-3.5 w-3.5" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden>
+                        <path d="M3 6.5 5.2 8.7 9.5 4" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </span>
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
+                      <EntityLogo name={dispatchBanner.target.name} kind={dispatchBanner.target.type} size={20} />
+                      <div className="min-w-0">
+                        <p className="text-[15px] font-semibold text-white">
+                          Batch {dispatchBanner.batchId} dispatched to {dispatchBanner.target.name}
+                          <span className="ml-1 font-mono text-[14px] font-normal text-white/70">
+                            · {USE_CASE_RAIL[dispatchBanner.useCase]}
+                          </span>
+                        </p>
+                        <p className="text-[14px] text-white/60">
+                          just now · {dispatchBanner.intents.toLocaleString('en-US')} intents queued ·
+                          awaiting settlement signal
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setDispatchBanner(null)}
+                      className="rounded-md border border-white/30 bg-black px-2 py-1 text-[14px] font-semibold text-white transition hover:bg-neutral-900"
+                    >
+                      Undo
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDispatchBanner(null)}
+                      aria-label="Dismiss"
+                      className="text-[19px] leading-none text-white/70 hover:text-white"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ) : null}
+                {journalNotice ? (
+                  <div
+                    role="status"
+                    className="mb-4 border border-[#0B1324]/20 bg-[#F1F5F9] px-4 py-2.5 text-[13px] text-[#0B1324]"
+                  >
+                    {journalNotice}
+                    <button
+                      type="button"
+                      className="ml-3 font-semibold underline"
+                      onClick={() => setJournalNotice(null)}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                ) : null}
+                <IntentJournalBatchDetail
+                  batch={selectedBatch}
+                  summary={overviewSummary}
+                  onBack={backToBatches}
+                  actions={{
+                    onSealEligible: sealEligibleIntents,
+                    onValidate: () =>
+                      setJournalNotice(
+                        `Validated ${overviewSummary.instructionCount} instructions · ${overviewSummary.sealEligibleCount} ready to seal · ${overviewSummary.blockedCount} blocked.`,
+                      ),
+                    onOpenReview: () => setActiveTab('failures'),
+                    sealEligibleCount: overviewSummary.sealEligibleCount,
+                  }}
+                >
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        downloadCsv(
+                          `intent-journal-payment-instructions${selectedBatchId ? `-${selectedBatchId}` : ''}.csv`,
+                          intentsToCsv(filteredIntents),
+                        )
+                      }
+                      className="text-[13px] font-semibold text-[#2563EB] hover:underline"
+                    >
+                      Export
+                    </button>
+                  </div>
+                  <IntentJournalActivityPanel vm={activityVm} isSandboxRoute={mode === 'sandbox'} />
+                </IntentJournalBatchDetail>
               </>
             ) : (
-              <section className={`relative mb-4 ${COMMAND_CENTER_KPI_CARD} ${JOURNAL_DM_SANS} px-6 py-8 text-center`}>
-                <CommandCenterCardGlow />
-                <p className={`relative ${COMMAND_CENTER_LABEL_GREEN}`}>Intent journal</p>
-                <p className={`relative mx-auto mt-2 max-w-xl ${HOME_BODY_IMPERIAL_SM}`}>
-                  Select a batch from the sidebar to view batch totals, intents, and DLQ rows for your workspace.
+              <div className="space-y-4">
+                <button
+                  type="button"
+                  onClick={backToBatches}
+                  className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[#2563EB] hover:underline"
+                >
+                  ← Back to batches
+                </button>
+                <p className="text-center text-[13px] text-[#94A3B8]">
+                  {liveDetailLoading ? 'Loading batch…' : 'Batch not found. Return to the list and try again.'}
                 </p>
-              </section>
+              </div>
             )}
 
           </div>
         </main>
       </div>
 
-      {/* ── Dispatch modal — smart routing recommendation ─────────────── */}
+      {/* ── Dispatch modal - smart routing recommendation ─────────────── */}
       {dispatchModalOpen && selectedBatch ? (
         <DispatchRoutingModal
           batch={selectedBatch}
@@ -1029,8 +1233,8 @@ const DISPATCH_TARGETS: DispatchTarget[] = [
 
 const REASON_CODE_DESCRIPTIONS: Record<string, string> = {
   LOW_P95_DELAY: 'p95 dispatch latency ≤ 7s in the last 14 days',
-  HIGH_DEFENSIBILITY: 'Defensibility score ≥ 85 — strongest evidence chain',
-  LOW_AMBIGUITY: 'Ambiguous-signal rate ≤ 2% — clean acknowledgments',
+  HIGH_DEFENSIBILITY: 'Defensibility score ≥ 85 - strongest evidence chain',
+  LOW_AMBIGUITY: 'Ambiguous-signal rate ≤ 2% - clean acknowledgments',
   USE_CASE_FIT: `Supports the preferred rail for this use-case`,
   COST_OPTIMAL: 'Lowest fee tier among comparable targets',
   SPONSOR_BANK_HEALTHY: 'Bank-direct rail with healthy sponsor-bank queue',
@@ -1221,7 +1425,7 @@ function DispatchRoutingModal({
                   <span className="text-[#94a3b8]">· {USE_CASE_RAIL[useCase]} rail</span>
                 </span>
                 {selected.name !== winnerName ? (
-                  <span className="ml-1 inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[13px] font-semibold text-amber-700 ring-1 ring-amber-200">
+                  <span className="ml-1 inline-flex items-center rounded-full bg-[#F1F5F9] px-2 py-0.5 text-[13px] font-semibold text-[#0B1324] ring-1 ring-[#0B1324]/20">
                     Override · not recommended
                   </span>
                 ) : null}
@@ -1348,7 +1552,7 @@ function DispatchOption({
   onPick: () => void
 }) {
   const scoreTone =
-    score >= 75 ? 'text-black' : score >= 55 ? 'text-amber-700' : 'text-rose-700'
+    score >= 75 ? 'text-black' : score >= 55 ? 'text-[#0B1324]' : 'text-[#0B1324]'
   return (
     <li>
       <button
