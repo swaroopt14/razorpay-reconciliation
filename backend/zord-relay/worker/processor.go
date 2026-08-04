@@ -14,6 +14,7 @@ import (
 	"zord-relay/model"
 	"zord-relay/publisher"
 	"zord-relay/retry"
+	"zord-relay/services"
 	"zord-relay/tracing"
 )
 
@@ -34,6 +35,11 @@ type processor struct {
 	serviceName  string
 	instanceID   string
 	log          *zap.Logger
+
+	// failureRepo durably persists exhausted publish attempts (P0 6.1.3).
+	// A poison event's upstream lease is only acknowledged once a record has
+	// been committed here — never on the strength of a DLQ Kafka publish alone.
+	failureRepo *services.PublishFailureRepo
 }
 
 func newProcessor(
@@ -41,6 +47,7 @@ func newProcessor(
 	svcCfg config.ServiceConfig,
 	instanceID string,
 	log *zap.Logger,
+	failureRepo *services.PublishFailureRepo,
 ) *processor {
 	maxAttempts, baseDelay, maxDelay := svcCfg.RetryConfig()
 	return &processor{
@@ -56,7 +63,55 @@ func newProcessor(
 		serviceName:  svcCfg.Name,
 		instanceID:   instanceID,
 		log:          log.With(zap.String("component", "processor")),
+		failureRepo:  failureRepo,
 	}
+}
+
+// recordDurableFailure persists a durable failure record for an exhausted
+// publish attempt (P0 6.1.3: source_event_id, source_service, topic,
+// destination_topic, payload_hash, attempt_count, failure_class, last_error,
+// replay_status). Returns true only if the record is durably committed —
+// callers must not acknowledge the upstream lease for a poison event unless
+// this returns true. A best-effort DLQ Kafka publish is not sufficient proof
+// of durability: Kafka may be unreachable when the failure occurs.
+func (p *processor) recordDurableFailure(
+	ctx context.Context,
+	eventID, sourceTopic, destinationTopic string,
+	payload []byte,
+	attempts int,
+	failureClass string,
+	cause error,
+) bool {
+	if p.failureRepo == nil {
+		p.log.Error("CRITICAL: no publish-failure repo configured — cannot durably record failure, withholding upstream ack",
+			zap.String("event_id", eventID),
+			zap.String("failure_class", failureClass),
+		)
+		return false
+	}
+
+	err := p.failureRepo.Record(ctx, services.PublishFailureRecord{
+		SourceEventID:    eventID,
+		SourceService:    p.serviceName,
+		Topic:            sourceTopic,
+		DestinationTopic: destinationTopic,
+		Payload:          payload,
+		AttemptCount:     attempts,
+		FailureClass:     failureClass,
+		LastError:        cause.Error(),
+	})
+	if err != nil {
+		metrics.PublishFailurePersistErrorTotal.WithLabelValues(p.serviceName).Inc()
+		p.log.Error("CRITICAL: failed to durably persist publish failure record — withholding upstream ack",
+			zap.String("event_id", eventID),
+			zap.String("failure_class", failureClass),
+			zap.Error(err),
+		)
+		return false
+	}
+
+	metrics.PublishFailureRecordedTotal.WithLabelValues(p.serviceName, failureClass).Inc()
+	return true
 }
 
 // process publishes one event, retrying on transient Kafka errors.
@@ -80,13 +135,6 @@ func (p *processor) process(ctx context.Context, event *model.OutboxEvent) proce
 		zap.String("trace_id", event.TraceID),
 	)
 
-	// Step 1 — validate the event before touching Kafka.
-	if err := validateEvent(event); err != nil {
-		log.Warn("poison event detected during validation", zap.Error(err))
-		p.routeToPoisonDLQ(ctx, event, err, model.ReasonCodeMissingRequiredField, 1)
-		return processorResult{eventID: event.EventID, isPoison: true, err: err}
-	}
-
 	topic := event.Topic
 	if topic == "" {
 		if t, ok := p.topicMap[event.EventType]; ok {
@@ -94,6 +142,18 @@ func (p *processor) process(ctx context.Context, event *model.OutboxEvent) proce
 		} else {
 			topic = p.defaultTopic
 		}
+	}
+
+	// Step 1 — validate the event before touching Kafka.
+	if err := validateEvent(event); err != nil {
+		log.Warn("poison event detected during validation", zap.Error(err))
+		persisted := p.routeToPoisonDLQ(ctx, event, err, model.ReasonCodeMissingRequiredField, 1, topic)
+		if !persisted {
+			// Durable record failed too — do NOT ack. Leave it for the next
+			// lease cycle rather than silently dropping it from the outbox.
+			return processorResult{eventID: event.EventID, success: false, err: err}
+		}
+		return processorResult{eventID: event.EventID, isPoison: true, err: err}
 	}
 
 	firstAttemptAt := time.Now()
@@ -145,13 +205,16 @@ func (p *processor) process(ctx context.Context, event *model.OutboxEvent) proce
 		if errors.Is(stopErr.cause, errMessageTooLarge) {
 			reasonCode = model.ReasonCodeMessageTooLarge
 		}
-		p.routeToPoisonDLQ(ctx, event, stopErr.cause, reasonCode, attemptCount)
+		persisted := p.routeToPoisonDLQ(ctx, event, stopErr.cause, reasonCode, attemptCount, topic)
+		if !persisted {
+			return processorResult{eventID: event.EventID, success: false, err: stopErr.cause}
+		}
 		return processorResult{eventID: event.EventID, isPoison: true, err: stopErr.cause}
 	}
 
 	// Kafka exhausted — publish-failure DLQ.
 	metrics.PublishTotal.WithLabelValues(p.serviceName, topic, "error").Inc()
-	p.routeToPublishFailureDLQ(ctx, event, lastErr, attemptCount, firstAttemptAt)
+	p.routeToPublishFailureDLQ(ctx, event, lastErr, attemptCount, firstAttemptAt, topic)
 
 	return processorResult{eventID: event.EventID, success: false, err: lastErr}
 }
@@ -177,12 +240,6 @@ func (p *processor) processEdge(ctx context.Context, event *model.EdgeOutboxEven
 		zap.String("trace_id", event.TraceID),
 	)
 
-	if err := validateEdgeEvent(event); err != nil {
-		log.Warn("poison edge event detected during validation", zap.Error(err))
-		p.routeEdgeToPoisonDLQ(ctx, event, err, model.ReasonCodeMissingRequiredField, 1)
-		return processorResult{eventID: event.EventID, isPoison: true, err: err}
-	}
-
 	topic := event.Topic
 	if topic == "" {
 		if t, ok := p.topicMap[event.EventType]; ok {
@@ -190,6 +247,15 @@ func (p *processor) processEdge(ctx context.Context, event *model.EdgeOutboxEven
 		} else {
 			topic = p.defaultTopic
 		}
+	}
+
+	if err := validateEdgeEvent(event); err != nil {
+		log.Warn("poison edge event detected during validation", zap.Error(err))
+		persisted := p.routeEdgeToPoisonDLQ(ctx, event, err, model.ReasonCodeMissingRequiredField, 1, topic)
+		if !persisted {
+			return processorResult{eventID: event.EventID, success: false, err: err}
+		}
+		return processorResult{eventID: event.EventID, isPoison: true, err: err}
 	}
 
 	firstAttemptAt := time.Now()
@@ -244,12 +310,15 @@ func (p *processor) processEdge(ctx context.Context, event *model.EdgeOutboxEven
 		if errors.Is(stopErr.cause, errMessageTooLarge) {
 			reasonCode = model.ReasonCodeMessageTooLarge
 		}
-		p.routeEdgeToPoisonDLQ(ctx, event, stopErr.cause, reasonCode, attemptCount)
+		persisted := p.routeEdgeToPoisonDLQ(ctx, event, stopErr.cause, reasonCode, attemptCount, topic)
+		if !persisted {
+			return processorResult{eventID: event.EventID, success: false, err: stopErr.cause}
+		}
 		return processorResult{eventID: event.EventID, isPoison: true, err: stopErr.cause}
 	}
 
 	metrics.PublishTotal.WithLabelValues(p.serviceName, topic, "error").Inc()
-	p.routeEdgeToPublishFailureDLQ(ctx, event, lastErr, attemptCount, firstAttemptAt)
+	p.routeEdgeToPublishFailureDLQ(ctx, event, lastErr, attemptCount, firstAttemptAt, topic)
 
 	return processorResult{eventID: event.EventID, success: false, err: lastErr}
 }
@@ -260,7 +329,8 @@ func (p *processor) routeEdgeToPoisonDLQ(
 	cause error,
 	reasonCode string,
 	attempts int,
-) {
+	destinationTopic string,
+) bool {
 	msg := &model.DLQMessage{
 		EdgeEvent:       event,
 		EventID:         event.EventID,
@@ -284,6 +354,8 @@ func (p *processor) routeEdgeToPoisonDLQ(
 		zap.String("reason_code", reasonCode),
 		zap.Error(cause),
 	)
+
+	return p.recordDurableFailure(ctx, event.EventID, event.Topic, destinationTopic, event.Payload, attempts, reasonCode, cause)
 }
 
 func (p *processor) routeEdgeToPublishFailureDLQ(
@@ -292,6 +364,7 @@ func (p *processor) routeEdgeToPublishFailureDLQ(
 	cause error,
 	attempts int,
 	firstAttemptAt time.Time,
+	destinationTopic string,
 ) {
 	reasonCode := model.ReasonCodeKafkaMaxRetries
 	if cause != nil && isKafkaTimeout(cause) {
@@ -322,6 +395,8 @@ func (p *processor) routeEdgeToPublishFailureDLQ(
 		zap.String("reason_code", reasonCode),
 		zap.Error(cause),
 	)
+
+	p.recordDurableFailure(ctx, event.EventID, event.Topic, destinationTopic, event.Payload, attempts, reasonCode, cause)
 }
 
 // validateEdgeEvent performs the same structural validation as validateEvent,
@@ -363,17 +438,20 @@ func (p *processor) processIntent(ctx context.Context, event *model.IntentOutbox
 		zap.String("trace_id", event.TraceID),
 	)
 
-	if err := validateIntentEvent(event); err != nil {
-		log.Warn("poison intent event detected during validation", zap.Error(err))
-		p.routeIntentToPoisonDLQ(ctx, event, err, model.ReasonCodeMissingRequiredField, 1)
-		return processorResult{eventID: event.EventID, isPoison: true, err: err}
-	}
-
 	topic := ""
 	if t, ok := p.topicMap[event.EventType]; ok {
 		topic = t
 	} else {
 		topic = p.defaultTopic
+	}
+
+	if err := validateIntentEvent(event); err != nil {
+		log.Warn("poison intent event detected during validation", zap.Error(err))
+		persisted := p.routeIntentToPoisonDLQ(ctx, event, err, model.ReasonCodeMissingRequiredField, 1, topic)
+		if !persisted {
+			return processorResult{eventID: event.EventID, success: false, err: err}
+		}
+		return processorResult{eventID: event.EventID, isPoison: true, err: err}
 	}
 
 	firstAttemptAt := time.Now()
@@ -428,15 +506,22 @@ func (p *processor) processIntent(ctx context.Context, event *model.IntentOutbox
 		if errors.Is(stopErr.cause, errMessageTooLarge) {
 			reasonCode = model.ReasonCodeMessageTooLarge
 		}
-		p.routeIntentToPoisonDLQ(ctx, event, stopErr.cause, reasonCode, attemptCount)
+		persisted := p.routeIntentToPoisonDLQ(ctx, event, stopErr.cause, reasonCode, attemptCount, topic)
+		if !persisted {
+			return processorResult{eventID: event.EventID, success: false, err: stopErr.cause}
+		}
 		return processorResult{eventID: event.EventID, isPoison: true, err: stopErr.cause}
 	}
 
 	metrics.PublishTotal.WithLabelValues(p.serviceName, topic, "error").Inc()
-	p.routeIntentToPublishFailureDLQ(ctx, event, lastErr, attemptCount, firstAttemptAt)
+	p.routeIntentToPublishFailureDLQ(ctx, event, lastErr, attemptCount, firstAttemptAt, topic)
 
 	return processorResult{eventID: event.EventID, success: false, err: lastErr}
 }
+
+// intentEventTopic is always "" — IntentOutboxEvent carries no per-event
+// topic field (routing is entirely topic-map/default-topic driven).
+const intentEventTopic = ""
 
 func (p *processor) routeIntentToPoisonDLQ(
 	ctx context.Context,
@@ -444,7 +529,8 @@ func (p *processor) routeIntentToPoisonDLQ(
 	cause error,
 	reasonCode string,
 	attempts int,
-) {
+	destinationTopic string,
+) bool {
 	msg := &model.DLQMessage{
 		IntentEvent:     event,
 		EventID:         event.EventID,
@@ -468,6 +554,8 @@ func (p *processor) routeIntentToPoisonDLQ(
 		zap.String("reason_code", reasonCode),
 		zap.Error(cause),
 	)
+
+	return p.recordDurableFailure(ctx, event.EventID, intentEventTopic, destinationTopic, event.Payload, attempts, reasonCode, cause)
 }
 
 func (p *processor) routeIntentToPublishFailureDLQ(
@@ -476,6 +564,7 @@ func (p *processor) routeIntentToPublishFailureDLQ(
 	cause error,
 	attempts int,
 	firstAttemptAt time.Time,
+	destinationTopic string,
 ) {
 	reasonCode := model.ReasonCodeKafkaMaxRetries
 	if cause != nil && isKafkaTimeout(cause) {
@@ -506,6 +595,8 @@ func (p *processor) routeIntentToPublishFailureDLQ(
 		zap.String("reason_code", reasonCode),
 		zap.Error(cause),
 	)
+
+	p.recordDurableFailure(ctx, event.EventID, intentEventTopic, destinationTopic, event.Payload, attempts, reasonCode, cause)
 }
 
 // validateIntentEvent performs the same structural validation as
@@ -532,7 +623,8 @@ func (p *processor) routeToPoisonDLQ(
 	cause error,
 	reasonCode string,
 	attempts int,
-) {
+	destinationTopic string,
+) bool {
 	msg := &model.DLQMessage{
 		Event:           event,
 		EventID:         event.EventID,
@@ -556,6 +648,8 @@ func (p *processor) routeToPoisonDLQ(
 		zap.String("reason_code", reasonCode),
 		zap.Error(cause),
 	)
+
+	return p.recordDurableFailure(ctx, event.EventID, event.Topic, destinationTopic, event.Payload, attempts, reasonCode, cause)
 }
 
 func (p *processor) routeToPublishFailureDLQ(
@@ -564,6 +658,7 @@ func (p *processor) routeToPublishFailureDLQ(
 	cause error,
 	attempts int,
 	firstAttemptAt time.Time,
+	destinationTopic string,
 ) {
 	reasonCode := model.ReasonCodeKafkaMaxRetries
 	if cause != nil && isKafkaTimeout(cause) {
@@ -594,6 +689,8 @@ func (p *processor) routeToPublishFailureDLQ(
 		zap.String("reason_code", reasonCode),
 		zap.Error(cause),
 	)
+
+	p.recordDurableFailure(ctx, event.EventID, event.Topic, destinationTopic, event.Payload, attempts, reasonCode, cause)
 }
 
 // validateEvent performs lightweight structural validation before publish.

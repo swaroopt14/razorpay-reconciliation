@@ -14,6 +14,7 @@ import (
 	"zord-relay/metrics"
 	"zord-relay/model"
 	"zord-relay/publisher"
+	"zord-relay/services"
 	"zord-relay/tracing"
 )
 
@@ -36,6 +37,7 @@ func NewWorker(
 	relayCfg config.RelayConfig,
 	pub publisher.Publisher,
 	log *zap.Logger,
+	failureRepo *services.PublishFailureRepo,
 ) *Worker {
 	workerLog := log.With(zap.String("service", svcCfg.Name))
 
@@ -48,7 +50,7 @@ func NewWorker(
 		workerLog,
 	)
 
-	proc := newProcessor(pub, svcCfg, relayCfg.InstanceID, workerLog, )
+	proc := newProcessor(pub, svcCfg, relayCfg.InstanceID, workerLog, failureRepo)
 
 	concurrency := int64(relayCfg.MaxPublishConcurrency)
 	if concurrency <= 0 {
@@ -356,6 +358,7 @@ func (w *Worker) ack(ctx context.Context, leaseID string, eventIDs []string) {
 		return
 	}
 	metrics.AckTotal.WithLabelValues(w.svcCfg.Name, "success").Inc()
+	w.checkLeaseMismatch("ack", leaseID, len(eventIDs), updated)
 	w.log.Info("acked events", zap.Int64("updated", updated), zap.String("lease_id", leaseID))
 }
 
@@ -376,7 +379,29 @@ func (w *Worker) nack(ctx context.Context, leaseID string, eventIDs []string) {
 		return
 	}
 	metrics.NackTotal.WithLabelValues(w.svcCfg.Name, "success").Inc()
+	w.checkLeaseMismatch("nack", leaseID, len(eventIDs), updated)
 	w.log.Info("nacked events", zap.Int64("updated", updated), zap.String("lease_id", leaseID))
+}
+
+// checkLeaseMismatch surfaces the case where an ack/nack call updated fewer
+// rows than requested (P1 6.1.4 — lease owner validation). The upstream
+// lease/ack/nack SQL scopes every mutation by lease_id, so a mismatch means
+// this worker's lease had already expired and been reclaimed by another
+// relay instance before the ack/nack landed. That is not itself data loss —
+// the reclaiming instance will re-lease and reprocess those events — but
+// without this check it was silently invisible: err was nil, so the caller
+// logged "success" even though some/all rows were untouched.
+func (w *Worker) checkLeaseMismatch(op, leaseID string, requested int, updated int64) {
+	if updated == int64(requested) {
+		return
+	}
+	metrics.LeaseAckNackMismatchTotal.WithLabelValues(w.svcCfg.Name, op).Inc()
+	w.log.Warn("lease ownership mismatch — fewer rows updated than requested; lease was likely reclaimed by another relay instance",
+		zap.String("op", op),
+		zap.String("lease_id", leaseID),
+		zap.Int("requested", requested),
+		zap.Int64("updated", updated),
+	)
 }
 
 func (w *Worker) Name() string {

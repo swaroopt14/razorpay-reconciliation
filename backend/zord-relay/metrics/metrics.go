@@ -97,6 +97,19 @@ var (
 		Help:      "Current number of in-flight Kafka publish goroutines.",
 	}, []string{"service"})
 
+	// LeaseAckNackMismatchTotal counts ack/nack calls where fewer rows were
+	// updated than requested (P1 6.1.4 — lease owner validation). This means
+	// the lease had already expired and been reclaimed by another relay
+	// instance before the ack/nack landed. Not itself data loss — the
+	// reclaiming instance will re-lease and reprocess those events — but a
+	// sustained non-zero rate indicates lease TTLs are too tight for the
+	// actual processing time.
+	LeaseAckNackMismatchTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "relay",
+		Name:      "lease_ack_nack_mismatch_total",
+		Help:      "Ack/nack calls where updated rows < requested rows — lease likely reclaimed by another instance.",
+	}, []string{"service", "op"}) // op: ack | nack
+
 	// ── Dispatch loop metrics ────────────────────────────────────────────────
 
 	// DispatchTotal counts dispatch lifecycle outcomes.
@@ -186,5 +199,25 @@ var (
 		Namespace: "relay",
 		Name:      "payload_hash_skipped_total",
 		Help:      "Events with empty payload_hash that were skipped (strict=false). Trend should go to 0 over time.",
+	}, []string{"service"})
+
+	// ── Durable publish-failure persistence (P0 6.1.3) ───────────────────────
+
+	// PublishFailureRecordedTotal counts exhausted publish attempts (poison or
+	// retries-exhausted) durably persisted to relay_publish_failures.
+	PublishFailureRecordedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "relay",
+		Name:      "publish_failure_recorded_total",
+		Help:      "Exhausted publish attempts durably recorded to relay_publish_failures.",
+	}, []string{"service", "failure_class"})
+
+	// PublishFailurePersistErrorTotal counts failures to durably persist a
+	// publish-failure record. When this fires for a poison event, the
+	// upstream lease is deliberately withheld (nacked instead of acked) —
+	// alert on any non-zero rate.
+	PublishFailurePersistErrorTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "relay",
+		Name:      "publish_failure_persist_error_total",
+		Help:      "Failed attempts to durably persist a publish-failure record. Alert on this (SEV1): any non-zero increase.",
 	}, []string{"service"})
 )
