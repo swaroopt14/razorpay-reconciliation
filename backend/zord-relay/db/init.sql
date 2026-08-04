@@ -79,3 +79,28 @@ CREATE TABLE IF NOT EXISTS connector_health_state (
     next_probe_at         TIMESTAMPTZ,
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- relay_payload_conflicts: audit trail for payload_hash verification failures.
+-- Every time we lease an event whose payload recomputed hash does not match
+-- the upstream-provided payload_hash, we write one row here. This is the
+-- persistence requirement of P0 6.1.2 and feeds the operational alert.
+CREATE TABLE IF NOT EXISTS relay_payload_conflicts (
+    conflict_id          BIGSERIAL   NOT NULL PRIMARY KEY,
+    service_name         TEXT        NOT NULL,
+    event_id             TEXT        NOT NULL,
+    event_type           TEXT,
+    lease_id             TEXT,
+    expected_hash        TEXT        NOT NULL,     -- upstream payload_hash
+    computed_hash        TEXT        NOT NULL,     -- our SHA-256 over raw payload bytes
+    payload_snippet      TEXT,                     -- first ~256 chars of payload for triage
+    conflict_count       INTEGER     NOT NULL DEFAULT 1,  -- counts repeated NACK attempts for same event
+    is_permanent         BOOLEAN     NOT NULL DEFAULT FALSE,  -- TRUE after MaxConflictRetries: we ACKed it out
+    detected_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    resolved_at          TIMESTAMPTZ               -- NULL until ACKed or eventually succeeds
+);
+
+CREATE INDEX IF NOT EXISTS idx_relay_payload_conflicts_event
+    ON relay_payload_conflicts (service_name, event_id);
+
+CREATE INDEX IF NOT EXISTS idx_relay_payload_conflicts_detected
+    ON relay_payload_conflicts (detected_at DESC);

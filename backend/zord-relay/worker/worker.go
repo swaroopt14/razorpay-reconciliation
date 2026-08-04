@@ -48,7 +48,7 @@ func NewWorker(
 		workerLog,
 	)
 
-	proc := newProcessor(pub, svcCfg, relayCfg.InstanceID, workerLog)
+	proc := newProcessor(pub, svcCfg, relayCfg.InstanceID, workerLog, )
 
 	concurrency := int64(relayCfg.MaxPublishConcurrency)
 	if concurrency <= 0 {
@@ -155,8 +155,8 @@ func (w *Worker) runCycle(ctx context.Context) int {
 
 	// --- Publish ---
 	var (
-		toAck   []string
-		toNack  []string
+		toAck  []string
+		toNack []string
 	)
 
 	for i := range leaseResp.Events {

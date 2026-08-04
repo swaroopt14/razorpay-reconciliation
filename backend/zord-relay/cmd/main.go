@@ -125,6 +125,23 @@ func run() error {
 	dispatchRepo := services.NewDispatchRepo(database)
 	relayOutboxRepo := services.NewRelayOutboxRepo(database)
 
+	// ── Payload hash verifier (P0 6.1.2) ─────────────────────────────────────
+	// Verifies SHA-256(payload bytes) == upstream payload_hash before publish.
+	// On mismatch: persist conflict, do not publish, do not ACK lease.
+	hashVerifierCfg := services.ConflictRepoConfig{
+		Strict:             cfg.Relay.StrictPayloadHash,
+		MaxConflictRetries: cfg.Relay.MaxConflictRetries,
+	}
+	hashVerifier := services.NewConflictRepo(database, hashVerifierCfg)
+	effectiveMaxRetries := cfg.Relay.MaxConflictRetries
+	if effectiveMaxRetries <= 0 {
+		effectiveMaxRetries = services.DefaultMaxConflictRetries
+	}
+	log.Info("payload hash verifier initialised",
+		zap.Bool("strict", cfg.Relay.StrictPayloadHash),
+		zap.Int("max_conflict_retries", effectiveMaxRetries),
+	)
+
 	// ── Dispatch Loop ────────────────────────────────────────────────────────
 	dispatchLoopCfg := &services.DispatchLoopConfig{
 		ConnectorID:                cfg.Dispatch.ConnectorID,
@@ -138,6 +155,7 @@ func run() error {
 		dispatchRepo,
 		pspClient,
 		tokenClient,
+		hashVerifier,
 		dispatchLoopCfg,
 	)
 
