@@ -861,10 +861,10 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
 
             {showSandboxSetupNotice ? (
               <JournalRecommendedBlackCard
-                eyebrow="Sandbox"
-                title="Upload intent + settlement in Batch Command Center"
+                eyebrow="Getting started"
+                title="Start with a payout file upload"
                 bodyBold
-                body="Step 1: intent file → POST /api/bulk-ingest. Step 2: settlement file (PSP + Batch-Id) → POST /api/settlement/upload. This journal then loads batches from the intent engine and intelligence — no demo rows."
+                body="Upload your payment instructions, then add the bank or payment-partner confirmation when it's ready. Once both are in, this journal shows your live batches and payment progress — nothing staged for demo."
                 onDismiss={() => {
                   dismissJournalNotice(JOURNAL_SANDBOX_SETUP_DISMISS_KEY)
                   setSandboxSetupNoticeDismissed(true)
@@ -874,14 +874,14 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
                   href={batchCommandCenterHref}
                   className="inline-flex items-center justify-center rounded-xl bg-white px-4 py-2.5 text-[14px] font-semibold text-[#0A0A0A] transition hover:bg-white/90"
                 >
-                  Open Batch Command Center
+                  Go to Create payout
                 </Link>
                 <button
                   type="button"
                   className="rounded-xl border border-white/25 bg-transparent px-4 py-2.5 text-[14px] font-medium text-white/90 transition hover:bg-white/10"
                   onClick={() => openSandboxSetupPanel()}
                 >
-                  Setup steps
+                  Setup guide
                 </button>
               </JournalRecommendedBlackCard>
             ) : null}
