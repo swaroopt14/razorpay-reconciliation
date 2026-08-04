@@ -19,7 +19,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"zord-edge/db"
@@ -202,13 +201,6 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 	// makes reprocess idempotency keys unique and prevents unbounded
 	// re-ingestion if the client hammers the endpoint.
 	forceReprocess := c.GetHeader("X-Zord-Force-Reprocess") == "true"
-	if forceReprocess && originalBatchID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    "BATCH_ID_REQUIRED",
-			"message": "Batch-ID header is required when X-Zord-Force-Reprocess is true",
-		})
-		return
-	}
 
 	logger.Log.Info("bulk file stored",
 		slog.String("filename", file.Filename),
@@ -379,7 +371,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		resultsMap := make(map[int]BulkResult)
 		jobs := make(chan BulkJob, 500)
 
-		var acceptedCount, failedCount, duplicateCount int32
+		//var acceptedCount, failedCount, duplicateCount int32
 
 		workerCount := runtime.NumCPU() * 2
 		var wg sync.WaitGroup
@@ -434,7 +426,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 					resultsMu.Lock()
 					if err != nil {
-						atomic.AddInt32(&failedCount, 1)
+						//atomic.AddInt32(&failedCount, 1)
 						if errors.Is(err, services.ErrFingerprintMismatch) {
 							resultsMap[job.Row] = BulkResult{
 								Row:    job.Row,
@@ -456,7 +448,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 							}
 						}
 					} else if duplicateID != uuid.Nil {
-						atomic.AddInt32(&duplicateCount, 1)
+						//atomic.AddInt32(&duplicateCount, 1)
 						resultsMap[job.Row] = BulkResult{
 							Row:        job.Row,
 							Status:     "DUPLICATE",
@@ -465,7 +457,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 							Error:      "duplicate idempotency key",
 						}
 					} else {
-						atomic.AddInt32(&acceptedCount, 1)
+						//atomic.AddInt32(&acceptedCount, 1)
 						resultsMap[job.Row] = BulkResult{
 							Row:        job.Row,
 							Status:     "Accepted",
@@ -493,8 +485,12 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		}
 
 		// ── Collect all non-empty rows for batch parse ──────────────────────
-		var allCSVRows []bulkSourceRow
+		// ── Stream rows directly into jobs channel ───────────────────────────────
+		// Profile-driven path streams one row at a time — no allCSVRows accumulation.
+		// Parser path still accumulates because parser.Parse requires the full slice.
+		var allCSVRows []bulkSourceRow // only used by parser path
 		fileRowNumber := 0
+
 		for {
 			row, err := reader.Read()
 			if err == io.EOF {
@@ -505,8 +501,17 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 				logger.Log.Warn("CSV parse error",
 					slog.Int("file_row", fileRowNumber),
 					slog.String("error", err.Error()))
+				resultsMu.Lock()
+				resultsMap[fileRowNumber] = BulkResult{
+					Row:    fileRowNumber,
+					Status: "FAILED",
+					Error:  "malformed CSV row",
+				}
+				resultsMu.Unlock()
 				continue
 			}
+
+			// skip empty rows
 			isEmpty := true
 			for _, col := range row {
 				if strings.TrimSpace(col) != "" {
@@ -514,25 +519,24 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 					break
 				}
 			}
-			if !isEmpty {
-				if rejection := CheckRowForFormulas(headers, row, fileRowNumber); rejection != nil {
-					resultsMu.Lock()
-					resultsMap[fileRowNumber] = *rejection
-					resultsMu.Unlock()
-					continue
-				}
-				allCSVRows = append(allCSVRows, bulkSourceRow{FileRowNumber: fileRowNumber, Values: row})
+			if isEmpty {
+				continue
 			}
-		}
 
-		var jobsToSend []BulkJob
-		if parser == nil {
-			// Profile-driven path: Bypass static parser.
-			// Construct raw row JSON payloads.
-			for _, row := range allCSVRows {
-				rowNum := row.FileRowNumber
-				sourceRowRef := strconv.Itoa(rowNum)
-				rawJSON, err := buildRowPayload(headers, row.Values, rowNum)
+			// formula check
+			if rejection := CheckRowForFormulas(headers, row, fileRowNumber); rejection != nil {
+				resultsMu.Lock()
+				resultsMap[fileRowNumber] = *rejection
+				resultsMu.Unlock()
+				continue
+			}
+
+			rowNum := fileRowNumber
+			sourceRowRef := strconv.Itoa(rowNum)
+
+			if parser == nil {
+				// Profile-driven path: stream directly, no accumulation
+				rawJSON, err := buildRowPayload(headers, row, rowNum)
 				if err != nil {
 					resultsMu.Lock()
 					resultsMap[rowNum] = BulkResult{Row: rowNum, Status: "FAILED", Error: "failed to build raw row payload"}
@@ -552,14 +556,18 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 					rowIdempotencyKey = hex.EncodeToString(sum[:])
 				}
 
-				jobsToSend = append(jobsToSend, BulkJob{Row: rowNum, Payload: rawJSON, IdempotencyKey: rowIdempotencyKey, SourceRowRef: sourceRowRef})
+				jobs <- BulkJob{Row: rowNum, Payload: rawJSON, IdempotencyKey: rowIdempotencyKey, SourceRowRef: sourceRowRef}
+			} else {
+				// Parser path: still accumulates — parser.Parse needs full slice
+				allCSVRows = append(allCSVRows, bulkSourceRow{FileRowNumber: rowNum, Values: row})
 			}
-		} else {
-			// Type-based static parser path: Parse into UniversalIntentShape.
+		}
+
+		// Parser path batch dispatch — runs after read loop completes
+		if parser != nil {
 			parseRows, rowIndexToFileRow := flattenSourceRows(allCSVRows)
 			shapes, parseErrors := parser.Parse(parseRows, headers)
 
-			// Record parse failures directly in resultsMap
 			for _, pe := range parseErrors {
 				rowNum := sourceFileRowNumber(rowIndexToFileRow, pe.RowIndex)
 				resultsMu.Lock()
@@ -571,7 +579,6 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 				resultsMu.Unlock()
 			}
 
-			// Fan out clean shapes
 			for _, shape := range shapes {
 				parserRowNum, _ := strconv.Atoi(strings.TrimPrefix(shape.SourceRowRef, "row:"))
 				rowNum := sourceFileRowNumber(rowIndexToFileRow, parserRowNum)
@@ -598,17 +605,12 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 					rowIdempotencyKey = hex.EncodeToString(sum[:])
 				}
 
-				jobsToSend = append(jobsToSend, BulkJob{Row: rowNum, Payload: jsonPayload, IdempotencyKey: rowIdempotencyKey, SourceRowRef: sourceRowRef})
+				jobs <- BulkJob{Row: rowNum, Payload: jsonPayload, IdempotencyKey: rowIdempotencyKey, SourceRowRef: sourceRowRef}
 			}
-		}
-
-		for _, job := range jobsToSend {
-			jobs <- job
 		}
 
 		close(jobs)
 		wg.Wait()
-
 		var actualResults []BulkResult
 		maxRow := 0
 		for k := range resultsMap {
@@ -691,7 +693,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		resultsMap := make(map[int]BulkResult)
 		jobs := make(chan BulkJob, 500)
 
-		var acceptedCount, failedCount, duplicateCount int32
+		//var acceptedCount, failedCount, duplicateCount int32
 
 		workerCount := runtime.NumCPU() * 2
 		var wg sync.WaitGroup
@@ -746,7 +748,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 					resultsMu.Lock()
 					if err != nil {
-						atomic.AddInt32(&failedCount, 1)
+						//atomic.AddInt32(&failedCount, 1)
 						if errors.Is(err, services.ErrFingerprintMismatch) {
 							resultsMap[job.Row] = BulkResult{
 								Row:    job.Row,
@@ -768,7 +770,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 							}
 						}
 					} else if duplicateID != uuid.Nil {
-						atomic.AddInt32(&duplicateCount, 1)
+						//atomic.AddInt32(&duplicateCount, 1)
 						resultsMap[job.Row] = BulkResult{
 							Row:        job.Row,
 							Status:     "DUPLICATE",
@@ -777,7 +779,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 							Error:      "duplicate idempotency key",
 						}
 					} else {
-						atomic.AddInt32(&acceptedCount, 1)
+						//atomic.AddInt32(&acceptedCount, 1)
 						resultsMap[job.Row] = BulkResult{
 							Row:        job.Row,
 							Status:     "Accepted",
@@ -823,18 +825,31 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 			return
 		}
 
-		// ── Collect all non-empty XLSX rows for batch parse ─────────────────
-		var allXLSXRows []bulkSourceRow
+		// ── Stream rows directly into jobs channel ───────────────────────────────
+		// Profile-driven path streams one row at a time — no allXLSXRows accumulation.
+		// Parser path still accumulates because parser.Parse requires the full slice.
+		var allXLSXRows []bulkSourceRow // only used by parser path
 		fileRowNumber := 0
+
 		for dataRows.Next() {
 			fileRowNumber++
+
 			row, err := dataRows.Columns()
 			if err != nil {
 				logger.Log.Warn("XLSX parse error",
 					slog.Int("file_row_number", fileRowNumber),
 					slog.String("error", err.Error()))
+				resultsMu.Lock()
+				resultsMap[fileRowNumber] = BulkResult{
+					Row:    fileRowNumber,
+					Status: "FAILED",
+					Error:  "malformed XLSX row",
+				}
+				resultsMu.Unlock()
 				continue
 			}
+
+			// skip empty rows
 			isEmpty := true
 			for _, col := range row {
 				if strings.TrimSpace(col) != "" {
@@ -842,25 +857,24 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 					break
 				}
 			}
-			if !isEmpty {
-				if rejection := CheckRowForFormulas(headers, row, fileRowNumber); rejection != nil {
-					resultsMu.Lock()
-					resultsMap[fileRowNumber] = *rejection
-					resultsMu.Unlock()
-					continue
-				}
-				allXLSXRows = append(allXLSXRows, bulkSourceRow{FileRowNumber: fileRowNumber, Values: row})
+			if isEmpty {
+				continue
 			}
-		}
 
-		var jobsToSend []BulkJob
-		if parser == nil {
-			// Profile-driven path: Bypass static parser.
-			// Construct raw row JSON payloads.
-			for _, row := range allXLSXRows {
-				rowNum := row.FileRowNumber
-				sourceRowRef := strconv.Itoa(rowNum)
-				rawJSON, err := buildRowPayload(headers, row.Values, rowNum)
+			// formula check
+			if rejection := CheckRowForFormulas(headers, row, fileRowNumber); rejection != nil {
+				resultsMu.Lock()
+				resultsMap[fileRowNumber] = *rejection
+				resultsMu.Unlock()
+				continue
+			}
+
+			rowNum := fileRowNumber
+			sourceRowRef := strconv.Itoa(rowNum)
+
+			if parser == nil {
+				// Profile-driven path: stream directly, no accumulation
+				rawJSON, err := buildRowPayload(headers, row, rowNum)
 				if err != nil {
 					resultsMu.Lock()
 					resultsMap[rowNum] = BulkResult{Row: rowNum, Status: "FAILED", Error: "failed to build raw row payload"}
@@ -880,14 +894,18 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 					rowIdempotencyKey = hex.EncodeToString(sum[:])
 				}
 
-				jobsToSend = append(jobsToSend, BulkJob{Row: rowNum, Payload: rawJSON, IdempotencyKey: rowIdempotencyKey, SourceRowRef: sourceRowRef})
+				jobs <- BulkJob{Row: rowNum, Payload: rawJSON, IdempotencyKey: rowIdempotencyKey, SourceRowRef: sourceRowRef}
+			} else {
+				// Parser path: still accumulates — parser.Parse needs full slice
+				allXLSXRows = append(allXLSXRows, bulkSourceRow{FileRowNumber: rowNum, Values: row})
 			}
-		} else {
-			// Type-based static parser path: Parse into UniversalIntentShape.
+		}
+
+		// Parser path batch dispatch — runs after read loop completes
+		if parser != nil {
 			parseRows, rowIndexToFileRow := flattenSourceRows(allXLSXRows)
 			shapes, parseErrors := parser.Parse(parseRows, headers)
 
-			// Record parse failures directly in resultsMap
 			for _, pe := range parseErrors {
 				rowNum := sourceFileRowNumber(rowIndexToFileRow, pe.RowIndex)
 				resultsMu.Lock()
@@ -899,7 +917,6 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 				resultsMu.Unlock()
 			}
 
-			// Fan out clean shapes
 			for _, shape := range shapes {
 				parserRowNum, _ := strconv.Atoi(strings.TrimPrefix(shape.SourceRowRef, "row:"))
 				rowNum := sourceFileRowNumber(rowIndexToFileRow, parserRowNum)
@@ -926,17 +943,12 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 					rowIdempotencyKey = hex.EncodeToString(sum[:])
 				}
 
-				jobsToSend = append(jobsToSend, BulkJob{Row: rowNum, Payload: jsonPayload, IdempotencyKey: rowIdempotencyKey, SourceRowRef: sourceRowRef})
+				jobs <- BulkJob{Row: rowNum, Payload: jsonPayload, IdempotencyKey: rowIdempotencyKey, SourceRowRef: sourceRowRef}
 			}
-		}
-
-		for _, job := range jobsToSend {
-			jobs <- job
 		}
 
 		close(jobs)
 		wg.Wait()
-
 		var actualResults []BulkResult
 		maxRow := 0
 		for k := range resultsMap {
@@ -986,7 +998,6 @@ func (cw *countingWriter) Write(p []byte) (int, error) {
 // This avoids returning a noisy array of N duplicate rows when the client
 // simply re-uploaded a file they already sent.
 func respondBulkResults(c *gin.Context, results []BulkResult, fileName, fileHash string) {
-	// empty result set means all rows were skipped/empty, not a duplicate batch
 	if len(results) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    "NO_PROCESSABLE_ROWS",
@@ -994,14 +1005,24 @@ func respondBulkResults(c *gin.Context, results []BulkResult, fileName, fileHash
 		})
 		return
 	}
-	duplicateCount := 0
+
+	var accepted, failed, duplicate, conflict, rejected int
 	for _, r := range results {
-		if r.Status == "DUPLICATE" {
-			duplicateCount++
+		switch r.Status {
+		case "Accepted":
+			accepted++
+		case "FAILED":
+			failed++
+		case "DUPLICATE":
+			duplicate++
+		case "CONFLICT":
+			conflict++
+		case "REJECTED":
+			rejected++
 		}
 	}
 
-	if duplicateCount == len(results) {
+	if duplicate == len(results) {
 		c.JSON(http.StatusConflict, gin.H{
 			"status":     "DUPLICATE_BATCH",
 			"message":    "This batch has already been processed. All rows exist in the system.",
@@ -1013,7 +1034,14 @@ func respondBulkResults(c *gin.Context, results []BulkResult, fileName, fileHash
 	}
 
 	c.JSON(http.StatusAccepted, gin.H{
-		"total":   len(results),
+		"total": len(results),
+		"summary": gin.H{
+			"accepted":  accepted,
+			"failed":    failed,
+			"duplicate": duplicate,
+			"conflict":  conflict,
+			"rejected":  rejected,
+		},
 		"results": results,
 	})
 }
