@@ -14,6 +14,7 @@ import (
 	"zord-relay/metrics"
 	"zord-relay/model"
 	"zord-relay/publisher"
+	"zord-relay/services"
 	"zord-relay/tracing"
 )
 
@@ -36,6 +37,7 @@ func NewWorker(
 	relayCfg config.RelayConfig,
 	pub publisher.Publisher,
 	log *zap.Logger,
+	failureRepo *services.PublishFailureRepo,
 ) *Worker {
 	workerLog := log.With(zap.String("service", svcCfg.Name))
 
@@ -48,7 +50,7 @@ func NewWorker(
 		workerLog,
 	)
 
-	proc := newProcessor(pub, svcCfg, relayCfg.InstanceID, workerLog, )
+	proc := newProcessor(pub, svcCfg, relayCfg.InstanceID, workerLog, failureRepo)
 
 	concurrency := int64(relayCfg.MaxPublishConcurrency)
 	if concurrency <= 0 {

@@ -104,3 +104,35 @@ CREATE INDEX IF NOT EXISTS idx_relay_payload_conflicts_event
 
 CREATE INDEX IF NOT EXISTS idx_relay_payload_conflicts_detected
     ON relay_payload_conflicts (detected_at DESC);
+
+-- relay_publish_failures: durable record of every exhausted Kafka publish
+-- attempt on the outbox-relay path (P0 6.1.3).
+--
+-- An exhausted publish attempt (poison event, or transient Kafka failure
+-- after max retries) must never be reduced to a log line. A best-effort DLQ
+-- Kafka message is not sufficient proof of durability on its own — Kafka may
+-- be the very thing that is unreachable when the failure happens. The
+-- upstream lease for the source event is only acknowledged after either the
+-- publish itself succeeded, or a row has been committed here.
+CREATE TABLE IF NOT EXISTS relay_publish_failures (
+    failure_id        BIGSERIAL   NOT NULL PRIMARY KEY,
+    source_event_id    TEXT        NOT NULL,
+    source_service     TEXT        NOT NULL,
+    topic              TEXT        NOT NULL DEFAULT '',  -- topic carried on the source event, if any
+    destination_topic  TEXT        NOT NULL,              -- Kafka topic the publish was attempted against
+    payload_hash       TEXT        NOT NULL,               -- SHA-256 over raw payload bytes
+    attempt_count      INTEGER     NOT NULL DEFAULT 1,
+    failure_class      TEXT        NOT NULL,               -- reason code, e.g. INVALID_PAYLOAD, KAFKA_MAX_RETRIES_EXCEEDED
+    last_error         TEXT        NOT NULL,
+    replay_status      TEXT        NOT NULL DEFAULT 'PENDING', -- PENDING | REPLAYED
+    detected_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    replayed_at        TIMESTAMPTZ
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_relay_publish_failures_event
+    ON relay_publish_failures (source_service, source_event_id, destination_topic);
+
+CREATE INDEX IF NOT EXISTS idx_relay_publish_failures_pending
+    ON relay_publish_failures (detected_at ASC)
+    WHERE replay_status = 'PENDING';

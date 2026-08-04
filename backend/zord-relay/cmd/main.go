@@ -125,6 +125,12 @@ func run() error {
 	dispatchRepo := services.NewDispatchRepo(database)
 	relayOutboxRepo := services.NewRelayOutboxRepo(database)
 
+	// Durable publish-failure persistence (P0 6.1.3) — used by the Kafka
+	// relay path (worker.Scheduler) so an exhausted publish attempt is never
+	// reduced to a log line, and the upstream lease is only acknowledged
+	// after success or a durable replayable failure record.
+	publishFailureRepo := services.NewPublishFailureRepo(database)
+
 	// ── Payload hash verifier (P0 6.1.2) ─────────────────────────────────────
 	// Verifies SHA-256(payload bytes) == upstream payload_hash before publish.
 	// On mismatch: persist conflict, do not publish, do not ACK lease.
@@ -216,7 +222,7 @@ func run() error {
 	)
 
 	// ── Existing Kafka Relay Scheduler (unchanged — Kafka relay path) ─────────
-	sched, err := worker.NewScheduler(cfg, kafkaPublisher, log)
+	sched, err := worker.NewScheduler(cfg, kafkaPublisher, log, publishFailureRepo)
 	if err != nil {
 		return fmt.Errorf("creating scheduler: %w", err)
 	}

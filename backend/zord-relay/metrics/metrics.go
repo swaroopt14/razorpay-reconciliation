@@ -187,4 +187,24 @@ var (
 		Name:      "payload_hash_skipped_total",
 		Help:      "Events with empty payload_hash that were skipped (strict=false). Trend should go to 0 over time.",
 	}, []string{"service"})
+
+	// ── Durable publish-failure persistence (P0 6.1.3) ───────────────────────
+
+	// PublishFailureRecordedTotal counts exhausted publish attempts (poison or
+	// retries-exhausted) durably persisted to relay_publish_failures.
+	PublishFailureRecordedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "relay",
+		Name:      "publish_failure_recorded_total",
+		Help:      "Exhausted publish attempts durably recorded to relay_publish_failures.",
+	}, []string{"service", "failure_class"})
+
+	// PublishFailurePersistErrorTotal counts failures to durably persist a
+	// publish-failure record. When this fires for a poison event, the
+	// upstream lease is deliberately withheld (nacked instead of acked) —
+	// alert on any non-zero rate.
+	PublishFailurePersistErrorTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "relay",
+		Name:      "publish_failure_persist_error_total",
+		Help:      "Failed attempts to durably persist a publish-failure record. Alert on this (SEV1): any non-zero increase.",
+	}, []string{"service"})
 )
