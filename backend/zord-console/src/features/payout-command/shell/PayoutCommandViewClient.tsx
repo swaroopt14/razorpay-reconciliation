@@ -22,22 +22,28 @@ import {
   BillingSurface,
   BorrowerVerificationSurface,
   EvidenceSurface,
-  HomeSurface,
   IntentJournalSurface,
-  SettlementJournalSurface,
   LeakageSurface,
   ProofSurface,
   PostDisbursalMonitoringSurface,
   SupportSurface,
   WorkspaceSurface,
 } from '../surfaces'
+import { SettlementJournalSurface as SettlementJournalV2Surface } from '../settlement-journal-v2/SettlementJournalSurface'
 import { ActivateLiveWizard } from '../sandbox/ActivateLiveWizard'
 import { SandboxSetupGuidePanel } from '../sandbox/SandboxSetupGuidePanel'
+import { OperationsOverviewSurface } from '../overview/OperationsOverviewSurface'
 import {
   PAYOUT_CONSOLE_CARD_CLASS,
   PAYOUT_PAGE_BG_CLASS,
 } from '../command-center/homeCommandCenterTokens'
 import { apiTrimmedString } from '@/services/payout-command/prod-api/coerceApiField'
+import {
+  getActiveDemoBatchId,
+  isDemoSession,
+  setActiveDemoBatchId,
+  withDemoBatchScope,
+} from '@/services/payout-command/demo/ycDemoConstants'
 
 export type PayoutCommandScope = {
   batchId?: string
@@ -49,10 +55,10 @@ type PayoutCommandViewClientProps = {
   /** When set, pins sandbox vs live for this route (`/sandbox` vs `/today`). */
   forceMode?: EnvMode
   /**
-   * Initial dock from the URL — must be resolved on the server (e.g. `searchParams.dock`)
-   * so the first client render matches SSR and avoids hydration errors. Do not read
-   * `window` / `location` only on the client for this value.
-   */
+    * Initial dock from the URL - must be resolved on the server (e.g. `searchParams.dock`)
+    * so the first client render matches SSR and avoids hydration errors. Do not read
+    * `window` / `location` only on the client for this value.
+    */
   initialDock?: DockId
   scope?: PayoutCommandScope
 }
@@ -86,6 +92,15 @@ export default function PayoutCommandViewClient({
   const onWorkspaceSuggestionSelect = useCallback((_label: string | null) => {}, [])
 
   const pageHeaderMeta = useMemo(() => {
+    // Surfaces that render their own title/hero - shell PageHeader would double-banner.
+    const ownsHeader =
+      activeDock === 'home' || // Spec 7.2 Overview
+      activeDock === 'grid' || // Spec 7.6 Intent Journal
+      activeDock === 'settlement' || // Settlement Journal (JournalPageHeader)
+      activeDock === 'workspace' // Ask Zord (canonical /ask also owns header)
+    if (ownsHeader) {
+      return { pageEyebrow: undefined, pageTitle: undefined, pageSubtitle: undefined }
+    }
     const label = activeSurface.label
     const title = activeSurface.title
     const same = label.trim() === title.trim()
@@ -94,7 +109,7 @@ export default function PayoutCommandViewClient({
       pageTitle: title,
       pageSubtitle: activeSurface.summary,
     }
-  }, [activeSurface])
+  }, [activeDock, activeSurface])
 
   // ── Feature hooks ──────────────────────────────────────────────────────────
   const home = useHomeState(activeDock === 'home')
@@ -118,6 +133,12 @@ export default function PayoutCommandViewClient({
       askZord.close()
     }
   }, [activeDock, askZord.close])
+
+  // Spec 7.16 canonical route is `/ask` - redirect legacy dock=workspace.
+  useEffect(() => {
+    if (activeDock !== 'workspace') return
+    router.replace(withDemoBatchScope('/ask'))
+  }, [activeDock, router])
 
   useEffect(() => {
     const dockFromUrl = resolveDockFromSearchParam(searchParams.get('dock')) ?? initialDock
@@ -143,6 +164,19 @@ export default function PayoutCommandViewClient({
       if (typeof window !== 'undefined') {
         const params = new URLSearchParams(window.location.search)
         params.set('dock', id)
+        // Keep / restore batch scope so menus stay connected to the open batch.
+        const batch =
+          apiTrimmedString(params.get('batch_id')) ||
+          apiTrimmedString(params.get('client_batch_id')) ||
+          getActiveDemoBatchId()
+        if (batch) {
+          params.set('batch_id', batch)
+          params.set('client_batch_id', batch)
+          setActiveDemoBatchId(batch)
+        }
+        // Never force demo fixtures after password login — only keep demo when already in one.
+        if (!params.get('demo') && isDemoSession()) params.set('demo', 'sandbox')
+        else if (params.get('demo') && !isDemoSession()) params.delete('demo')
         const newUrl = `${window.location.pathname}?${params.toString()}`
         router.push(newUrl)
       }
@@ -161,23 +195,7 @@ export default function PayoutCommandViewClient({
   // ── Active surface body ────────────────────────────────────────────────────
   const surfaceBody = useMemo(() => {
     if (activeDock === 'home') {
-      return (
-        <div>
-          <HomeSurface
-            batchId={sharedBatchId}
-            snapshot={home.snapshot}
-            timeframe={home.timeframe}
-            onTimeframeChange={home.setTimeframe}
-            onYearChange={home.setYear}
-            onQuarterChange={(qi) => {
-              home.setQuarterIndex(qi)
-              if (home.timeframe !== 'Quarter' && home.timeframe !== 'Custom') {
-                home.setTimeframe('Quarter')
-              }
-            }}
-          />
-        </div>
-      )
+      return <OperationsOverviewSurface />
     }
 
     if (activeDock === 'workspace') {
@@ -194,7 +212,8 @@ export default function PayoutCommandViewClient({
     if (activeDock === 'monitoring') return <PostDisbursalMonitoringSurface />
     if (activeDock === 'grid') return <IntentJournalSurface initialBatchId={scope.batchId} />
     if (activeDock === 'settlement') {
-      return <SettlementJournalSurface initialClientBatchId={scope.clientBatchId} />
+      // Spec 7.11 v2 batch-first journal (same as /settlement/journal) - not the legacy dock surface.
+      return <SettlementJournalV2Surface />
     }
     if (activeDock === 'proof')
       return (
@@ -237,38 +256,38 @@ export default function PayoutCommandViewClient({
             onDockChange={handleDockChange}
             onActivateClick={() => setActivateWizardOpen(true)}
             showSandboxStrip={forceMode === 'sandbox'}
-          />
-
-          <section
-            className={`relative ${activeDock === 'workspace' ? 'px-3 py-3 sm:px-4 sm:py-4 lg:px-5' : 'p-4 sm:p-5 lg:p-6'}`}
           >
-            <PayoutPageActionsProvider>
-              <PageHeader
-                pageEyebrow={pageHeaderMeta.pageEyebrow}
-                pageTitle={pageHeaderMeta.pageTitle}
-                pageSubtitle={pageHeaderMeta.pageSubtitle}
-                onAskZordToggle={handleAskZordToggle}
-                hideAskZordButton={activeDock === 'workspace'}
-              />
+            <section
+              className={`relative flex-1 ${activeDock === 'workspace' ? 'px-3 py-3 sm:px-4 sm:py-4 lg:px-5' : 'p-4 sm:p-5 lg:p-6'}`}
+            >
+              <PayoutPageActionsProvider>
+                <PageHeader
+                  pageEyebrow={pageHeaderMeta.pageEyebrow}
+                  pageTitle={pageHeaderMeta.pageTitle}
+                  pageSubtitle={pageHeaderMeta.pageSubtitle}
+                  onAskZordToggle={handleAskZordToggle}
+                  hideAskZordButton={activeDock === 'workspace'}
+                />
 
-              {surfaceBody}
-            </PayoutPageActionsProvider>
+                {surfaceBody}
+              </PayoutPageActionsProvider>
 
-            {activeDock !== 'workspace' ? (
-              <AskZordPanel
-                isOpen={askZord.isOpen}
-                close={askZord.close}
-                input={askZord.input}
-                setInput={askZord.setInput}
-                status={askZord.status}
-                response={askZord.response}
-                lastUserPrompt={askZord.lastUserPrompt}
-                archivedTurns={askZord.archivedTurns}
-                onSubmit={() => handleAskZordQuickPrompt(askZord.input)}
-                onQuickPrompt={handleAskZordQuickPrompt}
-              />
-            ) : null}
-          </section>
+              {activeDock !== 'workspace' ? (
+                <AskZordPanel
+                  isOpen={askZord.isOpen}
+                  close={askZord.close}
+                  input={askZord.input}
+                  setInput={askZord.setInput}
+                  status={askZord.status}
+                  response={askZord.response}
+                  lastUserPrompt={askZord.lastUserPrompt}
+                  archivedTurns={askZord.archivedTurns}
+                  onSubmit={() => handleAskZordQuickPrompt(askZord.input)}
+                  onQuickPrompt={handleAskZordQuickPrompt}
+                />
+              ) : null}
+            </section>
+          </PayoutConsoleNavStack>
         </div>
       </main>
       {activateWizardOpen ? (
