@@ -23,6 +23,8 @@ type SettlementJobStatusResponse struct {
 	MappingProfileID       string     `json:"mapping_profile_id"`
 	RunNumber              int        `json:"run_number"`
 	ForceReprocess         bool       `json:"force_reprocess"`
+	OutcomeArtifactID        string     `json:"outcome_artifact_id"`
+	OutcomeArtifactVersionID string     `json:"outcome_artifact_version_id"`
 	ActiveRunID            *string    `json:"current_active_run_id,omitempty"`
 	RunStatus              string     `json:"run_status"`
 	RowCountParsed         int        `json:"row_count_parsed"`
@@ -72,6 +74,8 @@ func (h *Handler) GetSettlementJobHandler(c *gin.Context) {
             r.row_count_canonicalized,
             r.parse_confidence_overall,
             r.failure_reason_code,
+            r.outcome_artifact_id,
+            r.outcome_artifact_version_id,
             r.started_at,
             r.completed_at,
             r.created_at,
@@ -89,6 +93,7 @@ func (h *Handler) GetSettlementJobHandler(c *gin.Context) {
 		&resp.RowCountParsed, &resp.RowCountFailed, &resp.RowCountCanonicalized,
 		&resp.ParseConfidenceOverall,
 		&resp.FailureReasonCode,
+		&resp.OutcomeArtifactID, &resp.OutcomeArtifactVersionID,
 		&resp.StartedAt, &resp.CompletedAt, &resp.CreatedAt,
 		&resp.SettlementBatchID, &resp.ClientBatchID, &resp.ActiveRunID,
 	)

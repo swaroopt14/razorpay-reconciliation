@@ -142,6 +142,8 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 				"active_run_id":       existingBatch.CurrentActiveRunID,
 				"client_batch_id":     clientBatchID,
 				"status":              existingBatch.ActiveRunStatus,
+				"outcome_artifact_id":         existingBatch.OutcomeArtifactID,
+				"outcome_artifact_version_id": existingBatch.OutcomeArtifactVersionID,
 				"already_processed":   true,
 				"message":             "file already ingested for this batch - use X-Zord-Force-Reprocess: true to reprocess",
 			})
@@ -173,7 +175,7 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 		return
 	}
 
-	ingestRunID, settlementBatchID, runNumber, err := svc.RegisterBatchAndRun(
+	ingestRunID, settlementBatchID, runNumber, outcomeArtifactID, outcomeArtifactVersionID, err := svc.RegisterBatchAndRun(
 		c.Request.Context(),
 		tenantID, psp, clientBatchID,
 		existingBatch,
@@ -195,6 +197,8 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 		"settlement_batch_id":    settlementBatchID,
 		"client_batch_id":        clientBatchID,
 		"settlement_envelope_id": envelopeID,
+		"outcome_artifact_id":         outcomeArtifactID,
+		"outcome_artifact_version_id": outcomeArtifactVersionID,
 		"status":                 "ACCEPTED",
 		"psp":                    psp,
 		"mapping_profile_id":     profile.ProfileID,
