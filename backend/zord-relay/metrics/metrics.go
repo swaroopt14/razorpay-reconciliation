@@ -97,6 +97,19 @@ var (
 		Help:      "Current number of in-flight Kafka publish goroutines.",
 	}, []string{"service"})
 
+	// LeaseAckNackMismatchTotal counts ack/nack calls where fewer rows were
+	// updated than requested (P1 6.1.4 — lease owner validation). This means
+	// the lease had already expired and been reclaimed by another relay
+	// instance before the ack/nack landed. Not itself data loss — the
+	// reclaiming instance will re-lease and reprocess those events — but a
+	// sustained non-zero rate indicates lease TTLs are too tight for the
+	// actual processing time.
+	LeaseAckNackMismatchTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "relay",
+		Name:      "lease_ack_nack_mismatch_total",
+		Help:      "Ack/nack calls where updated rows < requested rows — lease likely reclaimed by another instance.",
+	}, []string{"service", "op"}) // op: ack | nack
+
 	// ── Dispatch loop metrics ────────────────────────────────────────────────
 
 	// DispatchTotal counts dispatch lifecycle outcomes.
