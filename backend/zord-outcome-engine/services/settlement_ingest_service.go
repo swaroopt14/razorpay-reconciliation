@@ -53,12 +53,14 @@ type SettlementIngestService struct {
 // BatchLookupResult is returned when checking for an existing settlement batch.
 // It carries enough information for the handler to determine which idempotency case applies.
 type BatchLookupResult struct {
-	SettlementBatchID   string
-	ClientBatchID       string
-	CurrentActiveRunID  string
-	ActiveRunFileSHA256 string
-	ActiveRunStatus     string
-	LatestRunNumber     int
+	SettlementBatchID        string
+	ClientBatchID            string
+	CurrentActiveRunID       string
+	ActiveRunFileSHA256      string
+	ActiveRunStatus          string
+	LatestRunNumber          int
+	OutcomeArtifactID        string
+	OutcomeArtifactVersionID string
 }
 
 // FindBatchByClientID looks up a settlement batch by the client-provided batch reference.
@@ -71,6 +73,7 @@ func (s *SettlementIngestService) FindBatchByClientID(
 ) (*BatchLookupResult, error) {
 	var r BatchLookupResult
 	var activeRunID, activeFileSHA256, activeRunStatus sql.NullString
+	var outcomeArtifactID, outcomeArtifactVersionID sql.NullString
 	err := db.DB.QueryRowContext(ctx, `
         SELECT
             b.settlement_batch_id,
@@ -78,7 +81,9 @@ func (s *SettlementIngestService) FindBatchByClientID(
             b.current_active_run_id,
             b.latest_run_number,
             r.file_sha256,
-            r.run_status
+            r.run_status,
+            r.outcome_artifact_id,
+            r.outcome_artifact_version_id
         FROM settlement_batches b
         LEFT JOIN settlement_ingest_runs r
             ON r.ingest_run_id = b.current_active_run_id
@@ -89,6 +94,7 @@ func (s *SettlementIngestService) FindBatchByClientID(
 		&r.SettlementBatchID, &r.ClientBatchID,
 		&activeRunID, &r.LatestRunNumber,
 		&activeFileSHA256, &activeRunStatus,
+		&outcomeArtifactID, &outcomeArtifactVersionID,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -99,6 +105,8 @@ func (s *SettlementIngestService) FindBatchByClientID(
 	r.CurrentActiveRunID = activeRunID.String
 	r.ActiveRunFileSHA256 = activeFileSHA256.String
 	r.ActiveRunStatus = activeRunStatus.String
+	r.OutcomeArtifactID = outcomeArtifactID.String
+	r.OutcomeArtifactVersionID = outcomeArtifactVersionID.String
 	return &r, nil
 }
 
@@ -115,13 +123,17 @@ func (s *SettlementIngestService) RegisterBatchAndRun(
 	fileSHA256 string,
 	forceReprocess bool,
 	reprocessReason string,
-) (ingestRunID string, settlementBatchID string, runNumber int, err error) {
+) (ingestRunID string, settlementBatchID string, runNumber int, outcomeArtifactID string, outcomeArtifactVersionID string, err error) {
 	ingestRunID = uuid.New().String()
 	now := time.Now().UTC()
+
+	var artID, artVerID string
 
 	if existingBatch == nil {
 		settlementBatchID = uuid.New().String()
 		runNumber = 1
+		artID = uuid.New().String()
+		artVerID = uuid.New().String()
 		_, err = db.DB.ExecContext(ctx, `
             INSERT INTO settlement_batches (
                 settlement_batch_id, tenant_id, psp, client_batch_id,
@@ -133,13 +145,19 @@ func (s *SettlementIngestService) RegisterBatchAndRun(
 		)
 		if err != nil {
 			if isUniqueViolation(err) {
-				return "", "", 0, fmt.Errorf("concurrent batch creation - retry request: %w", err)
+				return "", "", 0, "", "", fmt.Errorf("concurrent batch creation - retry request: %w", err)
 			}
-			return "", "", 0, fmt.Errorf("create settlement batch failed: %w", err)
+			return "", "", 0, "", "", fmt.Errorf("create settlement batch failed: %w", err)
 		}
 	} else {
 		settlementBatchID = existingBatch.SettlementBatchID
 		runNumber = existingBatch.LatestRunNumber + 1
+		artID = existingBatch.OutcomeArtifactID
+		if existingBatch.ActiveRunFileSHA256 == fileSHA256 {
+			artVerID = existingBatch.OutcomeArtifactVersionID
+		} else {
+			artVerID = uuid.New().String()
+		}
 	}
 
 	var reprocessReasonVal interface{}
@@ -153,19 +171,19 @@ func (s *SettlementIngestService) RegisterBatchAndRun(
             settlement_envelope_id, artifact_family, source_system,
             mapping_profile_id, mapping_profile_version, parser_version,
             file_sha256, run_number, force_reprocess, reprocess_reason,
-            run_status, started_at, created_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+            run_status, outcome_artifact_id, outcome_artifact_version_id, started_at, created_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
 		ingestRunID, settlementBatchID, tenantID, psp,
 		envelopeID, profile.ArtifactFamily, profile.SourceSystem,
 		profile.ProfileID, profile.ProfileVersion, profile.ProfileVersion,
 		fileSHA256, runNumber, forceReprocess, reprocessReasonVal,
-		"PARSING", now, now,
+		"PARSING", artID, artVerID, now, now,
 	)
 	if err != nil {
-		return "", "", 0, fmt.Errorf("create ingest run failed: %w", err)
+		return "", "", 0, "", "", fmt.Errorf("create ingest run failed: %w", err)
 	}
 
-	return ingestRunID, settlementBatchID, runNumber, nil
+	return ingestRunID, settlementBatchID, runNumber, artID, artVerID, nil
 }
 
 // ActivateRun is called after a run completes successfully.
