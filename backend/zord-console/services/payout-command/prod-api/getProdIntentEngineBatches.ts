@@ -50,6 +50,8 @@ export type PaymentIntentRecord = {
   client_batch_ref?: string
   batchid?: string
   source_row_num?: number
+  rail_hint?: string
+  provider_hint?: string
   governance_state?: string
   business_state?: string
   duplicate_risk_flag?: boolean

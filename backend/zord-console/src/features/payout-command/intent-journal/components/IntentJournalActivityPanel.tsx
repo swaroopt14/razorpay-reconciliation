@@ -2,7 +2,6 @@
 
 import Link from 'next/link'
 import { Fragment, useState, type Dispatch, type SetStateAction } from 'react'
-import { EntityLogo } from '../../entity-logo'
 import { BankingInformationTokensBlock } from '../IntentDrawerSections'
 import { formatJournalMoney } from '../formatJournalMoney'
 import { downloadFailuresCsv } from '../journalExport'
@@ -12,8 +11,6 @@ import { buildLiveIntentDetailFromRowAndApi } from '@/services/payout-command/li
 import { CommandCenterCardGlow } from '../../command-center/CommandCenterCardGlow'
 import {
   COMMAND_CENTER_KPI_CARD,
-  COMMAND_CENTER_LABEL_GREEN,
-  HOME_BODY_IMPERIAL_SM,
   HOME_TITLE_BLACK,
 } from '../../command-center/homeCommandCenterTokens'
 import { intentJournalCopy } from '../copy/intentJournalCopy'
@@ -59,14 +56,6 @@ const filterSelectClass =
 const filterInputClass =
   'h-9 w-full rounded-xl border border-slate-200/90 bg-slate-50 px-3 text-[14px] text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#0B1324]/20/55 focus:bg-white focus:ring-2 focus:ring-[#0B1324]/20'
 
-function lifecycleClass(_lifecycle: string | undefined, _status: IntentStatus) {
-  return 'text-[#0B1324]'
-}
-
-function lifecycleLabel(row: JournalIntentRow) {
-  return row.lifecycleStage || intentRowCustomerStatus(row.status)
-}
-
 const TAB_ITEMS: { key: TabKey; label: string }[] = [
   { key: 'transactions', label: intentJournalCopy.tabs.instructions },
   { key: 'failures', label: intentJournalCopy.tabs.reviewItems },
@@ -74,64 +63,35 @@ const TAB_ITEMS: { key: TabKey; label: string }[] = [
 
 const ROW_SIZE_OPTIONS = [20, 50, 100, 200] as const
 
-const INTENT_TABLE_COL_COUNT = 10
+const INTENT_TABLE_COL_COUNT = 8
 
+/** Original journal columns + currency / dispatch score. Payment Mode = API rail_hint. */
 const INTENT_TABLE_HEADERS: { key: string; label: string }[] = [
-  { key: 'intentId', label: intentJournalCopy.table.headers.intentId },
-  { key: 'batchRef', label: 'Batch ref' },
-  { key: 'reference', label: intentJournalCopy.table.headers.obligationRef },
-  { key: 'recipient', label: intentJournalCopy.table.headers.recipient },
+  { key: 'zordId', label: intentJournalCopy.table.headers.zordId },
+  { key: 'paymentRef', label: intentJournalCopy.table.headers.paymentRef },
   { key: 'amount', label: intentJournalCopy.table.headers.amount },
-  { key: 'policy', label: intentJournalCopy.table.headers.policyStatus },
-  { key: 'source', label: intentJournalCopy.table.headers.sourceIntegrity },
-  { key: 'risk', label: intentJournalCopy.table.headers.riskState },
-  { key: 'contract', label: intentJournalCopy.table.headers.actionContract },
-  { key: 'lifecycle', label: intentJournalCopy.table.headers.lifecycle },
+  { key: 'currentStatus', label: intentJournalCopy.table.headers.currentStatus },
+  { key: 'plannedPaymentDate', label: intentJournalCopy.table.headers.plannedPaymentDate },
+  { key: 'paymentMode', label: intentJournalCopy.table.headers.paymentMode },
+  { key: 'currency', label: intentJournalCopy.table.headers.currency },
+  { key: 'dispatchScore', label: intentJournalCopy.table.headers.dispatchScore },
 ]
 
+function intentStatusLabel(row: JournalIntentRow): string {
+  return row.lifecycleStage || intentRowCustomerStatus(row.status) || row.status || '-'
+}
 
+function formatDispatchScore(score: number | null | undefined): string {
+  if (score == null || !Number.isFinite(score)) return '-'
+  const pct = score <= 1 ? score * 100 : score
+  return `${pct.toFixed(0)}%`
+}
 
-function HeaderIcon({ kind }: { kind: 'request' | 'reference' | 'amount' | 'payment' | 'status' | 'updated' }) {
-  const cls = 'h-3.5 w-3.5 text-[#888888]'
-  if (kind === 'request')
-    return (
-      <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M8 7V4h8v3M6 7h12l1 13H5L6 7Z" />
-      </svg>
-    )
-  if (kind === 'reference')
-    return (
-      <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M7 7h10v10H7z" />
-        <path d="M4 4h10v10" />
-      </svg>
-    )
-  if (kind === 'amount')
-    return (
-      <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M12 3v18M16 7.5c0-1.9-1.8-3.5-4-3.5s-4 1.6-4 3.5 1.8 3.5 4 3.5 4 1.6 4 3.5-1.8 3.5-4 3.5-4-1.6-4-3.5" />
-      </svg>
-    )
-  if (kind === 'payment')
-    return (
-      <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <rect x="3" y="6" width="18" height="12" rx="2" />
-        <path d="M3 10h18" />
-      </svg>
-    )
-  if (kind === 'status')
-    return (
-      <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <circle cx="12" cy="12" r="8" />
-        <path d="m9 12 2 2 4-4" />
-      </svg>
-    )
-  return (
-    <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <rect x="3" y="5" width="18" height="16" rx="2" />
-      <path d="M16 3v4M8 3v4M3 10h18" />
-    </svg>
-  )
+function failureRailLabel(row: FailureRow): string {
+  if (row.rail && row.rail !== '-') return row.rail
+  if (row.method && row.method !== '-') return row.method
+  if (row.paymentPartner && row.paymentPartner !== '-') return row.paymentPartner
+  return '-'
 }
 
 
@@ -365,13 +325,13 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
               <section className={`overflow-hidden ${COMMAND_CENTER_KPI_CARD}`}>
                 <div className="border-b border-[#E5E5E5] bg-white px-4 py-3">
                   <p className={`text-[13px] font-semibold ${HOME_TITLE_BLACK}`}>
-                    {intentTotal.toLocaleString('en-IN')} intent{intentTotal === 1 ? '' : 's'}
+                    {intentTotal.toLocaleString('en-IN')} instruction{intentTotal === 1 ? '' : 's'}
                     {tableFiltersActive && apiIntentTotal != null
                       ? ` · filtered from ${apiIntentTotal.toLocaleString('en-IN')}`
                       : ''}
                   </p>
                   <p className={`mt-0.5 text-[12px] text-[#64748B]`}>
-                    Click a row for details · policy · source · risk · Action Contract
+                    Click a row for details · status · planned date · payment mode · currency · dispatch score
                   </p>
                 </div>
                 <div className="min-w-0 overflow-x-auto">
@@ -408,14 +368,8 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                               <td className="truncate px-3 py-2.5 font-mono text-[12px] text-[#334155]" title={row.zordId ?? row.requestId}>
                                 {row.zordId ?? row.requestId}
                               </td>
-                              <td className="truncate px-3 py-2.5 font-mono text-[12px] text-[#334155]" title={row.clientBatchRef || row.batchId}>
-                                {row.clientBatchRef || row.batchId || '-'}
-                              </td>
                               <td className="truncate px-3 py-2.5 text-[13px] text-[#334155]" title={row.reference}>
                                 {row.reference}
-                              </td>
-                              <td className="truncate px-3 py-2.5 text-[13px] text-[#334155]" title={row.beneficiaryName || '-'}>
-                                {row.beneficiaryName || '-'}
                               </td>
                               <td className="px-3 py-2.5 tabular-nums whitespace-nowrap">
                                 {formatJournalMoney(
@@ -424,21 +378,19 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                                 )}
                               </td>
                               <td className="px-3 py-2.5 text-[13px] font-medium text-[#334155]">
-                                {row.policyStatus || '-'}
+                                {intentStatusLabel(row)}
                               </td>
-                              <td className="px-3 py-2.5 text-[13px] text-[#334155]">
-                                {row.sourceIntegrity || '-'}
+                              <td className="px-3 py-2.5 text-[13px] text-[#334155] whitespace-nowrap">
+                                {row.intendedExecutionAt || '-'}
                               </td>
-                              <td className="px-3 py-2.5 text-[13px] text-[#334155]" title={row.changeSignal}>
-                                {row.riskState || '-'}
+                              <td className="px-3 py-2.5 text-[13px] font-medium text-[#334155]">
+                                {row.rail && row.rail !== '-' ? row.rail : row.paymentMethodDetail || '-'}
                               </td>
-                              <td className="px-3 py-2.5 text-[13px] font-medium text-[#0B1324]">
-                                {row.actionContract || '-'}
+                              <td className="px-3 py-2.5 text-[13px] uppercase text-[#334155]">
+                                {row.currency ?? 'INR'}
                               </td>
-                              <td className="px-3 py-2.5">
-                                <span className={`text-[13px] font-medium ${lifecycleClass(row.lifecycleStage, row.status)}`}>
-                                  {lifecycleLabel(row)}
-                                </span>
+                              <td className="px-3 py-2.5 tabular-nums text-[13px] font-medium text-[#0B1324]">
+                                {formatDispatchScore(row.confidenceScore)}
                               </td>
                             </tr>
                             {expandedId === row.requestId ? (
@@ -586,66 +538,39 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
 
             {activeTab === 'failures' ? (
               <section className={`overflow-hidden ${COMMAND_CENTER_KPI_CARD}`}>
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50 px-4 py-3">
-                  <div>
-                    <p className={`text-[14px] font-medium ${HOME_TITLE_BLACK}`}>Failed intents (DLQ)</p>
-                    <p className={HOME_BODY_IMPERIAL_SM}>
-                      {tableFiltersActive && apiFailureTotal != null ? (
-                        <>
-                          <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[12px] font-semibold text-slate-700">
-                            {apiFailureTotal.toLocaleString('en-US')} total
-                          </span>{' '}
-                          ·{' '}
-                        </>
-                      ) : null}
-                      <span className="rounded-full border border-[#0B1324]/20/80 bg-[#F1F5F9] px-2 py-0.5 text-[12px] font-semibold text-[#0B1324]">
-                        {failureTotal.toLocaleString('en-US')} rows
-                      </span>{' '}
-                      match filters
-                    </p>
-                    <p className={`mt-1 max-w-3xl ${HOME_BODY_IMPERIAL_SM}`}>
-                      This table is only{' '}
-                      <span className="font-medium text-[#475569]">intent-engine DLQ</span> (dead-lettered envelopes /
-                      ingress failures). One bulk upload can create both payment intents and DLQ rows in the DB - accepted
-                      rows appear under <span className="font-medium text-[#475569]">Intents</span>; dead-lettered rows
-                      appear here.
-                    </p>
-                    {journalUsesBackendFeed && failureTotal === 0 ? (
-                      <p className={`mt-1 max-w-3xl ${HOME_BODY_IMPERIAL_SM}`}>
-                        No DLQ rows for this batch. DLQ from your upload may use a different batch id or workspace than the
-                        session scope above.
+                <div className="border-b border-[#E5E5E5] bg-white px-4 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className={`text-[13px] font-semibold ${HOME_TITLE_BLACK}`}>
+                        {failureTotal.toLocaleString('en-IN')} review item{failureTotal === 1 ? '' : 's'}
+                        {tableFiltersActive && apiFailureTotal != null
+                          ? ` · filtered from ${apiFailureTotal.toLocaleString('en-IN')}`
+                          : ''}
                       </p>
-                    ) : null}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
+                      <p className={`mt-0.5 text-[12px] text-[#64748B]`}>
+                        Click a row for manual review · status · planned date · payment mode · currency · dispatch score
+                      </p>
+                    </div>
                     <button
                       type="button"
                       disabled={filteredFailures.length === 0}
                       onClick={() => downloadFailuresCsv(filteredFailures, selectedBatchId)}
-                      className="h-8 rounded-lg border border-[#e2e8f0] bg-white px-2.5 text-[15px] font-medium text-[#475569] shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
+                      className="h-8 rounded-lg border border-[#e2e8f0] bg-white px-2.5 text-[13px] font-medium text-[#475569] shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Export
                     </button>
                   </div>
                 </div>
-                <div className="overflow-x-auto">
+                <div className="min-w-0 overflow-x-auto">
                   <table className={`w-full border-collapse text-[14px] ${HOME_TITLE_BLACK}`}>
                     <thead className="bg-[#f8fafc]">
                       <tr>
-                          {[
-                          { key: 'zordId', label: intentJournalCopy.table.headers.intentId, icon: 'reference' as const },
-                            { key: 'rownum', label: 'Row #', icon: 'reference' as const },
-                          { key: 'amount', label: 'Amount', icon: 'amount' as const },
-                          { key: 'connector', label: 'Connector', icon: 'payment' as const },
-                          { key: 'reason', label: 'Failure Reason', icon: 'status' as const },
-                          { key: 'status', label: 'Status', icon: 'status' as const },
-                          { key: 'updated', label: 'Updated', icon: 'updated' as const },
-                        ].map((h) => (
-                          <th key={h.key} className={`px-3 py-2.5 text-left ${COMMAND_CENTER_LABEL_GREEN}`}>
-                            <span className="inline-flex items-center gap-1.5">
-                              <HeaderIcon kind={h.icon} />
-                              {h.label}
-                            </span>
+                        {INTENT_TABLE_HEADERS.map((h) => (
+                          <th
+                            key={h.key}
+                            className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-[#888888] whitespace-nowrap"
+                          >
+                            {h.label}
                           </th>
                         ))}
                       </tr>
@@ -653,49 +578,48 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                     <tbody>
                       {failurePageRows.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="px-4 py-12 text-center text-[14px] text-[#64748b]">
-                            No failures match your filters for this batch.
+                          <td colSpan={INTENT_TABLE_COL_COUNT} className="px-4 py-12 text-center text-[14px] text-[#64748b]">
+                            {intentJournalCopy.table.emptyReview}
                           </td>
                         </tr>
                       ) : (
                         failurePageRows.map((row, rowIndex) => (
-                        <tr
-                          key={row.requestId}
-                          className={`border-t border-[#f3f4f6] hover:bg-[#f9fafb] ${rowIndex % 2 === 1 ? 'bg-slate-50/40' : ''}`}
-                        >
-                          <td
-                            className="truncate px-3 py-2.5 font-mono text-[12px] text-[#334155]"
-                            title={row.zordId ?? row.requestId}
+                          <tr
+                            key={row.requestId}
+                            onClick={() => setManualReviewRow(row)}
+                            className={`cursor-pointer border-t border-[#f3f4f6] hover:bg-[#f9fafb] ${rowIndex % 2 === 1 ? 'bg-slate-50/40' : ''}`}
+                            title={row.failureReason}
                           >
-                            {row.zordId ?? row.requestId}
-                          </td>
-                          <td className="px-3 py-2.5 text-[15px] text-[#475569] tabular-nums">
-                            {row.sourceRowNum ?? '-'}
-                          </td>
-                          <td className="px-3 py-2.5 tabular-nums">
-                            {Number.isFinite(row.amount)
-                              ? formatJournalMoney(row.amount, row.currency ?? 'INR')
-                              : '-'}
-                          </td>
-                          <td className="px-3 py-2.5">
-                            {row.paymentPartner && row.paymentPartner !== '-' ? (
-                              <EntityLogo name={row.paymentPartner} kind="psp" size={18} />
-                            ) : (
-                              '-'
-                            )}
-                          </td>
-                          <td className="px-3 py-2.5 text-[#0B1324]">{row.failureReason}</td>
-                          <td className="px-3 py-2.5 min-w-[9.5rem]">
-                            <button
-                              type="button"
-                              onClick={() => setManualReviewRow(row)}
-                              className="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-[#0f172a] bg-[#0f172a] px-3 text-[12px] font-medium text-white transition hover:bg-[#1e293b]"
+                            <td
+                              className="truncate px-3 py-2.5 font-mono text-[12px] text-[#334155]"
+                              title={row.zordId ?? row.requestId}
                             >
-                              Manual review
-                            </button>
-                          </td>
-                          <td className="px-3 py-2.5 text-[#64748b]">{row.lastUpdated}</td>
-                        </tr>
+                              {row.zordId ?? row.requestId}
+                            </td>
+                            <td className="truncate px-3 py-2.5 text-[13px] text-[#334155]" title={row.reference}>
+                              {row.reference}
+                            </td>
+                            <td className="px-3 py-2.5 tabular-nums whitespace-nowrap">
+                              {Number.isFinite(row.amount)
+                                ? formatJournalMoney(row.amount, row.currency ?? 'INR')
+                                : '-'}
+                            </td>
+                            <td className="px-3 py-2.5 text-[13px] font-medium text-[#334155]">
+                              {row.dlqStatusLabel || row.failureStage || '-'}
+                            </td>
+                            <td className="px-3 py-2.5 text-[13px] text-[#334155] whitespace-nowrap">
+                              {row.lastUpdated || '-'}
+                            </td>
+                            <td className="px-3 py-2.5 text-[13px] font-medium text-[#334155]">
+                              {failureRailLabel(row)}
+                            </td>
+                            <td className="px-3 py-2.5 text-[13px] uppercase text-[#334155]">
+                              {row.currency ?? 'INR'}
+                            </td>
+                            <td className="px-3 py-2.5 tabular-nums text-[13px] font-medium text-[#0B1324]">
+                              -
+                            </td>
+                          </tr>
                         ))
                       )}
                     </tbody>

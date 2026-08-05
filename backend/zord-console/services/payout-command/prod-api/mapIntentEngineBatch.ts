@@ -145,6 +145,8 @@ export type JournalFailureRow = {
   reference: string
   amount: number
   method: 'Bank Transfer' | 'LSM' | 'NACH' | '-'
+  /** Rail hint from DLQ intent context (e.g. IMPS). */
+  rail?: string
   currency?: string
   paymentPartner: string
   connectorSubtitle: string
@@ -261,7 +263,9 @@ export function mapPaymentIntentToIntentRow(
   else if (typeof conf === 'number' && conf < 0.5) match = 'Mismatch'
 
   const created = intent.created_at ? new Date(intent.created_at) : new Date()
+  const railHint = apiTrimmedString(intent.rail_hint)
   const instrument =
+    railHint ||
     String(intent.beneficiary_type ?? '').trim() ||
     String(intent.beneficiary?.instrument?.kind ?? '').trim()
   let method: JournalIntentRow['method'] = 'Bank Transfer'
@@ -331,6 +335,7 @@ export function mapDlqToFailureRow(row: ApiDlqRow, opts?: { inManualReviewQueue?
     reference: row.dlq_id,
     amount: ctx.amount,
     method: resolveDlqPaymentMethod(ctx),
+    rail: apiTrimmedString(ctx.paymentMethod) || undefined,
     currency: ctx.currency ?? 'INR',
     paymentPartner: connector,
     connectorSubtitle,
