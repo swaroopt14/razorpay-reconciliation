@@ -44,10 +44,21 @@ spec:
           labelSelector:
             matchLabels:
               app.kubernetes.io/name: zord-outcome-engine
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: zord-outcome-engine
           image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-outcome-engine:v12
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           ports:
             - containerPort: 8081
               name: http
@@ -136,3 +147,9 @@ spec:
             limits:
               cpu: 750m
               memory: 768Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
