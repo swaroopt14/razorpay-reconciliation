@@ -12,6 +12,7 @@ import (
 	"zord-relay/client"
 	"zord-relay/config"
 	"zord-relay/db"
+	"zord-relay/internal/health"
 	"zord-relay/kafka"
 	"zord-relay/logger"
 	"zord-relay/psp"
@@ -214,9 +215,12 @@ func run() error {
 		r.GET("/health", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"status": "ok"})
 		})
-		r.GET("/ready", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"status": "ready"})
+
+		// Readiness endpoint — checks DB connectivity
+		readinessHandler := health.NewReadinessHandler([]health.DependencyCheck{
+			health.DBCheck("postgres", database),
 		})
+		r.GET("/ready", readinessHandler.Ready)
 
 		metricsSrv = &http.Server{
 			Addr:         cfg.Metrics.Addr,

@@ -119,7 +119,7 @@ spec:
               value: zord-outcome-engine
           readinessProbe:
             httpGet:
-              path: /v1/health
+              path: /ready
               port: 8081
             initialDelaySeconds: 10
             periodSeconds: 10

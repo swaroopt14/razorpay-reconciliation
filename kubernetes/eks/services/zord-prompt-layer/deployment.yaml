@@ -116,7 +116,7 @@ spec:
               value: zord-prompt-layer
           readinessProbe:
             httpGet:
-              path: /health
+              path: /ready
               port: 8086
             initialDelaySeconds: 10
             periodSeconds: 10

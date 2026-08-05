@@ -206,7 +206,7 @@ func main() {
 	shadowDiffWorker := worker.NewShadowDiffWorker(batchRepo, policyRepo)
 
 	// ── Step 8: Create HTTP handlers ──────────────────────────────────────
-	healthHandler := handlers.NewHealthHandler()
+	healthHandler := handlers.NewHealthHandler(pool)
 
 	// PHASE 6: KPIHandler now receives mode so it can annotate responses
 	// and enforce Grade B guards on finality-grade endpoints.

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"zord-intent-engine/internal/auth"
+	"zord-intent-engine/internal/health"
 	"zord-intent-engine/internal/models"
 	"zord-intent-engine/internal/services"
 	"zord-intent-engine/internal/validator"
@@ -152,6 +153,12 @@ func main() {
 			http.Error(w, "failed to encode health response", http.StatusInternalServerError)
 		}
 	})
+
+	// Readiness endpoint — checks DB connectivity
+	readinessHandler := health.NewReadinessHandler([]health.DependencyCheck{
+		health.DBCheck("postgres", db.DB),
+	})
+	mux.HandleFunc("/ready", readinessHandler.ReadyHTTP)
 
 	// R-01: these routes carry tenant-scoped payment data and are reachable
 	// either through the public Kong gateway (/v1/*) or directly by

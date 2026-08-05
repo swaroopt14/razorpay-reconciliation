@@ -14,6 +14,7 @@ import (
 	"zord-edge/config"
 	"zord-edge/db"
 	"zord-edge/handler"
+	"zord-edge/internal/health"
 	"zord-edge/routes"
 	"zord-edge/services"
 	"zord-edge/storage"
@@ -127,7 +128,7 @@ func main() {
 	// Add metrics endpoint
 	server.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
-	// Add health check endpoint
+	// Add health check endpoint (liveness — is the process alive?)
 	server.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{
 			"status":  "healthy",
@@ -135,6 +136,12 @@ func main() {
 			"time":    time.Now().UTC(),
 		})
 	})
+
+	// Readiness endpoint — checks DB and S3 connectivity
+	readinessHandler := health.NewReadinessHandler([]health.DependencyCheck{
+		health.DBCheck("postgres", db.DB),
+	})
+	server.GET("/ready", readinessHandler.Ready)
 
 	outboxPullRepo := services.NewOutboxPullRepo(db.DB)
 	outboxHandler := handler.NewOutboxHandler(outboxPullRepo)

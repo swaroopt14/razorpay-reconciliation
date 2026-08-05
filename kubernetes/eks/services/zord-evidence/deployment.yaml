@@ -142,7 +142,7 @@ spec:
               readOnly: true
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /ready
               port: 8088
             initialDelaySeconds: 10
             periodSeconds: 10
