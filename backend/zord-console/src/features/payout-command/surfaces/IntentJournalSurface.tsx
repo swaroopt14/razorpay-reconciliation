@@ -28,7 +28,10 @@ import { intentJournalCopy } from '../intent-journal/copy/intentJournalCopy'
 import type { PaymentIntentRecord } from '@/services/payout-command/prod-api/getProdIntentEngineBatches'
 import type { ApiProdIntentDetailPayload } from '@/services/payout-command/prod-api/prodApiTypes'
 import { payoutBatchCommandCenterHref } from '@/services/payout-command/batchCommandCenterHref'
-import { useDemoBatchReady } from '@/services/payout-command/demo/demoBatchReadiness'
+import {
+  markDemoIntentUploaded,
+  useDemoBatchReady,
+} from '@/services/payout-command/demo/demoBatchReadiness'
 import { setActiveDemoBatchId } from '@/services/payout-command/demo/ycDemoConstants'
 import { markSandboxSetupStep, openSandboxSetupPanel } from '@/services/payout-command/sandbox-setup-guide'
 import { AwaitingUploadsEmptyState } from '../demo/AwaitingUploadsEmptyState'
@@ -326,7 +329,7 @@ function failureHaystack(row: FailureRow) {
 
 export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: string } = {}) {
   const { mode } = useEnvironment()
-  // Intent file alone unlocks this journal; settlement is not required to list API batches.
+  // Intent upload flag unlocks journal; also unlock when intent-engine already has batches.
   const { ready: demoBatchReady, readiness: demoBatchReadiness } = useDemoBatchReady(undefined, {
     requireUploads: true,
     requireSettlement: false,
@@ -367,6 +370,16 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
     selectedBatchId,
     setSelectedBatchId,
   })
+
+  // Show API data whenever intent-engine returns batches — don't block on session upload flag.
+  const journalUnlocked =
+    demoBatchReady || (liveFeedLoaded && liveBatchList.length > 0)
+
+  useEffect(() => {
+    if (!liveFeedLoaded || liveBatchList.length === 0 || demoBatchReady) return
+    const first = liveBatchList[0]?.batchId?.trim()
+    if (first) markDemoIntentUploaded(first)
+  }, [liveFeedLoaded, liveBatchList, demoBatchReady])
 
   const intentFeed = useJournalIntentRows(
     selectedBatchId,
@@ -499,26 +512,23 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
 
   const sidebarBatchList = useMemo(() => {
     if (!journalUsesBackendFeed) return []
-    if (mode !== 'sandbox') return liveBatchList
-    // Sandbox: one batch only - the unlocked upload batch (Batch 001 story).
-    if (!demoBatchReady) return []
-    const focusId = demoBatchReadiness?.batchId?.trim()
-    if (focusId) {
-      const only = liveBatchList.filter((b) => b.batchId === focusId)
-      if (only.length > 0) return only
+    if (!journalUnlocked) return []
+    // Prefer API list as-is (real Docker / live). Sandbox may focus uploaded batch when set.
+    if (mode === 'sandbox') {
+      const focusId = demoBatchReadiness?.batchId?.trim()
+      if (focusId) {
+        const only = liveBatchList.filter((b) => b.batchId === focusId)
+        if (only.length > 0) return only
+      }
     }
-    return liveBatchList.slice(0, 1)
-  }, [journalUsesBackendFeed, liveBatchList, mode, demoBatchReady, demoBatchReadiness?.batchId])
-
-  /** Sandbox demo: open the single unlocked batch once (Batch 001 story). */
-  useEffect(() => {
-    if (mode !== 'sandbox' || !demoBatchReady) return
-    const only = sidebarBatchList[0]
-    if (!only || selectedBatchId.trim()) return
-    setSelectedBatchId(only.batchId)
-    setJournalView('batch')
-    setActiveDemoBatchId(only.batchId)
-  }, [mode, demoBatchReady, sidebarBatchList, selectedBatchId])
+    return liveBatchList
+  }, [
+    journalUsesBackendFeed,
+    journalUnlocked,
+    liveBatchList,
+    mode,
+    demoBatchReadiness?.batchId,
+  ])
 
   const failureFeedLoading = failureFeed.loading
   const selectedDlqTotal: number | null = journalUsesBackendFeed
@@ -1027,6 +1037,8 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
                   page={safeSidebarPage}
                   totalPages={sidebarTotalPages}
                   onPageChange={setSidebarPage}
+                  ready={journalUnlocked}
+                  readiness={demoBatchReadiness}
                   actions={{
                     onSealEligible: () =>
                       setJournalNotice('Open a batch first, then seal eligible instructions.'),
@@ -1045,7 +1057,7 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
                   }}
                 />
               </>
-            ) : selectedBatch && !demoBatchReady ? (
+            ) : selectedBatch && !journalUnlocked ? (
               <div className="space-y-4">
                 <button
                   type="button"

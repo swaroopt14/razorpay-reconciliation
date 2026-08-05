@@ -11,8 +11,8 @@ import {
 import { useEnvironment } from '@/services/auth/EnvironmentProvider'
 import {
   markBatchDispatched,
-  useDemoBatchReady,
   useDispatchedBatchId,
+  type DemoBatchReadiness,
 } from '@/services/payout-command/demo/demoBatchReadiness'
 import { DEMO_BATCH_LABEL, withDemoBatchScope } from '@/services/payout-command/demo/ycDemoConstants'
 import { AwaitingUploadsEmptyState } from '../../demo/AwaitingUploadsEmptyState'
@@ -48,6 +48,9 @@ type IntentJournalOverviewProps = {
   page: number
   totalPages: number
   onPageChange: (updater: (p: number) => number) => void
+  /** Parent decides unlock from upload flag OR live API batches. */
+  ready: boolean
+  readiness?: DemoBatchReadiness | null
   actions?: {
     onSealEligible?: () => void
     onValidate?: () => void
@@ -69,14 +72,12 @@ export function IntentJournalOverview({
   page,
   totalPages,
   onPageChange,
+  ready,
+  readiness = null,
   actions,
 }: IntentJournalOverviewProps) {
   const router = useRouter()
   const { mode } = useEnvironment()
-  const { ready, readiness } = useDemoBatchReady(undefined, {
-    requireUploads: true,
-    requireSettlement: false,
-  })
   const dispatchedBatchId = useDispatchedBatchId()
 
   function dispatchBatch(batchId: string) {
