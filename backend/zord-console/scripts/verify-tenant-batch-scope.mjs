@@ -116,7 +116,7 @@ for (const check of checks) {
 
 const batchPages = [
   ['intent journal', 'src/features/payout-command/intent-journal/journalBatchCache.ts', 'getIntentJournalPaymentIntentsForSession'],
-  ['evidence', 'src/features/payout-command/evidence/EvidenceSurface.tsx', 'listEvidencePacksForBatch'],
+  ['proof center', 'services/payout-command/demo/proofCenterDemo.ts', 'listEvidencePacks'],
   ['settlement', 'services/payout-command/prod-api/settlementObservations.ts', 'getSettlementObservationsForClientBatch'],
 ]
 
