@@ -1,11 +1,6 @@
-import type { Metadata } from 'next'
-import { ApiKeysClient } from './_components/ApiKeysClient'
+import { redirect } from 'next/navigation'
 
-export const metadata: Metadata = {
-  title: 'API keys | Zord',
-  description: 'Manage your sandbox and live publishable + secret keys.',
-}
-
+/** Credentials live on Spec 7.17 Developer - not Settings. */
 export default function ApiKeysPage() {
-  return <ApiKeysClient />
+  redirect('/developer?demo=sandbox&tab=keys')
 }

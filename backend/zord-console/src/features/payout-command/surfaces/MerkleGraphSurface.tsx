@@ -2,7 +2,16 @@
 
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { forwardRef, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject,
+  type ReactNode,
+} from 'react'
 import { LiveDataHint } from '../shared'
 import { Glyph } from '../shared'
 import { useSessionTenant } from '@/services/auth/useSessionTenantId'
@@ -58,19 +67,27 @@ export type {
 } from './evidenceGraphTypes'
 
 /**
- * MerkleGraphSurface — Evidence Pack Graph.
- *
- * Visual proof of how an evidence pack is constructed and verified.
- * Layout: Leaves (left) → Intermediate hashes (middle) → Merkle Root (right).
- * Pill nodes on a grid canvas with curved Bezier connectors.
- *
- *   Valid    → green  (#000000)
- *   Missing  → amber  (#F59E0B)
- *   Invalid  → red    (#EF4444)
- *   Derived  → grey   (#888888)
- *
- * Color is meaningful here (verification state). Page chrome stays minimal.
- */
+  * MerkleGraphSurface - Evidence Pack Graph.
+  *
+  * Visual proof of how an evidence pack is constructed and verified.
+  * Layout: Leaves (left) → Intermediate hashes (middle) → Merkle Root (right).
+  * Pill nodes on a grid canvas with curved Bezier connectors.
+  *
+  *  Valid  → green (#15803D) - status accent only
+  *  Missing → amber (#F59E0B)
+  *  Invalid → red  (#EF4444)
+  *  Derived → slate (#64748B)
+  */
+
+const GRAPH = {
+  valid: '#15803D',
+  missing: '#F59E0B',
+  invalid: '#EF4444',
+  derived: '#64748B',
+  root: '#111111',
+  canvas: '#f7f7f7',
+  grid: 'rgba(15, 23, 42, 0.05)',
+} as const
 
 // ─── Empty shell (no sample packs in live payout-command flow) ───────────────
 
@@ -78,20 +95,20 @@ const SHARED_SCHEMAS = { intent: 'v1', outcome: 'v1', contract: 'v1', attachment
 
 /** Safe graph shell when live pack is not loaded (hooks must not see null). */
 const EMPTY_LIVE_PACK: EvidencePackGraph = {
-  packId: '—',
-  intentId: '—',
-  contractId: '—',
-  batchId: '—',
-  tenantId: '—',
+  packId: '-',
+  intentId: '-',
+  contractId: '-',
+  batchId: '-',
+  tenantId: '-',
   mode: 'INTELLIGENCE_ATTACH',
-  rulesetVersion: '—',
+  rulesetVersion: '-',
   schemaVersions: SHARED_SCHEMAS,
   createdAt: new Date(0).toISOString(),
   defensibilityScore: 0,
   proofScore: 0,
   leaves: [],
   intermediates: [],
-  root: { id: 'root', hashFull: '', hashShort: '—', status: 'partial', tamper: 'no-changes' },
+  root: { id: 'root', hashFull: '', hashShort: '-', status: 'partial', tamper: 'no-changes' },
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -107,11 +124,11 @@ export type MerkleGraphSurfaceProps = {
   initialPackId?: string
   /** Fallback graph shell when pack APIs return nothing (no sample data). */
   pack?: EvidencePackGraph
-  /** Embedded in pack detail Graph tab or Evidence dock — hides page chrome. */
+  /** Embedded in pack detail Graph tab or Evidence dock - hides page chrome. */
   embedMode?: boolean
   /** Parent-owned batch id (Evidence dock batch picker). */
   controlledBatchId?: string
-  /** Parent-owned pack id — updates when Evidence intent filter changes. */
+  /** Parent-owned pack id - updates when Evidence intent filter changes. */
   controlledPackId?: string
   /** `table`: only packs already loaded; `journal`: full intent roster from intent-engine. */
   intentOptionsSource?: 'table' | 'journal'
@@ -119,6 +136,11 @@ export type MerkleGraphSurfaceProps = {
   hideScopePickers?: boolean
   /** Called when the active evidence pack changes (intent · pack picker). */
   onActivePackIdChange?: (packId: string) => void
+  /**
+    * Use the parent-supplied `pack` only - skip live list/fan-out fetches.
+    * Required for Proof Center demo embeds so batch API races do not flicker the canvas.
+    */
+  preferProvidedPack?: boolean
 }
 
 export function MerkleGraphSurface({
@@ -130,14 +152,15 @@ export function MerkleGraphSurface({
   intentOptionsSource = 'journal',
   hideScopePickers = false,
   onActivePackIdChange,
+  preferProvidedPack = false,
 }: MerkleGraphSurfaceProps = {}) {
   const searchParams = useSearchParams()
   const urlBatchId = searchParams.get('batch_id')?.trim() ?? ''
   const { tenantId, tenantReady } = useSessionTenant()
-  const useLive = tenantReady
+  const useLive = tenantReady && !preferProvidedPack
 
   // Pack id pinned by a deep-link (Evidence Packs table → ?tab=graph). When set,
-  // batch-level fetches must never clobber this value — the intent pack we landed
+  // batch-level fetches must never clobber this value - the intent pack we landed
   // on may not appear in `liveBatchPacks` until the per-intent fan-out completes,
   // or may be beyond MAX_INTENT_PACK_QUERIES entirely.
   const pinnedPackId = useMemo(
@@ -155,7 +178,7 @@ export function MerkleGraphSurface({
   const [liveListError, setLiveListError] = useState<string | null>(null)
   const [manualRefreshing, setManualRefreshing] = useState(false)
   const [exporting, setExporting] = useState<'pdf' | 'json' | null>(null)
-  // Every payment intent in the active batch — drives the Intent · pack picker.
+  // Every payment intent in the active batch - drives the Intent · pack picker.
   // Sourced from intent-engine so we don't depend on the per-intent evidence
   // fan-out (which is capped) and the dropdown always lists the whole batch.
   const [batchIntents, setBatchIntents] = useState<IntentJournalPaymentIntentItem[]>([])
@@ -385,10 +408,15 @@ export function MerkleGraphSurface({
     }
   }, [useLive, initialPackId, controlledPackId, loadGraphForPackId])
 
+  // Track pin attempts without putting `liveGraphs` in deps (that re-fired on every
+  // batch fan-out update and toggled loading → canvas flicker).
+  const pinAttemptedRef = useRef('')
   useEffect(() => {
     const pid = apiTrimmedString(controlledPackId) || apiTrimmedString(initialPackId)
-    if (!useLive || !tenantReady || !pid || liveGraphs[pid]) return
+    if (!useLive || !tenantReady || !pid) return
+    if (pinAttemptedRef.current === pid) return
     if (!resolveActiveBatchId()) return
+    pinAttemptedRef.current = pid
     let cancelled = false
     setPinnedGraphLoading(true)
     void loadGraphForPackId(pid).then((g) => {
@@ -408,7 +436,6 @@ export function MerkleGraphSurface({
     tenantReady,
     controlledPackId,
     initialPackId,
-    liveGraphs,
     loadGraphForPackId,
     resolveActiveBatchId,
   ])
@@ -416,8 +443,8 @@ export function MerkleGraphSurface({
   const liveBatchPacks = useMemo(() => {
     const graphs: EvidencePackGraph[] = []
     const seen = new Set<string>()
-    // Always surface the URL-pinned pack first when its graph is loaded — even
-    // if it isn't in the current batch's pack summaries — so the Intent picker
+    // Always surface the URL-pinned pack first when its graph is loaded - even
+    // if it isn't in the current batch's pack summaries - so the Intent picker
     // can reach it and `livePack` resolves it cleanly.
     if (pinnedPackId) {
       const g = liveGraphs[pinnedPackId]
@@ -448,7 +475,7 @@ export function MerkleGraphSurface({
     }
     for (const g of Object.values(liveGraphs)) {
       const iid = apiTrimmedString(g.intentId)
-      if (iid && iid !== '—' && !m.has(iid)) m.set(iid, g.packId)
+      if (iid && iid !== '-' && !m.has(iid)) m.set(iid, g.packId)
     }
     return m
   }, [packSummaries, liveGraphs])
@@ -508,8 +535,8 @@ export function MerkleGraphSurface({
       if (seenPacks.has(g.packId)) continue
       seenPacks.add(g.packId)
       const iid = apiTrimmedString(g.intentId)
-      const ref = iid && iid !== '—' ? iid : ''
-      if (iid && iid !== '—') {
+      const ref = iid && iid !== '-' ? iid : ''
+      if (iid && iid !== '-') {
         opts.push({ value: g.packId, label: labelForIntent(iid, ref, g.packId), intentId: iid })
       } else {
         const head = g.packId.length > 22 ? `${g.packId.slice(0, 22)}…` : g.packId
@@ -572,10 +599,24 @@ export function MerkleGraphSurface({
     liveBatchPacks[0] ??
     null
 
-  const livePackMissing = tenantReady && livePack === null && !pinnedGraphLoading
-  const pack = livePack ?? EMPTY_LIVE_PACK
+  /** Parent-supplied graph (e.g. Proof Center demo) when live pack is unavailable. */
+  const hasProvidedPack =
+    initialPack.packId !== EMPTY_LIVE_PACK.packId && initialPack.leaves.length > 0
+  const pack =
+    preferProvidedPack && hasProvidedPack
+      ? initialPack
+      : livePack ?? (hasProvidedPack ? initialPack : EMPTY_LIVE_PACK)
+  const livePackMissing =
+    tenantReady &&
+    !preferProvidedPack &&
+    livePack === null &&
+    !pinnedGraphLoading &&
+    !hasProvidedPack
   const batchPacks = liveBatchPacks
-  const showGraph = tenantReady && !livePackMissing && !pinnedGraphLoading
+  /** Provided demo/parent graphs render immediately - don't wait on live pack fetch. */
+  const showGraph =
+    pack.packId !== EMPTY_LIVE_PACK.packId &&
+    (preferProvidedPack || hasProvidedPack || !pinnedGraphLoading)
 
   const handleManualRefresh = useCallback(async () => {
     if (!useLive) return
@@ -679,7 +720,7 @@ export function MerkleGraphSurface({
     }
   }, [useLive, batchPacks, activePackId, pinnedPackId])
 
-  const [zoom, setZoom] = useState(100)
+  const [zoom, setZoom] = useState(embedMode ? 120 : 100)
   const [collapsed, setCollapsed] = useState(false)
   const [highlightMissing, setHighlightMissing] = useState(false)
   const [search, setSearch] = useState('')
@@ -751,7 +792,8 @@ export function MerkleGraphSurface({
   }
   const displayStatus = batchAggregate.status
   const displayStatusLabel = displayStatus === 'verified' ? 'Verified' : displayStatus === 'partial' ? 'Partial' : 'Invalid'
-  const displayStatusDot = displayStatus === 'verified' ? 'bg-[#000000]' : displayStatus === 'partial' ? 'bg-[#F59E0B]' : 'bg-[#EF4444]'
+  const displayStatusDot =
+    displayStatus === 'verified' ? 'bg-[#15803D]' : displayStatus === 'partial' ? 'bg-[#F59E0B]' : 'bg-[#EF4444]'
 
   const handleCopy = useCallback((key: string, value: string) => {
     if (typeof navigator === 'undefined' || !navigator.clipboard) return
@@ -799,44 +841,44 @@ export function MerkleGraphSurface({
         <div className="flex items-center gap-3">
           <Link
             href="/payout-command-view/today?dock=proof"
-            className="inline-flex items-center gap-1 rounded-full border border-[#E5E5E5] bg-white px-2.5 py-1 text-[15px] font-medium text-[#475569] transition hover:bg-[#fafafa]"
+            className="inline-flex items-center gap-1 rounded-full border border-[#E5E5E5] bg-white px-2.5 py-1 text-[15px] font-medium text-[#222222] transition hover:bg-[#fafafa]"
           >
             ← Evidence
           </Link>
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-[#E5E5E5] bg-[#fafafa] px-2.5 py-0.5 text-[14px] font-semibold uppercase tracking-[0.12em] text-[#6f716d]">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-[#E5E5E5] bg-[#fafafa] px-2.5 py-0.5 text-[14px] font-semibold uppercase tracking-[0.12em] text-[#111111]">
             <Glyph name="shield" className="h-2.5 w-2.5" />
             Proof lineage
           </span>
         </div>
         <h1 className="mt-2 text-[28px] font-semibold tracking-[-0.02em] text-[#111111]">{evidenceCopy.graph.title}</h1>
-        <p className="mt-1 max-w-2xl text-[17px] leading-relaxed text-[#6f716d]">{evidenceCopy.graph.subtitle}</p>
+        <p className="mt-1 max-w-2xl text-[17px] leading-relaxed text-[#333333]">{evidenceCopy.graph.subtitle}</p>
       </header>
       ) : null}
 
       {liveListError ? (
-        <div className="rounded-[12px] border border-amber-200 bg-amber-50 px-4 py-3 text-[15px] text-amber-950">
+        <div className="rounded-[12px] border border-[#0B1324]/20 bg-[#F1F5F9] px-4 py-3 text-[15px] text-[#0B1324]">
           {liveListError}
         </div>
       ) : null}
 
-      {!tenantReady && useLive ? (
-        <section className="rounded-[16px] border border-slate-200 bg-white p-6 text-[15px] text-slate-600">
+      {!tenantReady && useLive && !hasProvidedPack ? (
+        <section className="rounded-[16px] border border-slate-200 bg-white p-6 text-[15px] text-[#222222]">
           Sign in to load evidence packs from your workspace. Demo graph data is not shown in live mode.
         </section>
       ) : null}
 
       {tenantReady && pinnedGraphLoading && embedMode ? (
-        <p className="py-8 text-center text-[14px] text-slate-500">{evidenceCopy.graph.loadingGraph}</p>
+        <p className="py-8 text-center text-[14px] text-[#333333]">{evidenceCopy.graph.loadingGraph}</p>
       ) : null}
 
       {tenantReady && livePackMissing && embedMode && !pinnedGraphLoading ? (
-        <p className="py-8 text-center text-[14px] text-slate-500">{evidenceCopy.graph.packNotFound}</p>
+        <p className="py-8 text-center text-[14px] text-[#333333]">{evidenceCopy.graph.packNotFound}</p>
       ) : null}
 
       {tenantReady && livePackMissing && !embedMode ? (
         <section className="rounded-[16px] border border-slate-200 bg-white p-6">
           <LiveDataHint isLive={false} source="evidence" />
-          <p className="mt-3 text-[15px] text-slate-600">
+          <p className="mt-3 text-[15px] text-[#222222]">
             {initialPackId?.trim() ? evidenceCopy.graph.packNotFound : evidenceCopy.graph.batchEmpty}
           </p>
         </section>
@@ -844,21 +886,71 @@ export function MerkleGraphSurface({
 
       {showGraph ? (
       <>
-      <section className={`flex flex-wrap items-center gap-x-6 gap-y-3 rounded-[16px] border border-[#E5E5E5] bg-white px-5 py-3 ${embedMode ? 'text-[14px]' : ''}`}>
-        {!hideScopePickers ? (
-        <div>
-            <p className="text-[14px] font-semibold uppercase tracking-[0.12em] text-[#94a3b8]">Batch</p>
-            <select
-              value={activeBatchId}
-              onChange={(e) => {
-                setActiveBatchId(e.target.value)
-                setSelected(null)
-              }}
-              disabled={Boolean(apiTrimmedString(controlledBatchId))}
-              className="mt-0.5 cursor-pointer rounded-[6px] border border-[#E5E5E5] bg-white px-1.5 py-0.5 font-mono text-[17px] font-semibold text-[#111111] outline-none transition hover:bg-[#fafafa]"
+      <section className={`overflow-hidden rounded-2xl border border-[#E5E5E5] bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] ${embedMode ? 'text-[13px]' : ''}`}>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E5E5E5] bg-[#fafafa] px-4 py-3">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#666666]">Proof lineage</p>
+            <p className="mt-0.5 truncate font-mono text-[13px] font-semibold text-[#111111]">{pack.packId}</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span
+              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] font-semibold ${
+                displayStatus === 'verified'
+                  ? 'border-[#bbf7d0] bg-[#f0fdf4] text-[#14532d]'
+                  : displayStatus === 'partial'
+                    ? 'border-[#fde68a] bg-[#fffbeb] text-[#92400e]'
+                    : 'border-[#fecaca] bg-[#fef2f2] text-[#991b1b]'
+              }`}
             >
-              {intelBatchOptions.length > 0 ? (
-                intelBatchOptions.map((b) => (
+              <span className={`h-1.5 w-1.5 rounded-full ${displayStatusDot}`} aria-hidden />
+              {displayStatusLabel}
+            </span>
+            <div className="inline-flex items-center gap-1 rounded-full border border-[#E5E5E5] bg-white p-0.5">
+              <SummaryChip
+                dot="bg-[#15803D]"
+                label="Valid"
+                count={displayCounts.valid}
+                tone="border-transparent bg-transparent text-[#111111]"
+              />
+              {displayCounts.missing > 0 ? (
+                <SummaryChip
+                  dot="bg-[#F59E0B]"
+                  label="Missing"
+                  count={displayCounts.missing}
+                  tone="border-transparent bg-transparent text-[#111111]"
+                />
+              ) : null}
+              {displayCounts.invalid > 0 ? (
+                <SummaryChip
+                  dot="bg-[#EF4444]"
+                  label="Invalid"
+                  count={displayCounts.invalid}
+                  tone="border-transparent bg-transparent text-[#111111]"
+                />
+              ) : null}
+            </div>
+          </div>
+        </div>
+
+        <div
+          className={`grid gap-3 p-4 sm:grid-cols-2 ${
+            hideScopePickers ? 'xl:grid-cols-4' : 'xl:grid-cols-6'
+          }`}
+        >
+          {!hideScopePickers ? (
+            <div className="rounded-xl border border-[#E5E5E5] bg-[#fafafa] px-3 py-2.5 sm:col-span-2 xl:col-span-2">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#666666]">Batch</p>
+              <select
+                value={activeBatchId}
+                onChange={(e) => {
+                  setActiveBatchId(e.target.value)
+                  setSelected(null)
+                }}
+                disabled={Boolean(apiTrimmedString(controlledBatchId))}
+                className="mt-1 w-full cursor-pointer rounded-md border border-[#E5E5E5] bg-white px-2 py-1 font-mono text-[12px] font-semibold text-[#111111] outline-none transition hover:bg-[#fafafa]"
+              >
+                {intelBatchOptions.length > 0 ? (
+                  intelBatchOptions.map((b) => (
                     <option key={b.batch_id} value={b.batch_id}>
                       {b.batch_id}
                       {intelBatches.some((x) => apiTrimmedString(x.batch_id) === apiTrimmedString(b.batch_id))
@@ -866,113 +958,106 @@ export function MerkleGraphSurface({
                         : ' (evidence)'}
                     </option>
                   ))
-              ) : (
-                <option value="" disabled>
-                  No batches available
-                </option>
-              )}
-            </select>
-          </div>
-        ) : apiTrimmedString(controlledBatchId) ? (
-          <div>
-            <p className="text-[14px] font-semibold uppercase tracking-[0.12em] text-[#94a3b8]">Batch</p>
-            <p className="mt-0.5 font-mono text-[17px] font-semibold text-[#111111]">{activeBatchId || '—'}</p>
-          </div>
-        ) : null}
-          {!hideScopePickers ? (
-          <div>
-            <p className="text-[14px] font-semibold uppercase tracking-[0.12em] text-[#94a3b8]">Intent · pack</p>
-            {tenantReady ? (
-              <select
-                value={packSelectValue}
-                onChange={(e) => {
-                  setSelected(null)
-                  void handlePackPickerChange(e.target.value)
-                }}
-                disabled={packOptions.length === 0}
-                className="mt-0.5 min-w-[12rem] max-w-[24rem] cursor-pointer rounded-[6px] border border-[#E5E5E5] bg-white px-1.5 py-0.5 font-mono text-[15px] font-semibold text-[#111111] outline-none transition hover:bg-[#fafafa] disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {packOptions.length === 0 ? (
-                  <option value="" disabled>
-                    No intents in this batch
-                  </option>
                 ) : (
-                  <>
-                    {!packOptions.some((o) => o.value === packSelectValue) ? (
-                      <option value="" disabled>
-                        Select intent…
-                      </option>
-                    ) : null}
-                    {packOptions.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </>
+                  <option value="" disabled>
+                    No batches available
+                  </option>
                 )}
               </select>
-            ) : (
-              <p className="mt-0.5 font-mono text-[15px] font-semibold text-[#94a3b8]">—</p>
-            )}
-            <p className="mt-1 max-w-[20rem] text-[12px] leading-snug text-[#94a3b8]">
-              {resolvingIntentId
-                ? 'Loading evidence pack for the selected intent…'
-                : 'Graph below is for this intent; metrics in the bar stay batch-aggregated.'}
-            </p>
-          </div>
+            </div>
+          ) : apiTrimmedString(controlledBatchId) ? (
+            <MetricTile label="Batch" value={activeBatchId || '-'} mono />
           ) : null}
-          <ContextField label="Contract" value={pack.contractId} mono />
-          <ContextField label="Mode" value={pack.mode} />
-        <div>
-          <p className="text-[14px] font-semibold uppercase tracking-[0.12em] text-[#94a3b8]">Proof score</p>
-          <div className="mt-0.5 flex items-baseline gap-1">
-            <span className="text-[24px] font-semibold leading-none tabular-nums text-[#111111]">
-              {displayDefensibility ?? '—'}
-            </span>
-            <span className="text-[15px] text-[#94a3b8]">/ 100</span>
+
+          {!hideScopePickers ? (
+            <div className="rounded-xl border border-[#E5E5E5] bg-[#fafafa] px-3 py-2.5 sm:col-span-2 xl:col-span-2">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#666666]">Intent · pack</p>
+              {tenantReady ? (
+                <select
+                  value={packSelectValue}
+                  onChange={(e) => {
+                    setSelected(null)
+                    void handlePackPickerChange(e.target.value)
+                  }}
+                  disabled={packOptions.length === 0}
+                  className="mt-1 w-full cursor-pointer rounded-md border border-[#E5E5E5] bg-white px-2 py-1 font-mono text-[12px] font-semibold text-[#111111] outline-none transition hover:bg-[#fafafa] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {packOptions.length === 0 ? (
+                    <option value="" disabled>
+                      No intents in this batch
+                    </option>
+                  ) : (
+                    <>
+                      {!packOptions.some((o) => o.value === packSelectValue) ? (
+                        <option value="" disabled>
+                          Select intent…
+                        </option>
+                      ) : null}
+                      {packOptions.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </>
+                  )}
+                </select>
+              ) : (
+                <p className="mt-1 font-mono text-[12px] font-semibold text-[#444444]">-</p>
+              )}
+              <p className="mt-1 text-[11px] leading-snug text-[#666666]">
+                {resolvingIntentId
+                  ? 'Loading evidence pack for the selected intent…'
+                  : 'Graph below is for this intent; metrics stay batch-aggregated.'}
+              </p>
+            </div>
+          ) : null}
+
+          <MetricTile label="Contract" value={pack.contractId || '-'} mono />
+          <MetricTile label="Mode" value={pack.mode.replace(/_/g, ' ')} />
+
+          <div className="rounded-xl border border-[#E5E5E5] bg-[#111111] px-3 py-2.5 text-white sm:col-span-2 xl:col-span-1">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/55">Proof score</p>
+            <div className="mt-1 flex items-baseline gap-1">
+              <span className="text-[28px] font-semibold leading-none tabular-nums">
+                {displayDefensibility ?? '-'}
+              </span>
+              <span className="text-[12px] text-white/50">/ 100</span>
+            </div>
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/15">
+              <div
+                className="h-full rounded-full bg-white transition-all"
+                style={{ width: `${Math.max(0, Math.min(100, displayDefensibility ?? 0))}%` }}
+              />
+            </div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <p className="text-[14px] font-semibold uppercase tracking-[0.12em] text-[#94a3b8]">Status</p>
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-[#E5E5E5] bg-[#fafafa] px-2 py-0.5 text-[15px] font-semibold text-[#111111]">
-            <span className={`h-1.5 w-1.5 rounded-full ${displayStatusDot}`} aria-hidden />
-            {displayStatusLabel}
-          </span>
-        </div>
 
-        {/* Status summary chips */}
-        <div className="flex items-center gap-1.5">
-          <SummaryChip dot="bg-[#000000]" label="Valid" count={displayCounts.valid} />
-          {displayCounts.missing > 0 ? <SummaryChip dot="bg-[#F59E0B]" label="Missing" count={displayCounts.missing} /> : null}
-          {displayCounts.invalid > 0 ? <SummaryChip dot="bg-[#EF4444]" label="Invalid" count={displayCounts.invalid} /> : null}
-        </div>
-
-        <div className="ml-auto flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-[#E5E5E5] bg-[#fafafa] px-4 py-2.5">
           <button
             type="button"
             onClick={() => void handleManualRefresh()}
             disabled={!useLive || manualRefreshing}
             title="Refresh evidence graph"
-            className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#E5E5E5] bg-white px-2.5 py-1.5 text-[15px] font-medium text-[#111111] transition hover:bg-[#fafafa] disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[#E5E5E5] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#111111] transition hover:bg-[#f4f4f5] disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Glyph name="refresh" className={`h-3.5 w-3.5 ${manualRefreshing ? 'animate-spin' : ''}`} />
-            {manualRefreshing ? 'Refreshing...' : 'Refresh'}
+            {manualRefreshing ? 'Refreshing…' : 'Refresh'}
           </button>
           <button
             type="button"
             onClick={() => void handleExport('pdf')}
             disabled={Boolean(exporting) || !showGraph}
-            className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#E5E5E5] bg-white px-2.5 py-1.5 text-[15px] font-medium text-[#111111] transition hover:bg-[#fafafa] disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[#E5E5E5] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#111111] transition hover:bg-[#f4f4f5] disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {exporting === 'pdf' ? 'Exporting...' : 'Export PDF'}
+            {exporting === 'pdf' ? 'Exporting…' : 'Export PDF'}
           </button>
           <button
             type="button"
             onClick={() => void handleExport('json')}
             disabled={Boolean(exporting) || !showGraph}
-            className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#E5E5E5] bg-white px-2.5 py-1.5 text-[15px] font-medium text-[#111111] transition hover:bg-[#fafafa] disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-[#111111] px-3 py-1.5 text-[12px] font-semibold text-white transition hover:bg-[#222222] disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {exporting === 'json' ? 'Exporting...' : 'Export JSON'}
+            {exporting === 'json' ? 'Exporting…' : 'Export JSON'}
           </button>
         </div>
       </section>
@@ -984,16 +1069,16 @@ export function MerkleGraphSurface({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search node…"
-            className="h-8 w-[14rem] rounded-[8px] border border-[#E5E5E5] bg-white pl-7 pr-2 text-[16px] outline-none transition placeholder:text-[#94a3b8] focus:border-[#111111]/40"
+            className="h-8 w-[14rem] rounded-[8px] border border-[#E5E5E5] bg-white pl-7 pr-2 text-[16px] text-[#111111] outline-none transition placeholder:text-[#666666] focus:border-[#111111]/40"
           />
-          <Glyph name="search" className="pointer-events-none absolute left-2 top-2 h-4 w-4 text-[#94a3b8]" />
+          <Glyph name="search" className="pointer-events-none absolute left-2 top-2 h-4 w-4 text-[#444444]" />
         </div>
 
         <div className="flex items-center gap-1 rounded-[8px] border border-[#E5E5E5] bg-white px-1 py-0.5">
-          <button type="button" onClick={() => setZoom((z) => Math.max(60, z - 10))} className="h-6 w-6 rounded-md text-[16px] font-semibold text-[#475569] hover:bg-[#fafafa]" aria-label="Zoom out">−</button>
-          <span className="w-12 text-center text-[15px] tabular-nums text-[#475569]">{zoom}%</span>
-          <button type="button" onClick={() => setZoom((z) => Math.min(160, z + 10))} className="h-6 w-6 rounded-md text-[16px] font-semibold text-[#475569] hover:bg-[#fafafa]" aria-label="Zoom in">+</button>
-          <button type="button" onClick={() => setZoom(100)} className="h-6 rounded-md px-1.5 text-[15px] font-medium text-[#475569] hover:bg-[#fafafa]">Reset</button>
+          <button type="button" onClick={() => setZoom((z) => Math.max(60, z - 10))} className="h-6 w-6 rounded-md text-[16px] font-semibold text-[#222222] hover:bg-[#fafafa]" aria-label="Zoom out">−</button>
+          <span className="w-12 text-center text-[15px] tabular-nums text-[#222222]">{zoom}%</span>
+          <button type="button" onClick={() => setZoom((z) => Math.min(160, z + 10))} className="h-6 w-6 rounded-md text-[16px] font-semibold text-[#222222] hover:bg-[#fafafa]" aria-label="Zoom in">+</button>
+          <button type="button" onClick={() => setZoom(embedMode ? 120 : 100)} className="h-6 rounded-md px-1.5 text-[15px] font-medium text-[#222222] hover:bg-[#fafafa]">Reset</button>
         </div>
 
         <button
@@ -1009,7 +1094,7 @@ export function MerkleGraphSurface({
           onClick={() => setHighlightMissing((h) => !h)}
           className={`inline-flex items-center gap-1.5 rounded-[8px] border px-2.5 py-1.5 text-[15px] font-medium transition ${
             highlightMissing
-              ? 'border-[#F59E0B] bg-[#FFFBEB] text-[#92400E]'
+              ? 'border-[#0B1324] bg-[#0B1324] text-white'
               : 'border-[#E5E5E5] bg-white text-[#111111] hover:bg-[#fafafa]'
           }`}
         >
@@ -1035,16 +1120,22 @@ export function MerkleGraphSurface({
           </button>
         ) : null}
 
-        <div className="ml-auto flex items-center gap-3 text-[14px] text-[#6f716d]">
-          <Legend dot="bg-[#000000]" label="Valid" />
+        <div className="ml-auto flex items-center gap-3 text-[14px] text-[#333333]">
+          <Legend dot="bg-[#15803D]" label="Valid" />
           <Legend dot="bg-[#F59E0B]" label="Missing" />
           <Legend dot="bg-[#EF4444]" label="Invalid" />
-          <Legend dot="bg-[#888888]" label="Derived" />
+          <Legend dot="bg-[#64748B]" label="Derived" />
         </div>
       </section>
 
       {/* ── Graph canvas + side panel ───────────────────────────────── */}
-      <section className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_340px]">
+      <section
+        className={`grid gap-3 ${
+          embedMode
+            ? 'xl:grid-cols-[minmax(0,1fr)_260px]'
+            : 'lg:grid-cols-[minmax(0,1fr)_340px]'
+        }`}
+      >
         <GraphCanvas
           pack={pack}
           zoom={zoom}
@@ -1055,6 +1146,7 @@ export function MerkleGraphSurface({
           lineage={lineage}
           onSelect={setSelected}
           rootBtnRef={rootBtnRef}
+          tall={embedMode}
         />
         <SidePanel
           selected={selected}
@@ -1084,19 +1176,19 @@ export function MerkleGraphSurface({
 
 // ─── Graph canvas (horizontal pill layout) ────────────────────────────────────
 
-const PILL_W = 256
-const PILL_H = 48
-const ROOT_W = 272
-const COL_GAP = 140
-const ROW_GAP = 22
-const PAD_X = 28
-const PAD_Y = 32
+const PILL_W = 280
+const PILL_H = 52
+const ROOT_W = 296
+const COL_GAP = 120
+const ROW_GAP = 20
+const PAD_X = 20
+const PAD_Y = 36
 
 function edgeColor(status: LeafStatus | 'derived'): string {
-  if (status === 'valid') return '#000000'
-  if (status === 'missing') return '#F59E0B'
-  if (status === 'invalid') return '#EF4444'
-  return '#cfcfcf'
+  if (status === 'valid') return GRAPH.valid
+  if (status === 'missing') return GRAPH.missing
+  if (status === 'invalid') return GRAPH.invalid
+  return GRAPH.derived
 }
 
 function GraphCanvas({
@@ -1109,6 +1201,7 @@ function GraphCanvas({
   lineage,
   onSelect,
   rootBtnRef,
+  tall = false,
 }: {
   pack: EvidencePackGraph
   zoom: number
@@ -1119,6 +1212,7 @@ function GraphCanvas({
   lineage: Set<string> | null
   onSelect: (next: SelectedNode) => void
   rootBtnRef: React.RefObject<HTMLButtonElement | null>
+  tall?: boolean
 }) {
   const layout = useMemo(() => {
     const leafX = PAD_X
@@ -1179,11 +1273,15 @@ function GraphCanvas({
 
   return (
     <div
-      className="relative overflow-auto rounded-[16px] border border-[#E5E5E5]"
+      className={`relative overflow-auto rounded-[16px] border border-[#E5E5E5] ${
+        tall ? 'min-h-[min(72vh,820px)]' : ''
+      }`}
       style={{
-        backgroundColor: '#fafafa',
-        backgroundImage:
-          'linear-gradient(to right, rgba(15,23,42,0.05) 1px, transparent 1px), linear-gradient(to bottom, rgba(15,23,42,0.05) 1px, transparent 1px)',
+        backgroundColor: GRAPH.canvas,
+        backgroundImage: `
+          linear-gradient(to right, ${GRAPH.grid} 1px, transparent 1px),
+          linear-gradient(to bottom, ${GRAPH.grid} 1px, transparent 1px)
+        `,
         backgroundSize: '24px 24px',
       }}
     >
@@ -1206,7 +1304,7 @@ function GraphCanvas({
             aria-hidden
           >
             <defs>
-              {(['#000000', '#F59E0B', '#EF4444', '#cfcfcf'] as const).map((c) => (
+              {([GRAPH.valid, GRAPH.missing, GRAPH.invalid, GRAPH.derived] as const).map((c) => (
                 <marker
                   key={c}
                   id={`arrow-${c.replace('#', '')}`}
@@ -1253,7 +1351,7 @@ function GraphCanvas({
               const allValid = inter.derivedFrom.every(
                 (id) => pack.leaves.find((l) => l.id === id)?.status === 'valid',
               )
-              const color = allValid ? '#000000' : '#F59E0B'
+              const color = allValid ? GRAPH.valid : GRAPH.missing
               const dim = dimRootEdge(inter.id)
               const inLineage = lineage?.has(inter.id) && lineage?.has('root')
               return (
@@ -1270,10 +1368,10 @@ function GraphCanvas({
           </svg>
 
           {/* Column labels */}
-          <div className="absolute left-0 right-0 top-2 flex justify-between px-7 text-[13px] font-semibold uppercase tracking-[0.14em] text-[#94a3b8]">
-            <span>Evidence items</span>
-            <span>Intermediate hashes</span>
-            <span>Merkle root</span>
+          <div className="absolute left-0 right-0 top-2 flex justify-between px-7 text-[13px] font-semibold uppercase tracking-[0.14em]">
+            <span className="text-[#111111]">Evidence items</span>
+            <span className="text-[#111111]">Intermediate hashes</span>
+            <span className="text-[#111111]">Merkle root</span>
           </div>
 
           {/* Leaves */}
@@ -1382,29 +1480,37 @@ function LeafPill({
   highlight: boolean
 }) {
   const dot =
-    node.status === 'valid' ? 'bg-[#000000]' : node.status === 'missing' ? 'bg-[#F59E0B]' : 'bg-[#EF4444]'
-  const border =
+    node.status === 'valid' ? 'bg-[#15803D]' : node.status === 'missing' ? 'bg-[#F59E0B]' : 'bg-[#EF4444]'
+  const surface =
     node.status === 'valid'
-      ? 'border-[#E5E5E5]'
+      ? 'border-[#E5E5E5] bg-white'
       : node.status === 'missing'
-        ? 'border-[#F59E0B]'
-        : 'border-[#EF4444]'
+        ? 'border-[#0B1324]/25 bg-white'
+        : 'border-red-300 bg-white'
+  const iconWrap =
+    node.status === 'valid'
+      ? 'bg-[#f0f0f0] text-[#111111]'
+      : node.status === 'missing'
+        ? 'bg-[#fff7ed] text-[#111111]'
+        : 'bg-[#fef2f2] text-[#111111]'
   return (
     <button
       type="button"
       onClick={onClick}
       title={`${node.name} · ${node.hashFull}`}
       style={{ left: x, top: y, width: PILL_W, height: PILL_H }}
-      className={`absolute flex items-center gap-2.5 rounded-full border bg-white pl-2.5 pr-3 text-left shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition ${border} ${
-        selected ? 'ring-2 ring-[#000000] ring-offset-2 ring-offset-[#fafafa]' : 'hover:border-[#cfcfcf] hover:shadow-[0_2px_8px_rgba(15,23,42,0.06)]'
+      className={`absolute flex items-center gap-2.5 rounded-full border pl-2.5 pr-3 text-left shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition ${surface} ${
+        selected
+          ? 'ring-2 ring-[#111111] ring-offset-2 ring-offset-[#f7f7f7]'
+          : 'hover:shadow-[0_2px_8px_rgba(15,23,42,0.08)]'
       } ${dim ? 'opacity-25' : ''} ${highlight ? 'shadow-[0_0_0_3px_#F59E0B]' : ''}`}
     >
-      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#fafafa] text-[#475569]">
+      <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${iconWrap}`}>
         <Glyph name={node.iconName} className="h-3.5 w-3.5" />
       </span>
       <span className="flex min-w-0 flex-1 flex-col leading-tight">
         <span className="truncate text-[16px] font-semibold text-[#111111]">{node.name}</span>
-        <span className="truncate font-mono text-[14px] text-[#6f716d]">{node.hashShort}</span>
+        <span className="truncate font-mono text-[14px] text-[#333333]">{node.hashShort}</span>
       </span>
       <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} aria-hidden />
     </button>
@@ -1436,25 +1542,27 @@ function IntermediatePill({
   const allValid = node.derivedFrom.every(
     (id) => leafLookup.find((l) => l.id === id)?.status === 'valid',
   )
-  const dotColor = allValid ? 'bg-[#000000]' : 'bg-[#F59E0B]'
+  const dotColor = allValid ? 'bg-[#15803D]' : 'bg-[#F59E0B]'
   return (
     <button
       type="button"
       onClick={onClick}
       style={{ left: x, top: y, width: PILL_W, height: PILL_H }}
-      title={`Combined hash · From: ${fromNames}`}
-      className={`absolute flex items-center gap-2.5 rounded-full border bg-white pl-2.5 pr-3 text-left shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition ${
-        selected ? 'border-[#888888] ring-2 ring-[#888888]/30' : 'border-[#E5E5E5] hover:border-[#cfcfcf] hover:shadow-[0_2px_8px_rgba(15,23,42,0.06)]'
+      title={`Proof bundle hash · From: ${fromNames}`}
+      className={`absolute flex items-center gap-2.5 rounded-full border border-slate-200 bg-gradient-to-r from-white to-slate-50 pl-2.5 pr-3 text-left shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition ${
+        selected
+          ? 'border-slate-400 ring-2 ring-slate-400/35'
+          : 'hover:border-slate-300 hover:shadow-[0_2px_10px_rgba(100,116,139,0.14)]'
       } ${dim ? 'opacity-25' : ''} ${highlight ? 'shadow-[0_0_0_3px_#F59E0B]' : ''}`}
     >
-      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#fafafa] text-[#475569]">
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[#222222]">
         <Glyph name="lock" className="h-3.5 w-3.5" />
       </span>
       <span className="flex min-w-0 flex-1 flex-col leading-tight">
-        <span className="text-[14px] font-semibold uppercase tracking-[0.1em] text-[#6f716d]">Combined</span>
+        <span className="text-[14px] font-semibold uppercase tracking-[0.1em] text-[#333333]">Bundle</span>
         <span className="truncate font-mono text-[16px] font-semibold text-[#111111]">{node.hashShort}</span>
       </span>
-      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#fafafa] px-1.5 py-0.5 font-mono text-[13px] text-[#6f716d]">
+      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-slate-100 px-1.5 py-0.5 font-mono text-[13px] text-[#222222]">
         <span className={`h-1.5 w-1.5 rounded-full ${dotColor}`} aria-hidden />
         {node.derivedFrom.length}
       </span>
@@ -1477,7 +1585,7 @@ const RootPill = forwardRef<HTMLButtonElement, RootPillProps>(function RootPill(
   ref,
 ) {
   const dot =
-    node.status === 'verified' ? 'bg-[#000000]' : node.status === 'partial' ? 'bg-[#F59E0B]' : 'bg-[#EF4444]'
+    node.status === 'verified' ? 'bg-[#0B1324]' : node.status === 'partial' ? 'bg-[#F59E0B]' : 'bg-[#EF4444]'
   return (
     <button
       ref={ref}
@@ -1485,18 +1593,18 @@ const RootPill = forwardRef<HTMLButtonElement, RootPillProps>(function RootPill(
       onClick={onClick}
       title={`Merkle Root · ${node.hashFull}`}
       style={{ left: x, top: y, width: ROOT_W, height: PILL_H }}
-      className={`absolute flex items-center gap-2.5 rounded-full border bg-[#0f172a] pl-2.5 pr-3 text-left text-white shadow-[0_4px_14px_rgba(15,23,42,0.18)] transition ${
-        selected ? 'ring-2 ring-[#000000] ring-offset-2 ring-offset-[#fafafa]' : 'border-[#0f172a]'
+      className={`absolute flex items-center gap-2.5 rounded-full border border-[#111111] bg-[#111111] pl-2.5 pr-3 text-left text-white shadow-[0_4px_14px_rgba(0,0,0,0.18)] transition ${
+        selected ? 'ring-2 ring-[#111111] ring-offset-2 ring-offset-[#f7f7f7]' : ''
       } ${dim ? 'opacity-25' : ''} ${highlight ? 'shadow-[0_0_0_3px_#F59E0B]' : ''}`}
     >
-      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/10 text-[#000000]">
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/10 text-white">
         <Glyph name="shield" className="h-3.5 w-3.5" />
       </span>
       <span className="flex min-w-0 flex-1 flex-col leading-tight">
-        <span className="text-[14px] font-semibold uppercase tracking-[0.12em] text-white/55">Proof Root</span>
+        <span className="text-[14px] font-semibold uppercase tracking-[0.12em] text-white/70">Proof Root</span>
         <span className="truncate font-mono text-[16px] font-semibold tabular-nums">{node.hashShort}</span>
       </span>
-      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white/10 px-1.5 py-0.5 text-[14px] font-semibold capitalize text-white">
+      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white/15 px-1.5 py-0.5 text-[14px] font-semibold capitalize text-white">
         <span className={`h-1.5 w-1.5 rounded-full ${dot}`} aria-hidden />
         {node.status}
       </span>
@@ -1509,8 +1617,22 @@ const RootPill = forwardRef<HTMLButtonElement, RootPillProps>(function RootPill(
 function ContextField({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
   return (
     <div>
-      <p className="text-[14px] font-semibold uppercase tracking-[0.12em] text-[#94a3b8]">{label}</p>
+      <p className="text-[14px] font-semibold uppercase tracking-[0.12em] text-[#444444]">{label}</p>
       <p className={`text-[17px] font-semibold text-[#111111] ${mono ? 'font-mono' : ''}`}>{value}</p>
+    </div>
+  )
+}
+
+function MetricTile({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="rounded-xl border border-[#E5E5E5] bg-[#fafafa] px-3 py-2.5">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#666666]">{label}</p>
+      <p
+        className={`mt-1 truncate text-[13px] font-semibold text-[#111111] ${mono ? 'font-mono' : ''}`}
+        title={value}
+      >
+        {value}
+      </p>
     </div>
   )
 }
@@ -1524,17 +1646,113 @@ function Legend({ dot, label }: { dot: string; label: string }) {
   )
 }
 
-function SummaryChip({ dot, label, count }: { dot: string; label: string; count: number }) {
+function SummaryChip({
+  dot,
+  label,
+  count,
+  tone = 'border-[#E5E5E5] bg-[#fafafa] text-[#222222]',
+}: {
+  dot: string
+  label: string
+  count: number
+  tone?: string
+}) {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-[#E5E5E5] bg-[#fafafa] px-2 py-0.5 text-[15px] font-semibold text-[#475569]">
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[15px] font-semibold ${tone}`}>
       <span className={`h-1.5 w-1.5 rounded-full ${dot}`} aria-hidden />
       <span className="tabular-nums">{count}</span>
-      <span className="text-[#6f716d]">{label}</span>
+      <span className="opacity-80">{label}</span>
     </span>
   )
 }
 
 // ─── Side panel ───────────────────────────────────────────────────────────────
+
+function statusMeta(status: string): { label: string; dot: string; chip: string } {
+  if (status === 'valid' || status === 'verified') {
+    return {
+      label: status === 'verified' ? 'Verified' : 'Valid',
+      dot: 'bg-[#15803D]',
+      chip: 'border-[#bbf7d0] bg-[#f0fdf4] text-[#14532d]',
+    }
+  }
+  if (status === 'missing' || status === 'partial') {
+    return {
+      label: status === 'partial' ? 'Partial' : 'Missing',
+      dot: 'bg-[#F59E0B]',
+      chip: 'border-[#fde68a] bg-[#fffbeb] text-[#92400e]',
+    }
+  }
+  return {
+    label: 'Invalid',
+    dot: 'bg-[#EF4444]',
+    chip: 'border-[#fecaca] bg-[#fef2f2] text-[#991b1b]',
+  }
+}
+
+function InspectorShell({
+  eyebrow,
+  title,
+  subtitle,
+  status,
+  children,
+}: {
+  eyebrow: string
+  title: string
+  subtitle?: string
+  status?: { label: string; dot: string; chip: string }
+  children: ReactNode
+}) {
+  return (
+    <aside className="overflow-hidden rounded-[16px] border border-[#E5E5E5] bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+      <div className="border-b border-[#E5E5E5] bg-[#111111] px-4 py-3.5 text-white">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/55">{eyebrow}</p>
+            <p className="mt-1 truncate text-[17px] font-semibold tracking-[-0.01em]">{title}</p>
+            {subtitle ? <p className="mt-0.5 truncate font-mono text-[12px] text-white/60">{subtitle}</p> : null}
+          </div>
+          {status ? (
+            <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${status.chip}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${status.dot}`} aria-hidden />
+              {status.label}
+            </span>
+          ) : null}
+        </div>
+      </div>
+      <div className="max-h-[min(70vh,720px)] space-y-4 overflow-y-auto p-4">{children}</div>
+    </aside>
+  )
+}
+
+function InspectorSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section>
+      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#444444]">{title}</p>
+      {children}
+    </section>
+  )
+}
+
+function MetaGrid({ rows }: { rows: Array<{ label: string; value: string; mono?: boolean }> }) {
+  return (
+    <dl className="overflow-hidden rounded-[10px] border border-[#E5E5E5]">
+      {rows.map((row, i) => (
+        <div
+          key={row.label}
+          className={`grid grid-cols-[7.5rem_minmax(0,1fr)] gap-3 px-3 py-2.5 ${
+            i % 2 === 0 ? 'bg-[#fafafa]' : 'bg-white'
+          } ${i > 0 ? 'border-t border-[#EFEFEF]' : ''}`}
+        >
+          <dt className="text-[12px] font-semibold text-[#444444]">{row.label}</dt>
+          <dd className={`min-w-0 break-words text-[13px] font-medium text-[#111111] ${row.mono ? 'font-mono' : ''}`}>
+            {row.value || '-'}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
 
 function SidePanel({
   selected,
@@ -1553,110 +1771,112 @@ function SidePanel({
 }) {
   if (!selected) {
     return (
-      <aside className="rounded-[16px] border border-[#E5E5E5] bg-white p-5">
-        <p className="text-[17px] font-semibold text-[#111111]">Node details</p>
-        <p className="mt-1 text-[15px] text-[#6f716d]">
-          Click any node to inspect the artifact, hash, source, and verification status.
-        </p>
-        <div className="mt-4 rounded-[10px] border border-dashed border-[#cfcfcf] bg-[#fafafa] p-4 text-center text-[15px] text-[#94a3b8]">
-          No node selected
+      <InspectorShell eyebrow="Inspector" title="Node details">
+        <div className="rounded-[10px] border border-dashed border-[#d4d4d8] bg-[#fafafa] px-4 py-8 text-center">
+          <p className="text-[14px] font-semibold text-[#111111]">No node selected</p>
+          <p className="mt-1 text-[13px] leading-relaxed text-[#333333]">
+            Click a leaf, Proof bundle hash, or proof root to inspect artifact metadata, hashes, and lineage.
+          </p>
         </div>
-        <p className="mt-4 text-[14px] uppercase tracking-[0.12em] text-[#94a3b8]">Tip</p>
-        <p className="mt-1 text-[15px] leading-relaxed text-[#6f716d]">
-          Selecting a leaf highlights its lineage all the way to the Merkle root. Use{' '}
-          <span className="font-semibold text-[#111111]">Locate root</span> to jump to the apex.
-        </p>
-      </aside>
+        <InspectorSection title="Tip">
+          <p className="text-[13px] leading-relaxed text-[#333333]">
+            Selecting a leaf highlights its path to the Merkle root. Use{' '}
+            <span className="font-semibold text-[#111111]">Locate root</span> to jump to the apex.
+          </p>
+        </InspectorSection>
+      </InspectorShell>
     )
   }
 
   if (selected.kind === 'leaf') {
     const inter = intermediateForLeaf.get(selected.node.id)
-    const dot =
-      selected.node.status === 'valid' ? 'bg-[#000000]' : selected.node.status === 'missing' ? 'bg-[#F59E0B]' : 'bg-[#EF4444]'
+    const status = statusMeta(selected.node.status)
     return (
-      <aside className="rounded-[16px] border border-[#E5E5E5] bg-white p-5">
-        <p className="text-[14px] font-semibold uppercase tracking-[0.12em] text-[#94a3b8]">{evidenceCopy.nodeDrawer.proofItem}</p>
-        <div className="mt-1 flex items-center gap-2">
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#fafafa] text-[#475569]">
-            <Glyph name={selected.node.iconName} className="h-3.5 w-3.5" />
-          </span>
-          <div className="min-w-0">
-            <p className="truncate text-[20px] font-semibold text-[#111111]">{selected.node.name}</p>
-            <p className="truncate font-mono text-[12px] text-[#94a3b8]">
-              {evidenceCopy.nodeDrawer.technicalName}: {selected.node.itemType}
+      <InspectorShell
+        eyebrow={evidenceCopy.nodeDrawer.proofItem}
+        title={selected.node.name}
+        subtitle={selected.node.itemType}
+        status={status}
+      >
+        <InspectorSection title="Summary">
+          <MetaGrid
+            rows={[
+              { label: 'Artifact', value: selected.node.artifact },
+              { label: 'Source', value: selected.node.source },
+              { label: 'Service', value: selected.node.sourceService, mono: true },
+              { label: 'Received', value: selected.node.receivedAt },
+              { label: 'In pack', value: 'Yes' },
+              {
+                label: 'Risk',
+                value: selected.node.status === 'missing' ? 'Incomplete proof' : 'None',
+              },
+            ]}
+          />
+          {selected.node.status === 'missing' ? (
+            <p className="mt-2 rounded-[8px] border border-[#0B1324]/20 bg-[#F1F5F9] px-3 py-2 text-[12px] leading-relaxed text-[#0B1324]">
+              {evidenceCopy.nodeDrawer.missingHint}
             </p>
-            <p className="truncate text-[15px] text-[#6f716d]">{selected.node.artifact}</p>
+          ) : null}
+        </InspectorSection>
+
+        <InspectorSection title="Identity">
+          <MetaGrid
+            rows={[
+              { label: 'Item type', value: selected.node.itemType, mono: true },
+              { label: 'Stable ref', value: selected.node.stableRef, mono: true },
+              { label: 'Version', value: selected.node.version, mono: true },
+            ]}
+          />
+        </InspectorSection>
+
+        <InspectorSection title="Cryptographic hashes">
+          <div className="space-y-3">
+            <CopyableField
+              label="Item hash"
+              value={selected.node.hashFull}
+              keyId={`leaf-${selected.node.id}-hash`}
+              onCopy={onCopy}
+              copiedKey={copiedKey}
+            />
+            <CopyableField
+              label="Leaf hash"
+              hint="SHA256(type ‖ stable_ref ‖ item_hash ‖ version)"
+              value={selected.node.leafHash}
+              keyId={`leaf-${selected.node.id}-leafhash`}
+              onCopy={onCopy}
+              copiedKey={copiedKey}
+            />
           </div>
-        </div>
+        </InspectorSection>
 
-        <Field
-          label={evidenceCopy.nodeDrawer.status}
-          value={
-            selected.node.status === 'valid'
-              ? 'Verified'
-              : selected.node.status === 'missing'
-                ? 'Missing'
-                : 'Invalid'
-          }
-        />
-        <Field label={evidenceCopy.nodeDrawer.source} value={selected.node.source} />
-        <Field label={evidenceCopy.nodeDrawer.createdAt} value={selected.node.receivedAt} />
-        <Field label={evidenceCopy.nodeDrawer.usedInPack} value="Yes" />
-        <Field
-          label={evidenceCopy.nodeDrawer.risk}
-          value={selected.node.status === 'missing' ? 'Incomplete proof' : 'None'}
-        />
-        {selected.node.status === 'missing' ? (
-          <p className="mt-2 text-[14px] leading-relaxed text-amber-900">{evidenceCopy.nodeDrawer.missingHint}</p>
-        ) : null}
-
-        <Field label="Item type" value={selected.node.itemType} mono />
-        <Field label="Stable ref" value={selected.node.stableRef} mono />
-        <Field label="Version" value={selected.node.version} mono />
-        <Field label="Source service" value={selected.node.sourceService} mono />
-        <CopyableField label={evidenceCopy.nodeDrawer.hash} value={selected.node.hashFull} keyId={`leaf-${selected.node.id}-hash`} onCopy={onCopy} copiedKey={copiedKey} />
-        <CopyableField label="Leaf hash · SHA256(type ‖ stable_ref ‖ item_hash ‖ version)" value={selected.node.leafHash} keyId={`leaf-${selected.node.id}-leafhash`} onCopy={onCopy} copiedKey={copiedKey} />
-        <Field label="Source" value={selected.node.source} />
-        <Field label="Received" value={selected.node.receivedAt} />
-
-        <div className="mt-3">
-          <p className="text-[14px] font-semibold uppercase tracking-[0.12em] text-[#94a3b8]">Verification</p>
-          <p className="mt-1 inline-flex items-center gap-1.5 rounded-full border border-[#E5E5E5] bg-[#fafafa] px-2 py-0.5 text-[15px] font-semibold capitalize text-[#111111]">
-            <span className={`h-1.5 w-1.5 rounded-full ${dot}`} aria-hidden />
-            {selected.node.status}
+        <InspectorSection title="Impact">
+          <p className="rounded-[10px] border border-[#E5E5E5] bg-[#fafafa] px-3 py-2.5 text-[13px] leading-relaxed text-[#111111]">
+            {selected.node.impact}
           </p>
-        </div>
+        </InspectorSection>
 
-        <div className="mt-3">
-          <p className="text-[14px] font-semibold uppercase tracking-[0.12em] text-[#94a3b8]">Impact</p>
-          <p className="mt-1 text-[16px] leading-relaxed text-[#475569]">{selected.node.impact}</p>
-        </div>
-
-        {/* Lineage trace */}
-        <div className="mt-4 rounded-[10px] border border-[#E5E5E5] bg-[#fafafa] p-3">
-          <p className="text-[14px] font-semibold uppercase tracking-[0.12em] text-[#94a3b8]">Lineage</p>
-          <ol className="mt-2 space-y-1.5 text-[15px]">
-            <li className="flex items-center gap-2">
-              <span className={`h-1.5 w-1.5 rounded-full ${dot}`} aria-hidden />
+        <InspectorSection title="Lineage path">
+          <ol className="space-y-2 rounded-[10px] border border-[#E5E5E5] bg-[#fafafa] p-3">
+            <li className="flex items-center gap-2 text-[13px]">
+              <span className={`h-2 w-2 rounded-full ${status.dot}`} aria-hidden />
               <span className="font-semibold text-[#111111]">{selected.node.name}</span>
-              <span className="font-mono text-[14px] text-[#6f716d]">{selected.node.hashShort}</span>
+              <span className="ml-auto font-mono text-[12px] text-[#333333]">{selected.node.hashShort}</span>
             </li>
             {inter ? (
-              <li className="flex items-center gap-2 pl-3">
-                <span className="text-[#cfcfcf]">↳</span>
+              <li className="flex items-center gap-2 border-t border-[#E5E5E5] pt-2 text-[13px]">
+                <span className="text-[#a1a1aa]">↳</span>
                 <button
                   type="button"
                   onClick={() => onSelect({ kind: 'intermediate', node: inter })}
                   className="font-semibold text-[#111111] underline-offset-2 hover:underline"
                 >
-                  Combined hash
+                  Proof bundle hash
                 </button>
-                <span className="font-mono text-[14px] text-[#6f716d]">{inter.hashShort}</span>
+                <span className="ml-auto font-mono text-[12px] text-[#333333]">{inter.hashShort}</span>
               </li>
             ) : null}
-            <li className="flex items-center gap-2 pl-6">
-              <span className="text-[#cfcfcf]">↳</span>
+            <li className="flex items-center gap-2 border-t border-[#E5E5E5] pt-2 text-[13px]">
+              <span className="text-[#a1a1aa]">↳</span>
               <button
                 type="button"
                 onClick={() => onSelect({ kind: 'root', node: pack.root })}
@@ -1664,130 +1884,131 @@ function SidePanel({
               >
                 Merkle root
               </button>
-              <span className="font-mono text-[14px] text-[#6f716d]">{pack.root.hashShort}</span>
+              <span className="ml-auto font-mono text-[12px] text-[#333333]">{pack.root.hashShort}</span>
             </li>
           </ol>
-        </div>
-
-      </aside>
+        </InspectorSection>
+      </InspectorShell>
     )
   }
 
   if (selected.kind === 'intermediate') {
     return (
-      <aside className="rounded-[16px] border border-[#E5E5E5] bg-white p-5">
-        <p className="text-[14px] font-semibold uppercase tracking-[0.12em] text-[#94a3b8]">Intermediate hash</p>
-        <p className="mt-1 text-[20px] font-semibold text-[#111111]">Combined hash</p>
-        <p className="text-[15px] text-[#6f716d]">Derived from {selected.node.derivedFrom.length} artifacts</p>
+      <InspectorShell
+        eyebrow="Intermediate hash"
+        title="Proof bundle hash"
+        subtitle={`Derived from ${selected.node.derivedFrom.length} artifacts`}
+        status={statusMeta('valid')}
+      >
+        <InspectorSection title="Hash">
+          <CopyableField
+            label="Proof bundle hash"
+            value={selected.node.hashFull}
+            keyId={`inter-${selected.node.id}-hash`}
+            onCopy={onCopy}
+            copiedKey={copiedKey}
+          />
+        </InspectorSection>
 
-        <CopyableField
-          label="Hash"
-          value={selected.node.hashFull}
-          keyId={`inter-${selected.node.id}-hash`}
-          onCopy={onCopy}
-          copiedKey={copiedKey}
-        />
-
-        <div className="mt-3">
-          <p className="text-[14px] font-semibold uppercase tracking-[0.12em] text-[#94a3b8]">Derived from</p>
-          <ul className="mt-1 space-y-1">
+        <InspectorSection title="Derived from">
+          <ul className="space-y-1.5">
             {selected.node.derivedFrom.map((id) => {
               const leaf = pack.leaves.find((l) => l.id === id)
               if (!leaf) return null
-              const dot =
-                leaf.status === 'valid' ? 'bg-[#000000]' : leaf.status === 'missing' ? 'bg-[#F59E0B]' : 'bg-[#EF4444]'
+              const st = statusMeta(leaf.status)
               return (
                 <li key={id}>
                   <button
                     type="button"
                     onClick={() => onSelect({ kind: 'leaf', node: leaf })}
-                    className="flex w-full items-center gap-2 rounded-[8px] border border-[#E5E5E5] bg-[#fafafa] px-2 py-1.5 text-left transition hover:bg-white"
+                    className="flex w-full items-center gap-2 rounded-[10px] border border-[#E5E5E5] bg-[#fafafa] px-3 py-2 text-left transition hover:border-[#111111]/20 hover:bg-white"
                   >
-                    <span className={`h-1.5 w-1.5 rounded-full ${dot}`} aria-hidden />
-                    <span className="text-[15px] font-medium text-[#111111]">{leaf.name}</span>
-                    <span className="ml-auto font-mono text-[14px] text-[#6f716d]">{leaf.hashShort}</span>
+                    <span className={`h-2 w-2 rounded-full ${st.dot}`} aria-hidden />
+                    <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[#111111]">{leaf.name}</span>
+                    <span className="font-mono text-[11px] text-[#333333]">{leaf.hashShort}</span>
                   </button>
                 </li>
               )
             })}
           </ul>
-        </div>
+        </InspectorSection>
 
-        <div className="mt-3">
-          <p className="text-[14px] font-semibold uppercase tracking-[0.12em] text-[#94a3b8]">Rolls up to</p>
+        <InspectorSection title="Rolls up to">
           <button
             type="button"
             onClick={() => onSelect({ kind: 'root', node: pack.root })}
-            className="mt-1 inline-flex items-center gap-1.5 rounded-full border border-[#E5E5E5] bg-white px-2 py-0.5 text-[15px] font-semibold text-[#111111] transition hover:bg-[#fafafa]"
+            className="inline-flex items-center gap-2 rounded-full border border-[#111111] bg-[#111111] px-3 py-1.5 text-[13px] font-semibold text-white transition hover:bg-[#222222]"
           >
             <Glyph name="shield" className="h-3 w-3" />
             Merkle root
           </button>
-        </div>
-      </aside>
+        </InspectorSection>
+      </InspectorShell>
     )
   }
 
-  // root
-  const dot =
-    selected.node.status === 'verified' ? 'bg-[#000000]' : selected.node.status === 'partial' ? 'bg-[#F59E0B]' : 'bg-[#EF4444]'
+  const status = statusMeta(selected.node.status)
   return (
-    <aside className="rounded-[16px] border border-[#E5E5E5] bg-white p-5">
-      <p className="text-[14px] font-semibold uppercase tracking-[0.12em] text-[#94a3b8]">Merkle root</p>
-      <p className="mt-1 text-[20px] font-semibold text-[#111111]">Verified composite hash</p>
+    <InspectorShell eyebrow="Merkle root" title="Proof root" subtitle="Composite sealed digest" status={status}>
+      <InspectorSection title="Root hash">
+        <CopyableField
+          label="Full hash"
+          value={selected.node.hashFull}
+          keyId="root-hash"
+          onCopy={onCopy}
+          copiedKey={copiedKey}
+        />
+      </InspectorSection>
 
-      <CopyableField label="Full hash" value={selected.node.hashFull} keyId="root-hash" onCopy={onCopy} copiedKey={copiedKey} />
-
-      <div className="mt-3">
-        <p className="text-[14px] font-semibold uppercase tracking-[0.12em] text-[#94a3b8]">Verified</p>
-        <p className="mt-1 inline-flex items-center gap-1.5 rounded-full border border-[#E5E5E5] bg-[#fafafa] px-2 py-0.5 text-[15px] font-semibold capitalize text-[#111111]">
-          <span className={`h-1.5 w-1.5 rounded-full ${dot}`} aria-hidden />
-          {selected.node.status === 'verified' ? 'Yes' : selected.node.status}
+      <InspectorSection title="Integrity">
+        <MetaGrid
+          rows={[
+            {
+              label: 'Verified',
+              value: selected.node.status === 'verified' ? 'Yes' : selected.node.status,
+            },
+            {
+              label: 'Tamper',
+              value:
+                selected.node.tamper === 'no-changes'
+                  ? 'No changes detected'
+                  : 'Changes detected',
+            },
+          ]}
+        />
+        <p className="mt-2 text-[12px] leading-relaxed text-[#333333]">
+          {selected.node.tamper === 'no-changes'
+            ? 'Pack hash matches the sealed state across all committed leaves.'
+            : 'At least one underlying artifact has been altered or is missing.'}
         </p>
-      </div>
+      </InspectorSection>
 
-      <div className="mt-3">
-        <p className="text-[14px] font-semibold uppercase tracking-[0.12em] text-[#94a3b8]">Tamper status</p>
-        <p className="mt-1 text-[16px] leading-relaxed text-[#475569]">
-          {selected.node.tamper === 'no-changes' ? 'No changes detected — pack hash matches sealed state.' : 'Changes detected — at least one underlying artifact has been altered or is missing.'}
-        </p>
-      </div>
-
-      {/* Branches summary */}
-      <div className="mt-4 rounded-[10px] border border-[#E5E5E5] bg-[#fafafa] p-3">
-        <p className="text-[14px] font-semibold uppercase tracking-[0.12em] text-[#94a3b8]">Branches</p>
-        <ul className="mt-2 space-y-1.5">
+      <InspectorSection title="Branches">
+        <ul className="space-y-1.5">
           {pack.intermediates.map((inter) => {
             const allValid = inter.derivedFrom.every(
               (id) => pack.leaves.find((l) => l.id === id)?.status === 'valid',
             )
-            const branchDot = allValid ? 'bg-[#000000]' : 'bg-[#F59E0B]'
+            const st = statusMeta(allValid ? 'valid' : 'partial')
             return (
               <li key={inter.id}>
                 <button
                   type="button"
                   onClick={() => onSelect({ kind: 'intermediate', node: inter })}
-                  className="flex w-full items-center gap-2 text-left text-[15px] hover:underline"
+                  className="flex w-full items-center gap-2 rounded-[10px] border border-[#E5E5E5] bg-[#fafafa] px-3 py-2 text-left transition hover:border-[#111111]/20 hover:bg-white"
                 >
-                  <span className={`h-1.5 w-1.5 rounded-full ${branchDot}`} aria-hidden />
-                  <span className="font-mono text-[14px] text-[#111111]">{inter.hashShort}</span>
-                  <span className="ml-auto text-[14px] text-[#6f716d]">{inter.derivedFrom.length} leaves</span>
+                  <span className={`h-2 w-2 rounded-full ${st.dot}`} aria-hidden />
+                  <span className="font-mono text-[12px] font-semibold text-[#111111]">{inter.hashShort}</span>
+                  <span className="ml-auto text-[11px] font-medium text-[#333333]">
+                    {inter.derivedFrom.length} leaves
+                  </span>
                 </button>
               </li>
             )
           })}
         </ul>
-      </div>
-    </aside>
-  )
-}
-
-function Field({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="mt-3">
-      <p className="text-[14px] font-semibold uppercase tracking-[0.12em] text-[#94a3b8]">{label}</p>
-      <p className={`mt-1 text-[16px] text-[#475569] ${mono ? 'font-mono' : ''}`}>{value}</p>
-    </div>
+      </InspectorSection>
+    </InspectorShell>
   )
 }
 
@@ -1797,29 +2018,34 @@ function CopyableField({
   keyId,
   onCopy,
   copiedKey,
+  hint,
 }: {
   label: string
   value: string
   keyId: string
   onCopy: (key: string, value: string) => void
   copiedKey: string | null
+  hint?: string
 }) {
   const copied = copiedKey === keyId
   return (
-    <div className="mt-3">
-      <div className="flex items-center justify-between">
-        <p className="text-[14px] font-semibold uppercase tracking-[0.12em] text-[#94a3b8]">{label}</p>
+    <div className={hint ? 'mt-0' : 'mt-0'}>
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[12px] font-semibold text-[#111111]">{label}</p>
+          {hint ? <p className="truncate font-mono text-[10px] text-[#666666]">{hint}</p> : null}
+        </div>
         <button
           type="button"
           onClick={() => onCopy(keyId, value)}
-          className="inline-flex items-center gap-1 rounded-[6px] border border-[#E5E5E5] bg-white px-1.5 py-0.5 text-[14px] font-medium text-[#475569] transition hover:bg-[#fafafa]"
+          className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[#E5E5E5] bg-white px-2 py-1 text-[11px] font-semibold text-[#111111] transition hover:bg-[#f4f4f5]"
         >
           <Glyph name={copied ? 'check' : 'copy'} className="h-2.5 w-2.5" />
           {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
-      <p className="mt-1 break-all rounded-[8px] border border-[#E5E5E5] bg-[#fafafa] px-2 py-1.5 font-mono text-[14px] leading-relaxed text-[#475569]">
-        {value}
+      <p className="break-all rounded-[10px] border border-[#E5E5E5] bg-[#111111] px-3 py-2.5 font-mono text-[11px] leading-relaxed text-[#e4e4e7]">
+        {value || '-'}
       </p>
     </div>
   )
@@ -1838,14 +2064,14 @@ function BatchSummary({
 }) {
   if (!batchMeta) {
     return (
-      <section className="rounded-[16px] border border-[#E5E5E5] bg-white p-6 text-[15px] text-[#6f716d]">
+      <section className="rounded-[16px] border border-[#E5E5E5] bg-white p-6 text-[15px] text-[#333333]">
         Batch not found.
       </section>
     )
   }
   if (packs.length === 0) {
     return (
-      <section className="rounded-[16px] border border-[#E5E5E5] bg-white p-6 text-[15px] text-[#6f716d]">
+      <section className="rounded-[16px] border border-[#E5E5E5] bg-white p-6 text-[15px] text-[#333333]">
         No evidence packs loaded for batch <span className="font-mono">{batchMeta.batchId}</span>.
       </section>
     )
@@ -1854,10 +2080,10 @@ function BatchSummary({
     <section className="rounded-[16px] border border-[#E5E5E5] bg-white p-5">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <div>
-          <p className="text-[14px] font-semibold uppercase tracking-[0.12em] text-[#94a3b8]">Batch</p>
+          <p className="text-[14px] font-semibold uppercase tracking-[0.12em] text-[#444444]">Batch</p>
           <p className="mt-0.5 font-mono text-[20px] font-semibold text-[#111111]">{batchMeta.batchId}</p>
         </div>
-        <div className="flex items-center gap-4 text-[14px] text-[#6f716d]">
+        <div className="flex items-center gap-4 text-[14px] text-[#333333]">
           <span><span className="font-semibold text-[#111111] tabular-nums">{batchMeta.totalIntents.toLocaleString()}</span> intents</span>
           <span><span className="font-semibold text-[#111111] tabular-nums">{batchMeta.totalTransactions.toLocaleString()}</span> transactions</span>
           <span>
@@ -1866,8 +2092,8 @@ function BatchSummary({
         </div>
       </div>
 
-      <p className="mt-2 text-[13px] text-[#94a3b8]">
-        Each intent in this batch has its own evidence pack — Service 6 commits one pack per lifecycle, never per batch.
+      <p className="mt-2 text-[13px] text-[#444444]">
+        Each intent in this batch has its own evidence pack - Service 6 commits one pack per lifecycle, never per batch.
       </p>
 
       <ul className="mt-4 grid gap-2">
@@ -1875,7 +2101,7 @@ function BatchSummary({
           const valid = p.leaves.filter((l) => l.status === 'valid').length
           const missing = p.leaves.filter((l) => l.status === 'missing').length
           const invalid = p.leaves.filter((l) => l.status === 'invalid').length
-          const dot = p.root.status === 'verified' ? 'bg-[#000000]' : p.root.status === 'partial' ? 'bg-[#F59E0B]' : 'bg-[#EF4444]'
+          const dot = p.root.status === 'verified' ? 'bg-[#15803D]' : p.root.status === 'partial' ? 'bg-[#F59E0B]' : 'bg-[#EF4444]'
           return (
             <li key={p.packId}>
               <button
@@ -1886,21 +2112,21 @@ function BatchSummary({
                 <span className={`h-2 w-2 rounded-full ${dot}`} aria-hidden />
                 <span className="min-w-0">
                   <span className="block truncate font-mono text-[16px] font-semibold text-[#111111]">{p.packId}</span>
-                  <span className="block truncate font-mono text-[13px] text-[#6f716d]">Intent {p.intentId} · {p.contractId}</span>
+                  <span className="block truncate font-mono text-[13px] text-[#333333]">Intent {p.intentId} · {p.contractId}</span>
                 </span>
-                <span className="inline-flex items-center rounded-full border border-[#E5E5E5] bg-white px-2 py-0.5 text-[12px] font-semibold uppercase tracking-[0.08em] text-[#475569]">
+                <span className="inline-flex items-center rounded-full border border-[#E5E5E5] bg-white px-2 py-0.5 text-[12px] font-semibold uppercase tracking-[0.08em] text-[#222222]">
                   {p.mode.replace(/_/g, ' ')}
                 </span>
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-[#E5E5E5] bg-white px-2 py-0.5 text-[14px] font-semibold text-[#111111]">
                   <span className="tabular-nums">{p.defensibilityScore}</span>
-                  <span className="text-[12px] text-[#94a3b8]">/100</span>
+                  <span className="text-[12px] text-[#444444]">/100</span>
                 </span>
-                <span className="flex items-center gap-1 text-[13px] text-[#6f716d]">
-                  <SummaryChip dot="bg-[#000000]" label="Valid" count={valid} />
+                <span className="flex items-center gap-1 text-[13px] text-[#333333]">
+                  <SummaryChip dot="bg-[#15803D]" label="Valid" count={valid} />
                   {missing > 0 ? <SummaryChip dot="bg-[#F59E0B]" label="Missing" count={missing} /> : null}
                   {invalid > 0 ? <SummaryChip dot="bg-[#EF4444]" label="Invalid" count={invalid} /> : null}
                 </span>
-                <span className="text-[14px] font-medium text-[#475569]">Show graph →</span>
+                <span className="text-[14px] font-medium text-[#222222]">Show graph →</span>
               </button>
             </li>
           )

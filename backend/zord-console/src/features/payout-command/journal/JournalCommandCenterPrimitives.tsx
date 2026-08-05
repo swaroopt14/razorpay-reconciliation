@@ -10,8 +10,8 @@ import {
 } from '../command-center/homeCommandCenterTokens'
 import { JOURNAL_DM_SANS } from './journalFonts'
 
-/** Page wash — matches Batch Command Center body. */
-export const JOURNAL_PAGE_BG = 'bg-[#f4f4f1]'
+/** Page wash - cool blue-grey, matches Overview / console canvas. */
+export const JOURNAL_PAGE_BG = 'bg-[#F8FAFC]'
 
 export function JournalPageHeader({
   label,

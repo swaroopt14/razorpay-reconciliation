@@ -1,14 +1,13 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { evidenceCopy, PROOF_SCORE_TOOLTIP } from '../../evidence/copy/evidenceCopy'
+import { evidenceCopy } from '../../evidence/copy/evidenceCopy'
 import { mapProofCoverageFromPack } from '../../evidence/mappers/mapProofCoverage'
 import { mapProofStatusFromPack } from '../../evidence/mappers/mapProofStatus'
-import { computePackProofScore } from '../../evidence/mappers/mapPackTableRow'
-import { ProofCoverageSection } from '../../evidence/components/ProofCoverageSection'
 import { VerifyProofIntegrityButton } from './VerifyProofIntegrityButton'
 import { MissingProofChecklist } from './MissingProofChecklist'
 import type { EvidencePackFull } from '@/services/payout-command/prod-api/evidenceTypes'
+import type { ProofCoverageTile } from '../../evidence/types/evidenceViewModels'
 import { EXPECTED_PROOF_ITEMS } from '../../evidence/types/evidenceViewModels'
 import { getIntentJournalPaymentIntentsForSession } from '@/services/payout-command/prod-api/intentJournalApi'
 import { apiTrimmedString } from '@/services/payout-command/prod-api/coerceApiField'
@@ -23,7 +22,7 @@ function cleanDisplay(value: unknown): string | null {
   const out = apiTrimmedString(value)
   if (!out) return null
   const normalized = out.toLowerCase()
-  if (normalized === 'null' || normalized === 'undefined') return null
+  if (normalized === 'null' || normalized === 'undefined' || normalized === '-') return null
   return out
 }
 
@@ -45,29 +44,12 @@ function parseCount(value: unknown): number | null {
   return Math.max(0, Math.round(parsed))
 }
 
-function formatPercent(value: number | null | undefined): string | null {
-  if (value == null || !Number.isFinite(value)) return null
-  return `${Math.round(value * 10000) / 100}%`
-}
-
-function scoreBreakdownHeadline(pack: EvidencePackFull): string | null {
-  const components = pack.proof_score_breakdown?.components ?? []
-  if (!components.length) return null
-  const passed = components.filter((c) => c.passed === true).length
-  return `${passed} / ${components.length} checks passed`
-}
-
 function resolvePackAmount(pack: EvidencePackFull | null): string | null {
   if (!pack) return null
-
-  const minor = pack.amount_minor
-  const minorNum = parseNumeric(minor)
+  const minorNum = parseNumeric(pack.amount_minor)
   if (minorNum != null) return formatCurrencyLabel(minorNum / 100)
-
-  const amount = pack.amount
-  const amountNum = parseNumeric(amount)
+  const amountNum = parseNumeric(pack.amount)
   if (amountNum != null) return formatCurrencyLabel(amountNum)
-
   return null
 }
 
@@ -77,8 +59,12 @@ function resolvePaymentRef(pack: EvidencePackFull): string {
     cleanDisplay(pack.client_reference) ||
     cleanDisplay(pack.intent_id) ||
     cleanDisplay(pack.evidence_pack_id) ||
-    '—'
+    '-'
   )
+}
+
+function coverageOk(status: ProofCoverageTile['status']): boolean {
+  return status === 'available' || status === 'generated'
 }
 
 export function EvidencePackSummaryTab({ pack, batchId, loading }: EvidencePackSummaryTabProps) {
@@ -96,13 +82,8 @@ export function EvidencePackSummaryTab({ pack, batchId, loading }: EvidencePackS
     void getIntentJournalPaymentIntentsForSession(bid).then((res) => {
       if (cancelled) return
       const intent = res.data?.items?.find((row) => apiTrimmedString(row.intent_id) === iid)
-      const rawAmount = intent?.amount
-      const parsed = parseNumeric(rawAmount)
-      if (parsed == null) {
-        setAmountFromIntent(null)
-        return
-      }
-      setAmountFromIntent(formatCurrencyLabel(parsed))
+      const parsed = parseNumeric(intent?.amount)
+      setAmountFromIntent(parsed == null ? null : formatCurrencyLabel(parsed))
     })
 
     return () => {
@@ -143,20 +124,19 @@ export function EvidencePackSummaryTab({ pack, batchId, loading }: EvidencePackS
     },
     pack.leaf_count ?? pack.items?.length,
   )
-  const score =
-    pack.proof_score != null ? Math.round(Number(pack.proof_score)) : computePackProofScore(pack.items?.length)
+
   const coverage = mapProofCoverageFromPack(pack)
   const paymentRef = resolvePaymentRef(pack)
   const amountLabel = resolvePackAmount(pack) ?? amountFromIntent
-  const confidenceLabel = formatPercent(pack.match_confidence)
-  const breakdownHeadline = scoreBreakdownHeadline(pack)
-  const governanceLabel = cleanDisplay(pack.governance_decision)
-  const attachmentLabel = cleanDisplay(pack.attachment_decision)
+  const confidence = pack.match_confidence != null && Number.isFinite(pack.match_confidence) ? pack.match_confidence : null
+  const governanceLabel = cleanDisplay(pack.governance_decision) ?? '-'
+  const attachmentLabel = cleanDisplay(pack.attachment_decision) ?? '-'
   const bankRefLabel = cleanDisplay(pack.bank_reference)
-  const amountMatchLabel =
-    typeof pack.amount_match === 'boolean' ? (pack.amount_match ? 'Pass' : 'Fail') : null
-  const valueDateLabel =
-    typeof pack.value_date_check === 'boolean' ? (pack.value_date_check ? 'Pass' : 'Fail') : null
+  const amountMatch =
+    typeof pack.amount_match === 'boolean' ? pack.amount_match : null
+  const valueDateOk =
+    typeof pack.value_date_check === 'boolean' ? pack.value_date_check : null
+
   const leafSeen = parseCount(pack.leaf_count) ?? parseCount(pack.items?.length)
   const requiredLeaves = parseCount(pack.required_leaf_count)
   const leafTotal =
@@ -164,67 +144,363 @@ export function EvidencePackSummaryTab({ pack, batchId, loading }: EvidencePackS
       ? Math.max(leafSeen, requiredLeaves)
       : requiredLeaves ?? leafSeen ?? EXPECTED_PROOF_ITEMS
   const leafDisplay = leafSeen ?? 0
-  const summaryCards: Array<{ label: string; value: string; mono?: boolean; hint?: string }> = [
-    { label: 'Payment Ref', value: paymentRef, mono: true },
-    { label: 'Evidence Pack ID', value: pack.evidence_pack_id, mono: true },
-    { label: 'Proof status', value: status.label },
+  const coverageReady = coverage.filter((t) => coverageOk(t.status)).length
+  const isPartial = status.label.toLowerCase().includes('partial')
+
+  const checks = [
     {
-      label: 'Proof score',
-      value: score != null ? `${score} / 100` : '—',
-      hint: breakdownHeadline ? `${PROOF_SCORE_TOOLTIP} ${breakdownHeadline}.` : PROOF_SCORE_TOOLTIP,
+      id: 'amount',
+      label: 'Amount check',
+      pass: amountMatch,
+      detail:
+        amountMatch == null
+          ? 'Not evaluated'
+          : amountMatch
+            ? 'Settled amount matches intent'
+            : 'Amount mismatch detected',
     },
-    { label: 'Match confidence', value: confidenceLabel ?? '—' },
-    { label: 'Governance decision', value: governanceLabel ?? '—' },
-    { label: 'Attachment decision', value: attachmentLabel ?? '—' },
-    { label: 'Bank reference', value: bankRefLabel ?? '—', mono: true },
-    { label: 'Amount check', value: amountMatchLabel ?? '—' },
-    { label: 'Value-date check', value: valueDateLabel ?? '—' },
-    ...(amountLabel ? [{ label: 'Amount', value: amountLabel }] : []),
-    { label: 'Beneficiary', value: '•••••• (masked)', hint: 'Full beneficiary controlled by access policy' },
-    { label: 'Final status', value: pack.pack_status },
+    {
+      id: 'value-date',
+      label: 'Value-date check',
+      pass: valueDateOk,
+      detail:
+        valueDateOk == null
+          ? 'Not evaluated'
+          : valueDateOk
+            ? 'Value date within policy window'
+            : 'Value date outside policy',
+    },
+    {
+      id: 'governance',
+      label: 'Governance',
+      pass: governanceLabel.toLowerCase() === 'pass',
+      detail: governanceLabel,
+    },
+    {
+      id: 'attachment',
+      label: 'Attachment',
+      pass:
+        attachmentLabel.toLowerCase().includes('attach') &&
+        !attachmentLabel.toLowerCase().includes('pending'),
+      detail: attachmentLabel,
+    },
+    {
+      id: 'bank',
+      label: 'Bank reference',
+      pass: Boolean(bankRefLabel),
+      detail: bankRefLabel ?? 'Awaiting UTR / settlement ref',
+    },
+  ]
+
+  const decisionSteps = [
+    { label: 'Governance', value: governanceLabel, done: governanceLabel.toLowerCase() === 'pass' || governanceLabel.toLowerCase() === 'review' },
+    { label: 'Attachment', value: attachmentLabel, done: Boolean(cleanDisplay(attachmentLabel)) },
+    { label: 'Bank ref', value: bankRefLabel ?? 'Pending', done: Boolean(bankRefLabel) },
+    { label: 'Pack status', value: pack.pack_status, done: pack.pack_status?.toUpperCase() === 'READY' },
   ]
 
   return (
-    <div className="space-y-5">
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {summaryCards.map((card) => (
-          <SummaryField
-            key={card.label}
-            label={card.label}
-            value={card.value}
-            mono={card.mono}
-            hint={card.hint}
-          />
-        ))}
-      </div>
-      <ProofCoverageSection tiles={coverage} />
+    <div className="space-y-6">
+      {/* Hero strip */}
+      <section className="overflow-hidden rounded-2xl border border-[#E5E5E5] bg-[#fafafa]">
+        <div className="flex flex-wrap items-end justify-between gap-4 px-5 py-5">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#888888]">Payment proof</p>
+            <p className="mt-1 truncate font-mono text-[18px] font-semibold tracking-tight text-[#111111] sm:text-[22px]">
+              {paymentRef}
+            </p>
+            <p className="mt-1 truncate font-mono text-[12px] text-[#888888]" title={pack.evidence_pack_id}>
+              {pack.evidence_pack_id}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            {amountLabel ? (
+              <div className="rounded-xl border border-[#E5E5E5] bg-white px-4 py-2.5">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#888888]">Amount</p>
+                <p className="mt-0.5 text-[20px] font-semibold tabular-nums text-[#111111]">{amountLabel}</p>
+              </div>
+            ) : null}
+            <div
+              className={`rounded-xl border px-4 py-2.5 ${
+                isPartial
+                  ? 'border-[#e8e0d0] bg-[#fbf7f0] text-[#7a5c2e]'
+                  : 'border-[#dce6df] bg-[#f4f7f5] text-[#2f4a3a]'
+              }`}
+            >
+              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] opacity-70">Proof status</p>
+              <p className="mt-0.5 text-[16px] font-semibold">{status.label}</p>
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-3 border-t border-[#E5E5E5] bg-white text-center">
+          <HeroStat label="Leaves" value={`${leafDisplay}/${leafTotal}`} />
+          <HeroStat label="Coverage" value={`${coverageReady}/${coverage.length}`} />
+          <HeroStat label="Beneficiary" value="Masked" />
+        </div>
+      </section>
+
+      {/* Confidence + decision pipeline */}
+      <section className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
+        <ConfidenceMeter confidence={confidence} />
+        <DecisionPipeline steps={decisionSteps} />
+      </section>
+
+      {/* Check rail */}
+      <section>
+        <div className="mb-3 flex items-baseline justify-between gap-3">
+          <div>
+            <p className="text-[15px] font-semibold text-[#111111]">Integrity checks</p>
+            <p className="mt-0.5 text-[12px] text-[#666666]">Pass / fail signals for this payment proof</p>
+          </div>
+          <span className="rounded-full border border-[#E5E5E5] bg-[#fafafa] px-2.5 py-1 text-[12px] font-semibold tabular-nums text-[#333333]">
+            {checks.filter((c) => c.pass).length}/{checks.length} passed
+          </span>
+        </div>
+        <ul className="overflow-hidden rounded-2xl border border-[#E5E5E5] bg-white">
+          {checks.map((check) => (
+            <li
+              key={check.id}
+              className="flex items-start gap-3 border-b border-[#F0F0F0] px-4 py-3.5 last:border-b-0"
+            >
+              <CheckMark pass={check.pass} />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-[14px] font-semibold text-[#111111]">{check.label}</p>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                      check.pass == null
+                        ? 'bg-[#f4f4f5] text-[#666666]'
+                        : check.pass
+                          ? 'bg-[#f4f7f5] text-[#2f4a3a]'
+                          : 'bg-[#fbf7f0] text-[#7a5c2e]'
+                    }`}
+                  >
+                    {check.pass == null ? 'Pending' : check.pass ? 'Pass' : 'Fail'}
+                  </span>
+                </div>
+                <p className="mt-0.5 text-[12px] text-[#666666]">{check.detail}</p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      {/* Proof chain */}
+      <ProofChainRail tiles={coverage} />
+
+      {/* IDs as compact definition list */}
+      <section className="overflow-hidden rounded-2xl border border-[#E5E5E5] bg-white">
+        <div className="border-b border-[#E5E5E5] bg-[#fafafa] px-4 py-3">
+          <p className="text-[15px] font-semibold text-[#111111]">References</p>
+        </div>
+        <dl>
+          <RefRow label="Payment ref" value={paymentRef} mono />
+          <RefRow label="Intent id" value={apiTrimmedString(pack.intent_id) || '-'} mono />
+          <RefRow label="Pack id" value={pack.evidence_pack_id} mono />
+          <RefRow label="Contract" value={apiTrimmedString(pack.contract_id) || '-'} mono />
+          <RefRow label="Mode" value={apiTrimmedString(pack.mode).replace(/_/g, ' ') || '-'} />
+          <RefRow label="Bank reference" value={bankRefLabel ?? 'Pending'} mono last />
+        </dl>
+      </section>
+
       <MissingProofChecklist pack={pack} />
       <VerifyProofIntegrityButton pack={pack} />
-      <p className="text-[12px] text-[#94a3b8]">
-        Proof items: {leafDisplay} / {leafTotal} available
-      </p>
     </div>
   )
 }
 
-function SummaryField({
+function HeroStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="px-3 py-3">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#888888]">{label}</p>
+      <p className="mt-0.5 text-[15px] font-semibold tabular-nums text-[#111111]">{value}</p>
+    </div>
+  )
+}
+
+function ConfidenceMeter({ confidence }: { confidence: number | null }) {
+  const pct = confidence == null ? 0 : Math.round(confidence * 100)
+  const radius = 54
+  const circumference = 2 * Math.PI * radius
+  const offset = circumference - (pct / 100) * circumference
+
+  return (
+    <div className="flex flex-col items-center justify-center rounded-2xl border border-[#E5E5E5] bg-white px-4 py-5">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#888888]">Match confidence</p>
+      <div className="relative mt-3 h-[140px] w-[140px]">
+        <svg viewBox="0 0 140 140" className="h-full w-full -rotate-90">
+          <circle cx="70" cy="70" r={radius} fill="none" stroke="#ececec" strokeWidth="10" />
+          <circle
+            cx="70"
+            cy="70"
+            r={radius}
+            fill="none"
+            stroke="#555555"
+            strokeWidth="10"
+            strokeLinecap="round"
+            strokeDasharray={circumference}
+            strokeDashoffset={confidence == null ? circumference : offset}
+            className="transition-[stroke-dashoffset] duration-500"
+          />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <p className="text-[28px] font-semibold tabular-nums leading-none text-[#111111]">
+            {confidence == null ? '-' : `${pct}%`}
+          </p>
+          <p className="mt-1 text-[11px] font-medium text-[#888888]">reconcile match</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function DecisionPipeline({
+  steps,
+}: {
+  steps: Array<{ label: string; value: string; done: boolean }>
+}) {
+  return (
+    <div className="rounded-2xl border border-[#E5E5E5] bg-white px-4 py-4 sm:px-5">
+      <p className="text-[15px] font-semibold text-[#111111]">Decision path</p>
+      <p className="mt-0.5 text-[12px] text-[#666666]">How this payment moved from policy to pack</p>
+      <ol className="mt-5 space-y-0">
+        {steps.map((step, index) => {
+          const last = index === steps.length - 1
+          return (
+            <li key={step.label} className="relative flex gap-3 pb-5 last:pb-0">
+              {!last ? (
+                <span
+                  className={`absolute left-[9px] top-5 h-[calc(100%-8px)] w-px ${
+                    step.done ? 'bg-[#cfcfcf]' : 'bg-[#EFEFEF]'
+                  }`}
+                  aria-hidden
+                />
+              ) : null}
+              <span
+                className={`relative z-[1] mt-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border text-[10px] font-bold ${
+                  step.done
+                    ? 'border-[#555555] bg-[#555555] text-white'
+                    : 'border-[#d4d4d8] bg-white text-[#aaaaaa]'
+                }`}
+              >
+                {step.done ? '✓' : index + 1}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-[#888888]">{step.label}</p>
+                <p className="mt-0.5 text-[14px] font-semibold text-[#111111]">{step.value}</p>
+              </div>
+            </li>
+          )
+        })}
+      </ol>
+    </div>
+  )
+}
+
+function CheckMark({ pass }: { pass: boolean | null }) {
+  if (pass == null) {
+    return (
+      <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[#d4d4d8] bg-[#fafafa] text-[11px] font-bold text-[#888888]">
+        ·
+      </span>
+    )
+  }
+  if (pass) {
+    return (
+      <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#3d5a48] text-[11px] font-bold text-white">
+        ✓
+      </span>
+    )
+  }
+  return (
+    <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#b08948] text-[11px] font-bold text-white">
+      !
+    </span>
+  )
+}
+
+function ProofChainRail({ tiles }: { tiles: ProofCoverageTile[] }) {
+  return (
+    <section className="rounded-2xl border border-[#E5E5E5] bg-white px-4 py-4 sm:px-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div>
+          <p className="text-[15px] font-semibold text-[#111111]">{evidenceCopy.coverage.title}</p>
+          <p className="mt-0.5 text-[12px] text-[#666666]">Evidence chain for this payment</p>
+        </div>
+      </div>
+      <div className="mt-5 flex flex-col gap-0 sm:flex-row sm:items-stretch sm:gap-0">
+        {tiles.map((tile, index) => {
+          const ok = coverageOk(tile.status)
+          const label =
+            tile.status === 'available'
+              ? evidenceCopy.coverage.available
+              : tile.status === 'generated'
+                ? evidenceCopy.coverage.generated
+                : tile.status === 'missing'
+                  ? evidenceCopy.coverage.missing
+                  : evidenceCopy.coverage.notGenerated
+          return (
+            <div key={tile.id} className="relative flex min-w-0 flex-1">
+              {index > 0 ? (
+                <div
+                  className={`absolute left-0 top-5 hidden h-px w-3 -translate-x-full sm:block ${
+                    ok ? 'bg-[#cfcfcf]' : 'bg-[#E5E5E5]'
+                  }`}
+                  aria-hidden
+                />
+              ) : null}
+              <div
+                className={`w-full rounded-lg border px-3 py-2.5 sm:mx-1 ${
+                  ok ? 'border-[#E5E5E5] bg-[#fafafa]' : 'border-[#e8e0d0] bg-[#fbf7f0]'
+                }`}
+              >
+                <div className="flex items-center gap-2 sm:flex-col sm:items-start">
+                  <span
+                    className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
+                      ok ? 'bg-[#555555] text-white' : 'bg-[#b08948] text-white'
+                    }`}
+                  >
+                    {ok ? '✓' : '!'}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-semibold uppercase leading-snug tracking-[0.06em] text-[#888888]">
+                      {tile.label}
+                    </p>
+                    <p className={`mt-0.5 text-[13px] font-semibold ${ok ? 'text-[#111111]' : 'text-[#7a5c2e]'}`}>
+                      {label}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+function RefRow({
   label,
   value,
   mono,
-  hint,
+  last,
 }: {
   label: string
   value: string
   mono?: boolean
-  hint?: string
+  last?: boolean
 }) {
   return (
-    <div className="rounded-[12px] border border-[#E5E5E5] bg-white p-4">
-      <p className="text-[11px] font-semibold uppercase tracking-wide text-[#94a3b8]">{label}</p>
-      <p className={`mt-1 text-[16px] font-semibold text-[#111111] ${mono ? 'font-mono text-[14px]' : ''}`}>
+    <div
+      className={`grid grid-cols-[7.5rem_minmax(0,1fr)] gap-3 px-4 py-3 odd:bg-[#fafafa] ${
+        last ? '' : 'border-b border-[#F0F0F0]'
+      }`}
+    >
+      <dt className="text-[12px] font-semibold text-[#888888]">{label}</dt>
+      <dd className={`min-w-0 truncate text-[13px] font-semibold text-[#111111] ${mono ? 'font-mono' : ''}`} title={value}>
         {value}
-      </p>
-      {hint ? <p className="mt-2 text-[12px] leading-relaxed text-[#6f716d]">{hint}</p> : null}
+      </dd>
     </div>
   )
 }

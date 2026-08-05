@@ -107,9 +107,9 @@ const queueBuckets: BorrowerQueueBucket[] = [
       { borrowerId: 'R-1045', borrowerName: 'Manish Gupta', product: 'LAP', loanAmountInr: 7500000, kyc: 'pass', bank: 'warn', fraud: 'pass', aml: 'pass', riskScore: 38, slaMinutes: 360, stage: 'Penny-drop', failReason: 'Awaiting LAP field verification report', status: 'Review', source: 'Sumsub' },
       { borrowerId: 'R-1051', borrowerName: 'Ritu Agarwal', product: 'Personal loan', loanAmountInr: 280000, kyc: 'warn', bank: 'pass', fraud: 'pass', aml: 'pass', riskScore: 44, slaMinutes: 95, stage: 'Aadhaar XML', failReason: 'Aadhaar XML share-code expired', status: 'Review', source: 'Sumsub' },
       { borrowerId: 'R-1058', borrowerName: 'Sanjay Patil', product: 'Two-wheeler', loanAmountInr: 70000, kyc: 'pass', bank: 'warn', fraud: 'pass', aml: 'pass', riskScore: 36, slaMinutes: 210, stage: 'Penny-drop', failReason: 'Account name partial match (82%)', status: 'Review', source: 'Sumsub' },
-      { borrowerId: 'R-1064', borrowerName: 'Neha Verma', product: 'Personal loan', loanAmountInr: 350000, kyc: 'pass', bank: 'pass', fraud: 'pass', aml: 'warn', riskScore: 52, slaMinutes: 75, stage: 'AML screen', failReason: 'PEP near-match — manual adjudication', status: 'Review', source: 'Sumsub' },
+      { borrowerId: 'R-1064', borrowerName: 'Neha Verma', product: 'Personal loan', loanAmountInr: 350000, kyc: 'pass', bank: 'pass', fraud: 'pass', aml: 'warn', riskScore: 52, slaMinutes: 75, stage: 'AML screen', failReason: 'PEP near-match - manual adjudication', status: 'Review', source: 'Sumsub' },
       { borrowerId: 'R-1072', borrowerName: 'Imran Sheikh', product: 'Business loan', loanAmountInr: 850000, kyc: 'pass', bank: 'pass', fraud: 'warn', aml: 'pass', riskScore: 55, slaMinutes: 160, stage: 'Fraud screen', failReason: 'IP geolocation mismatch with address', status: 'Review', source: 'Sumsub' },
-      { borrowerId: 'R-1079', borrowerName: 'Lakshmi Iyer', product: 'Personal loan', loanAmountInr: 150000, kyc: 'warn', bank: 'pass', fraud: 'pass', aml: 'pass', riskScore: 39, slaMinutes: 240, stage: 'Liveness', failReason: 'Low liveness score (0.61) — retake requested', status: 'Review', source: 'Sumsub' },
+      { borrowerId: 'R-1079', borrowerName: 'Lakshmi Iyer', product: 'Personal loan', loanAmountInr: 150000, kyc: 'warn', bank: 'pass', fraud: 'pass', aml: 'pass', riskScore: 39, slaMinutes: 240, stage: 'Liveness', failReason: 'Low liveness score (0.61) - retake requested', status: 'Review', source: 'Sumsub' },
     ],
   },
   {
@@ -119,7 +119,7 @@ const queueBuckets: BorrowerQueueBucket[] = [
       { borrowerId: 'R-1091', borrowerName: 'Meena Pillai', product: 'Personal loan', loanAmountInr: 500000, kyc: 'pass', bank: 'pass', fraud: 'pass', aml: 'fail', riskScore: 78, slaMinutes: 45, stage: 'AML screen', failReason: 'AML alert: sanctions list partial hit', status: 'Blocked', source: 'Sumsub' },
       { borrowerId: 'R-1152', borrowerName: 'Kiran Thakur', product: 'Business loan', loanAmountInr: 320000, kyc: 'fail', bank: 'fail', fraud: 'fail', aml: 'pass', riskScore: 92, slaMinutes: 30, stage: 'Doc check', failReason: 'Document tampering suspected on PAN', status: 'Blocked', source: 'Sumsub' },
       { borrowerId: 'R-1096', borrowerName: 'Deepak Chawla', product: 'Personal loan', loanAmountInr: 420000, kyc: 'pass', bank: 'pass', fraud: 'fail', aml: 'pass', riskScore: 84, slaMinutes: 60, stage: 'Fraud screen', failReason: 'Duplicate identity across 3 applications', status: 'Blocked', source: 'Sumsub' },
-      { borrowerId: 'R-1103', borrowerName: 'Asha Menon', product: 'Two-wheeler', loanAmountInr: 55000, kyc: 'pass', bank: 'fail', fraud: 'pass', aml: 'pass', riskScore: 71, slaMinutes: 120, stage: 'Penny-drop', failReason: 'Penny-drop failed — account closed', status: 'Blocked', source: 'Sumsub' },
+      { borrowerId: 'R-1103', borrowerName: 'Asha Menon', product: 'Two-wheeler', loanAmountInr: 55000, kyc: 'pass', bank: 'fail', fraud: 'pass', aml: 'pass', riskScore: 71, slaMinutes: 120, stage: 'Penny-drop', failReason: 'Penny-drop failed - account closed', status: 'Blocked', source: 'Sumsub' },
     ],
   },
   {
@@ -163,7 +163,7 @@ const insights: VerificationInsight[] = [
   {
     severity: 'high',
     title: 'Name-mismatch spike on penny-drop',
-    detail: '18 penny-drop name mismatches this week — 11 concentrated on co-operative bank accounts.',
+    detail: '18 penny-drop name mismatches this week - 11 concentrated on co-operative bank accounts.',
     caseCount: 18,
   },
   {
@@ -179,14 +179,14 @@ const insights: VerificationInsight[] = [
   },
   {
     severity: 'medium',
-    title: 'Duplicate identity cluster — Pune',
+    title: 'Duplicate identity cluster - Pune',
     detail: '3 applications share a device fingerprint and contact number across the Pune branch.',
     caseCount: 3,
   },
   {
     severity: 'low',
     title: 'CKYC hit rate improving',
-    detail: 'CKYC registry pull succeeded for 96% of new applicants — up 3pp week over week.',
+    detail: 'CKYC registry pull succeeded for 96% of new applicants - up 3pp week over week.',
   },
 ]
 

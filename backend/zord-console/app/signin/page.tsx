@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { login, hydrateSession } from '@/services/auth'
 import { persistEnvMode } from '@/services/auth/persistEnvMode'
+import { restartDemoSession } from '@/services/payout-command/demo/ycDemoConstants'
 import { AuthSplitLayout } from '@/components/auth/AuthSplitLayout'
 import {
   authInputClass,
@@ -57,6 +58,10 @@ function SignInForm() {
         return
       }
 
+      // Every password sign-in starts upload-first: clear leftover demo readiness
+      // so overview/journals ask for obligation + settlement files again.
+      restartDemoSession()
+
       if (openInSandbox) {
         persistEnvMode('sandbox')
         router.push('/sandbox')
@@ -80,7 +85,15 @@ function SignInForm() {
       subtitle="Use your work email and password. Live payout command opens after login."
       footer={
         <p className="text-center text-[12px] leading-relaxed text-slate-400">
-          By continuing you agree to our terms of use and privacy policy.
+          By continuing you agree to our{' '}
+          <Link href="/terms" className="font-medium text-[#2B55E8] hover:underline">
+            terms of use
+          </Link>{' '}
+          and{' '}
+          <Link href="/privacy" className="font-medium text-[#2B55E8] hover:underline">
+            privacy policy
+          </Link>
+          .
         </p>
       }
     >
@@ -134,13 +147,13 @@ function SignInForm() {
             className="mt-0.5 h-4 w-4 rounded border-slate-300 text-[#2B55E8] focus:ring-[#2B55E8]"
           />
           <span className="text-[13px] leading-snug text-slate-600">
-            <span className="font-semibold text-slate-900">Open in sandbox</span> — safe test workspace instead of live
+            <span className="font-semibold text-slate-900">Open in sandbox</span> - safe test workspace instead of live
             payout command.
           </span>
         </label>
 
         {error ? (
-          <div className="rounded-lg border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700">
+          <div className="rounded-lg border border-[#0B1324]/20 bg-[#F1F5F9] px-3.5 py-2.5 text-[13px] text-[#0B1324]">
             {error}
           </div>
         ) : null}
@@ -156,7 +169,10 @@ function SignInForm() {
         <span className="h-px flex-1 bg-slate-200" />
       </div>
 
-      <Link href="/signup" className={authOutlineButtonClass}>
+      <Link href="/login" className={authOutlineButtonClass}>
+        Enter demo workspace
+      </Link>
+      <Link href="/signup" className={`${authOutlineButtonClass} mt-2`}>
         Book a demo
       </Link>
     </AuthSplitLayout>

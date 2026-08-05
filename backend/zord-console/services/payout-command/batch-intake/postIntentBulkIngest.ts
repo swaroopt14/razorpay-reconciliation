@@ -1,5 +1,5 @@
 /**
- * Step 1 — Intent batch file → Next proxy → zord-edge POST /v1/bulk-ingest (never intelligence)
+ * Step 1 - Intent batch file → Next proxy → zord-edge POST /v1/bulk-ingest (never intelligence)
  * Breakpoint-friendly: all request/response handling lives here.
  *
  * Product default (Arealis): failed **bulk rows** (validation / business rules after a row
@@ -23,7 +23,7 @@ export type PostIntentBulkIngestParams = {
    * Otherwise raw pasted key or full `Bearer …` / `ApiKey …` / `API-Key …` (normalized to `Bearer …` for zord-edge).
    */
   apiKeyRaw?: string
-  /** e.g. CSV, FILE_UPLOAD — must match zord-edge TransportValidation allowlist */
+  /** e.g. CSV, FILE_UPLOAD - must match zord-edge TransportValidation allowlist */
   sourceType: string
   /**
    * Optional static parser type (BANK / NBFC / MERCHANT / VENDOR / GATEWAY).

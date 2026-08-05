@@ -7,7 +7,7 @@ export type IntentBatchMetrics = {
   /** Batch total from batch-ids `total_amount`, else sum of loaded payment-intent amounts. */
   intendedValue: number
   avgReadinessPct: number | null
-  /** Batch aggregate from intent-engine `aggregate_confidence_score` (0–1). */
+  /** Batch aggregate from intent-engine `aggregate_confidence_score` (0-1). */
   batchAggregateConfidenceScore: number | null
   lowReadinessCount: number
   dlqCount: number
@@ -118,7 +118,7 @@ export function deriveIntentBatchHealth(metrics: IntentBatchMetrics): {
     return { status: 'Ready', reasons: ['All instructions passed validation'] }
   }
   if ((metrics.instructionCount ?? 0) > 0) {
-    return { status: 'Awaiting Confirmation', reasons: ['Payment instructions received — awaiting bank confirmation'] }
+    return { status: 'Awaiting Confirmation', reasons: ['Payment instructions received - awaiting bank confirmation'] }
   }
   return { status: 'Ready', reasons: [] }
 }

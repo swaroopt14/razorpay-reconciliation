@@ -1,4 +1,4 @@
-# Intelligence Service KPI Gaps — Payout Command
+# Intelligence Service KPI Gaps - Payout Command
 
 **Audience:** Intelligence / Outcome service owners
 **Contract reference:** `Zord_Payout_Command_Canonical_KPI_and_UI_Data_Contract_2026-06-15.md`
@@ -41,13 +41,13 @@ Routes that follow this pattern today: **leakage**, **ambiguity**, **patterns**,
 
 ---
 
-## P0 — Required for correct batch scope and scale
+## P0 - Required for correct batch scope and scale
 
 | Ask | Why | Contract ref |
 |-----|-----|--------------|
 | **Confirm `batch_id` on defensibility** returns batch-scoped values (leakage and ambiguity already batch-scoped when `batch_id` sent) | Evidence page still tenant-wide for defensibility | §2.11, §9 |
-| **Confirm `defensibility_score` scale is 0–65** and document rubric dimensions + `calculation_version` | Evidence Completeness Index hero uses hover tooltip “X of 65 points”; score must not be shown as a percentage | §2.8, §10 |
-| **Confirm rate fields are 0.0–1.0** (`audit_ready_pct`, `evidence_pack_rate`, `governance_coverage_pct`, `replayability_pct`, `dispute_ready_pct`, `carrier_completeness_rate`, `candidate_collision_rate`) | Console normalizes with `normalizePercentRatio`; incorrect scales cause display bugs | §2.9 |
+| **Confirm `defensibility_score` scale is 0-65** and document rubric dimensions + `calculation_version` | Evidence Completeness Index hero uses hover tooltip “X of 65 points”; score must not be shown as a percentage | §2.8, §10 |
+| **Confirm rate fields are 0.0-1.0** (`audit_ready_pct`, `evidence_pack_rate`, `governance_coverage_pct`, `replayability_pct`, `dispute_ready_pct`, `carrier_completeness_rate`, `candidate_collision_rate`) | Console normalizes with `normalizePercentRatio`; incorrect scales cause display bugs | §2.9 |
 
 ### Removed workaround
 
@@ -55,7 +55,7 @@ Console no longer hides batch-selected KPIs with “Not available for this batch
 
 ---
 
-## P1 — New endpoints / projections
+## P1 - New endpoints / projections
 
 | Ask | Why | Contract ref |
 |-----|-----|--------------|
@@ -67,7 +67,7 @@ Console no longer hides batch-selected KPIs with “Not available for this batch
 
 ---
 
-## P2 — Deterministic aggregates
+## P2 - Deterministic aggregates
 
 | Ask | Why | Contract ref |
 |-----|-----|--------------|
@@ -98,7 +98,7 @@ Console surfaces `computed_at` where present today; scope badges will use full e
 | Workspace | Same + `/api/prod/intents/dlq-items` | Leakage amounts; separate queue counts; patterns when `batch_id` set |
 | Payment Gaps | leakage, timeseries/leakage, ambiguity, defensibility | Unmatched / intended / observed amounts |
 | Match Review | ambiguity, ambiguity/velocity, batch health | `ambiguous_intent_count`, `candidate_collision_rate`, batch health KPIs |
-| Evidence | defensibility, evidence packs | `defensibility_score` (0–65 index), pack artifact counts |
+| Evidence | defensibility, evidence packs | `defensibility_score` (0-65 index), pack artifact counts |
 | Connectors | leakage, ambiguity, patterns, recommendations | Provider patterns; no connector-attributed money until P1 |
 
 ---

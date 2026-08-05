@@ -2,7 +2,7 @@ import { fetchProdJsonGet } from './fetchProdJsonGet'
 import type { DisbursementTrendRange, DisbursementTrendResponse } from './disbursementTrendTypes'
 
 /**
- * Home trend chart — BFF maps zord-intelligence leakage dashboard into chart buckets.
+ * Home trend chart - BFF maps zord-intelligence leakage dashboard into chart buckets.
  * Upstream per bucket: GET /v1/intelligence/dashboard/leakage?from_date=&to_date=
  */
 export async function getDisbursementTrend(

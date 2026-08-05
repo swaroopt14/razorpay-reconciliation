@@ -186,13 +186,13 @@ export async function hydrateSession(): Promise<User | null> {
       credentials: 'include',
     })
   } catch {
-    // Network down, CORS misconfig, or browser blocked request — do not clear auth;
+    // Network down, CORS misconfig, or browser blocked request - do not clear auth;
     // caller should not treat this the same as an invalid session.
     return null
   }
 
   if (!response.ok) {
-    // Only tear down client auth on explicit session rejection — not edge outages.
+    // Only tear down client auth on explicit session rejection - not edge outages.
     if (response.status === 401 || response.status === 403) {
       clearAuth()
     }

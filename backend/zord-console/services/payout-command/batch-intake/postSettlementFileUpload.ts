@@ -1,5 +1,5 @@
 /**
- * Step 2 — Settlement file → Next BFF `/api/settlement/upload` → outcome-engine:
+ * Step 2 - Settlement file → Next BFF `/api/settlement/upload` → outcome-engine:
  *
  *   POST {ZORD_SETTLEMENT_URL}/v1/settlement/upload?tenant_id=<session>&psp=<psp>&batch_id=<optional>
  *
@@ -11,7 +11,7 @@
  *
  * Body: multipart field `file`
  *
- * `tenant_id` is never sent from the browser — the BFF injects it from the signed-in session.
+ * `tenant_id` is never sent from the browser - the BFF injects it from the signed-in session.
  */
 import { errorMessageFromProxyResponse, normalizeAuthorizationHeader } from './intakeHttpShared'
 

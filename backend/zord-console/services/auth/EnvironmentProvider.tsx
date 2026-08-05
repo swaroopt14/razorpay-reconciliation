@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 
 /**
- * EnvironmentProvider — top-level client provider that owns the sandbox/live mode
+ * EnvironmentProvider - top-level client provider that owns the sandbox/live mode
  * for the current session and the activate-live wizard status.
  *
  * Why: a single source of truth for "am I in test mode?" so every surface (dock nav,
@@ -68,7 +68,7 @@ function loadFromStorage(): StoredState {
 }
 
 /**
- * First paint + SSR must match — do not read localStorage here (client-only).
+ * First paint + SSR must match - do not read localStorage here (client-only).
  * `routeMode` from the route wins; otherwise default sandbox until hydration effect runs.
  */
 function getInitialStoredState(routeMode?: EnvMode): StoredState {
@@ -83,7 +83,7 @@ function persistToStorage(state: StoredState) {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
   } catch {
-    // Quota exceeded / privacy mode — silently ignore.
+    // Quota exceeded / privacy mode - silently ignore.
   }
 }
 
@@ -99,7 +99,7 @@ export function EnvironmentProvider({
 }: {
   children: ReactNode
   /**
-   * If set (typically from the route — `/sandbox` passes 'sandbox',
+   * If set (typically from the route - `/sandbox` passes 'sandbox',
    * `/payout-command-view/today` passes 'live'), forces the mode for this
    * tree regardless of localStorage. The user reaches the other mode by
    * navigating to its route, not by toggling state in place.

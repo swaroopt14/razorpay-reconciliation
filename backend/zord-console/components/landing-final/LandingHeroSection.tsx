@@ -100,7 +100,7 @@ export function LandingHeroSection() {
             sizes="100vw"
           />
         )}
-        {/* Transparent black scrim, video visible underneath, text stays readable */}
+        {/* Transparent black scrim - video visible underneath, text stays readable */}
         <div className="absolute inset-0 bg-black/50" />
         <div className="absolute inset-0 bg-gradient-to-b from-black/55 via-black/40 to-black/55" />
         <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/25 to-black/35" />
@@ -128,6 +128,13 @@ export function LandingHeroSection() {
             <span className="block text-white">{heroCopy.headlineLead}</span>
             <span className="block text-white">{heroCopy.headlineTail}</span>
           </motion.h1>
+
+          <motion.p
+            {...textItemMotion}
+            className="mx-auto mt-6 max-w-2xl text-base leading-relaxed text-white/70 sm:text-lg"
+          >
+            {landingHomeCopy.featuresSection.subcopy}
+          </motion.p>
 
           <motion.div
             {...textItemMotion}
@@ -157,7 +164,7 @@ export function LandingHeroSection() {
         >
           <LandingHeroRocks />
 
-          <div className="dashboard-card relative z-[5] w-full max-w-[1200px] overflow-hidden rounded-[2rem] shadow-[0_20px_40px_rgba(0,0,0,0.04)]">
+          <div className="dashboard-card relative z-[5] w-full max-w-[1200px] shadow-[0_20px_40px_rgba(0,0,0,0.04)]">
             <LandingHeroDashboardPreview />
           </div>
         </motion.div>

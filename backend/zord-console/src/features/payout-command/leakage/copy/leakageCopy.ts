@@ -35,7 +35,7 @@ export const leakageCopy = {
     projectStart: 'PROJECT START',
     helper:
       'This value is based on unmatched, ambiguous, short-settled, orphaned, or reversed payment records.',
-    trendPending: 'Trend data pending — chart uses illustrative history until leakage time-series API is available.',
+    trendPending: 'Trend data pending - chart uses illustrative history until leakage time-series API is available.',
     criticalReview: 'Immediate review required',
   },
   exposure: {
@@ -63,7 +63,7 @@ export const leakageCopy = {
     openReview: 'Open Review Items',
     exportGap: 'Export Gap Report',
     uploadSettlement: 'Upload Missing Confirmation File',
-    exportPending: 'Export API pending — use Intent Journal to review unmatched payments.',
+    exportPending: 'Export API pending - use Intent Journal to review unmatched payments.',
     uploadPending: 'Upload settlement confirmation via your ingest flow when available.',
   },
   linkMatching: 'Why payments need review',

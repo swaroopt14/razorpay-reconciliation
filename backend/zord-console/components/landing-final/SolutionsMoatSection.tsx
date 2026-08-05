@@ -5,16 +5,16 @@ import { motion, useReducedMotion } from 'framer-motion'
 
 const moatItems = [
   {
-    title: 'Governed Payment Action Contract',
-    body: 'The authorised beneficiary, amount, policy, route and expected outcome remain bound to one versioned transaction contract.',
+    title: 'Shared payout record',
+    body: 'Intended payments, bank confirmations, gaps, and proof stay connected - so every team works from the same story.',
   },
   {
-    title: 'Evidence by Design',
-    body: 'Evidence is recorded throughout the payment lifecycle, rather than reconstructed later from portals, spreadsheets and screenshots.',
+    title: 'Evidence by design',
+    body: 'Proof packs attach to the payout path as work happens - not rebuilt later from exports and screenshots.',
   },
   {
-    title: 'Rail-neutral payment workflows',
-    body: 'Works across files, APIs, banks, PSPs, ledgers and tokenised rails without replacing the systems that move funds.',
+    title: 'Real operator workflows',
+    body: 'Built around how finance and ops actually close the day: batch tracking, clearing mismatches, and proof ready for audit.',
   },
 ] as const
 
@@ -27,7 +27,7 @@ function MoatAtmosphere() {
         style={{ backgroundImage: "url('/final-landing/solutions/solutions-card-buyer-story-bg.png')" }}
       />
 
-      {/* Soft color lifts, bloom instead of a flat wash */}
+      {/* Soft color lifts - bloom instead of a flat wash */}
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_90%_70%_at_50%_42%,rgba(16,185,129,0.28)_0%,transparent_62%)]" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_38%,rgba(110,231,183,0.34)_0%,transparent_36%)]" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_82%_48%,rgba(52,211,153,0.3)_0%,transparent_38%)]" />
@@ -94,11 +94,11 @@ export function SolutionsMoatSection() {
               <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-white/10 text-[#6EE7B7] ring-1 ring-white/20 backdrop-blur-md sm:h-7 sm:w-7">
                 <Sparkles className="h-3 w-3 sm:h-3.5 sm:w-3.5" strokeWidth={2.25} />
               </span>
-              <span>Why payment infrastructure needs Zord</span>
+              <span>Why teams choose Zord</span>
             </div>
 
             <h2 className="mt-5 text-[1.85rem] font-semibold leading-[1.05] tracking-[-0.055em] text-white sm:mt-6 sm:text-[2.5rem] md:text-[2.85rem] lg:text-[3.1rem]">
-              One control and evidence layer across payment systems
+              Clear advantage for ops and finance
             </h2>
 
             <div className="mt-8 flex flex-col gap-3 sm:mt-9 sm:gap-3.5">

@@ -26,7 +26,7 @@ const BANK_LOGO_MAP: Record<string, LogoConfig> = {
 }
 
 export function inferBankNameFromReference(reference: string): string | null {
-  if (!reference || reference === '—' || reference === 'Awaited') return null
+  if (!reference || reference === '-' || reference === 'Awaited') return null
 
   if (/^ICICI/i.test(reference)) return 'ICICI Bank'
   if (/^HDFC/i.test(reference)) return 'HDFC Bank'

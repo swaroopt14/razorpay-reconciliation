@@ -8,7 +8,7 @@ export type RiskSignalKind =
   | 'Device risk'
   | 'Instant withdrawal'
 export type NextAction =
-  | '—'
+  | '-'
   | 'Auto-debit retry'
   | 'Tele-calling'
   | 'Field visit'
@@ -94,23 +94,23 @@ type RiskRow = {
 }
 
 const queueRows: LoanMonitoringRow[] = [
-  { loanId: 'L-1001', borrowerName: 'Ananya Sharma', amountInr: 250000, dpd: 0, rail: 'eNACH', emiStatus: 'Paid', riskSignal: 'None', region: 'Mumbai', nextAction: '—', lastEventAt: '2h ago', confirmed: 'Yes', evidence: 'Complete', status: 'Confirmed' },
-  { loanId: 'L-1004', borrowerName: 'Nita Rao', amountInr: 120000, dpd: 0, rail: 'UPI Autopay', emiStatus: 'Paid', riskSignal: 'None', region: 'Bengaluru', nextAction: '—', lastEventAt: '4h ago', confirmed: 'Yes', evidence: 'Complete', status: 'Confirmed' },
+  { loanId: 'L-1001', borrowerName: 'Ananya Sharma', amountInr: 250000, dpd: 0, rail: 'eNACH', emiStatus: 'Paid', riskSignal: 'None', region: 'Mumbai', nextAction: '-', lastEventAt: '2h ago', confirmed: 'Yes', evidence: 'Complete', status: 'Confirmed' },
+  { loanId: 'L-1004', borrowerName: 'Nita Rao', amountInr: 120000, dpd: 0, rail: 'UPI Autopay', emiStatus: 'Paid', riskSignal: 'None', region: 'Bengaluru', nextAction: '-', lastEventAt: '4h ago', confirmed: 'Yes', evidence: 'Complete', status: 'Confirmed' },
   { loanId: 'L-1009', borrowerName: 'Amit Bansal', amountInr: 600000, dpd: 12, rail: 'eNACH', emiStatus: 'Bounced', riskSignal: 'Instant withdrawal', region: 'Delhi', nextAction: 'Auto-debit retry', lastEventAt: '1d ago', confirmed: 'Yes', evidence: 'Complete', status: 'At risk' },
-  { loanId: 'L-1012', borrowerName: 'Kavita Joshi', amountInr: 60000, dpd: 0, rail: 'UPI Autopay', emiStatus: 'Paid', riskSignal: 'None', region: 'Nagpur', nextAction: '—', lastEventAt: '6h ago', confirmed: 'Yes', evidence: 'Complete', status: 'Confirmed' },
-  { loanId: 'L-1017', borrowerName: 'Rohan Mehta', amountInr: 4500000, dpd: 0, rail: 'eNACH', emiStatus: 'Paid', riskSignal: 'None', region: 'Mumbai', nextAction: '—', lastEventAt: '1d ago', confirmed: 'Yes', evidence: 'Complete', status: 'Confirmed' },
+  { loanId: 'L-1012', borrowerName: 'Kavita Joshi', amountInr: 60000, dpd: 0, rail: 'UPI Autopay', emiStatus: 'Paid', riskSignal: 'None', region: 'Nagpur', nextAction: '-', lastEventAt: '6h ago', confirmed: 'Yes', evidence: 'Complete', status: 'Confirmed' },
+  { loanId: 'L-1017', borrowerName: 'Rohan Mehta', amountInr: 4500000, dpd: 0, rail: 'eNACH', emiStatus: 'Paid', riskSignal: 'None', region: 'Mumbai', nextAction: '-', lastEventAt: '1d ago', confirmed: 'Yes', evidence: 'Complete', status: 'Confirmed' },
   { loanId: 'L-1020', borrowerName: 'Sneha Kulkarni', amountInr: 320000, dpd: 6, rail: 'eNACH', emiStatus: 'Due', riskSignal: 'None', region: 'Pune', nextAction: 'Auto-debit retry', lastEventAt: '5h ago', confirmed: 'Yes', evidence: 'Complete', status: 'At risk' },
   { loanId: 'L-1023', borrowerName: 'Ravi Kumar', amountInr: 200000, dpd: 34, rail: 'eNACH', emiStatus: 'Bounced', riskSignal: 'Dormant', region: 'Pune', nextAction: 'Tele-calling', lastEventAt: '3d ago', confirmed: 'Yes', evidence: 'Partial', status: 'At risk' },
-  { loanId: 'L-1027', borrowerName: 'Vikram Singh', amountInr: 1200000, dpd: 0, rail: 'eNACH', emiStatus: 'Paid', riskSignal: 'None', region: 'Chandigarh', nextAction: '—', lastEventAt: '8h ago', confirmed: 'Yes', evidence: 'Complete', status: 'Confirmed' },
-  { loanId: 'L-1031', borrowerName: 'Divya Nair', amountInr: 180000, dpd: 0, rail: 'UPI Autopay', emiStatus: 'Paid', riskSignal: 'None', region: 'Kochi', nextAction: '—', lastEventAt: '12h ago', confirmed: 'Yes', evidence: 'Complete', status: 'Confirmed' },
+  { loanId: 'L-1027', borrowerName: 'Vikram Singh', amountInr: 1200000, dpd: 0, rail: 'eNACH', emiStatus: 'Paid', riskSignal: 'None', region: 'Chandigarh', nextAction: '-', lastEventAt: '8h ago', confirmed: 'Yes', evidence: 'Complete', status: 'Confirmed' },
+  { loanId: 'L-1031', borrowerName: 'Divya Nair', amountInr: 180000, dpd: 0, rail: 'UPI Autopay', emiStatus: 'Paid', riskSignal: 'None', region: 'Kochi', nextAction: '-', lastEventAt: '12h ago', confirmed: 'Yes', evidence: 'Complete', status: 'Confirmed' },
   { loanId: 'L-1036', borrowerName: 'Arjun Reddy', amountInr: 85000, dpd: 28, rail: 'UPI Autopay', emiStatus: 'Bounced', riskSignal: 'Dormant', region: 'Hyderabad', nextAction: 'Tele-calling', lastEventAt: '2d ago', confirmed: 'Yes', evidence: 'Partial', status: 'At risk' },
-  { loanId: 'L-1042', borrowerName: 'Farhan Khan', amountInr: 220000, dpd: 0, rail: 'eNACH', emiStatus: 'Paid', riskSignal: 'None', region: 'Lucknow', nextAction: '—', lastEventAt: '9h ago', confirmed: 'Yes', evidence: 'Complete', status: 'Confirmed' },
+  { loanId: 'L-1042', borrowerName: 'Farhan Khan', amountInr: 220000, dpd: 0, rail: 'eNACH', emiStatus: 'Paid', riskSignal: 'None', region: 'Lucknow', nextAction: '-', lastEventAt: '9h ago', confirmed: 'Yes', evidence: 'Complete', status: 'Confirmed' },
   { loanId: 'L-1045', borrowerName: 'Manish Gupta', amountInr: 7500000, dpd: 0, rail: 'NEFT', emiStatus: 'N/A', riskSignal: 'None', region: 'Delhi', nextAction: 'Awaiting confirmation', lastEventAt: '30m ago', confirmed: 'Pending', evidence: 'Partial', status: 'Pending' },
   { loanId: 'L-1051', borrowerName: 'Ritu Agarwal', amountInr: 280000, dpd: 67, rail: 'eNACH', emiStatus: 'Bounced', riskSignal: 'Instant withdrawal', region: 'Kolkata', nextAction: 'Legal notice', lastEventAt: '4d ago', confirmed: 'Yes', evidence: 'Partial', status: 'At risk' },
   { loanId: 'L-1058', borrowerName: 'Sanjay Patil', amountInr: 70000, dpd: 9, rail: 'eNACH', emiStatus: 'Due', riskSignal: 'None', region: 'Nashik', nextAction: 'Auto-debit retry', lastEventAt: '1d ago', confirmed: 'Yes', evidence: 'Complete', status: 'At risk' },
-  { loanId: 'L-1064', borrowerName: 'Neha Verma', amountInr: 350000, dpd: 0, rail: 'eNACH', emiStatus: 'Paid', riskSignal: 'None', region: 'Indore', nextAction: '—', lastEventAt: '11h ago', confirmed: 'Yes', evidence: 'Complete', status: 'Confirmed' },
+  { loanId: 'L-1064', borrowerName: 'Neha Verma', amountInr: 350000, dpd: 0, rail: 'eNACH', emiStatus: 'Paid', riskSignal: 'None', region: 'Indore', nextAction: '-', lastEventAt: '11h ago', confirmed: 'Yes', evidence: 'Complete', status: 'Confirmed' },
   { loanId: 'L-1072', borrowerName: 'Imran Sheikh', amountInr: 850000, dpd: 96, rail: 'eNACH', emiStatus: 'Bounced', riskSignal: 'Linked + Circular', region: 'Bhopal', nextAction: 'Legal notice', lastEventAt: '6d ago', confirmed: 'Yes', evidence: 'Partial', status: 'At risk' },
-  { loanId: 'L-1079', borrowerName: 'Lakshmi Iyer', amountInr: 150000, dpd: 0, rail: 'UPI Autopay', emiStatus: 'Paid', riskSignal: 'None', region: 'Chennai', nextAction: '—', lastEventAt: '7h ago', confirmed: 'Yes', evidence: 'Complete', status: 'Confirmed' },
+  { loanId: 'L-1079', borrowerName: 'Lakshmi Iyer', amountInr: 150000, dpd: 0, rail: 'UPI Autopay', emiStatus: 'Paid', riskSignal: 'None', region: 'Chennai', nextAction: '-', lastEventAt: '7h ago', confirmed: 'Yes', evidence: 'Complete', status: 'Confirmed' },
   { loanId: 'L-1091', borrowerName: 'Meena Pillai', amountInr: 500000, dpd: 0, rail: 'NEFT', emiStatus: 'N/A', riskSignal: 'None', region: 'Kochi', nextAction: 'Awaiting confirmation', lastEventAt: '1h ago', confirmed: 'Pending', evidence: 'Partial', status: 'Pending' },
   { loanId: 'L-1102', borrowerName: 'Suresh Mishra', amountInr: 400000, dpd: 41, rail: 'eNACH', emiStatus: 'Bounced', riskSignal: 'Linked + Circular', region: 'Jaipur', nextAction: 'Field visit', lastEventAt: '40m ago', confirmed: 'Yes', evidence: 'Partial', status: 'At risk' },
   { loanId: 'L-1138', borrowerName: 'Pooja Desai', amountInr: 180000, dpd: 0, rail: 'UPI Autopay', emiStatus: 'Paid', riskSignal: 'Device risk', region: 'Ahmedabad', nextAction: 'Watchlist', lastEventAt: '3h ago', confirmed: 'Yes', evidence: 'Complete', status: 'Confirmed' },
@@ -123,12 +123,12 @@ const queueCounts = {
   'At risk': 47,
 } as const
 
-/** RBI delinquency classification — how a big NBFC risk team reads the book. */
+/** RBI delinquency classification - how a big NBFC risk team reads the book. */
 const dpdBuckets: DpdBucket[] = [
   { label: 'Current', range: '0 DPD', amountCr: 34.2, loans: 645, tone: 'green' },
-  { label: 'SMA-0', range: '1–30 DPD', amountCr: 4.1, loans: 67, tone: 'lime' },
-  { label: 'SMA-1', range: '31–60 DPD', amountCr: 2.2, loans: 38, tone: 'amber' },
-  { label: 'SMA-2', range: '61–90 DPD', amountCr: 1.1, loans: 18, tone: 'orange' },
+  { label: 'SMA-0', range: '1-30 DPD', amountCr: 4.1, loans: 67, tone: 'lime' },
+  { label: 'SMA-1', range: '31-60 DPD', amountCr: 2.2, loans: 38, tone: 'amber' },
+  { label: 'SMA-2', range: '61-90 DPD', amountCr: 1.1, loans: 18, tone: 'orange' },
   { label: 'NPA', range: '90+ DPD', amountCr: 0.4, loans: 12, tone: 'red' },
 ]
 
@@ -154,12 +154,12 @@ const enach = {
 }
 
 const alerts: MonitoringAlert[] = [
-  { time: '10:42', loanId: 'L-1102', label: 'Circular transfer detected — ₹4.1L moved across 3 linked accounts in 40 min', severity: 'high' },
-  { time: '10:18', loanId: 'L-1072', label: 'Crossed 90 DPD — auto-classified NPA, legal notice queued', severity: 'high' },
+  { time: '10:42', loanId: 'L-1102', label: 'Circular transfer detected - ₹4.1L moved across 3 linked accounts in 40 min', severity: 'high' },
+  { time: '10:18', loanId: 'L-1072', label: 'Crossed 90 DPD - auto-classified NPA, legal notice queued', severity: 'high' },
   { time: '09:51', loanId: 'L-1051', label: 'Full disbursal withdrawn within 2 hours of credit', severity: 'high' },
-  { time: '09:15', loanId: 'L-1009', label: 'eNACH bounce — insufficient funds, retry scheduled for tomorrow 6am', severity: 'medium' },
-  { time: '08:47', loanId: 'L-1036', label: 'Account dormant 28 days — no inbound credits since disbursal', severity: 'medium' },
-  { time: '08:02', loanId: 'L-1138', label: 'Login from new device — matches device seen on 1 other active loan', severity: 'low' },
+  { time: '09:15', loanId: 'L-1009', label: 'eNACH bounce - insufficient funds, retry scheduled for tomorrow 6am', severity: 'medium' },
+  { time: '08:47', loanId: 'L-1036', label: 'Account dormant 28 days - no inbound credits since disbursal', severity: 'medium' },
+  { time: '08:02', loanId: 'L-1138', label: 'Login from new device - matches device seen on 1 other active loan', severity: 'low' },
 ]
 
 const summaryCards = [
@@ -247,7 +247,7 @@ const repaymentTrend = {
 const connectionClusters: ConnectionCluster[] = [
   {
     id: 'cluster-1',
-    title: 'Cluster 1 — L-1102 (Suresh Mishra)',
+    title: 'Cluster 1 - L-1102 (Suresh Mishra)',
     riskLabel: 'Shared device + circular transfers across 3 accounts',
     nodes: [
       { id: 'b1', label: 'Suresh Mishra · L-1102', type: 'borrower', risk: '41 DPD' },
@@ -264,7 +264,7 @@ const connectionClusters: ConnectionCluster[] = [
   },
   {
     id: 'cluster-2',
-    title: 'Cluster 2 — L-1072 (Imran Sheikh)',
+    title: 'Cluster 2 - L-1072 (Imran Sheikh)',
     riskLabel: 'Funds routed to common counterparty seen on 2 NPA loans',
     nodes: [
       { id: 'b2', label: 'Imran Sheikh · L-1072', type: 'borrower', risk: '96 DPD · NPA' },

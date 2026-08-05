@@ -1,7 +1,7 @@
 'use client'
 
 /**
- * Seeded batches store — localStorage-backed list of sandbox-seeded batches
+ * Seeded batches store - localStorage-backed list of sandbox-seeded batches
  * with cross-tab sync via the `storage` event.
  *
  * Why this exists: sandbox test flows produce a `TEST_*` batch
@@ -37,7 +37,7 @@ function persistToStorage(batches: SeededBatch[]) {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(batches))
   } catch {
-    // Quota exceeded or privacy mode — silently ignore. Worst case the user
+    // Quota exceeded or privacy mode - silently ignore. Worst case the user
     // loses sandbox-seeded data on refresh.
   }
 }
@@ -52,7 +52,7 @@ export function useSeededBatches() {
     setHydrated(true)
   }, [])
 
-  // Cross-tab sync — when another tab writes to the same key, refresh ours.
+  // Cross-tab sync - when another tab writes to the same key, refresh ours.
   useEffect(() => {
     if (typeof window === 'undefined') return
     const onStorage = (e: StorageEvent) => {

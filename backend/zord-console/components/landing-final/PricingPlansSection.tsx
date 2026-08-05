@@ -21,7 +21,7 @@ export function PricingPlansSection() {
             transition={{ duration: 0.5 }}
             className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#9CA3AF]"
           >
-            Rollout paths
+            Plans
           </motion.p>
           <motion.h2
             initial={shouldReduceMotion ? false : { opacity: 0, y: 18 }}
@@ -30,8 +30,8 @@ export function PricingPlansSection() {
             transition={{ duration: 0.55, delay: 0.05 }}
             className="mt-4 text-[2.2rem] font-semibold leading-[1.05] tracking-[-0.05em] text-[#111111] sm:text-4xl"
           >
-            Sandbox first, then{' '}
-            <span className="text-[#047857]">commercials with sales.</span>
+            Try first, then{' '}
+            <span className="text-[#047857]">talk to sales about pricing.</span>
           </motion.h2>
           <motion.p
             initial={shouldReduceMotion ? false : { opacity: 0, y: 14 }}
@@ -40,7 +40,7 @@ export function PricingPlansSection() {
             transition={{ duration: 0.5, delay: 0.1 }}
             className="mt-4 text-[15px] leading-relaxed text-[#6B7280] sm:text-base"
           >
-            Three enterprise-ready paths. No public rate card, pricing follows workspace depth and rollout needs.
+            Three ways to start. No public rate card - pricing follows how much you use Zord and how much help you need.
           </motion.p>
         </div>
 
@@ -90,7 +90,7 @@ export function PricingPlansSection() {
 
                 <a
                   href={
-                    plan.title === 'Sandbox'
+                    plan.title === 'Try first'
                       ? '/signin'
                       : 'mailto:Support@zordnet.com?subject=ZORD%20pricing%20discussion'
                   }
@@ -100,7 +100,7 @@ export function PricingPlansSection() {
                       : 'border border-black/10 bg-white text-[#111111] hover:bg-black/[0.02]'
                   }`}
                 >
-                  {plan.title === 'Sandbox' ? 'Start in sandbox' : 'Talk to sales'}
+                  {plan.title === 'Try first' ? 'Try first' : 'Talk to sales'}
                 </a>
               </motion.article>
             )

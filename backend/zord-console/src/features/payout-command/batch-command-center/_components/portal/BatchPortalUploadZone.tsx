@@ -12,6 +12,8 @@ type BatchPortalUploadZoneProps = {
   onFileChosen: (file: File) => void
   inputLabel: string
   browseLabel?: string
+  /** Shown on the browse control while `busy` (default: Uploading…). */
+  busyLabel?: string
 }
 
 function UploadIcon() {
@@ -44,6 +46,7 @@ export function BatchPortalUploadZone({
   onFileChosen,
   inputLabel,
   browseLabel = 'Browse files',
+  busyLabel = 'Uploading…',
 }: BatchPortalUploadZoneProps) {
   const [dragOver, setDragOver] = useState(false)
 
@@ -88,7 +91,7 @@ export function BatchPortalUploadZone({
         </p>
       ) : null}
       <label className={`mt-3 ${PORTAL_PRIMARY_BTN} ${busy ? 'pointer-events-none opacity-70' : 'cursor-pointer'}`}>
-        {busy ? 'Uploading…' : browseLabel}
+        {busy ? busyLabel : browseLabel}
         <input
           type="file"
           accept={accept}

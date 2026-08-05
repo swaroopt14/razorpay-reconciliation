@@ -49,7 +49,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# Python packaging dirs at repo root only — do not ignore app `src/**/lib`.
+/lib/
 lib64/
 parts/
 sdist/

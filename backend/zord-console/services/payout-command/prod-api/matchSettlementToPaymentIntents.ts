@@ -6,7 +6,7 @@ function norm(value: string | null | undefined): string {
 }
 
 function isPresent(value: string): boolean {
-  return Boolean(value && value !== '—')
+  return Boolean(value && value !== '-')
 }
 
 /** Resolve payment intent id for one settlement row (console-only; no outcome-engine field). */

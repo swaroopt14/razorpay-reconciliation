@@ -47,7 +47,7 @@ function formatLoanCompact(amountInr: number): string {
 }
 
 function formatSla(minutes: number | null): string {
-  if (minutes === null) return '—'
+  if (minutes === null) return '-'
   if (minutes < 60) return `${minutes}m`
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`
 }
@@ -71,8 +71,8 @@ function riskScoreTone(score: number): string {
 
 function signalDotTone(level: SignalLevel): string {
   if (level === 'pass') return 'bg-[#000000]'
-  if (level === 'warn') return 'bg-[#d97706]'
-  return 'bg-[#dc2626]'
+  if (level === 'warn') return 'bg-[#0B1324]'
+  return 'bg-[#0B1324]'
 }
 
 function rowSearchHaystack(row: BorrowerQueueRow): string {
@@ -386,7 +386,7 @@ export function BorrowerVerificationSurface() {
             <span className="inline-flex items-center rounded-full border border-[#cbd5e1] bg-[#f4f4f5] px-2.5 py-0.5 text-[12px] font-semibold text-[#000000]">
               {source.header.statusPill}
             </span>
-            <span className="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2.5 py-0.5 text-[12px] font-semibold text-sky-700">
+            <span className="inline-flex items-center rounded-full border border-[#0B1324]/20 bg-[#0B1324] px-2.5 py-0.5 text-[12px] font-semibold text-white">
               {source.header.providerPill}
             </span>
           </div>
@@ -414,14 +414,14 @@ export function BorrowerVerificationSurface() {
         </div>
       </section>
 
-      <section className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-sky-200 bg-sky-50/70 px-4 py-2.5">
-        <p className="text-[13px] font-medium text-sky-900">
+      <section className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-[#0B1324]/20 bg-[#0B1324]/70 px-4 py-2.5">
+        <p className="text-[13px] font-medium text-[#0B1324]">
           {source.header.syncLine} · Last pull {source.header.lastPullMinutes} min ago · Manual review fallback active for{' '}
           {source.header.manualReviewFallbackBorrowers} borrowers · Last check {formatClock(lastCheckAt)}
         </p>
         <Link
           href="/payout-command-view/today?dock=grid&tab=failures"
-          className="text-[13px] font-semibold text-sky-800 underline decoration-sky-300 underline-offset-4"
+          className="text-[13px] font-semibold text-[#0B1324] underline decoration-[#0B1324]/30 underline-offset-4"
         >
           View manual queue
         </Link>
@@ -464,7 +464,7 @@ export function BorrowerVerificationSurface() {
           <div className="flex items-start justify-between gap-3">
             <div>
               <h3 className={`text-[1.2rem] font-semibold tracking-[-0.01em] ${HOME_TITLE_BLACK}`}>Verification volume</h3>
-              <p className={`mt-0.5 ${ZORD_SURFACE_MUTED}`}>Checks processed per day — last 7 days</p>
+              <p className={`mt-0.5 ${ZORD_SURFACE_MUTED}`}>Checks processed per day - last 7 days</p>
             </div>
             <div className="text-right">
               <p className={`text-[26px] font-semibold leading-none ${HOME_TITLE_BLACK} ${dmMono.className}`}>
@@ -554,7 +554,7 @@ export function BorrowerVerificationSurface() {
                 <span className="text-[13px] font-semibold text-[#00239C]">{signal.label}</span>
                 <div className="h-3 overflow-hidden rounded-full bg-slate-100">
                   <div
-                    className={`h-full rounded-full ${signal.value >= 14 ? 'bg-[#ef4444]' : signal.value >= 8 ? 'bg-[#f59e0b]' : 'bg-[#94a3b8]'}`}
+                    className={`h-full rounded-full ${signal.value >= 14 ? 'bg-[#0B1324]' : signal.value >= 8 ? 'bg-[#0B1324]' : 'bg-[#94a3b8]'}`}
                     style={{ width: `${(signal.value / riskMax) * 100}%` }}
                   />
                 </div>
@@ -642,7 +642,7 @@ export function BorrowerVerificationSurface() {
                     <tr
                       key={row.borrowerId}
                       onClick={() => profile.open(row.borrowerId)}
-                      className="cursor-pointer border-t border-slate-200 transition hover:bg-sky-50/50"
+                      className="cursor-pointer border-t border-slate-200 transition hover:bg-[#0B1324]/50"
                     >
                       <td className="px-3 py-2.5">
                         <p className={`text-[14px] font-semibold ${HOME_TITLE_BLACK}`}>{row.borrowerName}</p>

@@ -59,12 +59,12 @@ export function PricingVideoHero() {
               ZORD Pricing
             </p>
             <h1 className="mt-5 text-[2.6rem] font-semibold leading-[0.95] tracking-[-0.06em] text-white sm:text-6xl lg:text-[5.5rem]">
-              Sandbox first.
-              <span className="block text-white">Commercials with sales.</span>
+              Try first.
+              <span className="block text-white">Price with sales.</span>
             </h1>
             <p className="mt-6 max-w-2xl text-base leading-relaxed text-white sm:text-lg">
-              Evaluate the payout workspace, then shape production pricing around connectors, evidence depth, and
-              rollout support, not a public rate card.
+              Try first with sample data, book a demo when you are ready, then set production pricing with the team - based on how
+              you use proof packs, review workflows, and support needs. No public rate card.
             </p>
 
             <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -78,7 +78,7 @@ export function PricingVideoHero() {
                 href="/signin"
                 className="inline-flex cursor-pointer items-center justify-center rounded-full border border-white/25 bg-white/10 px-7 py-3.5 text-[14px] font-semibold text-white backdrop-blur-sm transition hover:bg-white/15"
               >
-                Start in sandbox
+                Try first
               </Link>
             </div>
           </motion.div>
@@ -91,8 +91,8 @@ export function PricingVideoHero() {
             className="group inline-flex w-full max-w-sm cursor-pointer items-center justify-between gap-4 rounded-[1.35rem] border border-white/20 bg-white/10 px-5 py-4 text-white backdrop-blur-md transition hover:bg-white/15 lg:w-auto"
           >
             <div className="min-w-0">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/65">Rollout paths</p>
-              <p className="mt-1 truncate text-[15px] font-semibold tracking-[-0.02em]">Scroll to commercial models</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/65">Ways to start</p>
+              <p className="mt-1 truncate text-[15px] font-semibold tracking-[-0.02em]">Scroll to plans</p>
             </div>
             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white text-[#0A0A0A] transition group-hover:scale-105">
               <ArrowDown className="h-4 w-4" />

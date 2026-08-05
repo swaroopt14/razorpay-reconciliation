@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   useSessionAccountProfile,
@@ -19,7 +20,7 @@ import {
   postSupportChatReply,
   postSupportEmailMessage,
 } from '@/services/payout-command/support/supportTicketsApi'
-import { SANDBOX_API_KEYS, SANDBOX_RECENT_REQUESTS } from '@/services/payout-command/sandbox-data'
+import { SANDBOX_RECENT_REQUESTS } from '@/services/payout-command/sandbox-data'
 import { getAmbiguityHeatmap, getPatternsKpis } from '@/services/payout-command/prod-api/getIntelligenceKpis'
 import { isDataAvailable, type AmbiguityHeatmapBatchRow } from '@/services/payout-command/prod-api/intelligenceTypes'
 import { getProdIntentEngineBatchesForSession } from '@/services/payout-command/prod-api/getProdIntentEngineBatches'
@@ -29,11 +30,9 @@ import {
 } from '@/services/payout-command/prod-api/settlementObservations'
 import { SupportDocNav } from './SupportDocNav'
 import { RaiseTicketModal } from './RaiseTicketModal'
-import { Glyph } from '../shared'
 import {
   ZORD_SUPPORT_EMAIL,
   ZORD_SUPPORT_MAILTO,
-  supportMailtoForTicket,
 } from './supportConstants'
 import {
   HOME_BODY_IMPERIAL,
@@ -68,53 +67,39 @@ type ProcessingOverview = {
 
 function relativeTime(iso: string): string {
   const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return '—'
+  if (Number.isNaN(d.getTime())) return '-'
   const diffMs = Date.now() - d.getTime()
   const mins = Math.floor(diffMs / 60_000)
-  if (mins < 2) return 'Just now'
+  if (mins < 2) return 'just now'
   if (mins < 60) return `${mins} mins ago`
   const hours = Math.floor(mins / 60)
-  if (hours < 48) return `${hours} hours ago`
+  if (hours < 24) return hours === 1 ? 'an hour ago' : `${hours} hours ago`
   const days = Math.floor(hours / 24)
-  return `${days} days ago`
+  if (days === 1) return 'a day ago'
+  if (days < 30) return `${days} days ago`
+  const months = Math.floor(days / 30)
+  if (months === 1) return 'a month ago'
+  if (months < 12) return `${months} months ago`
+  const years = Math.floor(days / 365)
+  return years === 1 ? 'a year ago' : `${years} years ago`
 }
 
-function formatHeaderDate(iso: string) {
+function formatReplyTimestamp(iso: string): string {
   const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return '—'
-  return d
-    .toLocaleString('en-IN', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true,
-    })
-    .toUpperCase()
-}
-
-function formatExpectedReply(iso?: string) {
-  if (!iso) return null
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return null
-  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' })
+  if (Number.isNaN(d.getTime())) return '-'
+  const stamped = d.toLocaleString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  })
+  return `${stamped} (${relativeTime(iso)})`
 }
 
 function avatarInitial(name: string) {
   return (name.trim()[0] ?? '?').toUpperCase()
-}
-
-function categoryAvatarColor(category: string) {
-  const hash = category.split('').reduce((s, c) => s + c.charCodeAt(0), 0)
-  const palette = [
-    'bg-[#dbeafe] text-[#1e40af]',
-    'bg-[#f4f4f5] text-[#000000]',
-    'bg-[#fef3c7] text-[#92400e]',
-    'bg-[#ede9fe] text-[#5b21b6]',
-    'bg-[#ffe4e6] text-[#9f1239]',
-  ]
-  return palette[hash % palette.length]
 }
 
 function money(n: number) {
@@ -127,8 +112,8 @@ function money(n: number) {
 
 function statusTone(status: string) {
   const s = status.toUpperCase()
-  if (s.includes('FAIL')) return 'text-rose-600'
-  if (s.includes('PEND') || s.includes('PROC')) return 'text-amber-600'
+  if (s.includes('FAIL')) return 'text-[#0B1324]'
+  if (s.includes('PEND') || s.includes('PROC')) return 'text-[#0B1324]'
   if (s.includes('SUCCESS') || s.includes('SETTL') || s.includes('CONFIRM')) return 'text-black'
   return 'text-slate-600'
 }
@@ -145,7 +130,7 @@ function StatusBadge({ ticket, compact }: { ticket: SupportTicket; compact?: boo
   if (ticket.status === 'closed') {
     return (
       <span
-        className={`inline-flex items-center gap-1 rounded-full bg-slate-200/80 px-2 py-0.5 font-semibold text-slate-600 ${
+        className={`inline-flex items-center rounded-[4px] bg-[#E11D48] px-2 py-0.5 font-bold uppercase tracking-wide text-white ${
           compact ? 'text-[10px]' : 'text-[11px]'
         }`}
       >
@@ -156,23 +141,21 @@ function StatusBadge({ ticket, compact }: { ticket: SupportTicket; compact?: boo
   if (ticket.state === 'awaiting_customer') {
     return (
       <span
-        className={`inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-900 ${
+        className={`inline-flex items-center rounded-[4px] bg-[#3B82F6] px-2 py-0.5 font-bold uppercase tracking-wide text-white ${
           compact ? 'text-[10px]' : 'text-[11px]'
         }`}
       >
-        <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden />
         Awaiting your reply
       </span>
     )
   }
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full bg-neutral-200 px-2 py-0.5 font-semibold text-black ${
+      className={`inline-flex items-center rounded-[4px] bg-[#0EA5E9] px-2 py-0.5 font-bold uppercase tracking-wide text-white ${
         compact ? 'text-[10px]' : 'text-[11px]'
       }`}
     >
-      <span className="h-1.5 w-1.5 rounded-full bg-black" aria-hidden />
-      Active
+      Open
     </span>
   )
 }
@@ -200,13 +183,26 @@ function MessageRow({ msg }: { msg: SupportMessage }) {
     )
   }
 
+  if (isZord) {
+    return (
+      <article className="rounded-xl border border-[#E5E7EB] bg-white px-5 py-5 shadow-sm">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#0B1B4D] text-[15px] font-bold text-white">
+              Z
+            </span>
+            <span className="text-[15px] font-semibold text-[#111827]">{msg.author || 'Zord Support'}</span>
+          </div>
+          <span className="shrink-0 text-[12px] text-[#6B7280]">{formatReplyTimestamp(msg.createdAt)}</span>
+        </div>
+        <p className="mt-4 whitespace-pre-wrap text-[14px] leading-[1.7] text-[#374151]">{msg.body}</p>
+      </article>
+    )
+  }
+
   return (
     <article className="flex gap-3 border-b border-slate-100/90 pb-5 last:border-0">
-      <span
-        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[13px] font-bold ${
-          isZord ? 'bg-[#0f172a] text-white' : 'bg-slate-200 text-slate-800'
-        }`}
-      >
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[13px] font-bold text-slate-800">
         {avatarInitial(msg.author)}
       </span>
       <div className="min-w-0 flex-1 pt-0.5">
@@ -297,42 +293,26 @@ function FieldCard({ title, subtitle, children }: { title: string; subtitle?: st
   )
 }
 
-function ProfileTab({ profile, tenantApiKey }: { profile: ProfileInfo | null; tenantApiKey: string | null }) {
-  const [showSecret, setShowSecret] = useState(false)
-  const [copied, setCopied] = useState<'key' | 'secret' | null>(null)
-
-  const publishable = SANDBOX_API_KEYS.find((k) => k.type === 'publishable' && k.mode === 'sandbox')?.value ?? 'pk_test_unavailable'
-  const secret = tenantApiKey || SANDBOX_API_KEYS.find((k) => k.type === 'secret' && k.mode === 'sandbox')?.value || 'sk_test_unavailable'
-
-  const copy = async (v: string, kind: 'key' | 'secret') => {
-    try {
-      await navigator.clipboard.writeText(v)
-      setCopied(kind)
-      window.setTimeout(() => setCopied(null), 1200)
-    } catch {
-      // ignore
-    }
-  }
-
+function ProfileTab({ profile }: { profile: ProfileInfo | null; tenantApiKey?: string | null }) {
   return (
     <div className="space-y-4">
       <FieldCard title="My Profile" subtitle="Mapped from /api/auth/me">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Name</p>
-            <p className={`mt-1 text-[15px] font-semibold ${HOME_TITLE_BLACK}`}>{profile?.name || '—'}</p>
+            <p className={`mt-1 text-[15px] font-semibold ${HOME_TITLE_BLACK}`}>{profile?.name || '-'}</p>
           </div>
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Email</p>
-            <p className={`mt-1 text-[15px] font-semibold ${HOME_TITLE_BLACK}`}>{profile?.email || '—'}</p>
+            <p className={`mt-1 text-[15px] font-semibold ${HOME_TITLE_BLACK}`}>{profile?.email || '-'}</p>
           </div>
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Role</p>
-            <p className={`mt-1 text-[15px] ${HOME_TITLE_BLACK}`}>{profile?.role || '—'}</p>
+            <p className={`mt-1 text-[15px] ${HOME_TITLE_BLACK}`}>{profile?.role || '-'}</p>
           </div>
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Tenant</p>
-            <p className={`mt-1 font-mono text-[14px] ${HOME_TITLE_BLACK}`}>{profile?.tenantId || '—'}</p>
+            <p className={`mt-1 font-mono text-[14px] ${HOME_TITLE_BLACK}`}>{profile?.tenantId || '-'}</p>
           </div>
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Workspace</p>
@@ -341,32 +321,26 @@ function ProfileTab({ profile, tenantApiKey }: { profile: ProfileInfo | null; te
                 ? [profile?.tenantName, profile?.workspaceCode ? `(${profile.workspaceCode})` : null]
                     .filter(Boolean)
                     .join(' ')
-                : '—'}
+                : '-'}
             </p>
           </div>
         </div>
       </FieldCard>
 
-      <FieldCard title="Zord Access Credentials" subtitle="From API keys state + local tenant key cache">
-        <div className="space-y-3 text-[13px]">
-          <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Publishable key</p>
-              <code className="text-[13px] text-slate-800">{publishable}</code>
-            </div>
-            <button type="button" onClick={() => void copy(publishable, 'key')} className="rounded-md border border-slate-200 px-2 py-1 text-[12px] font-semibold">{copyLabel(copied === 'key','Copy')}</button>
-          </div>
-          <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">API secret</p>
-              <code className="text-[13px] text-slate-800">{showSecret ? secret : `${secret.slice(0, 8)}••••••••••••${secret.slice(-4)}`}</code>
-            </div>
-            <div className="flex gap-2">
-              <button type="button" onClick={() => setShowSecret((v) => !v)} className="rounded-md border border-slate-200 px-2 py-1 text-[12px] font-semibold">{showSecret ? 'Hide' : 'Reveal'}</button>
-              <button type="button" onClick={() => void copy(secret, 'secret')} className="rounded-md border border-slate-200 px-2 py-1 text-[12px] font-semibold">{copyLabel(copied === 'secret','Copy')}</button>
-            </div>
-          </div>
-        </div>
+      <FieldCard
+        title="API credentials"
+        subtitle="Moved to Developer & Integrations - secrets are not revealed on profile"
+      >
+        <p className="text-[13px] text-slate-600">
+          Create, rotate, and revoke scoped keys under Developer. Secrets are shown once at creation and are not
+          recoverable from Support or My Account.
+        </p>
+        <Link
+          href="/developer?demo=sandbox&tab=keys"
+          className="mt-3 inline-flex h-9 items-center rounded-md bg-[#0B1324] px-3.5 text-[13px] font-semibold text-white hover:bg-[#1E293B]"
+        >
+          Open Developer
+        </Link>
       </FieldCard>
     </div>
   )
@@ -385,7 +359,7 @@ function CreditsTab({ tickets }: { tickets: SupportTicket[] }) {
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Available credits</p>
             <p className="mt-1 text-[28px] font-bold text-[#000000]">{money(available)}</p>
           </div>
-          <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold text-amber-800">Mock / estimated</span>
+          <span className="rounded-full bg-[#F1F5F9] px-2.5 py-1 text-[11px] font-semibold text-[#0B1324]">Mock / estimated</span>
         </div>
       </FieldCard>
 
@@ -445,9 +419,9 @@ function ProcessingOverviewTab({ overview, loading }: { overview: ProcessingOver
       <FieldCard title="Status breakdown">
         <div className="grid gap-3 sm:grid-cols-4 text-[14px]">
           <div>✔ Success <span className="font-semibold text-black">{overview.successPct.toFixed(1)}%</span></div>
-          <div>⚠ Failed <span className="font-semibold text-rose-700">{overview.failedPct.toFixed(1)}%</span></div>
-          <div>⏳ Processing <span className="font-semibold text-amber-700">{overview.processingPct.toFixed(1)}%</span></div>
-          <div>❓ Unresolved <span className="font-semibold text-blue-700">{overview.unresolvedPct.toFixed(1)}%</span></div>
+          <div>⚠ Failed <span className="font-semibold text-[#0B1324]">{overview.failedPct.toFixed(1)}%</span></div>
+          <div>⏳ Processing <span className="font-semibold text-[#0B1324]">{overview.processingPct.toFixed(1)}%</span></div>
+          <div>❓ Unresolved <span className="font-semibold text-[#0B1324]">{overview.unresolvedPct.toFixed(1)}%</span></div>
         </div>
       </FieldCard>
 
@@ -456,7 +430,7 @@ function ProcessingOverviewTab({ overview, loading }: { overview: ProcessingOver
           <div className="grid grid-cols-12 gap-1">
             {overview.heatmap.flatMap((row, rowIdx) =>
               row.map((cell, colIdx) => {
-                const color = cell === 0 ? 'bg-slate-200' : cell === 1 ? 'bg-neutral-700' : cell === 2 ? 'bg-amber-400' : 'bg-rose-500'
+                const color = cell === 0 ? 'bg-slate-200' : cell === 1 ? 'bg-neutral-700' : cell === 2 ? 'bg-[#0B1324]' : 'bg-[#0B1324]'
                 return <span key={`${rowIdx}-${colIdx}`} className={`h-3.5 rounded-sm ${color}`} title={`${overview.heatmapLabels[rowIdx] || 'Day'} intensity ${cell}`} />
               }),
             )}
@@ -504,7 +478,7 @@ function ProcessingOverviewTab({ overview, loading }: { overview: ProcessingOver
 
 function ManageTeamTab({ profile }: { profile: ProfileInfo | null }) {
   const members = [
-    { name: profile?.name || 'Current User', email: profile?.email || '—', role: profile?.role || 'Admin', status: 'Active' },
+    { name: profile?.name || 'Current User', email: profile?.email || '-', role: profile?.role || 'Admin', status: 'Active' },
     { name: 'Ops Reviewer', email: 'ops@company.com', role: 'Ops', status: 'Active' },
     { name: 'Finance Owner', email: 'finance@company.com', role: 'Finance', status: 'Invited' },
   ]
@@ -572,204 +546,303 @@ function SupportRequestsTab({
   hiddenCount: number
   setMailOpen: (v: boolean) => void
 }) {
-  const filtered = tickets.filter((t) => t.status === tab)
-  const openCount = tickets.filter((t) => t.status === 'open').length
-  const closedCount = tickets.length - openCount
-  const awaitingCount = tickets.filter((t) => t.state === 'awaiting_customer').length
+  const [surfaceTab, setSurfaceTab] = useState<'queries' | 'requests'>('queries')
+  const [closedOpen, setClosedOpen] = useState(true)
+  const [showDetails, setShowDetails] = useState(false)
+
+  const openTickets = tickets.filter((t) => t.status === 'open')
+  const closedTickets = tickets.filter((t) => t.status === 'closed')
+  const listTickets = surfaceTab === 'queries' ? tickets : tickets.filter((t) => t.status === tab)
+
+  if (selected) {
+    const customerMsg = selected.messages.find((m) => m.role === 'customer')
+    return (
+      <div className="min-h-[640px] bg-white px-1 py-2 sm:px-2">
+        <button
+          type="button"
+          onClick={() => setSelectedId(null)}
+          className="inline-flex items-center gap-1.5 text-[14px] font-semibold text-[#2563EB] hover:underline"
+        >
+          <span aria-hidden>←</span> View All Tickets
+        </button>
+
+        <section className="mt-4 rounded-xl border border-[#E5E7EB] bg-white px-5 py-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#E5E7EB] text-[#6B7280]">
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <circle cx="12" cy="8" r="3.2" stroke="currentColor" strokeWidth="1.7" />
+                  <path
+                    d="M5.5 18.5c1.2-2.8 3.4-4.2 6.5-4.2s5.3 1.4 6.5 4.2"
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </span>
+              <div className="min-w-0">
+                <p className="text-[16px] font-semibold text-[#111827]">
+                  Ticket ID #{selected.ticketNumber}{' '}
+                  <span className="font-medium text-[#6B7280]">| Category: {selected.category}</span>
+                </p>
+                <p className="mt-1 text-[13px] text-[#6B7280]">
+                  Raised {relativeTime(selected.createdAt)}{' '}
+                  <button
+                    type="button"
+                    onClick={() => setShowDetails((v) => !v)}
+                    className="font-semibold text-[#2563EB] hover:underline"
+                  >
+                    {showDetails ? 'Hide details' : 'Show details'}
+                  </button>
+                </p>
+              </div>
+            </div>
+            <StatusBadge ticket={selected} />
+          </div>
+
+          {showDetails ? (
+            <div className="mt-4 rounded-lg bg-[#F8FAFC] px-4 py-3 text-[13px] text-[#475569]">
+              <p>
+                <span className="font-semibold text-[#111827]">Topic:</span> {selected.topic}
+              </p>
+              {selected.contactEmail ? (
+                <p className="mt-1">
+                  <span className="font-semibold text-[#111827]">Contact:</span> {selected.contactEmail}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          <div className="mt-5 border-t border-[#F3F4F6] pt-4 text-[14px] leading-relaxed text-[#374151]">
+            <p className="whitespace-pre-wrap">{customerMsg?.body || selected.preview}</p>
+          </div>
+        </section>
+
+        <h3 className="mt-8 text-[15px] font-semibold text-[#374151]">All Replies</h3>
+        <div className="mt-3 space-y-3">
+          {hiddenCount > 0 ? (
+            <button
+              type="button"
+              onClick={() => setShowAllMessages(true)}
+              className="text-[13px] font-semibold text-[#2563EB] hover:underline"
+            >
+              {hiddenCount} more {hiddenCount === 1 ? 'reply' : 'replies'}
+            </button>
+          ) : null}
+          {visibleMessages
+            .filter((m) => m.role === 'zord' || m.kind === 'email')
+            .map((msg) => (
+              <MessageRow key={msg.id} msg={msg} />
+            ))}
+          {visibleMessages.filter((m) => m.role === 'zord' || m.kind === 'email').length === 0 ? (
+            <p className="rounded-xl border border-dashed border-[#E5E7EB] px-4 py-8 text-center text-[14px] text-[#6B7280]">
+              No support replies yet.
+            </p>
+          ) : null}
+        </div>
+
+        {selected.status === 'open' ? (
+          <div className="mt-10 border-t border-[#F3F4F6] pt-6">
+            <p className="text-center text-[14px] text-[#6B7280]">
+              This query is open and our team is waiting for your reply.
+            </p>
+            <textarea
+              value={replyDraft}
+              onChange={(e) => setReplyDraft(e.target.value)}
+              rows={3}
+              placeholder="Write your reply…"
+              className="mx-auto mt-4 block w-full max-w-xl resize-none rounded-xl border border-[#D1D5DB] px-4 py-3 text-[14px] text-[#111827] outline-none focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/20"
+            />
+            <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
+              <button
+                type="button"
+                onClick={handleSendReply}
+                disabled={!replyDraft.trim()}
+                className="inline-flex h-11 items-center gap-2 rounded-full border border-[#CBD5E1] bg-white px-5 text-[14px] font-semibold text-[#1E3A8A] transition hover:bg-[#F8FAFC] disabled:opacity-45"
+              >
+                <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" aria-hidden>
+                  <path
+                    d="M4 10h9m0 0-3-3m3 3-3 3M7 5l8 5-8 5V5Z"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                Send a reply
+              </button>
+              <button
+                type="button"
+                onClick={() => setMailOpen(true)}
+                className="inline-flex h-11 items-center gap-2 rounded-full border border-[#CBD5E1] bg-white px-5 text-[14px] font-semibold text-[#1E3A8A] transition hover:bg-[#F8FAFC]"
+              >
+                <span aria-hidden>&gt;&gt;</span>
+                Request follow-up
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p className="mt-10 border-t border-[#F3F4F6] pt-6 text-center text-[14px] text-[#6B7280]">
+            This query is closed.{' '}
+            <button type="button" onClick={() => setRaiseOpen(true)} className="font-semibold text-[#2563EB] hover:underline">
+              Raise a new query
+            </button>
+          </p>
+        )}
+      </div>
+    )
+  }
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-[0_18px_60px_rgba(15,23,42,0.09)] ring-1 ring-black/[0.04]">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-gradient-to-r from-[#f8fbff] via-[#f4f8ff] to-[#f7f8fc] px-5 py-3">
-        <div className="flex flex-wrap items-center gap-2.5">
-          <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-200">
-            Open: {openCount}
-          </span>
-          <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-200">
-            Awaiting reply: {awaitingCount}
-          </span>
-          <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-200">
-            Closed: {closedCount}
-          </span>
-        </div>
-        <p className="text-[12px] font-medium text-slate-500">Fastest path for incidents: raise ticket + attach batch context</p>
-      </div>
-      <div className="flex min-h-[min(78vh,760px)] flex-col lg:flex-row">
-        <div className="flex w-full shrink-0 flex-col border-b border-slate-200/90 bg-[#f2f5fb] lg:w-[min(100%,390px)] lg:border-b-0 lg:border-r">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/60 px-5 py-4">
-            <div>
-              <h2 className={`text-[1.35rem] font-bold tracking-tight ${HOME_TITLE_BLACK}`}>Support requests</h2>
-              <p className="mt-0.5 text-[12px] font-medium text-slate-500">Track open issues and continue threads</p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <button type="button" onClick={() => setDocsOpen(true)} className="rounded-lg border border-slate-300/80 bg-white/80 px-3 py-1.5 text-[12px] font-semibold text-[#00239C] hover:bg-white">Docs</button>
-              <a href={ZORD_SUPPORT_MAILTO} className="rounded-lg border border-slate-300/80 bg-white/80 px-3 py-1.5 text-[12px] font-semibold text-[#00239C] hover:bg-white">Email</a>
-              <button type="button" onClick={() => setRaiseOpen(true)} className="rounded-lg border-2 border-[#2563eb] bg-transparent px-3.5 py-1.5 text-[12px] font-bold text-[#2563eb] transition hover:bg-[#2563eb] hover:text-white">Raise new request</button>
-            </div>
-          </div>
-
-          <div className="flex gap-6 border-b border-slate-200/60 px-5">
-            {(['open', 'closed'] as const).map((key) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => {
-                  setTab(key)
-                  const first = tickets.find((t) => t.status === key)
-                  if (first) setSelectedId(first.id)
-                }}
-                className={`border-b-2 py-3 text-[14px] font-semibold capitalize transition ${
-                  tab === key
-                    ? 'border-[#0f172a] text-[#000000]'
-                    : 'border-transparent text-slate-500 hover:text-[#00239C]'
-                }`}
-              >
-                {key}
-              </button>
-            ))}
-          </div>
-
-          <ul className="min-h-[320px] flex-1 space-y-0 overflow-y-auto">
-            {filtered.length === 0 ? (
-              <li className={`px-5 py-10 text-center ${HOME_BODY_IMPERIAL_SM}`}>No {tab} requests yet.</li>
-            ) : (
-              filtered.map((ticket) => {
-                const active = ticket.id === selectedId
-                return (
-                  <li key={ticket.id} className="px-2.5 py-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedId(ticket.id)}
-                      className={`relative flex w-full gap-3 rounded-xl border px-3.5 py-3.5 text-left transition ${
-                        active
-                          ? 'border-[#93c5fd] bg-white shadow-[0_8px_18px_rgba(37,99,235,0.08)]'
-                          : 'border-slate-200/60 bg-white/55 hover:bg-white'
-                      }`}
-                    >
-                      <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[15px] font-bold ${categoryAvatarColor(ticket.category)}`}>
-                        {avatarInitial(ticket.category)}
-                      </span>
-                      <span className="min-w-0 flex-1 pr-2">
-                        <span className="flex flex-wrap items-center gap-2">
-                          <span className={`text-[14px] font-bold ${HOME_TITLE_BLACK}`}>{ticket.category}</span>
-                          <StatusBadge ticket={ticket} compact />
-                          {ticket.unreadForCustomer > 0 ? (
-                            <span className="flex h-[22px] min-w-[22px] items-center justify-center rounded-full bg-[#2563eb] px-1.5 text-[11px] font-bold text-white shadow-sm">{ticket.unreadForCustomer}</span>
-                          ) : null}
-                        </span>
-                        <span className="mt-0.5 block text-[13px] font-medium text-slate-600">{ticket.topic}</span>
-                        <span className="mt-0.5 block font-mono text-[11px] text-slate-500"># {ticket.ticketNumber}</span>
-                        <span className={`mt-2 line-clamp-2 text-[13px] leading-snug text-slate-600`}>{ticket.preview}</span>
-                      </span>
-                    </button>
-                  </li>
-                )
-              })
-            )}
-          </ul>
-
-          <div className="border-t border-slate-200/60 px-5 py-3">
-            <button type="button" onClick={() => void copySupportEmail()} className={`w-full text-left text-[12px] font-medium ${HOME_BODY_IMPERIAL_SM}`}>
-              {emailCopied ? (
-                <span className="text-black">Copied {ZORD_SUPPORT_EMAIL}</span>
-              ) : (
-                <>
-                  Or email us at <span className="font-semibold text-[#00239C] underline">{ZORD_SUPPORT_EMAIL}</span>
-                </>
-              )}
+    <div className="min-h-[640px] bg-white">
+      <div className="flex flex-wrap items-end gap-2 border-b border-[#E5E7EB]">
+        {(
+          [
+            { key: 'queries' as const, label: 'Support Queries' },
+            { key: 'requests' as const, label: 'Support Requests' },
+          ] as const
+        ).map((item) => {
+          const active = surfaceTab === item.key
+          return (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => {
+                setSurfaceTab(item.key)
+                if (item.key === 'requests') setTab('open')
+              }}
+              className={`rounded-t-lg px-4 py-2.5 text-[14px] font-semibold transition ${
+                active
+                  ? 'bg-[#E8F0FE] text-[#1D4ED8]'
+                  : 'bg-transparent text-[#6B7280] hover:text-[#111827]'
+              }`}
+            >
+              {item.label}
             </button>
-          </div>
-        </div>
+          )
+        })}
+      </div>
 
-        <div className="flex min-h-[400px] min-w-0 flex-1 flex-col bg-[#fcfdff]">
-          {!selected ? (
-            <div className={`flex flex-1 flex-col items-center justify-center gap-3 px-8 ${HOME_BODY_IMPERIAL_SM}`}>
-              <p className={`text-center text-[17px] font-semibold ${HOME_TITLE_BLACK}`}>Select a support request</p>
-              <p className="max-w-sm text-center">Or raise a new request / email {ZORD_SUPPORT_EMAIL}</p>
-              <div className="mt-2 flex flex-wrap justify-center gap-2">
-                <button type="button" onClick={() => setRaiseOpen(true)} className="rounded-lg bg-[#0f172a] px-4 py-2 text-[13px] font-semibold text-white">Raise new request</button>
-                <a href={ZORD_SUPPORT_MAILTO} className="rounded-lg border border-slate-200 px-4 py-2 text-[13px] font-semibold text-[#00239C]">Email support</a>
-              </div>
-            </div>
+      <div className="flex flex-wrap items-center justify-between gap-3 px-1 py-5 sm:px-2">
+        <button
+          type="button"
+          onClick={() => setClosedOpen((v) => !v)}
+          className="inline-flex items-center gap-2 text-[18px] font-semibold text-[#1E293B]"
+        >
+          {surfaceTab === 'queries'
+            ? `Closed queries (${closedTickets.length})`
+            : `${tab === 'open' ? 'Open' : 'Closed'} requests (${listTickets.length})`}
+          <svg
+            className={`h-4 w-4 text-[#64748B] transition ${closedOpen ? 'rotate-180' : ''}`}
+            viewBox="0 0 20 20"
+            fill="none"
+            aria-hidden
+          >
+            <path d="m5 8 5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          onClick={() => setRaiseOpen(true)}
+          className="inline-flex h-10 items-center rounded-lg border border-[#2563EB] bg-white px-4 text-[14px] font-semibold text-[#2563EB] transition hover:bg-[#EFF6FF]"
+        >
+          + Raise New Query
+        </button>
+      </div>
+
+      {surfaceTab === 'requests' ? (
+        <div className="mb-3 flex gap-4 px-2">
+          {(['open', 'closed'] as const).map((key) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              className={`border-b-2 pb-2 text-[13px] font-semibold capitalize ${
+                tab === key ? 'border-[#2563EB] text-[#2563EB]' : 'border-transparent text-[#6B7280]'
+              }`}
+            >
+              {key}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {closedOpen ? (
+        <ul className="space-y-3 px-1 pb-6 sm:px-2">
+          {(surfaceTab === 'queries' ? closedTickets : listTickets).length === 0 ? (
+            <li className="rounded-xl border border-dashed border-[#E5E7EB] px-4 py-10 text-center text-[14px] text-[#6B7280]">
+              No {surfaceTab === 'queries' ? 'closed queries' : `${tab} requests`} yet.
+            </li>
+          ) : (
+            (surfaceTab === 'queries' ? closedTickets : listTickets).map((ticket) => (
+              <li key={ticket.id}>
+                <button
+                  type="button"
+                  onClick={() => setSelectedId(ticket.id)}
+                  className="w-full rounded-xl border border-[#E5E7EB] bg-white px-5 py-4 text-left transition hover:border-[#BFDBFE] hover:bg-[#F8FBFF]"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <p className="text-[15px] font-semibold text-[#1E293B]">
+                      {ticket.category} <span className="font-medium text-[#64748B]">•</span> {ticket.topic}
+                    </p>
+                    <StatusBadge ticket={ticket} compact />
+                  </div>
+                  <p className="mt-1.5 text-[13px] text-[#64748B]">
+                    Ticket # {ticket.ticketNumber} <span className="mx-1">•</span> Raised {relativeTime(ticket.createdAt)}
+                  </p>
+                  <p className="mt-2 line-clamp-2 text-[14px] leading-relaxed text-[#475569]">{ticket.preview}</p>
+                </button>
+              </li>
+            ))
+          )}
+        </ul>
+      ) : null}
+
+      {surfaceTab === 'queries' && openTickets.length > 0 ? (
+        <div className="border-t border-[#F3F4F6] px-1 pt-5 sm:px-2">
+          <p className="mb-3 text-[16px] font-semibold text-[#1E293B]">Open queries ({openTickets.length})</p>
+          <ul className="space-y-3 pb-4">
+            {openTickets.map((ticket) => (
+              <li key={ticket.id}>
+                <button
+                  type="button"
+                  onClick={() => setSelectedId(ticket.id)}
+                  className="w-full rounded-xl border border-[#E5E7EB] bg-white px-5 py-4 text-left transition hover:border-[#BFDBFE] hover:bg-[#F8FBFF]"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <p className="text-[15px] font-semibold text-[#1E293B]">
+                      {ticket.category} <span className="font-medium text-[#64748B]">•</span> {ticket.topic}
+                    </p>
+                    <StatusBadge ticket={ticket} compact />
+                  </div>
+                  <p className="mt-1.5 text-[13px] text-[#64748B]">
+                    Ticket # {ticket.ticketNumber} <span className="mx-1">•</span> Raised {relativeTime(ticket.createdAt)}
+                  </p>
+                  <p className="mt-2 line-clamp-2 text-[14px] leading-relaxed text-[#475569]">{ticket.preview}</p>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#F3F4F6] px-2 py-4">
+        <button type="button" onClick={() => void copySupportEmail()} className="text-[13px] text-[#64748B]">
+          {emailCopied ? (
+            <span className="font-medium text-[#059669]">Copied {ZORD_SUPPORT_EMAIL}</span>
           ) : (
             <>
-              <header className="border-b border-slate-200/80 bg-white px-6 py-5">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className={`text-[14px] font-medium ${HOME_BODY_IMPERIAL}`}>
-                      <span className="font-semibold text-[#000000]">{selected.category}</span>
-                      <span className="mx-1.5 text-slate-400">»</span>
-                      <span>{selected.topic}</span>
-                    </p>
-                    <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                      <span>{formatHeaderDate(selected.createdAt)}</span>
-                      <span className="text-slate-300">·</span>
-                      <span className="font-mono normal-case tracking-normal"># {selected.ticketNumber}</span>
-                      {selected.contactEmail ? (
-                        <>
-                          <span className="text-slate-300">·</span>
-                          <a href={`mailto:${selected.contactEmail}`} className="normal-case tracking-normal text-[#00239C] underline">{selected.contactEmail}</a>
-                        </>
-                      ) : null}
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <StatusBadge ticket={selected} />
-                    <a href={supportMailtoForTicket(selected.ticketNumber, selected.topic)} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-[12px] font-semibold text-[#00239C] hover:bg-slate-50" title="Open in your mail app">
-                      <Glyph name="document" className="h-3.5 w-3.5" />
-                      Reply via email
-                    </a>
-                  </div>
-                </div>
-              </header>
-
-              <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
-                {hiddenCount > 0 ? (
-                  <button type="button" onClick={() => setShowAllMessages(true)} className="mb-6 flex items-center gap-1.5 text-[13px] font-semibold text-[#2563eb] hover:underline">
-                    {hiddenCount} more {hiddenCount === 1 ? 'reply' : 'replies'}
-                    <Glyph name="arrow-up-right" className="h-3.5 w-3.5 rotate-90" />
-                  </button>
-                ) : null}
-                <div className="space-y-3 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm">
-                  {visibleMessages.map((msg) => (
-                    <MessageRow key={msg.id} msg={msg} />
-                  ))}
-                </div>
-              </div>
-
-              {selected.status === 'open' ? (
-                <footer className="border-t border-slate-200/80 bg-white px-6 py-5">
-                  {formatExpectedReply(selected.expectedReplyBefore) ? (
-                    <p className={`mb-5 text-center text-[14px] leading-relaxed ${HOME_BODY_IMPERIAL}`}>
-                      This request is open and our team is working on it. You can expect reply before:{' '}
-                      <span className="font-bold text-[#000000]">{formatExpectedReply(selected.expectedReplyBefore)}</span>
-                      {selected.notifyByEmail && selected.contactEmail ? (
-                        <span className="mt-1 block text-[13px] font-medium text-slate-600">Updates will also be sent to {selected.contactEmail}</span>
-                      ) : null}
-                    </p>
-                  ) : null}
-                  <textarea
-                    value={replyDraft}
-                    onChange={(e) => setReplyDraft(e.target.value)}
-                    rows={3}
-                    placeholder="Write your reply…"
-                    className="mb-3 w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-3 text-[14px] font-medium text-[#0f172a] placeholder:text-slate-400 focus:border-[#00239C] focus:outline-none focus:ring-2 focus:ring-[#00239C]/15"
-                  />
-                  <div className="grid gap-2 sm:grid-cols-3">
-                    <button type="button" onClick={handleSendReply} disabled={!replyDraft.trim()} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#0f172a] py-3 text-[14px] font-bold text-white shadow-md transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-45">Reply</button>
-                    <button type="button" onClick={() => setMailOpen(true)} className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#bfdbfe] bg-[#eff6ff] py-3 text-[14px] font-semibold text-[#1d4ed8] hover:bg-[#dbeafe]">Send Email</button>
-                    <button type="button" className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-50 py-3 text-[14px] font-semibold text-slate-700 hover:bg-slate-100">Attach File</button>
-                  </div>
-                </footer>
-              ) : (
-                <p className={`border-t border-slate-100 px-6 py-5 text-center ${HOME_BODY_IMPERIAL_SM}`}>
-                  This request is closed.{' '}
-                  <button type="button" onClick={() => setRaiseOpen(true)} className="font-semibold text-[#00239C] underline">Open a new request</button>{' '}
-                  or <a href={ZORD_SUPPORT_MAILTO} className="font-semibold text-[#00239C] underline">email support</a>.
-                </p>
-              )}
+              Or email us at <span className="font-semibold text-[#2563EB]">{ZORD_SUPPORT_EMAIL}</span>
             </>
           )}
-        </div>
+        </button>
+        <button
+          type="button"
+          onClick={() => setDocsOpen(true)}
+          className="text-[13px] font-semibold text-[#2563EB] hover:underline"
+        >
+          Documentation
+        </button>
       </div>
     </div>
   )
@@ -817,8 +890,7 @@ export function SupportSurface({ initialAccountTab }: SupportSurfaceProps) {
         const loaded = await fetchSupportTickets(tenantId)
         if (cancelled) return
         setTickets(loaded)
-        const firstOpen = loaded.find((t) => t.status === 'open')
-        setSelectedId(firstOpen?.id ?? loaded[0]?.id ?? null)
+        setSelectedId(null)
       } catch (e) {
         if (!cancelled) {
           setTicketsError(e instanceof Error ? e.message : 'Could not load support tickets.')
@@ -883,7 +955,7 @@ export function SupportSurface({ initialAccountTab }: SupportSurfaceProps) {
           time: relativeTime(it.created_at || it.observation_timestamp || new Date().toISOString()),
           intentId: it.matched_intent_id || `INT_${String(idx + 1).padStart(5, '0')}`,
           status: (it.settlement_status || 'Processing').replace(/_/g, ' '),
-          batchId: it.client_batch_id || settlementIds[0] || '—',
+          batchId: it.client_batch_id || settlementIds[0] || '-',
         }))
 
         const heatmapBatches = isDataAvailable(heatmap) ? heatmap.batches : []
@@ -1051,10 +1123,10 @@ export function SupportSurface({ initialAccountTab }: SupportSurfaceProps) {
           <div className="flex items-center justify-between px-5 py-3">
             <p className={`text-[26px] font-semibold tracking-tight ${HOME_TITLE_BLACK}`}>My account</p>
             <div className="hidden items-center gap-5 text-[13px] font-medium text-slate-600 lg:flex">
-              <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#ca8a04]" />Test Mode</span>
+              <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#0B1324]" />Test Mode</span>
               <button type="button" className="hover:text-[#00239C]">Switch Merchant</button>
               <button type="button" onClick={() => setDocsOpen(true)} className="hover:text-[#00239C]">Documentation</button>
-              <span>Announcements <span className="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] text-white">1</span></span>
+              <span>Announcements <span className="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[#0B1324] px-1 text-[10px] text-white">1</span></span>
             </div>
           </div>
           <div className="flex items-center gap-7 border-t border-slate-100 px-5">
@@ -1090,7 +1162,7 @@ export function SupportSurface({ initialAccountTab }: SupportSurfaceProps) {
             ) : (
               <>
                 {ticketsError ? (
-                  <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] font-medium text-red-700">
+                  <p className="mb-3 rounded-lg border border-[#0B1324]/20 bg-[#F1F5F9] px-3 py-2 text-[13px] font-medium text-[#0B1324]">
                     {ticketsError}
                   </p>
                 ) : null}
@@ -1125,7 +1197,7 @@ export function SupportSurface({ initialAccountTab }: SupportSurfaceProps) {
         open={mailOpen}
         onClose={() => setMailOpen(false)}
         defaultTo={selected?.contactEmail || ZORD_SUPPORT_EMAIL}
-        defaultSubject={selected ? `Payment Failure — #${selected.ticketNumber}` : 'Zord support follow-up'}
+        defaultSubject={selected ? `Payment Failure - #${selected.ticketNumber}` : 'Zord support follow-up'}
         onSend={handleSendEmail}
       />
     </>

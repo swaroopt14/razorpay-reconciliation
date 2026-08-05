@@ -5,7 +5,6 @@ import {
   BackendErrorEnvelope,
   applyAuthCookies,
   buildForwardHeaders,
-  edgeAuthUrl,
   parseJSONSafe,
   sanitizeAuthEnvelope,
 } from '@/services/auth/server'
@@ -24,17 +23,42 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  let edgeResponse: Response
-  try {
-    edgeResponse = await fetch(edgeAuthUrl(BACKEND_SERVICES.EDGE.ENDPOINTS.AUTH_LOGIN), {
-      method: 'POST',
-      headers: buildForwardHeaders(request),
-      cache: 'no-store',
-      body: JSON.stringify(requestBody),
-    })
-  } catch {
+  const loginBases = Array.from(
+    new Set(
+      [
+        BACKEND_SERVICES.EDGE.BASE_URL,
+        process.env.ZORD_EDGE_URL,
+        'http://localhost:8099', // smoke simulator fallback when zord-edge is down
+      ]
+        .map((b) => (typeof b === 'string' ? b.trim().replace(/\/$/, '') : ''))
+        .filter(Boolean),
+    ),
+  )
+
+  let edgeResponse: Response | null = null
+  let lastNetworkError = 'Authentication service is unavailable right now.'
+  for (const base of loginBases) {
+    try {
+      const candidate = await fetch(`${base}${BACKEND_SERVICES.EDGE.ENDPOINTS.AUTH_LOGIN}`, {
+        method: 'POST',
+        headers: buildForwardHeaders(request),
+        cache: 'no-store',
+        body: JSON.stringify(requestBody),
+      })
+      // Prefer a successful auth response; keep last non-OK for error reporting.
+      edgeResponse = candidate
+      if (candidate.ok) break
+    } catch (err) {
+      lastNetworkError = err instanceof Error ? err.message : lastNetworkError
+    }
+  }
+
+  if (!edgeResponse) {
     return NextResponse.json(
-      { code: 'AUTH_SERVICE_UNAVAILABLE', message: 'Authentication service is unavailable right now.' },
+      {
+        code: 'AUTH_SERVICE_UNAVAILABLE',
+        message: `${lastNetworkError}. Tried: ${loginBases.join(', ')}. Start smoke on :8099 or set ZORD_EDGE_URL.`,
+      },
       { status: 503 },
     )
   }

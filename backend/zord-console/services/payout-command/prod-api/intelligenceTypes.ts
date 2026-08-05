@@ -1,6 +1,6 @@
 // Shape contracts for the 5 KPI dashboards + 2 batches endpoints on zord-intelligence (:8089).
 // All endpoints return `data_available: false` with a `reason` when the tenant has no events
-// yet — the frontend uses that to render empty-state cards instead of zeros.
+// yet - the frontend uses that to render empty-state cards instead of zeros.
 
 export type RiskTier = 'CLEAN' | 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
 
@@ -18,7 +18,7 @@ export type Resolved<T> = T & {
   window_end?: string
 }
 
-// ── KPIs 1–6: Leakage ──────────────────────────────────────────────────────
+// ── KPIs 1-6: Leakage ──────────────────────────────────────────────────────
 /** Minor amounts may arrive as JSON strings or numbers from zord-intelligence. */
 export type MinorAmountField = string | number
 
@@ -28,7 +28,7 @@ export type LeakageKpiResolved = Resolved<{
   under_settlement_amount_minor: MinorAmountField
   orphan_amount_minor: MinorAmountField
   reversal_exposure_minor: MinorAmountField
-  /** Open financial exception value — sum of exposure buckets (API only). */
+  /** Open financial exception value - sum of exposure buckets (API only). */
   total_amount_minor?: MinorAmountField
   total_observed_settled_amount_minor?: MinorAmountField
   ambiguous_value_at_risk_minor?: MinorAmountField
@@ -62,9 +62,9 @@ export type SignalClarityBand = {
   amount_minor: MinorAmountField
   item_count?: number
   roll_pct?: number
-  /** Bar width from API — no client-side share math. */
+  /** Bar width from API - no client-side share math. */
   share_pct?: number
-  /** e.g. "0 DPD", "1–30 DPD" */
+  /** e.g. "0 DPD", "1-30 DPD" */
   range_label?: string
   tone?: 'green' | 'lime' | 'amber' | 'orange' | 'red' | string
 }
@@ -81,7 +81,7 @@ export type PatternSummaryStats = {
   total_decision_count?: number
 }
 
-/** One point on Intended Payment Value — current vs predicted leakage chart. */
+/** One point on Intended Payment Value - current vs predicted leakage chart. */
 export type LeakageExposureTimeseriesPoint = {
   /** ISO date (YYYY-MM-DD) for the bucket. */
   date: string
@@ -107,7 +107,7 @@ export type LeakageExposureTimeseriesResponse =
   | LeakageExposureTimeseriesResolved
   | EmptyKpiResponse
 
-// ── KPIs 7–10: Ambiguity ──────────────────────────────────────────────────
+// ── KPIs 7-10: Ambiguity ──────────────────────────────────────────────────
 export type AmbiguityVelocityPoint = {
   period: string
   review_count?: number
@@ -163,7 +163,7 @@ export type AmbiguityKpiResolved = Resolved<{
   ambiguous_intent_count: number
   ambiguity_rate: number
   avg_attachment_confidence: number
-  /** A7 — avg(WinningScore − RunnerUpScore) from attachment decisions. */
+  /** A7 - avg(WinningScore − RunnerUpScore) from attachment decisions. */
   avg_score_margin?: number
   provider_ref_missing_rate: number
   value_at_risk_minor: string
@@ -182,9 +182,9 @@ export type AmbiguityKpiResolved = Resolved<{
   value_at_risk_delta_pct_from_prior?: number
   avg_attachment_confidence_delta_pct?: number
   confidence_trend_label?: string
-  /** Stacked bar chart — Ambiguity Velocity. */
+  /** Stacked bar chart - Ambiguity Velocity. */
   velocity_series?: AmbiguityVelocitySeries
-  /** Donut — Ambiguity Mix. When set, overrides derived mix from snapshot rates. */
+  /** Donut - Ambiguity Mix. When set, overrides derived mix from snapshot rates. */
   ambiguity_mix_segments?: AmbiguityMixSegment[]
   clearing_pct?: number
   signal_clarity_bands?: SignalClarityBand[]
@@ -197,7 +197,7 @@ export type AmbiguityKpiResolved = Resolved<{
   total_intended_amount_minor?: MinorAmountField
   total_observed_settled_amount_minor?: MinorAmountField
   unresolved_count?: number
-  /** Heatmap — Matching Execution Log. */
+  /** Heatmap - Matching Execution Log. */
   matching_execution_heatmap?: MatchingExecutionHeatmap
   matching_execution_summary?: string
   intents_under_evaluation_count?: number
@@ -209,11 +209,11 @@ export type AmbiguityKpiResolved = Resolved<{
 }>
 export type AmbiguityKpiResponse = AmbiguityKpiResolved | EmptyKpiResponse
 
-// ── KPIs 11–13: Defensibility ─────────────────────────────────────────────
+// ── KPIs 11-13: Defensibility ─────────────────────────────────────────────
 export type DefensibilityTier = 'STRONG' | 'GOOD' | 'WEAK' | 'FRAGILE'
 export type DefensibilityKpiResolved = Resolved<{
   evidence_pack_rate: number
-  /** Optional extended field — not used for Home Proof Readiness (uses evidence_pack_rate). */
+  /** Optional extended field - not used for Home Proof Readiness (uses evidence_pack_rate). */
   evidence_pack_coverage?: number
   governance_coverage_pct: number
   replayability_pct: number
@@ -282,11 +282,11 @@ export type PatternsKpiResolved = Resolved<{
   value_date_mismatch_rate?: number
   settlement_delay_p95_days?: number
   same_beneficiary_amount_density?: number
-  /** A9 — tenant-wide decision success rate (present even when data_available is false). */
+  /** A9 - tenant-wide decision success rate (present even when data_available is false). */
   decision_success_rate?: number | string
-  /** A9 — per-provider breakdown from pattern.provider projections. */
+  /** A9 - per-provider breakdown from pattern.provider projections. */
   by_provider?: Record<string, ProviderDecisionStats>
-  /** Network Health Snapshot / Trend — API-provided points only (no client derivation). */
+  /** Network Health Snapshot / Trend - API-provided points only (no client derivation). */
   network_health_trend?: NetworkHealthTrendPoint[]
 }>
 export type PatternsKpiResponse =
@@ -321,7 +321,7 @@ export type BatchContractKpiResponse = {
   missing_reference_rate?: string | number
 }
 
-// ── KPIs 15–16: Recommendations ───────────────────────────────────────────
+// ── KPIs 15-16: Recommendations ───────────────────────────────────────────
 export type RecommendationsKpiResolved = Resolved<{
   action_acceptance_rate: number
   action_resolution_rate: number
@@ -333,7 +333,7 @@ export type RecommendationsKpiResolved = Resolved<{
 }>
 export type RecommendationsKpiResponse = RecommendationsKpiResolved | EmptyKpiResponse
 
-// ── RCA dashboard (R4–R8) ─────────────────────────────────────────────────
+// ── RCA dashboard (R4-R8) ─────────────────────────────────────────────────
 export type RcaKpiResolved = Resolved<{
   parser_weakness_rate: number
   weak_parse_count: number
@@ -358,13 +358,13 @@ export type IntelligenceBatchRow = {
   success_count: number
   failed_count: number
   pending_count: number
-  /** API field from /v1/intelligence/batches → batch_contract. Already scaled 0–100 by backend. */
+  /** API field from /v1/intelligence/batches → batch_contract. Already scaled 0-100 by backend. */
   match_confidence?: number
-  /** @deprecated backend sends match_confidence — this field is never populated from batches list */
+  /** @deprecated backend sends match_confidence - this field is never populated from batches list */
   match_confidence_pct?: number
   /** Value of payment intents not yet resolved/matched for this batch. Source: unresolved_intended_amount_minor. */
   unresolved_intended_amount_minor?: MinorAmountField
-  /** Not present in /batches list response — only on tenant-level KPI endpoint. */
+  /** Not present in /batches list response - only on tenant-level KPI endpoint. */
   value_at_risk_minor?: MinorAmountField
   unmatched_amount_minor?: MinorAmountField
   unexplained_variance_minor?: MinorAmountField
@@ -375,7 +375,7 @@ export type IntelligenceBatchRow = {
   reversal_exposure_minor?: MinorAmountField
   /** Per-batch leakage rate from ML model. Source: predicted_leakage_rate in /batches list response. */
   predicted_leakage_rate?: number
-  /** @deprecated batch list API sends predicted_leakage_rate — this field is never populated from /batches */
+  /** @deprecated batch list API sends predicted_leakage_rate - this field is never populated from /batches */
   leakage_percentage?: number
   ambiguous_amount_minor?: MinorAmountField
   missing_ref_count?: number

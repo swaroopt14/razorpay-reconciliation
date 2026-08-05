@@ -50,6 +50,8 @@ export type PaymentIntentRecord = {
   client_batch_ref?: string
   batchid?: string
   source_row_num?: number
+  rail_hint?: string
+  provider_hint?: string
   governance_state?: string
   business_state?: string
   duplicate_risk_flag?: boolean
@@ -110,7 +112,7 @@ function batchesUrl(
 export type IntentEngineBatchesFetchResult = ProdJsonGetResult<IntentEngineBatchesListResponse>
 
 /**
- * Sidebar list — BFF resolves `tenant_id` from session cookies when omitted.
+ * Sidebar list - BFF resolves `tenant_id` from session cookies when omitted.
  * Prefer this when the client hook has not yet resolved a tenant string.
  */
 export async function getProdIntentEngineBatchesForSession(): Promise<IntentEngineBatchesFetchResult> {
@@ -127,7 +129,7 @@ export async function getProdIntentEngineBatches(tenantId: string): Promise<Inte
 /** Max rows per upstream request (intent-engine caps page_size at 200). */
 export const INTENT_ENGINE_BATCH_DETAIL_CHUNK = 200
 
-/** Batch drill-down — BFF session tenant when `tenantId` omitted. */
+/** Batch drill-down - BFF session tenant when `tenantId` omitted. */
 export async function getProdIntentEngineBatchDetail(
   tenantId: string | undefined,
   batchId: string,

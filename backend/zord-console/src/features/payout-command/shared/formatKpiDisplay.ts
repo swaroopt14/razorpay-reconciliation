@@ -19,7 +19,7 @@ export function formatKpiCount(value: number | null | undefined): string {
   return Math.round(value).toLocaleString('en-IN')
 }
 
-/** Rate fields from intelligence APIs are 0.0–1.0; values above 1 are treated as already-percent. */
+/** Rate fields from intelligence APIs are 0.0-1.0; values above 1 are treated as already-percent. */
 export function formatKpiRatePercent(value: number | null | undefined, digits = 1): string {
   if (value == null || !Number.isFinite(value)) return KPI_UNAVAILABLE
   const pct = value <= 1 ? value * 100 : value

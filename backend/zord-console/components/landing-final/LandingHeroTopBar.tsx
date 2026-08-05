@@ -90,7 +90,7 @@ export function LandingHeroTopBar({
       <div className="mx-auto flex h-[4.25rem] max-w-[1440px] items-center gap-4 px-5 sm:h-[4.75rem] sm:px-8 lg:px-10">
         <Link
           href="/"
-          className="shrink-0 rounded-md transition-opacity duration-150 hover:opacity-80 focus:outline-none focus-visible:opacity-70"
+          className="shrink-0 transition-opacity duration-150 hover:opacity-80 focus:outline-none focus:ring-2 focus:ring-zord-blue-500 focus:ring-offset-2"
           aria-label="Zord home"
         >
           <ZordLogo
@@ -109,7 +109,7 @@ export function LandingHeroTopBar({
             <Link
               key={item.label}
               href={item.href}
-              className={`cursor-pointer rounded-md text-[11px] font-semibold uppercase tracking-[0.2em] transition-colors duration-300 focus:outline-none focus-visible:opacity-70 ${
+              className={`cursor-pointer text-[11px] font-semibold uppercase tracking-[0.2em] transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-zord-blue-500 focus:ring-offset-2 ${
                 useLightChrome ? 'text-[#0A0A0A] hover:text-[#4B5563]' : 'text-white/90 hover:text-white'
               }`}
             >
@@ -121,7 +121,7 @@ export function LandingHeroTopBar({
         <div className="ml-auto flex items-center gap-3 sm:gap-5">
           <button
             type="button"
-            className={`hidden cursor-pointer items-center gap-2 rounded-md text-[13px] font-medium transition-colors duration-300 focus:outline-none focus-visible:opacity-70 sm:flex ${
+            className={`hidden cursor-pointer items-center gap-2 text-[13px] font-medium transition-colors duration-300 sm:flex ${
               useLightChrome ? 'text-[#6B7280] hover:text-[#0A0A0A]' : 'text-white/70 hover:text-white'
             }`}
             aria-label="Language: English"
@@ -132,7 +132,7 @@ export function LandingHeroTopBar({
 
           <Link
             href="/signin"
-            className={`inline-flex cursor-pointer items-center gap-2.5 rounded-full py-2 pl-2 pr-4 text-[13px] font-semibold transition-all duration-300 focus:outline-none focus-visible:opacity-90 sm:pr-5 ${
+            className={`inline-flex cursor-pointer items-center gap-2.5 rounded-full py-2 pl-2 pr-4 text-[13px] font-semibold transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-zord-blue-500 focus:ring-offset-2 sm:pr-5 ${
               useLightChrome
                 ? 'bg-[#0A0A0A] text-white shadow-[0_8px_24px_rgba(0,0,0,0.12)] hover:bg-[#1f1f1f]'
                 : 'bg-white text-[#0A0A0A] shadow-[0_8px_24px_rgba(0,0,0,0.2)] hover:bg-white/92'
@@ -152,7 +152,7 @@ export function LandingHeroTopBar({
           <button
             type="button"
             onClick={() => setMobileOpen((open) => !open)}
-            className={`flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border transition-all duration-300 focus:outline-none focus-visible:opacity-80 lg:hidden ${
+            className={`flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-zord-blue-500 lg:hidden ${
               useLightChrome
                 ? 'border-black/10 text-[#0A0A0A] hover:bg-black/[0.04]'
                 : 'border-white/20 text-white hover:bg-white/10'
@@ -173,7 +173,7 @@ export function LandingHeroTopBar({
                 key={item.label}
                 href={item.href}
                 onClick={() => setMobileOpen(false)}
-                className={`cursor-pointer rounded-lg px-3 py-2.5 text-[13px] font-semibold uppercase tracking-[0.14em] transition-colors duration-150 focus:outline-none focus-visible:opacity-70 ${
+                className={`cursor-pointer rounded-lg px-3 py-2.5 text-[13px] font-semibold uppercase tracking-[0.14em] transition-colors duration-150 ${
                   useLightChrome ? 'text-[#0A0A0A] hover:bg-black/[0.04]' : 'text-white hover:bg-white/10'
                 }`}
               >

@@ -2,12 +2,13 @@ import type { IntentJournalPaymentIntentItem } from '@/services/payout-command/p
 import type { JournalIntentRow, JournalIntentStatus } from '@/services/payout-command/prod-api/mapIntentEngineBatch'
 import { apiTrimmedString } from '@/services/payout-command/prod-api/coerceApiField'
 import { readIntentQualityScore } from '@/services/payout-command/prod-api/resolveIntentQualityScore'
+import { withSpec76Fields } from './enrichIntentSpec76'
 
 export const READINESS_REVIEW_THRESHOLD = 0.7
 
 function formatJournalExecutionAt(iso: string | undefined): string {
   const s = apiTrimmedString(iso)
-  if (!s) return '—'
+  if (!s) return '-'
   const d = new Date(s)
   if (Number.isNaN(d.getTime())) return s
   return d.toLocaleString('en-IN', {
@@ -21,7 +22,7 @@ function formatJournalExecutionAt(iso: string | undefined): string {
 
 
 function formatConfidenceLabel(score: number | undefined): string {
-  if (score == null || !Number.isFinite(score)) return '—'
+  if (score == null || !Number.isFinite(score)) return '-'
   const pct = score <= 1 ? score * 100 : score
   return `${pct.toFixed(0)}%`
 }
@@ -31,7 +32,7 @@ function resolveProviderHint(item: IntentJournalPaymentIntentItem): string {
     apiTrimmedString(item.provider_hint) ||
     apiTrimmedString(item.beneficiary_type) ||
     apiTrimmedString(item.rail_hint)
-  if (!h) return '—'
+  if (!h) return '-'
   return h.charAt(0).toUpperCase() + h.slice(1)
 }
 
@@ -52,11 +53,11 @@ function parseSourceRowNum(raw: unknown): number | null {
 
 function resolveRailHint(item: IntentJournalPaymentIntentItem): string {
   const rail = apiTrimmedString(item.rail_hint)
-  return rail || '—'
+  return rail || '-'
 }
 
 function methodFromRail(rail: string): JournalIntentRow['method'] {
-  if (rail === '—') return '—'
+  if (rail === '-') return '-'
   const r = rail.toUpperCase()
   if (r.includes('NACH')) return 'NACH'
   if (r.includes('IMPS') || r.includes('UPI') || r.includes('LSM')) return 'LSM'
@@ -102,7 +103,7 @@ export function mapPaymentIntentListItemToRow(
   const clientBatchRef = apiTrimmedString(item.client_batch_ref) || apiTrimmedString(item.batch_id) || batchId
   const referenceFallback = sourceRowNum != null ? `SRC-${sourceRowNum}` : requestId
 
-  return {
+  const base: JournalIntentRow = {
     batchId,
     zordId,
     requestId,
@@ -114,10 +115,10 @@ export function mapPaymentIntentListItemToRow(
     lastUpdated: formatJournalExecutionAt(item.intended_execution_at),
     paymentPartner: provider,
     bank: provider,
-    paymentMethodDetail: rail !== '—' ? rail : provider,
+    paymentMethodDetail: rail !== '-' ? rail : provider,
     engineStatus: undefined,
     currency: apiTrimmedString(item.currency ?? 'INR') || 'INR',
-    tenantId: apiTrimmedString(item.tenant_id) || apiTrimmedString(sessionTenantId) || '—',
+    tenantId: apiTrimmedString(item.tenant_id) || apiTrimmedString(sessionTenantId) || '-',
     intendedExecutionAt: formatJournalExecutionAt(item.intended_execution_at),
     provider,
     confidenceScore: qualityScore,
@@ -128,11 +129,15 @@ export function mapPaymentIntentListItemToRow(
     clientBatchRef,
     beneficiaryName: beneficiaryNameHint(item),
   }
+  return withSpec76Fields(base, index)
 }
 
-/** Customer-facing status label for intent journal rows. */
+/** Customer-facing status label for intent journal rows (Spec 7.6 lifecycle preferred). */
 export function intentRowCustomerStatus(status: JournalIntentStatus): string {
-  if (status === 'Pending') return 'Awaiting Bank Confirmation'
-  if (status === 'Ready to Process') return 'Ready for Dispatch'
+  if (status === 'Pending') return 'Dispatched'
+  if (status === 'Ready to Process') return 'Ready to seal'
+  if (status === 'Needs Review') return 'Needs review'
+  if (status === 'Confirmed') return 'Dispatched'
+  if (status === 'In Progress') return 'Sealed'
   return status
 }

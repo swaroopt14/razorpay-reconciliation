@@ -5,7 +5,7 @@ import { BATCH_REVIEW_COPY } from '../copy/batchCommandCenterCopy'
 import type { PaymentStatusSlice } from '../mappers/mapBatchReviewKpis'
 import { PORTAL_CARD } from './portal/batchPortalTokens'
 
-const PIE_COLORS = ['#000000', '#3b82f6', '#ef4444', '#f59e0b', '#94a3b8', '#a855f7']
+const PIE_COLORS = ['#000000', '#3b82f6', '#0B1324', '#0B1324', '#94a3b8', '#a855f7']
 
 export function PaymentStatusBreakdown({
   slices,

@@ -73,14 +73,14 @@ function segmentSeriesKey(name: string): string {
 }
 
 /** Two-bucket status mix driven by the batch's payment-intent count:
- *  Complete   = total payment intents in the batch (each payment that has proof)
- *  Incomplete = total evidence packs − total intents (packs beyond covered intents)
- *  Packs are classified chronologically so the daily area still sums to pack volume. */
+  * Complete  = total payment intents in the batch (each payment that has proof)
+  * Incomplete = total evidence packs − total intents (packs beyond covered intents)
+  * Packs are classified chronologically so the daily area still sums to pack volume. */
 const COMPLETE_BUCKET = 'Complete'
 const INCOMPLETE_BUCKET = 'Incomplete'
 const BUCKET_COLOR: Record<string, string> = {
   [COMPLETE_BUCKET]: '#0f172a',
-  [INCOMPLETE_BUCKET]: '#f59e0b',
+  [INCOMPLETE_BUCKET]: '#0B1324',
 }
 
 function buildMixAreaSeries(

@@ -7,10 +7,11 @@ import {
   PREVIEW_AMBIGUITY_KPI,
   PREVIEW_BATCHES,
   PREVIEW_EVIDENCE_KPI_CARDS,
+  PREVIEW_HEALTH_CARDS,
   PREVIEW_JOURNAL_ROWS,
-  PREVIEW_LEAKAGE_KPI,
   PREVIEW_LEAKAGE_PCT_CACHE,
   PREVIEW_LEAKAGE_VM,
+  PREVIEW_NEXT_ACTIONS,
   PREVIEW_SETTLEMENT_ROWS,
   PREVIEW_SUPPORT_TICKETS,
 } from '@/components/landing-final/landingHeroPreviewFixtures'
@@ -18,6 +19,7 @@ import { buildMockTrendSeries } from '@/components/landing-final/landingHeroMock
 import { MatchingConfidenceKpiStrip } from '@/features/payout-command/ambiguity/components/MatchingConfidenceKpiStrip'
 import { BatchesNeedingReviewTable } from '@/features/payout-command/ambiguity/components/BatchesNeedingReviewTable'
 import { SignalClarityBar } from '@/features/payout-command/ambiguity/components/SignalClarityBar'
+import { PaymentCommandCenterBand } from '@/features/payout-command/command-center/PaymentCommandCenterBand'
 import { PAYMENT_COMMAND_CENTER } from '@/features/payout-command/command-center/paymentCommandCopy'
 import { PaymentTrendPanel } from '@/features/payout-command/command-center/PaymentTrendPanel'
 import { JournalIntelligenceKpiHero } from '@/features/payout-command/command-center/JournalIntelligenceKpiHero'
@@ -26,6 +28,7 @@ import {
   HOME_BODY_IMPERIAL_CENTERED,
   HOME_TITLE_BLACK,
 } from '@/features/payout-command/command-center/homeCommandCenterTokens'
+import type { CarouselInsightPeriod } from '@/features/payout-command/command-center/commandCenterPeriod'
 import { EvidenceHeroBanner } from '@/features/payout-command/evidence/components/EvidenceHeroBanner'
 import { EvidenceKpiStrip } from '@/features/payout-command/evidence/components/EvidenceKpiStrip'
 import { LeakageKpiStrip } from '@/features/payout-command/leakage/components/LeakageKpiStrip'
@@ -38,7 +41,10 @@ import type { AskZordState } from '@/features/payout-command/hooks/useAskZordSta
 import { AskZordWorkspaceLayout } from '@/features/payout-command/workspace/AskZordWorkspaceLayout'
 import { BatchProgressPanel } from '@/features/payout-command/batch-command-center/_components/BatchProgressPanel'
 import { BatchWorkspaceBar } from '@/features/payout-command/batch-command-center/_components/BatchWorkspaceBar'
+import { PaymentStatusBreakdown } from '@/features/payout-command/batch-command-center/_components/PaymentStatusBreakdown'
+import { ReviewItemsTable } from '@/features/payout-command/batch-command-center/_components/ReviewItemsTable'
 import { BATCH_REVIEW_COPY } from '@/features/payout-command/batch-command-center/copy/batchCommandCenterCopy'
+import { mapPaymentStatusBreakdown } from '@/features/payout-command/batch-command-center/mappers/mapBatchReviewKpis'
 import { PORTAL_CARD } from '@/features/payout-command/batch-command-center/_components/portal/batchPortalTokens'
 import {
   derivePaymentProofTimeline,
@@ -47,6 +53,7 @@ import {
 } from '@/services/payout-command/batch-model'
 import type { DisbursementTrendRange } from '@/services/payout-command/prod-api/disbursementTrendTypes'
 import type { FinalityStatus } from '@/services/payout-command/prod-api/intelligenceTypes'
+import type { JournalFailureRow, JournalIntentRow } from '@/services/payout-command/prod-api/mapIntentEngineBatch'
 
 type PreviewMetric = 'intended' | 'confirmed'
 type PreviewYear = '2026' | '2027' | '2028'
@@ -94,7 +101,7 @@ function PreviewExposureCard() {
     <article className="flex h-full flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className={`text-[20px] font-semibold ${HOME_TITLE_BLACK}`}>Risk-adjusted leakage exposure</p>
+          <p className={`text-[20px] font-semibold ${HOME_TITLE_BLACK}`}>Risk-adjusted payment gaps</p>
           <p className={`mt-1 ${HOME_BODY_IMPERIAL}`}>
             Mock exposure trend by unmatched, short-settled, and reversed records.
           </p>
@@ -123,6 +130,8 @@ export function HomePreviewSurface(props: {
   setYear: (year: PreviewYear) => void
   chartSeries: ReturnType<typeof buildMockTrendSeries>
 }) {
+  const [carouselPeriod, setCarouselPeriod] = useState<CarouselInsightPeriod>('weekly')
+
   return (
     <div className="mt-0 w-full min-w-0">
       <div className="px-2 pt-2 text-center sm:px-4">
@@ -197,6 +206,15 @@ export function HomePreviewSurface(props: {
           </div>
         </div>
       </div>
+
+      <section className="mt-5 space-y-3 bg-[#f4f4f1] px-2 pb-3 pt-1.5 sm:px-3" aria-labelledby="landing-home-command-center-title">
+        <PaymentCommandCenterBand
+          carouselPeriod={carouselPeriod}
+          onCarouselPeriodChange={setCarouselPeriod}
+          {...PREVIEW_HEALTH_CARDS}
+          nextActions={{ actions: PREVIEW_NEXT_ACTIONS }}
+        />
+      </section>
     </div>
   )
 }
@@ -252,7 +270,7 @@ export function AmbiguityPreviewSurface() {
   return (
     <div className="space-y-4 rounded-2xl bg-[#f4f4f1] p-3 sm:p-4">
       <MatchingConfidenceKpiStrip amb={PREVIEW_AMBIGUITY_KPI} scopeHint="Preview workspace snapshot" />
-      <SignalClarityBar amb={PREVIEW_AMBIGUITY_KPI} leakage={PREVIEW_LEAKAGE_KPI} />
+      <SignalClarityBar amb={PREVIEW_AMBIGUITY_KPI} />
       <BatchesNeedingReviewTable
         batches={PREVIEW_BATCHES}
         loading={false}
@@ -304,7 +322,7 @@ function JournalLikePreview({
       : [
           { label: 'Observations', value: '986', sub: 'Settlement records observed' },
           { label: 'Matched', value: '912', sub: 'Linked to payment intents' },
-          { label: 'Unlinked', value: '48', sub: 'Need match review' },
+          { label: 'Unlinked', value: '48', sub: 'Needs a person' },
           { label: 'Parse errors', value: '6', sub: 'Failed settlement parses' },
         ]
 
@@ -384,7 +402,7 @@ export function EvidencePreviewSurface() {
       <div className="grid gap-3 lg:grid-cols-3">
         {['Finance close', 'Audit pack', 'Dispute proof'].map((title, index) => (
           <article key={title} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <p className="text-[10px] uppercase tracking-[0.14em] text-slate-400">Evidence Pack</p>
+            <p className="text-[10px] uppercase tracking-[0.14em] text-slate-400">Proof pack</p>
             <h4 className={`mt-2 text-sm font-bold ${HOME_TITLE_BLACK}`}>{title}</h4>
             <div className="mt-4 h-2 rounded-full bg-slate-100">
               <div className="h-full rounded-full bg-black" style={{ width: `${[88, 76, 92][index]}%` }} />
@@ -443,9 +461,70 @@ const PREVIEW_BATCH_SUMMARY: BatchSummary = {
   pending: 40,
 }
 
-/** Landing-only Batch Command Center, same product view as /batch-command-center with mock data. */
+const PREVIEW_BATCH_INTENTS: JournalIntentRow[] = [
+  {
+    batchId: 'BATCH-1042',
+    zordId: 'ZRD-1042-01',
+    requestId: 'REQ-8801',
+    reference: 'INV-22091',
+    amount: 245_000,
+    method: 'Bank Transfer',
+    status: 'Needs Review',
+    match: 'Mismatch',
+    lastUpdated: '2 min ago',
+    paymentPartner: 'Cashfree',
+    bank: 'HDFC',
+    paymentMethodDetail: 'NEFT',
+    tenantId: 'preview',
+    intendedExecutionAt: '2026-07-13',
+    provider: 'Cashfree',
+    confidenceScore: 0.62,
+    confidenceLabel: '62%',
+    infoSummary: 'Needs a person',
+  },
+  {
+    batchId: 'BATCH-1042',
+    zordId: 'ZRD-1042-02',
+    requestId: 'REQ-8804',
+    reference: 'INV-22108',
+    amount: 98_500,
+    method: 'NACH',
+    status: 'Pending',
+    match: 'Awaiting',
+    lastUpdated: '8 min ago',
+    paymentPartner: 'Razorpay',
+    bank: 'ICICI',
+    paymentMethodDetail: 'NACH',
+    tenantId: 'preview',
+    intendedExecutionAt: '2026-07-13',
+    provider: 'Razorpay',
+    confidenceScore: 0.71,
+    confidenceLabel: '71%',
+    infoSummary: 'Awaiting bank confirmation',
+  },
+]
+
+const PREVIEW_BATCH_FAILURES: JournalFailureRow[] = [
+  {
+    batchId: 'BATCH-1042',
+    zordId: 'ZRD-1042-09',
+    requestId: 'REQ-8812',
+    reference: 'INV-22140',
+    amount: 56_000,
+    method: 'Bank Transfer',
+    paymentPartner: 'PayU',
+    connectorSubtitle: 'PayU · NEFT',
+    failureReason: 'Missing UTR on settlement file',
+    failureStage: 'Settlement',
+    lastUpdated: '14 min ago',
+    action: 'Investigate',
+  },
+]
+
+/** Landing-only Batch Command Center - same product view as /batch-command-center with mock data. */
 export function BatchCommandCenterPreviewSurface({ onBack }: { onBack?: () => void }) {
   const summary = PREVIEW_BATCH_SUMMARY
+  const pieSlices = useMemo(() => mapPaymentStatusBreakdown(summary), [])
   const pipelineSteps = useMemo(
     () =>
       derivePaymentProofTimeline(summary, {
@@ -510,7 +589,6 @@ export function BatchCommandCenterPreviewSurface({ onBack }: { onBack?: () => vo
           tenantId="preview-workspace"
           tenantReady
           isSandbox={false}
-          companyName="Jacme Company"
           activeBatchId="BATCH-1042"
           onSelectBatch={() => undefined}
           onRefresh={() => undefined}
@@ -534,6 +612,16 @@ export function BatchCommandCenterPreviewSurface({ onBack }: { onBack?: () => vo
         </section>
 
         <BatchProgressPanel steps={pipelineSteps} progressPct={progressPct} busy />
+        <PaymentStatusBreakdown slices={pieSlices} hasBatch />
+        <ReviewItemsTable
+          failures={PREVIEW_BATCH_FAILURES}
+          intents={PREVIEW_BATCH_INTENTS}
+          settlementRows={[]}
+          intentFileRows={[]}
+          settlementFileRows={[]}
+          failuresTabHref="#"
+          loading={false}
+        />
       </div>
     </div>
   )

@@ -23,7 +23,7 @@ type PreviewMode = 'intent' | 'settlement'
 
 function formatConfidenceDisplay(score: number | null | undefined, label?: string): string {
   if (label?.trim()) return label
-  if (score == null || !Number.isFinite(score)) return '—'
+  if (score == null || !Number.isFinite(score)) return '-'
   const pct = score <= 1 ? score * 100 : score
   return `${Math.round(pct)}%`
 }
@@ -32,11 +32,11 @@ export function mapIntentReviewRows(failures: JournalFailureRow[], intents: Jour
   const failureItems: ReviewItemRow[] = failures.map((r) => ({
     id: r.requestId,
     paymentRef: r.reference || r.requestId,
-    invoiceNo: '—',
+    invoiceNo: '-',
     beneficiary: r.reference || r.requestId,
     amount: r.amount,
     issue: r.failureReason || r.failureStage,
-    confidence: '—',
+    confidence: '-',
     isDlq: true,
   }))
   const intentItems: ReviewItemRow[] = intents
@@ -44,7 +44,7 @@ export function mapIntentReviewRows(failures: JournalFailureRow[], intents: Jour
     .map((r) => ({
       id: r.requestId,
       paymentRef: r.reference || r.requestId,
-      invoiceNo: '—',
+      invoiceNo: '-',
       beneficiary: r.paymentPartner || r.bank || r.reference,
       amount: r.amount,
       issue: r.match || r.status,
@@ -59,22 +59,22 @@ function mapSettlementReviewRows(rows: SettlementObservationTableRow[]): ReviewI
     .filter((r) => {
       const st = (r.statusRaw ?? r.status ?? '').toUpperCase()
       const failed = st.includes('FAIL') || st.includes('REJECT')
-      const unmatched = !r.matchedIntentId || r.matchedIntentId === '—'
+      const unmatched = !r.matchedIntentId || r.matchedIntentId === '-'
       const lowMap = r.mappingConfidence != null && r.mappingConfidence < 0.5
       return failed || unmatched || lowMap
     })
     .slice(0, 25)
     .map((r) => ({
       id: r.observationId,
-      paymentRef: r.clientRef !== '—' ? r.clientRef : r.providerRef,
-      invoiceNo: '—',
-      beneficiary: r.bankRef !== '—' ? r.bankRef : r.sourceSystem,
+      paymentRef: r.clientRef !== '-' ? r.clientRef : r.providerRef,
+      invoiceNo: '-',
+      beneficiary: r.bankRef !== '-' ? r.bankRef : r.sourceSystem,
       amount: r.amount,
-      issue: r.failureReasonCode !== '—' ? r.failureReasonCode : r.status,
+      issue: r.failureReasonCode !== '-' ? r.failureReasonCode : r.status,
       confidence:
         r.mappingConfidence != null && Number.isFinite(r.mappingConfidence)
           ? formatConfidenceDisplay(r.mappingConfidence)
-          : '—',
+          : '-',
       isDlq: false,
     }))
 }
@@ -83,11 +83,11 @@ function mapFilePreviewRows(rows: BatchRow[]): ReviewItemRow[] {
   return rows.slice(0, 25).map((r, idx) => ({
     id: `file-${idx}-${r.refId}`,
     paymentRef: r.refId,
-    invoiceNo: r.invoiceNo?.trim() || '—',
+    invoiceNo: r.invoiceNo?.trim() || '-',
     beneficiary: r.beneficiary,
     amount: r.amount,
     issue: r.status,
-    confidence: '—',
+    confidence: '-',
     isDlq: false,
   }))
 }
@@ -168,7 +168,6 @@ export function ReviewPreviewPanel({
   settlementFileRows,
   failuresTabHref,
   loading,
-  showFilePreview = true,
 }: {
   failures: JournalFailureRow[]
   intents: JournalIntentRow[]
@@ -177,8 +176,6 @@ export function ReviewPreviewPanel({
   settlementFileRows: BatchRow[]
   failuresTabHref: string
   loading?: boolean
-  /** When false, hides the uploaded-file preview block (used on landing). */
-  showFilePreview?: boolean
 }) {
   const [queueMode, setQueueMode] = useState<PreviewMode>('intent')
   const [fileMode, setFileMode] = useState<PreviewMode>('intent')
@@ -218,22 +215,20 @@ export function ReviewPreviewPanel({
         />
       )}
 
-      {showFilePreview ? (
-        <div className="mt-8 border-t border-[#e2e8f0] pt-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h3 className="text-[14px] font-bold text-[#0f172a]">{BATCH_REVIEW_COPY.filePreview.title}</h3>
-              <p className="mt-1 text-[13px] text-[#64748b]">{BATCH_REVIEW_COPY.filePreview.subtitle}</p>
-            </div>
-            <ModeToggle mode={fileMode} onChange={setFileMode} />
+      <div className="mt-8 border-t border-[#e2e8f0] pt-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-[14px] font-bold text-[#0f172a]">{BATCH_REVIEW_COPY.filePreview.title}</h3>
+            <p className="mt-1 text-[13px] text-[#64748b]">{BATCH_REVIEW_COPY.filePreview.subtitle}</p>
           </div>
-          <ReviewTableBody
-            rows={filePreviewRows}
-            failuresTabHref={failuresTabHref}
-            emptyMessage={BATCH_REVIEW_COPY.filePreview.empty}
-          />
+          <ModeToggle mode={fileMode} onChange={setFileMode} />
         </div>
-      ) : null}
+        <ReviewTableBody
+          rows={filePreviewRows}
+          failuresTabHref={failuresTabHref}
+          emptyMessage={BATCH_REVIEW_COPY.filePreview.empty}
+        />
+      </div>
     </section>
   )
 }

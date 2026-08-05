@@ -5,7 +5,7 @@ import type { ReactNode } from 'react'
 import { ZordLogo } from '@/components/ZordLogo'
 import { AUTH_UI } from './authUiTokens'
 
-type AuthMarketingVariant = 'signin' | 'signup' | 'demo'
+type AuthMarketingVariant = 'signin' | 'signup' | 'demo' | 'admin' | 'ops'
 
 const MARKETING: Record<
   AuthMarketingVariant,
@@ -16,12 +16,20 @@ const MARKETING: Record<
     features: ['Payment intelligence', 'Proof-ready evidence', 'Live & sandbox workspaces'],
   },
   signup: {
-    headline: 'Provision a tenant on Arealis Zord — payout control and defensibility, ready to ship.',
+    headline: 'Provision a tenant on Arealis Zord - payout control and defensibility, ready to ship.',
     features: ['Tenant provisioning', 'Secure API keys', 'Sandbox-first onboarding'],
   },
   demo: {
-    headline: 'Tell us about your payments — see how Zord controls and proves every payout.',
+    headline: 'Tell us about your payments - see how Zord controls and proves every payout.',
     features: ['Payout control', 'Proof-ready evidence', 'A team that calls you back'],
+  },
+  admin: {
+    headline: 'Govern tenants and access without losing the audit trail.',
+    features: ['Tenant governance', 'Role-locked access', 'Operator audit log'],
+  },
+  ops: {
+    headline: 'Keep every queue, tenant, and recovery lane visible when the platform gets noisy.',
+    features: ['Cross-tenant visibility', 'Replay controls', 'DLQ triage'],
   },
 }
 

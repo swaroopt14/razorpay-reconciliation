@@ -1,29 +1,31 @@
+/** Everyday language for the Resources hub. */
+
 export const resourceCards = [
   {
     eyebrow: 'Product walkthrough',
-    title: 'See how ZORD operates across confirmation, matching, and proof',
-    body: 'Start with the operating model if your team needs the fastest explanation of how ZORD works in production.',
+    title: 'See how Zord follows a payout from instruction to proof',
+    body: 'Start here if your team needs the fastest explanation of how Zord works day to day.',
     href: '/final-landing/how-it-works',
     cta: 'Open how it works',
   },
   {
-    eyebrow: 'Security and trust',
-    title: 'Review controls, bank-side visibility, and finance-ready evidence',
-    body: 'Use this path when security, proof, auditability, and operational trust matter before rollout.',
+    eyebrow: 'Trust and proof',
+    title: 'See how proof packs support finance and audit questions',
+    body: 'Use this path when trust in the numbers, and proof you can show others, matter before you go live.',
     href: '/#security',
-    cta: 'Review security',
+    cta: 'Review trust',
   },
   {
-    eyebrow: 'Pricing and rollout',
-    title: 'Understand plan structure, buying motion, and implementation fit',
-    body: 'See pricing logic, rollout paths, and when teams move from pilot to deeper operational adoption.',
+    eyebrow: 'Pricing and getting started',
+    title: 'Understand how teams try, demo, and buy Zord',
+    body: 'See how to try first, book a demo, and when teams move to production pricing.',
     href: '/final-landing/pricing',
     cta: 'View pricing',
   },
   {
     eyebrow: 'Talk to the team',
-    title: 'Get product access, technical answers, or onboarding support',
-    body: 'Reach Arealis directly for demos, integration questions, enterprise rollout discussions, or support.',
+    title: 'Get a demo, onboarding help, or product answers',
+    body: 'Reach Arealis for demos, go-live discussions, or support.',
     href: 'mailto:Support@zordnet.com?subject=ZORD%20resources%20and%20support',
     cta: 'Contact Zord',
   },
@@ -32,20 +34,20 @@ export const resourceCards = [
 export const learningPaths = [
   {
     title: 'For operators',
-    body: 'Focus on payout posture, connector performance, queue ownership, and the decision patterns teams use when something starts to drift.',
+    body: 'Focus on payout health, batch progress, payment gaps, and the review list when something is unclear.',
   },
   {
     title: 'For finance',
-    body: 'Use ZORD resources to understand finality, reconciliation, finance-ready exports, and why the proof layer matters at close.',
+    body: 'Focus on money meant to pay vs bank-confirmed amounts, gaps to close, and proof packs ready for close and audit.',
   },
   {
     title: 'For engineering',
-    body: 'Start with the system model, then move into docs, contracts, and platform entry points that explain how ZORD fits into live infra.',
+    body: 'Focus on how Zord sits next to your existing payment systems and why teams share one payout record.',
   },
 ] as const
 
 export const resourceHighlights = [
-  'Canonical obligation and source integrity.',
-  'Policy decision and versioned contract .',
-  'Execution lineage and settlement evidence .',
+  'One shared explanation for ops, finance, and engineering - not scattered docs.',
+  'Clear paths for trust, pricing, and going live when teams are ready to go deeper.',
+  'Direct access to Arealis for demos and go-live conversations.',
 ] as const

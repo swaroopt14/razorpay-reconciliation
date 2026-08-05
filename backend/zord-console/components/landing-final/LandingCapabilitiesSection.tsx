@@ -34,14 +34,15 @@ export function LandingCapabilitiesSection() {
       <div className="mx-auto max-w-5xl">
         <LandingReveal className="flex flex-col items-center text-center">
           <p className="mb-6 inline-flex w-fit rounded-full border border-white/20 bg-white/10 backdrop-blur-sm px-4 py-1.5 text-[10px] font-semibold uppercase tracking-[0.15em] text-white/80">
-            DEPLOYMENT OPTIONS
+            WHY ZORD
           </p>
           <h2 className="max-w-[20ch] text-[2.5rem] font-semibold leading-[1.05] tracking-[-0.04em] text-white sm:text-[3.25rem] lg:text-[4rem]">
-            Start with files.<br />
-            Scale to connected payment infrastructure.
+            Built for payout teams.<br />
+            Not another payments black box.
           </h2>
           <p className="mt-6 max-w-2xl text-[15px] sm:text-base font-medium leading-relaxed text-white/70">
-            Validate Zord using existing payout and settlement records, then expand to APIs, webhooks and real-time event streams.
+            See money you meant to pay next to what the bank confirmed, resolve gaps, and keep proof packs ready - in one shared
+            place for ops and finance.
           </p>
         </LandingReveal>
 
@@ -88,7 +89,7 @@ export function LandingCapabilitiesSection() {
 
                   <a
                     href={
-                      plan.title === 'Sandbox'
+                      plan.title === 'Try first'
                         ? '/signin'
                         : 'mailto:Support@zordnet.com?subject=ZORD%20pricing%20discussion'
                     }
@@ -98,7 +99,7 @@ export function LandingCapabilitiesSection() {
                         : 'border border-black/10 bg-[#F7F8FA] text-[#111111] hover:bg-[#F0F1F3]'
                     }`}
                   >
-                    {plan.title === 'Sandbox' ? 'Start in sandbox' : 'Talk to sales'}
+                    {plan.title === 'Try first' ? 'Try first' : 'Talk to sales'}
                   </a>
                 </article>
               )

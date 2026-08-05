@@ -5,7 +5,7 @@ import type { EvidencePackSummaryRow, ListPacksResponse } from './evidenceTypes'
 const EVIDENCE_BASE = '/api/prod/evidence'
 
 /**
- * Intent-level evidence packs for one batch — BFF injects session tenant.
+ * Intent-level evidence packs for one batch - BFF injects session tenant.
  * Maps to GET /v1/evidence/batch/:batchId/intents
  */
 export async function getEvidencePacksForBatchIntents(
