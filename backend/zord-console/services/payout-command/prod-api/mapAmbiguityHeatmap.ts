@@ -5,7 +5,7 @@ import type {
 } from './intelligenceTypes'
 import { isDataAvailable } from './intelligenceTypes'
 
-/** Column keys from ambiguity heatmap API — display labels applied in UI. */
+/** Column keys from ambiguity heatmap API - display labels applied in UI. */
 const HEATMAP_X_LABELS = ['Exact', 'High', 'Amb', 'Unres', 'Conf'] as const
 const MAX_ROWS = 12
 
@@ -57,7 +57,7 @@ export function mapAmbiguityHeatmapResponse(
 
   const allBatches = res.batches
 
-  // Sum ambiguous + unresolved across ALL batches — not just the display-capped slice.
+  // Sum ambiguous + unresolved across ALL batches - not just the display-capped slice.
   const intents_under_evaluation_count = allBatches.reduce(
     (sum, b) => sum + (b.ambiguous_count ?? 0) + (b.unresolved_count ?? 0),
     0,

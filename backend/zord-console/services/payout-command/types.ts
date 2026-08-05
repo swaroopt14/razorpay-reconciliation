@@ -1,4 +1,4 @@
-// Shared types for the payout command view — conversation, AI responses, and
+// Shared types for the payout command view - conversation, AI responses, and
 // prompt-layer API shapes. Kept separate from model.ts (simulation data) so
 // each file has a single clear responsibility.
 

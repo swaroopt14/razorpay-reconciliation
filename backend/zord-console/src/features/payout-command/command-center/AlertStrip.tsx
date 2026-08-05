@@ -6,8 +6,8 @@ import type { AlertStripProps } from './types'
 
 const BG: Record<AlertStripProps['status'], string> = {
   GREEN: '#000000',
-  AMBER: '#f59e0b',
-  RED: '#dc2626',
+  AMBER: '#0B1324',
+  RED: '#0B1324',
 }
 
 /** Neon rim + glow (payout view system). Exported for SandboxBanner parity. */
@@ -15,7 +15,7 @@ export const ALERT_STRIP_NEON: Record<AlertStripProps['status'], string> = {
   GREEN:
     'shadow-[0_0_32px_rgba(0,0,0,0.25),0_4px_24px_rgba(0,0,0,0.2)] ring-1 ring-black/35',
   AMBER:
-    'shadow-[0_0_28px_rgba(245,158,11,0.42),0_4px_20px_rgba(217,119,6,0.25)] ring-1 ring-amber-300/40',
+    'shadow-sm ring-1 ring-[#0B1324]/20',
   RED: 'shadow-[0_0_30px_rgba(220,38,38,0.48),0_4px_22px_rgba(185,28,28,0.3)] ring-1 ring-red-400/35',
 }
 
@@ -27,7 +27,7 @@ const ARIA_LABEL: Record<AlertStripProps['status'], string> = {
   GREEN: 'Normal',
 }
 
-/** Product labels for accessibility only — strip color carries state. */
+/** Product labels for accessibility only - strip color carries state. */
 const STATE_TAB: Record<AlertStripProps['status'], string> = {
   GREEN: 'Normal',
   AMBER: 'Attention required',

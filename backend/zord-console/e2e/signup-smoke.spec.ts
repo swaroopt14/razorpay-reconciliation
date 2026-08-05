@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 
 /**
- * Live signup smoke — creates a real tenant + admin via zord-edge (not mocked).
+ * Live signup smoke - creates a real tenant + admin via zord-edge (not mocked).
  *
  * Prerequisites:
  *   1. `npm run dev` in zord-console (port 3000)
@@ -11,7 +11,7 @@ import { test, expect } from '@playwright/test'
  *   npm run test:e2e -- e2e/signup-smoke.spec.ts
  *
  * Optional env:
- *   SMOKE_SIGNUP_EMAIL=you@gmail.com   — fixed email (fails if already registered)
+ *   SMOKE_SIGNUP_EMAIL=you@gmail.com   - fixed email (fails if already registered)
  *   ZORD_EDGE_URL=http://localhost:8080
  */
 const EDGE_URL = process.env.ZORD_EDGE_URL || 'http://localhost:8080'
@@ -30,7 +30,7 @@ test.describe('signup smoke (live zord-edge)', () => {
   })
 
   test('creates workspace through /signup UI and lands in sandbox', async ({ page }) => {
-    test.skip(!edgeHealthy, `zord-edge not reachable at ${EDGE_URL} — run: cd backend/zord-edge && docker compose up -d`)
+    test.skip(!edgeHealthy, `zord-edge not reachable at ${EDGE_URL} - run: cd backend/zord-edge && docker compose up -d`)
 
     const stamp = Date.now()
     const email =

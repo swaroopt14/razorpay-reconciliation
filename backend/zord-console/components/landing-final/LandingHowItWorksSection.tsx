@@ -29,8 +29,8 @@ export function LandingHowItWorksSection() {
       <LandingReveal>
         <LandingSectionHeader
           badge="How it works"
-          title="The operating model behind"
-          titleAccent="control"
+          title="From payment file"
+          titleAccent="to proof"
         />
       </LandingReveal>
 

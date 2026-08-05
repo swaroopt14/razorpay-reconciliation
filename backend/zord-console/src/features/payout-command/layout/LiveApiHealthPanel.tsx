@@ -15,8 +15,8 @@ type LiveApiHealthPanelProps = {
 
 function statusClass(status: LiveApiCheckStatus): string {
   if (status === 'ok') return 'bg-neutral-100 text-black border-black/30'
-  if (status === 'empty') return 'bg-sky-50 text-sky-800 border-sky-200'
-  if (status === 'error') return 'bg-red-50 text-red-800 border-red-200'
+  if (status === 'empty') return 'bg-[#F1F5F9] text-[#64748B] border-[#0B1324]/20'
+  if (status === 'error') return 'bg-[#F1F5F9] text-[#0B1324] border-[#0B1324]/20'
   return 'bg-slate-50 text-slate-600 border-slate-200'
 }
 
@@ -78,7 +78,7 @@ export function LiveApiHealthPanel({ tenantReady, batchId }: LiveApiHealthPanelP
                   <div className="flex flex-wrap items-center justify-between gap-1">
                     <span className="font-semibold">{r.label}</span>
                     <span className="font-mono text-[11px] opacity-80">
-                      {r.httpStatus || '—'} · {r.status}
+                      {r.httpStatus || '-'} · {r.status}
                     </span>
                   </div>
                   <p className="mt-0.5 opacity-90">{r.detail}</p>

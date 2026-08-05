@@ -18,11 +18,11 @@ const TIMELINE_ORDER: { types: string[]; verb: string }[] = [
 function formatTime(iso: string, offsetMin: number): string {
   try {
     const d = new Date(iso)
-    if (Number.isNaN(d.getTime())) return '—'
+    if (Number.isNaN(d.getTime())) return '-'
     d.setMinutes(d.getMinutes() + offsetMin)
     return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
   } catch {
-    return '—'
+    return '-'
   }
 }
 

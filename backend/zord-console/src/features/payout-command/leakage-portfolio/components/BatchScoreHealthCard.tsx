@@ -56,7 +56,7 @@ export function BatchScoreHealthCard({ patterns, loading, batchId, emptyReason }
       data-testid="batch-score-health"
       data-scope={scopedBatchId ? 'batch' : 'tenant'}
     >
-      <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#f59e0b] via-[#f97316] to-[#ef4444]" />
+      <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#0B1324] via-[#0B1324] to-[#0B1324]" />
       {loading ? (
         <BatchScoreHealthSkeleton />
       ) : (
@@ -95,7 +95,7 @@ export function BatchScoreHealthCard({ patterns, loading, batchId, emptyReason }
                   <span className="text-[14px] font-semibold text-[#00239C]">{displayApiField(row.label)}</span>
                   <div className="h-3 overflow-hidden rounded-full bg-slate-100">
                     <div
-                      className="h-full rounded-full bg-[#ef4444]"
+                      className="h-full rounded-full bg-[#0B1324]"
                       style={{
                         width: `${Math.min(100, Math.max(0, Number(row.share_pct) || 0))}%`,
                       }}

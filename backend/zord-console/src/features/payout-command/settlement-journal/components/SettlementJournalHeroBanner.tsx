@@ -41,30 +41,30 @@ export function SettlementJournalHeroBanner({
   )
   const observedValue =
     intelligenceLoading && totalSettlementValue == null
-      ? '—'
+      ? '-'
       : totalSettlementValue != null
         ? formatJournalMoney(totalSettlementValue)
-        : '—'
+        : '-'
   const recordsTotal = observationTotal ?? null
   const countLine =
-    recordsTotal != null ? recordsTotal.toLocaleString('en-IN') : loading ? '…' : '—'
+    recordsTotal != null ? recordsTotal.toLocaleString('en-IN') : loading ? '…' : '-'
   const paymentPartner = derivePaymentPartnerLabel(rows)
   const recordsReceivedDisplay =
-    loading && recordsTotal == null ? '—' : recordsTotal != null ? recordsTotal.toLocaleString('en-IN') : '—'
+    loading && recordsTotal == null ? '-' : recordsTotal != null ? recordsTotal.toLocaleString('en-IN') : '-'
   const settlementMatchedDisplay =
     intelligenceLoading && kpis.settlementValueMatched == null
-      ? '—'
+      ? '-'
       : kpis.settlementValueMatched != null
         ? formatJournalMoney(kpis.settlementValueMatched)
-        : '—'
+        : '-'
   const varianceAmount = parseBatchContractAmount(batchContract?.variance_amount)
   const varianceDisplay =
     intelligenceLoading && varianceAmount == null
-      ? '—'
+      ? '-'
       : varianceAmount != null
         ? formatJournalMoney(varianceAmount)
-        : '—'
-  const varianceSub = varianceAmount != null ? copy.amountVariance : '—'
+        : '-'
+  const varianceSub = varianceAmount != null ? copy.amountVariance : '-'
 
   const matchOutcome = outcomeFromMatchConfidence(kpis.matchConfidence)
   const deltaPill =
@@ -72,7 +72,7 @@ export function SettlementJournalHeroBanner({
       ? `${matchOutcome.label} · ${matchOutcome.progressPct}% match`
       : intelligenceLoading
         ? '…'
-        : '—'
+        : '-'
 
   const obsSub =
     filtersActive && recordsTotal != null
@@ -81,7 +81,7 @@ export function SettlementJournalHeroBanner({
         ? copy.recordsReceivedSub(recordsTotal.toLocaleString('en-IN'))
         : loading
           ? 'Loading observation count…'
-          : '—'
+          : '-'
 
   const buckets = [
     { label: copy.paymentPartner, value: paymentPartner, sub: copy.paymentPartnerSub },

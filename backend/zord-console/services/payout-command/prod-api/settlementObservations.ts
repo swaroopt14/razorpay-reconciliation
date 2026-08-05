@@ -16,7 +16,7 @@ export type SettlementObservationBatchListResponse = {
   pagination?: SettlementPagination
 }
 
-/** Canonical settlement observation row (mode 2) — mirrors outcome-engine JSON. */
+/** Canonical settlement observation row (mode 2) - mirrors outcome-engine JSON. */
 export type CanonicalSettlementObservation = {
   settlement_observation_id: string
   tenant_id?: string
@@ -333,7 +333,7 @@ function parseMoney(raw: string | number | null | undefined): number {
 
 function formatObsTime(iso: string | undefined): string {
   const safeIso = apiTrimmedString(iso)
-  if (!safeIso) return '—'
+  if (!safeIso) return '-'
   const d = new Date(safeIso)
   if (Number.isNaN(d.getTime())) return safeIso
   return d.toLocaleString('en-IN', {
@@ -347,7 +347,7 @@ function formatObsTime(iso: string | undefined): string {
 
 function displayOrDash(value: string | null | undefined): string {
   const v = value?.trim()
-  return v ? v : '—'
+  return v ? v : '-'
 }
 
 /** Use 1-based row index only when API source_row_ref is missing or invalid. */
@@ -357,7 +357,7 @@ function resolveSourceRowRef(
 ): string {
   const v = raw?.trim()
   if (!v) {
-    return rowIndex != null ? String(rowIndex + 1) : '—'
+    return rowIndex != null ? String(rowIndex + 1) : '-'
   }
   const signed = /^-?\d+$/.test(v) ? Number.parseInt(v, 10) : Number.NaN
   if (Number.isFinite(signed)) {
@@ -398,7 +398,7 @@ export function mapObservationToTableRow(
     deductionAmount: parseMoney(full.deduction_amount ?? slim.deduction_amount),
     currency: apiTrimmedString(full.currency_code ?? slim.currency_code ?? 'INR') || 'INR',
     statusRaw,
-    status: statusRaw ? statusRaw.replace(/_/g, ' ') : '—',
+    status: statusRaw ? statusRaw.replace(/_/g, ' ') : '-',
     sourceSystem: displayOrDash(full.source_system ?? slim.source_system),
     sourceSystemId: displayOrDash(full.source_system_id ?? slim.source_system_id),
     sourceType: displayOrDash(full.source_type),
@@ -450,7 +450,7 @@ export function mapObservationToTableRow(
         ? 'Yes'
         : full.provider_ref_consistency_flag === false
           ? 'No'
-          : '—',
+          : '-',
     mappingProfileId: displayOrDash(full.mapping_profile_id),
     mappingProfileVersion: displayOrDash(full.mapping_profile_version),
     scoreVersion: displayOrDash(full.score_version),

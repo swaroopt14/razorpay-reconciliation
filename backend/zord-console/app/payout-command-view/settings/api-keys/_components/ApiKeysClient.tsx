@@ -24,18 +24,18 @@ type DisplayApiKey = {
 }
 
 /**
- * ApiKeysClient — Stripe-style API keys page.
- *
- * Layout:
- *   ┌──────────────────────────────────────────┬─────────────────┐
- *   │ Page header                              │                 │
- *   │ Publishable keys card                    │ Recommendations │
- *   │ Secret keys card                         │ (sidebar)       │
- *   │ Recent API requests table                │                 │
- *   └──────────────────────────────────────────┴─────────────────┘
- *
- * Wraps in its own EnvironmentProvider so it works as a standalone route too.
- */
+  * ApiKeysClient - Stripe-style API keys page.
+  *
+  * Layout:
+  *  ┌──────────────────────────────────────────┬─────────────────┐
+  *  │ Page header               │         │
+  *  │ Publishable keys card          │ Recommendations │
+  *  │ Secret keys card             │ (sidebar)    │
+  *  │ Recent API requests table        │         │
+  *  └──────────────────────────────────────────┴─────────────────┘
+  *
+  * Wraps in its own EnvironmentProvider so it works as a standalone route too.
+  */
 export function ApiKeysClient() {
   return (
     <EnvironmentProvider>
@@ -93,13 +93,13 @@ function ApiKeysClientInner() {
   const sandboxPublishable: DisplayApiKey = {
     type: 'publishable',
     mode: 'sandbox',
-    value: publishableValue || '—',
+    value: publishableValue || '-',
     lastUsedAt: null,
   }
   const sandboxSecret: DisplayApiKey = {
     type: 'secret',
     mode: 'sandbox',
-    value: secretValue || '—',
+    value: secretValue || '-',
     lastUsedAt: null,
   }
 
@@ -111,10 +111,10 @@ function ApiKeysClientInner() {
         <p className="mt-1 max-w-2xl text-[16px] leading-relaxed text-[#64748b]">
           Use sandbox keys (<span className="font-mono">pk_test_…</span>) to test your integration. Live keys
           (<span className="font-mono">pk_live_…</span>) are issued only after activation. Treat secret keys
-          like passwords — never commit them.
+          like passwords - never commit them.
         </p>
         {keysError ? (
-          <p className="mt-2 text-[14px] text-amber-800">{keysError}</p>
+          <p className="mt-2 text-[14px] text-[#0B1324]">{keysError}</p>
         ) : null}
       </div>
 
@@ -147,7 +147,7 @@ function ApiKeysClientInner() {
               <KeyRow
                 apiKey={sandboxSecret}
                 masked
-                copyDisabled={!secretValue || secretValue === '—'}
+                copyDisabled={!secretValue || secretValue === '-'}
                 rotateDisabled
               />
             )}
@@ -186,7 +186,7 @@ function ApiKeysClientInner() {
           </article>
         </div>
 
-        {/* Right sidebar — recommendations */}
+        {/* Right sidebar - recommendations */}
         <aside className="space-y-3">
           <p className="text-[14px] font-semibold uppercase tracking-[0.12em] text-[#94a3b8]">Recommendations</p>
           <RecommendationCard
@@ -228,7 +228,7 @@ function KeyCard({ title, subtitle, warning, children }: { title: string; subtit
         <div className="flex items-center justify-between gap-2">
           <p className="text-[17px] font-semibold text-[#0f172a]">{title}</p>
           {warning ? (
-            <span className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[14px] font-semibold text-rose-700">
+            <span className="inline-flex items-center gap-1 rounded-full border border-[#0B1324]/20 bg-[#F1F5F9] px-1.5 py-0.5 text-[14px] font-semibold text-[#0B1324]">
               <Glyph name="lock" className="h-2.5 w-2.5" />
               Sensitive
             </span>
@@ -264,9 +264,9 @@ function KeyRow({
   const [revealed, setRevealed] = useState(!masked)
   const [copied, setCopied] = useState(false)
 
-  const hasValue = apiKey.value && apiKey.value !== '—'
+  const hasValue = apiKey.value && apiKey.value !== '-'
   const display = !hasValue
-    ? '—'
+    ? '-'
     : revealed
       ? apiKey.value
       : `${apiKey.value.slice(0, 12)}${'•'.repeat(Math.max(0, apiKey.value.length - 16))}${apiKey.value.slice(-4)}`
@@ -347,7 +347,7 @@ function LiveLockedRow({
   if (canSwitch) {
     return (
       <div className="flex items-center gap-3 border-t border-[#E5E5E5] bg-[#fafafa] px-5 py-3 text-[15px] text-[#64748b]">
-        Live {type} key issued — switch to Live mode in the dock to view.
+        Live {type} key issued - switch to Live mode in the dock to view.
       </div>
     )
   }
@@ -360,7 +360,7 @@ function LiveLockedRow({
       </span>
       <span className="text-[15px] text-[#64748b]">
         {status === 'in_review'
-          ? 'Activation submitted — live keys will be issued after approval.'
+          ? 'Activation submitted - live keys will be issued after approval.'
           : 'Activate live to issue your live keys.'}
       </span>
       {status !== 'in_review' ? (

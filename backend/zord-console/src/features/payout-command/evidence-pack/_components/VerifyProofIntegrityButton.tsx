@@ -46,7 +46,7 @@ export function VerifyProofIntegrityButton({ pack }: VerifyProofIntegrityButtonP
       {message ? (
         <div
           className={`rounded-lg border px-3 py-2 text-[13px] ${
-            ok ? 'border-black/40 bg-black text-white' : 'border-rose-200 bg-rose-50 text-rose-900'
+            ok ? 'border-black/40 bg-black text-white' : 'border-[#0B1324]/20 bg-[#F1F5F9] text-[#0B1324]'
           }`}
         >
           <p className="font-medium">{message}</p>

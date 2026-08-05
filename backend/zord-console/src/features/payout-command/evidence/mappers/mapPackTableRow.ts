@@ -22,7 +22,7 @@ function packPaymentRef(s: EvidencePackSummaryRow): string {
   return (
     clean(s.client_payout_ref) ||
     clean(s.client_reference) ||
-    '—'
+    '-'
   )
 }
 
@@ -81,10 +81,10 @@ export function mapPackTableRow(
 
   return {
     packId: summary.evidence_pack_id,
-    batchId: clean(summary.batch_id) || '—',
+    batchId: clean(summary.batch_id) || '-',
     paymentRef: packPaymentRef(summary),
-    intentId: clean(summary.intent_id) || '—',
-    proofRoot: summary.merkle_root || '—',
+    intentId: clean(summary.intent_id) || '-',
+    proofRoot: summary.merkle_root || '-',
     proofScore: perPackScore ?? batchScoreEstimate ?? null,
     proofScoreIsEstimate: perPackScore == null && batchScoreEstimate != null,
     itemCount: leafSeen,
@@ -95,12 +95,12 @@ export function mapPackTableRow(
     modeLabel: humanizePackMode(summary.mode),
     summaryLine: summaryLabel(summary),
     scope: packScopeFromMode(summary.mode, summary.intent_id),
-    contractId: clean(summary.contract_id) || '—',
-    governanceDecision: clean(summary.governance_decision) || '—',
-    attachmentDecision: clean(summary.attachment_decision) || '—',
+    contractId: clean(summary.contract_id) || '-',
+    governanceDecision: clean(summary.governance_decision) || '-',
+    attachmentDecision: clean(summary.attachment_decision) || '-',
     matchConfidence:
       typeof summary.match_confidence === 'number' ? summary.match_confidence : null,
-    bankReference: clean(summary.bank_reference) || '—',
+    bankReference: clean(summary.bank_reference) || '-',
     amountMatch: typeof summary.amount_match === 'boolean' ? summary.amount_match : null,
     valueDateCheck:
       typeof summary.value_date_check === 'boolean' ? summary.value_date_check : null,

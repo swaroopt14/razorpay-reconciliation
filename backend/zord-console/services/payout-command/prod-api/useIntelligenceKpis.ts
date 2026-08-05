@@ -37,7 +37,7 @@ const DEFAULT_POLL_MS = 30_000
 export type UseIntelligenceKpisOptions = {
   /** When true, polls BFF routes (tenant from session cookies). */
   tenantReady: boolean
-  /** Optional — scopes intelligence KPIs to a batch when set; tenant-wide when omitted. */
+  /** Optional - scopes intelligence KPIs to a batch when set; tenant-wide when omitted. */
   batchId?: string
   /** Optional date window forwarded to intelligence dashboards (from_date / to_date). */
   dateQuery?: IntelligenceDateQuery
@@ -48,7 +48,7 @@ export type UseIntelligenceKpisOptions = {
 /**
  * Fans out intelligence dashboard KPIs and polls every `intervalMs` (default 30s).
  * Set `intervalMs` to 0 or less to fetch only once.
- * Does not require client `tenant_id` — BFF resolves tenant from session.
+ * Does not require client `tenant_id` - BFF resolves tenant from session.
  */
 export function useIntelligenceKpis(options: UseIntelligenceKpisOptions): IntelligenceKpis {
   const { tenantReady, batchId, dateQuery, intervalMs = DEFAULT_POLL_MS } = options

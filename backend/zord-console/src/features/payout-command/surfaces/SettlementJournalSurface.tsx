@@ -32,6 +32,7 @@ import {
   HOME_BODY_IMPERIAL_SM,
   HOME_TITLE_BLACK,
 } from '../command-center/homeCommandCenterTokens'
+import { PageExplainerBanner } from '../demo/PageExplainerBanner'
 import { JOURNAL_PAGE_BG, JournalPageHeader } from '../journal/JournalCommandCenterPrimitives'
 import { JOURNAL_DM_SANS } from '../journal/journalFonts'
 import { useEnvironment } from '@/services/auth/EnvironmentProvider'
@@ -51,9 +52,7 @@ import { useRegisterPayoutPageActions } from '../layout/PayoutPageActionsContext
 type SettlementActivityTab = 'observations' | 'parseErrors'
 const SETTLEMENT_PAGE_SUMMARY = dockItems.find((d) => d.id === 'settlement')?.summary ?? ''
 
-const ROW_SIZE_OPTIONS = [25, 50, 100, 200] as const
-/** Cap sidebar status enrichment — avoids hundreds of batch_contract calls in smoke mode. */
-const BATCH_CONTRACT_PREFETCH_CAP = SETTLEMENT_SIDEBAR_PAGE_SIZE * 2
+const ROW_SIZE_OPTIONS = [20, 50, 100, 200] as const
 
 export function SettlementJournalSurface({
   initialClientBatchId,
@@ -147,7 +146,7 @@ function SettlementJournalSurfaceContent({
   const [filterSettlementBatchId, setFilterSettlementBatchId] = useState('')
   const [sourceSystemFilter, setSourceSystemFilter] = useState<'All' | string>('All')
   const [amountRangeFilter, setAmountRangeFilter] = useState<AmountRangeFilter>('All')
-  const [rowsPerPage, setRowsPerPage] = useState<(typeof ROW_SIZE_OPTIONS)[number]>(50)
+  const [rowsPerPage, setRowsPerPage] = useState<(typeof ROW_SIZE_OPTIONS)[number]>(20)
   const [page, setPage] = useState(1)
   const [jumpPage, setJumpPage] = useState('1')
   const [sidebarPage, setSidebarPage] = useState(1)
@@ -197,22 +196,21 @@ function SettlementJournalSurfaceContent({
     }
   }, [mode, feedLoaded, observationTotal])
 
-  // Pre-populate sidebar status for the first page of batches (not the full catalogue).
+  // Pre-populate sidebar status for all batches in parallel via batch contract KPI
   useEffect(() => {
     if (!feedLoaded || !tenantReady || clientBatches.length === 0) return
-    const idsToPrefetch = clientBatches.slice(0, BATCH_CONTRACT_PREFETCH_CAP)
     void (async () => {
       try {
         const results = await Promise.allSettled(
-          idsToPrefetch.map((bid) => getBatchContractKpis(bid)),
+          clientBatches.map((bid) => getBatchContractKpis(bid)),
         )
         const entries: Record<string, SettlementSidebarOutcome> = {}
-        for (let i = 0; i < idsToPrefetch.length; i++) {
+        for (let i = 0; i < clientBatches.length; i++) {
           const result = results[i]
           if (result?.status !== 'fulfilled' || !result.value) continue
           const confidence = parseMatchConfidence(result.value.match_confidence)
           if (confidence == null) continue
-          entries[idsToPrefetch[i]!] = outcomeFromMatchConfidence(confidence)
+          entries[clientBatches[i]!] = outcomeFromMatchConfidence(confidence)
         }
         if (Object.keys(entries).length > 0) {
           setBatchMatchOutcomeCache((prev) => ({ ...entries, ...prev }))
@@ -280,7 +278,7 @@ function SettlementJournalSurfaceContent({
   }, [observationRows])
 
   const sourceSystemOptions = useMemo(() => {
-    const set = new Set(observationRows.map((r) => r.sourceSystem).filter((s) => s && s !== '—'))
+    const set = new Set(observationRows.map((r) => r.sourceSystem).filter((s) => s && s !== '-'))
     return ['All', ...Array.from(set).sort()]
   }, [observationRows])
 
@@ -459,9 +457,9 @@ function SettlementJournalSurfaceContent({
 
   return (
     <div
-      className={`h-[calc(100vh-8rem)] overflow-hidden ${JOURNAL_PAGE_BG} ${JOURNAL_DM_SANS} text-[13px] font-normal leading-relaxed text-slate-900 antialiased`}
+      className={`min-h-0 ${JOURNAL_PAGE_BG} ${JOURNAL_DM_SANS} pb-10 text-[13px] font-normal leading-relaxed text-slate-900 antialiased`}
     >
-      <div className="grid h-full grid-cols-[272px,minmax(0,1fr)]">
+      <div className="grid grid-cols-[272px,minmax(0,1fr)] items-start">
         <SettlementJournalBatchSidebar
           tenantReady={tenantReady}
           clientBatches={clientBatches}
@@ -479,8 +477,9 @@ function SettlementJournalSurfaceContent({
           batchCommandCenterHref={batchCommandCenterHref}
         />
 
-        <main className="flex h-full min-w-0 flex-col overflow-hidden">
-          <div className="flex-1 overflow-y-auto p-4 sm:p-5">
+        <main className="min-w-0">
+          <div className="p-4 sm:p-5">
+            <PageExplainerBanner page="settlement" />
             <JournalPageHeader label="Settlement journal" summary={SETTLEMENT_PAGE_SUMMARY}>
               <LiveDataHint isLive={Boolean(tenantReady && feedLoaded)} source="settlement" />
               <button

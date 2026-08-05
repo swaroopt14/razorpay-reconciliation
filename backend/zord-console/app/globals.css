@@ -29,39 +29,52 @@
   --neo-accent: #8aa0b4;
   --neo-accent-soft: #d7e0e9;
 
+  /* V1 product tokens (locked palette) - map gradually into feature UIs */
+  --zord-canvas: #F7F8FB;
+  --zord-surface: #FFFFFF;
+  --zord-navy: #0B1324;
+  --zord-navy-mid: #132B5F;
+  --zord-action: #2E5BFF;
+  --zord-ai-violet: #6D4AFF;
+  --zord-success: #138A63;
+  --zord-warning: #B7791F;
+  --zord-danger: #C2413B;
+  --zord-neutral: #64748B;
+  --zord-border: #D8DEE9;
+
   /* Page Background */
-  --zord-page-bg: #F9FAFB;
+  --zord-page-bg: var(--zord-canvas);
   
   /* Card/Panel Backgrounds */
-  --zord-card-bg: #FFFFFF;
-  --zord-card-border: #E5E7EB;
-  --zord-card-header-bg: #F9FAFB;
+  --zord-card-bg: var(--zord-surface);
+  --zord-card-border: var(--zord-border);
+  --zord-card-header-bg: var(--zord-canvas);
   
   /* Text Colors */
-  --zord-text-primary: #111827;
-  --zord-text-secondary: #6B7280;
-  --zord-text-tertiary: #9CA3AF;
-  --zord-text-muted: #D1D5DB;
+  --zord-text-primary: var(--zord-navy);
+  --zord-text-secondary: var(--zord-neutral);
+  --zord-text-tertiary: #94A3B8;
+  --zord-text-muted: #CBD5E1;
   
   /* Border Colors */
-  --zord-border-primary: #E5E7EB;
-  --zord-border-secondary: #F3F4F6;
+  --zord-border-primary: var(--zord-border);
+  --zord-border-secondary: #E8EDF4;
   
   /* Status Colors (ONLY for indicators and graphs) */
-  --zord-status-healthy: #22C55E;
-  --zord-status-warning: #EAB308;
-  --zord-status-critical: #EF4444;
-  --zord-status-info: #3B82F6;
-  --zord-status-neutral: #6B7280;
+  --zord-status-healthy: var(--zord-success);
+  --zord-status-warning: var(--zord-warning);
+  --zord-status-critical: var(--zord-danger);
+  --zord-status-info: var(--zord-action);
+  --zord-status-neutral: var(--zord-neutral);
   
   /* Interactive */
-  --zord-link: #2563EB;
-  --zord-link-hover: #1D4ED8;
-  --zord-focus-ring: #3B82F6;
+  --zord-link: var(--zord-action);
+  --zord-link-hover: #1E45D4;
+  --zord-focus-ring: var(--zord-action);
   
   /* Hover States */
-  --zord-hover-bg: #F3F4F6;
-  --zord-active-bg: #E5E7EB;
+  --zord-hover-bg: #F1F4F9;
+  --zord-active-bg: #E8EDF4;
 }
 
 /* Base Body Styles */
@@ -738,10 +751,11 @@ body {
   }
 }
 
-/* Payout Command console — restrained type + thin nav (scoped) */
+/* Payout Command console - restrained type + thin nav (scoped) */
 .payout-command-console {
   font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   color: #171717;
+  background: #ffffff;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
@@ -765,12 +779,75 @@ body {
 }
 
 .payout-command-nav {
-  border-bottom: 1px solid rgba(0, 0, 0, 0.07);
-  background: rgba(255, 255, 255, 0.94);
-  backdrop-filter: blur(12px);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.8) inset, 0 8px 28px -12px rgba(15, 23, 42, 0.08);
-  font-size: 15px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #ffffff;
+  font-size: 14px;
   letter-spacing: -0.01em;
+}
+
+.payout-command-topbar {
+  background: #000000;
+  border-bottom: none;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+}
+
+/* Selected top-nav: soft light from below + bottom bar */
+.zord-top-link--active::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 88%;
+  height: 70%;
+  transform: translateX(-50%);
+  background: radial-gradient(
+    ellipse 70% 90% at 50% 100%,
+    rgba(56, 189, 248, 0.55) 0%,
+    rgba(37, 99, 235, 0.22) 38%,
+    rgba(37, 99, 235, 0) 72%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+.zord-top-link--active::after {
+  content: '';
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: #ffffff;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.55);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.payout-command-sidebar {
+  font-size: 13px;
+  letter-spacing: -0.01em;
+  border: 0 !important;
+  border-right: 0 !important;
+  box-shadow: none !important;
+  outline: none !important;
+  background: #ffffff !important;
+}
+
+.payout-command-sidebar::before,
+.payout-command-sidebar::after {
+  content: none !important;
+  display: none !important;
+  border: 0 !important;
+  width: 0 !important;
+  background: transparent !important;
+}
+
+/* Kill any vertical separator next to the rail */
+.payout-command-console aside.payout-command-sidebar + * {
+  border-left: 0 !important;
+  box-shadow: none !important;
 }
 
 .pc-nav-scroll {
@@ -780,4 +857,105 @@ body {
 
 .pc-nav-scroll::-webkit-scrollbar {
   display: none;
+}
+
+/* ── Ask Zord hologram orb (Razorpay blue / sky aurora - no violet) ──────── */
+.ask-zord-orb-blur--cool {
+  background: radial-gradient(
+    circle at 35% 40%,
+    rgba(56, 189, 248, 0.5) 0%,
+    rgba(0, 102, 255, 0.22) 42%,
+    transparent 70%
+  );
+  filter: blur(28px);
+  opacity: 0.8;
+  animation: ask-zord-orb-drift 8s ease-in-out infinite;
+}
+
+.ask-zord-orb-blur--azure,
+.ask-zord-orb-blur--violet {
+  /* --violet kept as alias; color is azure, never product violet */
+  background: radial-gradient(
+    circle at 65% 55%,
+    rgba(0, 102, 255, 0.5) 0%,
+    rgba(14, 165, 233, 0.28) 45%,
+    transparent 72%
+  );
+  filter: blur(22px);
+  opacity: 0.88;
+  animation: ask-zord-orb-drift 6.5s ease-in-out infinite reverse;
+}
+
+/* Motion layer under azure color remap (see AskZordOrb mix-blend overlay) */
+.ask-zord-orb-core {
+  filter: contrast(1.12) brightness(1.08) saturate(0.85);
+}
+
+.ask-zord-orb-blur--active {
+  opacity: 1;
+  filter: blur(32px);
+  animation-duration: 3.2s;
+}
+
+.ask-zord-orb-ring {
+  background: conic-gradient(
+    from 0deg,
+    transparent 0%,
+    rgba(56, 189, 248, 0.65) 18%,
+    transparent 36%,
+    rgba(0, 102, 255, 0.75) 55%,
+    transparent 72%,
+    rgba(14, 165, 233, 0.5) 88%,
+    transparent 100%
+  );
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1px));
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1px));
+  opacity: 0.55;
+  animation: ask-zord-orb-spin 10s linear infinite;
+}
+
+.ask-zord-orb-ring--active {
+  opacity: 0.95;
+  animation-duration: 3.5s;
+}
+
+.ask-zord-orb-video {
+  box-shadow:
+    0 12px 40px rgba(0, 102, 255, 0.22),
+    0 0 0 1px rgba(0, 102, 255, 0.14);
+  transition: transform 0.45s ease, box-shadow 0.45s ease;
+}
+
+.ask-zord-orb-video--active {
+  box-shadow:
+    0 16px 56px rgba(0, 102, 255, 0.36),
+    0 0 48px rgba(56, 189, 248, 0.3),
+    0 0 0 1px rgba(14, 165, 233, 0.4);
+  animation: ask-zord-orb-breathe 1.8s ease-in-out infinite;
+}
+
+@keyframes ask-zord-orb-drift {
+  0%,
+  100% {
+    transform: scale(1) translate(0, 0);
+  }
+  50% {
+    transform: scale(1.08) translate(2%, -2%);
+  }
+}
+
+@keyframes ask-zord-orb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes ask-zord-orb-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.04);
+  }
 }

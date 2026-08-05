@@ -17,9 +17,9 @@ type WorkspaceKeysPayload = {
 const DISMISS_KEY = 'zord_sandbox_home_credentials_card'
 
 /**
- * Dismissible sidebar card: tenant id / API key from session (`/api/sandbox/workspace-api-keys`)
- * and localStorage for the one-time signup secret.
- */
+  * Dismissible sidebar card: tenant id / API key from session (`/api/sandbox/workspace-api-keys`)
+  * and localStorage for the one-time signup secret.
+  */
 export function SandboxHomeCredentialsCard() {
   const [dismissed, setDismissed] = useState(false)
   const [keys, setKeys] = useState<WorkspaceKeysPayload | null>(null)
@@ -87,7 +87,7 @@ export function SandboxHomeCredentialsCard() {
 
   const secretFull = storedSecret
   const secretDisplay =
-    secretFull ?? (keys?.secret_key_prefix ? `${keys.secret_key_prefix.slice(0, 16)}…` : '—')
+    secretFull ?? (keys?.secret_key_prefix ? `${keys.secret_key_prefix.slice(0, 16)}…` : '-')
 
   const docsBase =
     typeof process.env.NEXT_PUBLIC_ZORD_DOCS_URL === 'string' && process.env.NEXT_PUBLIC_ZORD_DOCS_URL.trim()
@@ -157,7 +157,7 @@ export function SandboxHomeCredentialsCard() {
           <p className="mt-4 text-[13px] text-[#b45309]">{loadError}</p>
         ) : (
           <>
-            <CompactKeyRow label="Tenant id" value={keys?.tenant_id ?? '—'} tone="sky" />
+            <CompactKeyRow label="Tenant id" value={keys?.tenant_id ?? '-'} tone="sky" />
             <CompactKeyRow
               label="API key"
               value={secretFull ?? secretDisplay}
@@ -174,10 +174,10 @@ export function SandboxHomeCredentialsCard() {
         )}
 
         <Link
-          href="/payout-command-view/settings/api-keys"
+          href="/developer?demo=sandbox&tab=keys"
           className="mt-4 flex w-full items-center justify-center gap-1.5 rounded-lg border border-[#c5d5f0] bg-white py-2.5 text-[13px] font-medium text-[#30313d] shadow-[0_1px_3px_rgba(59,130,246,0.08)] transition hover:bg-[#eef3fc]"
         >
-          Manage keys
+          Manage in Developer
           <Glyph name="arrow-up-right" className="h-3 w-3" />
         </Link>
       </div>

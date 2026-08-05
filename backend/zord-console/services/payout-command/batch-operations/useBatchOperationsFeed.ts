@@ -302,7 +302,7 @@ export function useBatchOperationsFeed(options: {
   }, [tenantReady, refreshRecentBatches, loadBatchScoped])
 
   const setBatchId = useCallback((_id: string) => {
-    /* controlled by parent — noop placeholder for API symmetry */
+    /* controlled by parent - noop placeholder for API symmetry */
   }, [])
 
   const effectivePollMs = batchId.trim() ? pollMs : BATCH_OPERATIONS_IDLE_POLL_MS

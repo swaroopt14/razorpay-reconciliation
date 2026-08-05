@@ -15,7 +15,7 @@ import type {
 } from './evidenceGraphTypes'
 
 function shortHash(h: string | undefined): string {
-  if (!h || h.length < 10) return '—'
+  if (!h || h.length < 10) return '-'
   const s = h.startsWith('sha256:') ? h.slice(7) : h
   return `${s.slice(0, 4)}…`
 }
@@ -134,9 +134,9 @@ function rootFromPack(pack: EvidencePackFull): RootNode {
 }
 
 /**
- * Builds a graph the canvas can render: one synthetic intermediate combining all API leaves,
- * wired to the committed Merkle root from the pack. Defensibility score is tenant-level (caller).
- */
+  * Builds a graph the canvas can render: one synthetic intermediate combining all API leaves,
+  * wired to the committed Merkle root from the pack. Defensibility score is tenant-level (caller).
+  */
 export function buildEvidencePackGraphFromApi(
   pack: EvidencePackFull,
   opts: { batchId: string; defensibilityScore: number },
@@ -153,13 +153,13 @@ export function buildEvidencePackGraphFromApi(
       name: businessName,
       artifact: `${typeKey.toLowerCase().replace(/_/g, '-')}.json`,
       itemType,
-      stableRef: apiTrimmedString(it.ref) || '—',
+      stableRef: apiTrimmedString(it.ref) || '-',
       version: it.schema_version || 'v1',
       sourceService: 'zord-evidence',
-      hashFull: h || '—',
+      hashFull: h || '-',
       hashShort: shortHash(h),
-      leafHash: it.leaf_hash || h || '—',
-      source: 'Service 6 — Evidence',
+      leafHash: it.leaf_hash || h || '-',
+      source: 'Service 6 - Evidence',
       receivedAt: new Date(pack.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }),
       status,
       impact: `${typeKey} · ${apiTrimmedString(it.ref) || 'no ref'}`,
@@ -177,10 +177,10 @@ export function buildEvidencePackGraphFromApi(
         stableRef: pack.evidence_pack_id,
         version: pack.ruleset_version || 'v1',
         sourceService: 'zord-evidence',
-        hashFull: '—',
-        hashShort: '—',
-        leafHash: '—',
-        source: 'Service 6 — Evidence',
+        hashFull: '-',
+        hashShort: '-',
+        leafHash: '-',
+        source: 'Service 6 - Evidence',
         receivedAt: new Date(pack.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }),
         status: 'missing',
         impact: 'GET /v1/evidence/packs/:id returned an empty items array.',
@@ -201,8 +201,8 @@ export function buildEvidencePackGraphFromApi(
 
   return {
     packId: pack.evidence_pack_id,
-    intentId: pack.intent_id || '—',
-    contractId: pack.contract_id || '—',
+    intentId: pack.intent_id || '-',
+    contractId: pack.contract_id || '-',
     batchId: opts.batchId,
     tenantId: pack.tenant_id,
     mode: normalizeMode(pack.mode),
@@ -253,13 +253,13 @@ export function buildEvidencePackGraphFromLineage(
         name: nodeLabel,
         artifact: `${nodeType.toLowerCase()}-${i + 1}.json`,
         itemType,
-        stableRef: apiTrimmedString(node.item_ref) || nodeId || '—',
+        stableRef: apiTrimmedString(node.item_ref) || nodeId || '-',
         version: apiTrimmedString(node.schema_version) || pack.ruleset_version || 'v1',
         sourceService: 'zord-evidence',
-        hashFull: hash || '—',
+        hashFull: hash || '-',
         hashShort: shortHash(hash),
-        leafHash: hash || '—',
-        source: `Service 6 — ${humanizeType(nodeType)}`,
+        leafHash: hash || '-',
+        source: `Service 6 - ${humanizeType(nodeType)}`,
         receivedAt: new Date(pack.created_at).toLocaleTimeString(undefined, {
           hour: '2-digit',
           minute: '2-digit',
@@ -280,10 +280,10 @@ export function buildEvidencePackGraphFromLineage(
         stableRef: pack.evidence_pack_id,
         version: pack.ruleset_version || 'v1',
         sourceService: 'zord-evidence',
-        hashFull: '—',
-        hashShort: '—',
-        leafHash: '—',
-        source: 'Service 6 — Evidence',
+        hashFull: '-',
+        hashShort: '-',
+        leafHash: '-',
+        source: 'Service 6 - Evidence',
         receivedAt: new Date(pack.created_at).toLocaleTimeString(undefined, {
           hour: '2-digit',
           minute: '2-digit',
@@ -312,8 +312,8 @@ export function buildEvidencePackGraphFromLineage(
 
   return {
     packId: apiTrimmedString(lineage.evidence_pack_id) || pack.evidence_pack_id,
-    intentId: apiTrimmedString(lineage.intent_id) || pack.intent_id || '—',
-    contractId: pack.contract_id || '—',
+    intentId: apiTrimmedString(lineage.intent_id) || pack.intent_id || '-',
+    contractId: pack.contract_id || '-',
     batchId: opts.batchId,
     tenantId: apiTrimmedString(lineage.tenant_id) || pack.tenant_id,
     mode: normalizeMode(pack.mode),

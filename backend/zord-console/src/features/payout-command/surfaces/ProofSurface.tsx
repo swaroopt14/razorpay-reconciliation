@@ -38,7 +38,7 @@ export function ProofSurface() {
         <LightCard className={`${COMMAND_CENTER_KPI_CARD} border-[#E5E5E5]`}>
           <SurfaceEyebrow>Ambiguous intents</SurfaceEyebrow>
           <div className={`mt-3 text-[2.5rem] font-light tracking-[-0.04em] ${HOME_TITLE_BLACK}`}>
-            {ambData?.ambiguous_intent_count ?? '—'}
+            {ambData?.ambiguous_intent_count ?? '-'}
           </div>
           <div className={`mt-1 ${HOME_BODY_IMPERIAL_SM}`}>From ambiguity KPI</div>
         </LightCard>
@@ -46,7 +46,7 @@ export function ProofSurface() {
         <LightCard className={`${COMMAND_CENTER_KPI_CARD} border-[#E5E5E5]`}>
           <SurfaceEyebrow>Ambiguity rate</SurfaceEyebrow>
           <div className={`mt-3 text-[2.5rem] font-light tracking-[-0.04em] ${HOME_TITLE_BLACK}`}>
-            {ambData?.ambiguity_rate != null ? `${(ambData.ambiguity_rate * 100).toFixed(2)}%` : '—'}
+            {ambData?.ambiguity_rate != null ? `${(ambData.ambiguity_rate * 100).toFixed(2)}%` : '-'}
           </div>
           <p className={`mt-1 ${HOME_BODY_IMPERIAL_SM}`}>Tenant ambiguity KPI</p>
         </LightCard>
@@ -54,7 +54,7 @@ export function ProofSurface() {
         <LightCard className={`${COMMAND_CENTER_KPI_CARD} border-[#E5E5E5]`}>
           <SurfaceEyebrow>Value at risk</SurfaceEyebrow>
           <div className={`mt-3 text-[2rem] font-semibold tabular-nums ${HOME_TITLE_BLACK}`}>
-            {ambData?.value_at_risk_minor ?? '—'}
+            {ambData?.value_at_risk_minor ?? '-'}
           </div>
           <p className={`mt-1 font-mono text-[11px] text-slate-500`}>value_at_risk_minor</p>
         </LightCard>
@@ -62,7 +62,7 @@ export function ProofSurface() {
         <LightCard className={`${COMMAND_CENTER_KPI_CARD} border-[#E5E5E5]`}>
           <p className={COMMAND_CENTER_LABEL_GREEN}>DLQ / exceptions</p>
           <div className={`mt-3 text-[2.5rem] font-light tracking-[-0.04em] ${HOME_TITLE_BLACK}`}>
-            {dlqCount != null ? dlqCount : '—'}
+            {dlqCount != null ? dlqCount : '-'}
           </div>
           <p className={`mt-1 ${HOME_BODY_IMPERIAL_SM}`}>From GET /api/prod/dlq (intent-engine)</p>
         </LightCard>
@@ -76,7 +76,7 @@ export function ProofSurface() {
         </p>
         <Link
           href="/payout-command-view/today?dock=ambiguity"
-          className="mt-4 inline-flex text-[14px] font-semibold text-sky-800 underline decoration-sky-300 underline-offset-4"
+          className="mt-4 inline-flex text-[14px] font-semibold text-[#0B1324] underline decoration-[#0B1324]/30 underline-offset-4"
         >
           Open ambiguity analysis →
         </Link>

@@ -36,7 +36,7 @@ function dateQueryExtra(dates?: IntelligenceDateQuery): Record<string, string> {
   return { from_date: dates.from_date, to_date: dates.to_date }
 }
 
-/** Tenant-wide leakage KPI — BFF injects session tenant. */
+/** Tenant-wide leakage KPI - BFF injects session tenant. */
 export async function getLeakageKpis(dates?: IntelligenceDateQuery, batchId?: string): Promise<LeakageKpiResponse | null> {
   const extra = dateQueryExtra(dates)
   const bid = apiTrimmedString(batchId)
@@ -55,7 +55,7 @@ export async function getAmbiguityKpis(dates?: IntelligenceDateQuery, batchId?: 
   )
 }
 
-/** Per-batch matching execution heatmap — BFF injects session tenant. */
+/** Per-batch matching execution heatmap - BFF injects session tenant. */
 export async function getAmbiguityHeatmap(): Promise<AmbiguityHeatmapResponse | null> {
   return fetchProdJsonGet<AmbiguityHeatmapResponse>(`${INTEL_BASE}/ambiguity/heatmap`)
 }
@@ -72,7 +72,7 @@ export async function getDefensibilityKpis(
   )
 }
 
-/** Patterns KPI — optional `batch_id` scopes anomaly to one batch; omit for latest tenant snapshot. */
+/** Patterns KPI - optional `batch_id` scopes anomaly to one batch; omit for latest tenant snapshot. */
 export async function getPatternsKpis(batchId?: string): Promise<PatternsKpiResponse | null> {
   const bid = apiTrimmedString(batchId)
   const path = bid
@@ -110,7 +110,7 @@ export type BatchesListOptions = {
   limit?: number
 }
 
-/** Intelligence batch list — BFF injects session tenant (no client tenant_id). */
+/** Intelligence batch list - BFF injects session tenant (no client tenant_id). */
 export async function getIntelligenceBatches(
   opts: BatchesListOptions = {},
 ): Promise<BatchesListResponse | null> {
@@ -120,7 +120,7 @@ export async function getIntelligenceBatches(
   return fetchProdJsonGet<BatchesListResponse>(intelQueryPath(`${INTEL_BASE}/batches`, extra))
 }
 
-/** Per-batch intelligence snapshot — BFF injects session tenant. */
+/** Per-batch intelligence snapshot - BFF injects session tenant. */
 export async function getIntelligenceBatchDetail(batchId: string): Promise<BatchDetailResponse | null> {
   const bid = apiTrimmedString(batchId)
   if (!bid) return null

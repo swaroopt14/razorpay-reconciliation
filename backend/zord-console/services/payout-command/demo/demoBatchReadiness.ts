@@ -41,6 +41,16 @@ function writeRaw(next: DemoBatchReadiness) {
   }
 }
 
+/** Re-render listeners (e.g. useDemoBatchReady) after API-backed demo stores refresh. */
+export function notifyDemoDataListeners() {
+  if (typeof window === 'undefined') return
+  try {
+    window.dispatchEvent(new CustomEvent(DEMO_BATCH_READY_EVENT, { detail: readRaw() }))
+  } catch {
+    /* ignore */
+  }
+}
+
 export function markDemoIntentUploaded(batchId: string) {
   const id = batchId.trim()
   if (!id) return

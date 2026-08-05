@@ -14,7 +14,7 @@ export const dynamic = 'force-dynamic'
 const RANGES: DisbursementTrendRange[] = ['week', 'month', 'quarter', 'year']
 
 /**
- * Home trend chart BFF — buckets Intended vs Bank-Confirmed from zord-intelligence
+ * Home trend chart BFF - buckets Intended vs Bank-Confirmed from zord-intelligence
  * leakage dashboard (GET /v1/intelligence/dashboard/leakage) per date window.
  * No intent-engine aggregation.
  */

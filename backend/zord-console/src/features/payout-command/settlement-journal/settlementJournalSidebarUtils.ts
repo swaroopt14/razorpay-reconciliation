@@ -25,7 +25,7 @@ export const DATE_RANGE_OPTIONS: { value: DateRangePreset; label: string }[] = [
 export const AMOUNT_RANGE_OPTIONS = [
   'All',
   'Under ₹10,000',
-  '₹10,000 – ₹1,00,000',
+  '₹10,000 - ₹1,00,000',
   'Over ₹1,00,000',
 ] as const
 
@@ -49,7 +49,7 @@ export function observationInDateRange(observationTime: string, preset: DateRang
 export function matchesAmountRange(amount: number, range: AmountRangeFilter): boolean {
   if (range === 'All') return true
   if (range === 'Under ₹10,000') return amount < 10_000
-  if (range === '₹10,000 – ₹1,00,000') return amount >= 10_000 && amount <= 100_000
+  if (range === '₹10,000 - ₹1,00,000') return amount >= 10_000 && amount <= 100_000
   return amount > 100_000
 }
 
@@ -84,17 +84,17 @@ export function outcomeFromMatchConfidence(matchConfidence: number | null | unde
   if (score >= 0.75) label = 'Settled'
   else if (score < 0.5) label = 'Failed'
 
-  let dotClass = 'bg-amber-500'
-  let toneText = 'text-amber-700'
-  let barClass = 'bg-amber-500'
+  let dotClass = 'bg-[#0B1324]'
+  let toneText = 'text-[#0B1324]'
+  let barClass = 'bg-[#0B1324]'
   if (score >= 0.75) {
     dotClass = 'bg-black'
     toneText = 'text-black'
     barClass = 'bg-black'
   } else if (score < 0.5) {
-    dotClass = 'bg-rose-500'
-    toneText = 'text-rose-700'
-    barClass = 'bg-rose-500'
+    dotClass = 'bg-[#0B1324]'
+    toneText = 'text-[#0B1324]'
+    barClass = 'bg-[#0B1324]'
   }
 
   return {
@@ -134,13 +134,13 @@ export function outcomeFromObservationRows(rows: SettlementObservationTableRow[]
 
   const failedRatio = failed / total
   const settledRatio = settled / total
-  let dotClass = 'bg-amber-500'
-  let toneText = 'text-amber-700'
-  let barClass = 'bg-amber-500'
+  let dotClass = 'bg-[#0B1324]'
+  let toneText = 'text-[#0B1324]'
+  let barClass = 'bg-[#0B1324]'
   if (failedRatio >= 0.5 || (failed > 0 && settled === 0)) {
-    dotClass = 'bg-rose-500'
-    toneText = 'text-rose-700'
-    barClass = 'bg-rose-500'
+    dotClass = 'bg-[#0B1324]'
+    toneText = 'text-[#0B1324]'
+    barClass = 'bg-[#0B1324]'
   } else if (settledRatio >= 0.8 && failed === 0) {
     dotClass = 'bg-black'
     toneText = 'text-black'
@@ -160,18 +160,8 @@ export function outcomeFromObservationRows(rows: SettlementObservationTableRow[]
   }
 }
 
-export function settlementStatusBadgeClass(statusRaw: string) {
-  const u = statusRaw.toUpperCase()
-  if (u.includes('SETTLED') || u.includes('SUCCESS')) {
-    return 'inline-flex rounded-full border border-black/30 bg-black px-2.5 py-0.5 text-[12px] font-semibold text-white'
-  }
-  if (u.includes('FAIL') || u.includes('REJECT')) {
-    return 'inline-flex rounded-full border border-rose-200 bg-rose-50 px-2.5 py-0.5 text-[12px] font-semibold text-rose-800'
-  }
-  if (u.includes('PEND') || u.includes('PROCESS')) {
-    return 'inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[12px] font-semibold text-amber-900'
-  }
-  return 'inline-flex rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-[12px] font-semibold text-slate-700'
+export function settlementStatusBadgeClass(_statusRaw: string) {
+  return 'inline-flex rounded-full border border-black/30 bg-[#0B1324] px-2.5 py-0.5 text-[12px] font-semibold text-white'
 }
 
 export function computeSettlementBatchSummary(rows: SettlementObservationTableRow[]) {

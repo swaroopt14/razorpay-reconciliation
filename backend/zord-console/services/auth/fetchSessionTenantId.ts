@@ -64,7 +64,7 @@ async function tenantFromIntelligenceBatch(batchId: string): Promise<string> {
 }
 
 /**
- * Resolve tenant id for display and localStorage — BFF routes still use session cookies.
+ * Resolve tenant id for display and localStorage - BFF routes still use session cookies.
  * Order: env → /api/auth/me → /api/sandbox/workspace-api-keys → localStorage → intelligence (optional batchId).
  */
 export async function fetchSessionTenantId(options?: {

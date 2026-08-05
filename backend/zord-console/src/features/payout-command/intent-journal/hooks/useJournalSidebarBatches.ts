@@ -33,7 +33,7 @@ export function useJournalSidebarBatches(options: {
   const refresh = useCallback(async () => {
     if (!tenantId.trim()) {
       setBatches([])
-      setFeedError('No tenant on session — sign in with a workspace that has a tenant_id.')
+      setFeedError('No tenant on session - sign in with a workspace that has a tenant_id.')
       return
     }
     const fetchRes = await getIntentJournalBatchIdsForSession()
@@ -49,7 +49,7 @@ export function useJournalSidebarBatches(options: {
         fetchRes.status === 401
           ? ' Sign in required.'
           : fetchRes.status === 403
-            ? ' Tenant mismatch — clear NEXT_PUBLIC_ZORD_TENANT_ID if it differs from your signed-in workspace.'
+            ? ' Tenant mismatch - clear NEXT_PUBLIC_ZORD_TENANT_ID if it differs from your signed-in workspace.'
             : fetchRes.status === 502
               ? ' Intent-engine unreachable.'
               : ''

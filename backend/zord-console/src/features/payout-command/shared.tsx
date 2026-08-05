@@ -28,23 +28,54 @@ export function Glyph({ name, className = '' }: { name: GlyphName; className?: s
     case 'grid':
       return <svg className={base} viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="5" height="5" rx="1.2" stroke="currentColor" strokeWidth="1.5" /><rect x="12" y="3" width="5" height="5" rx="1.2" stroke="currentColor" strokeWidth="1.5" /><rect x="3" y="12" width="5" height="5" rx="1.2" stroke="currentColor" strokeWidth="1.5" /><rect x="12" y="12" width="5" height="5" rx="1.2" stroke="currentColor" strokeWidth="1.5" /></svg>
     case 'settlement':
+      /* Money moving both ways between parties - settlement / reconciliation. */
+      return (
+        <svg className={base} viewBox="0 0 20 20" fill="none" aria-hidden>
+          <path d="M4 7h11m0 0-2.6-2.6M15 7l-2.6 2.6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M16 13H5m0 0 2.6-2.6M5 13l2.6 2.6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      )
+    case 'banknote':
+      /* Banknote - payment instruction / payout value. */
+      return (
+        <svg className={base} viewBox="0 0 20 20" fill="none" aria-hidden>
+          <rect x="2.5" y="5.5" width="15" height="9" rx="1.6" stroke="currentColor" strokeWidth="1.5" />
+          <circle cx="10" cy="10" r="2.2" stroke="currentColor" strokeWidth="1.5" />
+          <path d="M5.2 8v4M14.8 8v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+      )
+    case 'payout':
+      /* Coin leaving with an outbound arrow - payout dispatch. */
+      return (
+        <svg className={base} viewBox="0 0 20 20" fill="none" aria-hidden>
+          <circle cx="8" cy="11.5" r="4.5" stroke="currentColor" strokeWidth="1.5" />
+          <path d="M8 9.6v3.8M6.6 10.6h2.8a1 1 0 1 1 0 2H6.6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+          <path d="M12.5 7.5 17 3m0 0h-3.6M17 3v3.6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      )
+    case 'gaps':
+      return (
+        <svg className={base} viewBox="0 0 20 20" fill="none" aria-hidden>
+          <path d="M4 14.5V9.5M10 14.5V5.5M16 14.5V11" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          <path d="M3 16.5h14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          <path d="M13.2 6.2 16.5 3M16.5 6.2 13.2 3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        </svg>
+      )
+    case 'link':
       return (
         <svg className={base} viewBox="0 0 20 20" fill="none" aria-hidden>
           <path
-            d="M3.5 11.5 7 8l3 2.5 3.5-3 3 2.5"
+            d="M8.2 11.8a3.2 3.2 0 0 0 4.5 0l2.1-2.1a3.2 3.2 0 0 0-4.5-4.5L9.2 6.3"
             stroke="currentColor"
-            strokeWidth="1.5"
+            strokeWidth="1.6"
             strokeLinecap="round"
-            strokeLinejoin="round"
           />
           <path
-            d="M6.5 14.5h7M8 16.5h4"
+            d="M11.8 8.2a3.2 3.2 0 0 0-4.5 0L5.2 10.3a3.2 3.2 0 0 0 4.5 4.5l1.1-1.1"
             stroke="currentColor"
-            strokeWidth="1.5"
+            strokeWidth="1.6"
             strokeLinecap="round"
           />
-          <circle cx="7" cy="8" r="1.1" fill="currentColor" />
-          <circle cx="13" cy="10.5" r="1.1" fill="currentColor" />
         </svg>
       )
     case 'billing':
@@ -259,11 +290,11 @@ export function usePromptAutoContrast(containerRef: RefObject<HTMLElement>) {
 }
 
 /**
- * Optional pill when a surface is backed by live APIs (`isLive`).
- * When not live, renders nothing (no placeholder / demo copy).
- *
- * `variant="command"` uses the same black “Live” styling as command-center surfaces.
- */
+  * Optional pill when a surface is backed by live APIs (`isLive`).
+  * When not live, renders nothing (no placeholder / demo copy).
+  *
+  * `variant="command"` uses the same black “Live” styling as command-center surfaces.
+  */
 export function LiveDataHint({
   isLive,
   source,

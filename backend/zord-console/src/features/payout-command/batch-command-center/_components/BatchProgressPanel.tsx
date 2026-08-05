@@ -24,7 +24,7 @@ function PipelineNode({ state, stepNumber }: { state: BatchStepState; stepNumber
   }
   if (state === 'warning') {
     return (
-      <span className="relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#f59e0b] text-white shadow-[0_0_0_4px_#fff]">
+      <span className="relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#0B1324] text-white shadow-[0_0_0_4px_#fff]">
         <span className="text-[13px] font-bold">!</span>
       </span>
     )

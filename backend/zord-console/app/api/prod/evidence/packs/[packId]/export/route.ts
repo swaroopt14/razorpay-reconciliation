@@ -4,6 +4,11 @@ import {
   applyRefreshedSessionCookies,
   requireSessionTenantForProdProxy,
 } from '@/services/auth/resolvePayoutTenant.server'
+import {
+  buildArealisLetterheadPdf,
+  fieldLine,
+  formatPdfDate,
+} from '@/services/payout-command/prod-api/arealisLetterheadPdf'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -20,6 +25,8 @@ type EvidencePackExportPayload = {
   proof_status?: string
   proof_score?: number
   created_at?: string
+  client_payout_ref?: string
+  client_reference?: string
   items?: Array<{
     type?: string
     ref?: string
@@ -33,66 +40,53 @@ function safeFilenamePart(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]/g, '_')
 }
 
-function escapePdfText(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)')
-}
+function evidencePackPdf(pack: EvidencePackExportPayload): Promise<Uint8Array> {
+  const packId = pack.evidence_pack_id || 'unknown'
+  const paymentRef =
+    pack.client_payout_ref || pack.client_reference || pack.intent_id || packId
 
-function lineText(label: string, value: unknown): string {
-  const text = value == null || value === '' ? '-' : String(value)
-  return `${label}: ${text}`
-}
-
-function createSimplePdf(lines: string[]): Uint8Array {
-  const contentLines = lines.slice(0, 52).map((line, index) => {
-    const y = 780 - index * 14
-    return `BT /F1 10 Tf 50 ${y} Td (${escapePdfText(line.slice(0, 100))}) Tj ET`
-  })
-  const stream = contentLines.join('\n')
-  const objects = [
-    '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
-    '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n',
-    '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n',
-    '4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n',
-    `5 0 obj\n<< /Length ${Buffer.byteLength(stream, 'utf8')} >>\nstream\n${stream}\nendstream\nendobj\n`,
-  ]
-
-  let body = '%PDF-1.4\n'
-  const offsets = [0]
-  for (const object of objects) {
-    offsets.push(Buffer.byteLength(body, 'utf8'))
-    body += object
-  }
-  const xrefStart = Buffer.byteLength(body, 'utf8')
-  body += `xref\n0 ${objects.length + 1}\n`
-  body += '0000000000 65535 f \n'
-  for (let i = 1; i < offsets.length; i++) {
-    body += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`
-  }
-  body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`
-  return new Uint8Array(Buffer.from(body, 'utf8'))
-}
-
-function evidencePackPdf(pack: EvidencePackExportPayload): Uint8Array {
-  const lines = [
-    'Evidence Pack Export',
-    lineText('Evidence Pack ID', pack.evidence_pack_id),
-    lineText('Tenant ID', pack.tenant_id),
-    lineText('Intent ID', pack.intent_id),
-    lineText('Contract ID', pack.contract_id),
-    lineText('Batch ID', pack.batch_id),
-    lineText('Mode', pack.mode),
-    lineText('Pack Status', pack.pack_status),
-    lineText('Proof Status', pack.proof_status),
-    lineText('Proof Score', pack.proof_score),
-    lineText('Merkle Root', pack.merkle_root),
-    lineText('Created At', pack.created_at),
-    '',
-    `Evidence Items (${pack.items?.length ?? 0})`,
-    ...(pack.items ?? []).map((item, index) =>
-      `${index + 1}. ${item.type ?? '-'} ref=${item.ref ?? '-'} leaf=${item.leaf_hash ?? item.hash ?? '-'}`,
-    ),
-  ]
-  return createSimplePdf(lines)
+  return buildArealisLetterheadPdf(
+    {
+      date: formatPdfDate(pack.created_at),
+      to: 'Compliance, Audit & Dispute Review',
+      subject: `Evidence Pack Statement - ${packId}`,
+      title: 'Cryptographic evidence pack for payout verification at real-world scale',
+    },
+    [
+      {
+        heading: 'PACK IDENTITY',
+        lines: [
+          fieldLine('Evidence pack', pack.evidence_pack_id),
+          fieldLine('Payment reference', paymentRef),
+          fieldLine('Tenant', pack.tenant_id),
+          fieldLine('Intent', pack.intent_id),
+          fieldLine('Contract', pack.contract_id),
+          fieldLine('Batch', pack.batch_id),
+          fieldLine('Mode', pack.mode),
+        ],
+      },
+      {
+        heading: 'VERIFICATION STATUS',
+        lines: [
+          fieldLine('Pack status', pack.pack_status),
+          fieldLine('Proof status', pack.proof_status),
+          fieldLine('Proof score', pack.proof_score),
+          fieldLine('Merkle root', pack.merkle_root),
+          fieldLine('Created at', pack.created_at),
+        ],
+      },
+      {
+        heading: `EVIDENCE ITEMS (${pack.items?.length ?? 0})`,
+        lines:
+          (pack.items?.length ?? 0) === 0
+            ? ['No evidence items attached.']
+            : (pack.items ?? []).map((item, index) => {
+                const leaf = item.leaf_hash || item.hash || '-'
+                return `${index + 1}. ${item.type ?? '-'}  |  ref=${item.ref ?? '-'}  |  leaf=${leaf}`
+              }),
+      },
+    ],
+  )
 }
 
 export async function GET(
@@ -152,7 +146,7 @@ export async function GET(
     }
 
     const pack = JSON.parse(text) as EvidencePackExportPayload
-    const pdf = evidencePackPdf(pack)
+    const pdf = await evidencePackPdf(pack)
     const pdfBytes = pdf.buffer.slice(pdf.byteOffset, pdf.byteOffset + pdf.byteLength) as ArrayBuffer
     const res = new NextResponse(pdfBytes, {
       status: 200,

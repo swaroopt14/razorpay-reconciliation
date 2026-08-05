@@ -17,9 +17,8 @@ function OverviewBootstrap({ children }: { children: ReactNode }) {
   const guide = params.get('guide') === '1'
 
   useEffect(() => {
-    // Spec demo entry only — password /signin must stay upload-first (no auto-seed).
+    persistEnvMode('sandbox')
     if (demo || guide) {
-      persistEnvMode('sandbox')
       enterDemoSession({ guide })
       markSandboxSetupStep('overview')
       if (guide) openSandboxSetupPanel()

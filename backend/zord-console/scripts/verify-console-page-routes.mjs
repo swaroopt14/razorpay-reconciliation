@@ -10,10 +10,17 @@ import { fileURLToPath } from 'node:url'
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 const appDir = path.join(root, 'app')
 
-/** grep-like: page path segment → required BFF suffix (payout-facing surfaces) */
+/** grep-like: page path segment → required BFF suffix */
 const PAGE_BFF_EXPECTATIONS = [
-  ['payout-command-view/today/page.tsx', 'intents/route.ts'],
-  ['payout-command-view/today/page.tsx', 'dlq/route.ts'],
+  ['customer/intents/page.tsx', 'intents/route.ts'],
+  ['customer/work-queue/page.tsx', 'intents/route.ts'],
+  ['customer/work-queue/page.tsx', 'dlq/route.ts'],
+  ['customer/exceptions/page.tsx', 'dlq/route.ts'],
+  ['customer/intents/replay/page.tsx', 'intents/route.ts'],
+  ['console/page.tsx', 'overview/route.ts'],
+  ['console/ingestion/page.tsx', 'overview/route.ts'],
+  ['ops/intents/page.tsx', 'intents/route.ts'],
+  ['ops/dlq/page.tsx', 'dlq/route.ts'],
 ]
 
 function walk(dir, acc = []) {
@@ -28,11 +35,7 @@ function walk(dir, acc = []) {
 const pages = walk(appDir)
 const prodCallers = pages.filter((p) => {
   const text = fs.readFileSync(p, 'utf8')
-  return (
-    text.includes("'/api/prod") ||
-    text.includes('"/api/prod') ||
-    text.includes('`/api/prod')
-  )
+  return text.includes("'/api/prod") || text.includes('"/api/prod') || text.includes('`/api/prod')
 })
 
 let missing = 0
@@ -51,4 +54,4 @@ if (missing > 0) {
   console.error(`\n${missing} expected route(s) missing.`)
   process.exit(1)
 }
-console.log('\nPage→BFF expectations OK.')
+console.log('\nConsole page→BFF expectations OK.')

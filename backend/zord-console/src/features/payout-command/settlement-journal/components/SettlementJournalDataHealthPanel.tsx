@@ -25,14 +25,14 @@ function MetricCard({ label, value, sub }: { label: string; value: string; sub?:
 }
 
 function formatMoneyKpi(value: number | null, loading: boolean): string {
-  if (loading && value == null) return '—'
-  if (value == null) return '—'
+  if (loading && value == null) return '-'
+  if (value == null) return '-'
   return formatJournalMoney(value)
 }
 
 function formatCoverageKpi(value: string | null, loading: boolean): string {
-  if (loading && !value) return '—'
-  return value ?? '—'
+  if (loading && !value) return '-'
+  return value ?? '-'
 }
 
 export function SettlementJournalDataHealthPanel() {
@@ -52,7 +52,7 @@ export function SettlementJournalDataHealthPanel() {
   const bankRefDisplay = formatCoverageKpi(kpis.bankReferenceCoverage, intelligenceLoading)
   const clientRefDisplay = formatCoverageKpi(kpis.clientReferenceCoverage, intelligenceLoading)
   const parseIssuesDisplay =
-    parseErrorsLoading && parseErrorTotal == null ? '—' : (parseErrorTotal ?? 0).toLocaleString('en-IN')
+    parseErrorsLoading && parseErrorTotal == null ? '-' : (parseErrorTotal ?? 0).toLocaleString('en-IN')
 
   return (
     <section className="mb-4">
@@ -73,12 +73,12 @@ export function SettlementJournalDataHealthPanel() {
         <MetricCard
           label={copy.matchConfidence}
           value={
-            kpis.matchConfidence != null ? `${(kpis.matchConfidence * 100).toFixed(0)}%` : '—'
+            kpis.matchConfidence != null ? `${(kpis.matchConfidence * 100).toFixed(0)}%` : '-'
           }
         />
         <MetricCard
           label={copy.missingRefRate}
-          value={kpis.missingReferenceRate ?? '—'}
+          value={kpis.missingReferenceRate ?? '-'}
         />
       </div>
     </section>

@@ -20,9 +20,9 @@ type BatchCommandCenterShellProps = {
 }
 
 /**
- * Batch Command Center — same outer shell as Home/Sandbox:
- * imperial strip (sandbox) + DockNav + cool blue-grey content band.
- */
+  * Batch Command Center - same outer shell as Home/Sandbox:
+  * sidebar + top bar + cool blue-grey content band.
+  */
 export function BatchCommandCenterShell({ forceMode }: BatchCommandCenterShellProps) {
   const router = useRouter()
   const [activateWizardOpen, setActivateWizardOpen] = useState(false)
@@ -48,12 +48,13 @@ export function BatchCommandCenterShell({ forceMode }: BatchCommandCenterShellPr
             onDockChange={onDockChange}
             onActivateClick={() => setActivateWizardOpen(true)}
             showSandboxStrip={isSandbox}
-          />
-          <section className={`relative ${COMMAND_COOL_PAGE_BG} p-0`}>
-            <Suspense fallback={<p className="text-[14px] text-slate-600">Loading batch command center…</p>}>
-              <BatchCommandCenterClient />
-            </Suspense>
-          </section>
+          >
+            <section className={`relative flex-1 ${COMMAND_COOL_PAGE_BG} p-0`}>
+              <Suspense fallback={<p className="text-[14px] text-slate-600">Loading batch command center…</p>}>
+                <BatchCommandCenterClient />
+              </Suspense>
+            </section>
+          </PayoutConsoleNavStack>
         </div>
         {activateWizardOpen ? (
           <ActivateLiveWizard onClose={() => setActivateWizardOpen(false)} />

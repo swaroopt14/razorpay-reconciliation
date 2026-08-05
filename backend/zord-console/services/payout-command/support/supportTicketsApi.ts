@@ -16,11 +16,32 @@ function isSeedOnly(tickets: SupportTicket[]): boolean {
 }
 
 async function parseJson<T>(res: Response): Promise<T> {
-  const data = (await res.json()) as T & { message?: string }
+  const text = await res.text()
+  let data: (T & { message?: string }) | null = null
+  if (text.trim()) {
+    try {
+      data = JSON.parse(text) as T & { message?: string }
+    } catch {
+      throw new Error(
+        res.ok
+          ? 'Support API returned invalid JSON.'
+          : `Request failed (${res.status}): invalid JSON response.`,
+      )
+    }
+  }
+
   if (!res.ok) {
-    const msg = typeof data.message === 'string' ? data.message : `Request failed (${res.status})`
+    const msg =
+      typeof data?.message === 'string' && data.message.trim()
+        ? data.message
+        : text.trim() || `Request failed (${res.status})`
     throw new Error(msg)
   }
+
+  if (!data) {
+    throw new Error('Support API returned an empty response.')
+  }
+
   return data
 }
 

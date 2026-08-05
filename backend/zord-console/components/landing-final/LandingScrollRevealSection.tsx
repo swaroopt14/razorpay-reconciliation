@@ -24,7 +24,7 @@ const PILLAR_FRAME_CLASS = 'relative aspect-[4/4.65] w-full overflow-hidden roun
 const GLASS_CARD_BASE =
   'relative z-10 flex h-[296px] min-h-[296px] w-full flex-col overflow-hidden rounded-t-[1.125rem] rounded-b-[2.125rem] border p-4 text-white shadow-[0_28px_64px_rgba(0,0,0,0.28),inset_0_1px_0_rgba(255,255,255,0.28)] backdrop-blur-2xl transition-[box-shadow,transform] duration-300 sm:p-[1.125rem]'
 
-/** Per-pillar glass material, each card picks up its photo's hue (blue / near-black / warm sand). */
+/** Per-pillar glass material - each card picks up its photo's hue (blue / near-black / warm sand). */
 const GLASS_TONES = {
   frost: 'border-white/30 bg-[rgba(42,64,102,0.68)]',
   dark: 'border-white/18 bg-[rgba(13,19,13,0.76)]',
@@ -42,7 +42,7 @@ const PILLAR_TITLE_CLASS =
 const PILLAR_DESCRIPTION_CLASS =
   'mt-3.5 min-h-[4.85rem] max-w-[34ch] text-[15px] leading-relaxed text-[#6B7280] md:min-h-[5.7rem] lg:min-h-[5rem]'
 
-/** Shared content width, hero + pillars align on one grid. */
+/** Shared content width - hero + pillars align on one grid. */
 const SECTION_SHELL = LANDING_SECTION_SHELL
 
 const LABEL = 'text-[9px] font-medium uppercase tracking-[0.1em] text-white/50'
@@ -278,34 +278,34 @@ function AnimatedBars({ bars, barDelay = 1.35 }: { bars: number[]; barDelay?: nu
 function PayoutOverviewCard() {
   const bars = [38, 52, 44, 68, 58, 72, 48, 64, 42, 56, 50]
   const connectors = [
-    { name: 'Razorpay', status: 'Stable', tone: 'text-[#A7F3D0]' },
-    { name: 'Cashfree', status: 'Watch', tone: 'text-amber-200' },
-    { name: 'PayU', status: 'Review', tone: 'text-rose-200' },
-    { name: 'Stripe', status: 'Stable', tone: 'text-[#A7F3D0]' },
+    { name: 'Razorpay', status: 'OK', tone: 'text-[#A7F3D0]' },
+    { name: 'Cashfree', status: 'Check', tone: 'text-amber-200' },
+    { name: 'PayU', status: 'Needs help', tone: 'text-rose-200' },
+    { name: 'Stripe', status: 'OK', tone: 'text-[#A7F3D0]' },
   ] as const
 
   return (
     <AnimatedBlurShell backgroundSrc={PILLAR_BACKGROUNDS.connector}>
       <GlassPanel tone="frost">
-        <CardHeader icon={LayoutGrid} title="Payout overview" />
+        <CardHeader icon={LayoutGrid} title="Today's payments" />
 
         <div className="mt-3.5 grid shrink-0 grid-cols-3 gap-2 border-b border-white/10 pb-3">
           <div>
-            <div className={LABEL}>Total value</div>
+            <div className={LABEL}>Meant to pay</div>
             <div className="mt-1">
               <CountUp to={3.45} decimals={2} prefix="₹" suffix=" Cr" delay={0.35} />
             </div>
           </div>
           <div>
-            <div className={LABEL}>Period change</div>
+            <div className={LABEL}>Bank confirmed</div>
             <div className="mt-1">
-              <CountUp to={24.8} decimals={1} prefix="+₹" suffix=" L" delay={0.45} />
+              <CountUp to={3.21} decimals={2} prefix="₹" suffix=" Cr" delay={0.45} />
             </div>
           </div>
           <div>
-            <div className={LABEL}>Connectors</div>
+            <div className={LABEL}>Still open</div>
             <div className="mt-1">
-              <CountUp to={12} decimals={0} delay={0.55} />
+              <CountUp to={24} decimals={0} prefix="₹" suffix=" L" delay={0.55} />
             </div>
           </div>
         </div>
@@ -330,7 +330,7 @@ function PerformanceCardGlass() {
     <GlassPanel tone="dark">
       <CardHeader
         icon={Zap}
-        title="Performance"
+        title="Mismatches to clear"
         trailing={
           <div className="flex items-center gap-0.5">
             <span className="inline-flex items-center gap-0.5 rounded-md border border-white/12 bg-white/8 px-1.5 py-1 text-[9px] text-white/65">
@@ -355,20 +355,20 @@ function PerformanceCardGlass() {
         />
         <TrendingUp className="mb-1 h-4 w-4 text-[#6EE7B7]" />
       </div>
-      <p className="mt-1 shrink-0 text-[9px] text-white/45">Match confidence · last 7 days</p>
+      <p className="mt-1 shrink-0 text-[9px] text-white/45">Payments that lined up · last 7 days</p>
 
       <div className="mt-3 flex flex-1 flex-col gap-3 border-b border-white/10 pb-3">
         <div>
-          <p className="text-[11px] font-semibold text-white/88">Payment health insights</p>
+          <p className="text-[11px] font-semibold text-white/88">What needs attention</p>
           <p className={`mt-1.5 ${BODY}`}>
-            Confidence across instructions, bank confirmation, and review queues in one frame.
+            See which payments lined up, which are waiting on the bank, and which need a person.
           </p>
         </div>
         <div className="space-y-2">
           {[
-            ['Instruction match', '1,248 routed'],
-            ['Bank confirmation', 'Stable across rails'],
-            ['Review queue', '42 items open'],
+            ['Lined up', '1,248 payments'],
+            ['Waiting on bank', 'Looking good'],
+            ['Needs a person', '42 open'],
           ].map(([label, value]) => (
             <div key={label} className="flex items-center justify-between gap-2 text-[10px]">
               <span className="text-white/75">{label}</span>
@@ -380,9 +380,9 @@ function PerformanceCardGlass() {
 
       <div className="mt-3 grid shrink-0 grid-cols-3 gap-1 border-t border-dashed border-white/15 pt-2.5">
         {[
-          { label: 'Matched', to: 12, prefix: '+', suffix: '%', up: true },
+          { label: 'Lined up', to: 12, prefix: '+', suffix: '%', up: true },
           { label: 'Gaps', to: -3.1, prefix: '', suffix: '%', up: false },
-          { label: 'Proof', to: 8, prefix: '+', suffix: '%', up: true },
+          { label: 'Proof ready', to: 8, prefix: '+', suffix: '%', up: true },
         ].map(({ label, to, prefix, suffix, up }, index) => (
           <div key={label} className="text-center">
             <div className={LABEL}>{label}</div>
@@ -415,9 +415,9 @@ function PerformanceCard() {
 
 function EvidenceTrustCard() {
   const auditRows = [
-    { who: 'A. Sharma', what: 'Evidence export', when: '12 Jan' },
-    { who: 'Finance ops', what: 'Match review', when: '11 Jan' },
-    { who: 'System', what: 'Consent logged', when: '10 Jan' },
+    { who: 'A. Sharma', what: 'Downloaded proof pack', when: '12 Jan' },
+    { who: 'Finance ops', what: 'Cleared a mismatch', when: '11 Jan' },
+    { who: 'System', what: 'Marked proof ready', when: '10 Jan' },
   ] as const
 
   return (
@@ -425,11 +425,11 @@ function EvidenceTrustCard() {
       <GlassPanel tone="warm">
         <CardHeader
           icon={ShieldCheck}
-          title="Trust & evidence"
+          title="Proof for finance"
           trailing={
             <span className="inline-flex items-center gap-1 rounded-md border border-white/20 bg-white/10 px-1.5 py-0.5 text-[8px] font-medium text-white/80">
               <Lock className="h-2.5 w-2.5" />
-              TLS 1.3
+              Protected
             </span>
           }
         />
@@ -444,7 +444,7 @@ function EvidenceTrustCard() {
           />
           <p className="mt-1.5 flex items-center gap-1.5 text-[9px] text-white/60">
             <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-orange-400" />
-            Audit events · chain verified
+            Proof steps logged
           </p>
         </div>
 
@@ -468,14 +468,14 @@ function EvidenceTrustCard() {
           </div>
 
           <div className="shrink-0 rounded-xl border border-white/10 bg-white/6 p-2.5">
-            <p className={LABEL}>Consent on file</p>
+            <p className={LABEL}>Ready to share</p>
             <div className="mt-1.5 flex gap-2">
               <span className="mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] border border-[#34D399]/45 bg-[#059669]/20">
                 <Check className="h-2.5 w-2.5 text-[#A7F3D0]" strokeWidth={3} />
               </span>
               <div className="min-w-0">
                 <p className="text-[9px] leading-snug text-white/82">
-                  I authorize export of payment evidence for audit review.
+                  Proof pack ready for finance close or audit questions.
                 </p>
                 <p className="mt-0.5 text-[8px] text-white/45">10 Jan 2026 · 14:32 IST</p>
               </div>
@@ -513,16 +513,16 @@ function LandingThreePillars() {
           <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#34D399]/15 text-[#059669]">
             <LayoutGrid className="h-3.5 w-3.5" strokeWidth={2.25} />
           </span>
-          <p>Payout intelligence for operators, finance teams, and proof-ready close.</p>
+          <p>For the people who have to explain payouts - ops, finance, and audit.</p>
         </motion.div>
 
         <motion.h2
           variants={shouldReduceMotion ? undefined : fadeUpItem}
           className="mt-10 text-[2.35rem] font-semibold leading-[1.02] tracking-[-0.055em] text-[#111111] sm:text-5xl lg:text-[3.75rem]"
         >
-          Clarity and control across
+          Three things every payout team
           <span className="mt-1 block sm:mt-2">
-            <span className="text-[#047857]">every payout surface.</span>
+            <span className="text-[#047857]">needs in one place.</span>
           </span>
         </motion.h2>
 

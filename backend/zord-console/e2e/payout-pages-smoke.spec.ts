@@ -1182,26 +1182,9 @@ test.describe('payout console pages smoke (empty prod → preview fallbacks)', (
     await expect(page.getByTestId('leakage-batch-watchlist')).toBeVisible({ timeout: 20_000 })
   })
 
-  test('view batches navigates from ambiguity dock header', async ({ page }) => {
-    await page.goto('/payout-command-view/today?dock=ambiguity')
-    await expect(page.getByTestId('ambiguity-kpi-hero')).toBeVisible({ timeout: 20_000 })
-    const viewBatches = page.getByTestId('view-batches-link')
-    await expect(viewBatches).toHaveAttribute('href', /\/payout-command-view\/batch-command-center/)
-    await viewBatches.click()
-    await expect(page).toHaveURL(/\/payout-command-view\/batch-command-center/, { timeout: 15_000 })
-  })
-
-  test('view batches link works from settlement and intent journal docks', async ({ page }) => {
-    for (const dock of ['settlement', 'grid'] as const) {
-      await page.goto(`/payout-command-view/today?dock=${dock}`)
-      await expect(page.getByTestId('view-batches-link')).toBeVisible({ timeout: 20_000 })
-      await expect(page.getByTestId('view-batches-link')).toHaveAttribute(
-        'href',
-        /\/payout-command-view\/batch-command-center/,
-      )
-      await page.getByTestId('view-batches-link').click()
-      await expect(page).toHaveURL(/\/payout-command-view\/batch-command-center/, { timeout: 15_000 })
-    }
+  test('batch command center route opens directly', async ({ page }) => {
+    await page.goto('/payout-command-view/batch-command-center')
+    await expect(page.getByTestId('batch-review-page')).toBeVisible({ timeout: 20_000 })
   })
 
   test('leakage hides Preview when live comparison timeseries is available', async ({ page }) => {

@@ -317,7 +317,7 @@ function sourceRows(
     })
 }
 
-/** Leakage KPI exposure_bands or component minors — API fields only. */
+/** Leakage KPI exposure_bands or component minors - API fields only. */
 function buildLeakageComposition(leakage: LeakageKpiResponse | null): LeakageCompositionSlice[] {
   if (!isDataAvailable(leakage)) return []
 

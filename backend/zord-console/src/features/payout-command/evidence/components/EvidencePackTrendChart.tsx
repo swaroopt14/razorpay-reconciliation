@@ -37,7 +37,7 @@ export function EvidencePackTrendChart({ trend, preview }: Props) {
     <article className={`flex min-h-[280px] flex-col ${EVIDENCE_CARD}`}>
       <EvidenceSectionHeader
         title="Pack Volume"
-        subtitle={`Daily histogram — last ${EVIDENCE_VOLUME_DAYS} days`}
+        subtitle={`Daily histogram - last ${EVIDENCE_VOLUME_DAYS} days`}
         badge={preview ? 'Awaiting live data' : undefined}
         action={
           hasChart ? (

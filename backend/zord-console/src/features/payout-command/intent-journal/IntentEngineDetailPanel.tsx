@@ -11,7 +11,7 @@ function DetailField({ label, value, mono }: { label: string; value: string; mon
         className={`mt-0.5 text-[13px] text-[#0f172a] ${mono ? 'break-all font-mono text-[12px]' : ''}`}
         title={value}
       >
-        {value || '—'}
+        {value || '-'}
       </p>
     </div>
   )
@@ -19,7 +19,7 @@ function DetailField({ label, value, mono }: { label: string; value: string; mon
 
 function formatIso(iso: string | undefined): string {
   const s = apiTrimmedString(iso)
-  if (!s) return '—'
+  if (!s) return '-'
   const d = new Date(s)
   if (Number.isNaN(d.getTime())) return s
   return d.toLocaleString('en-IN', {
@@ -31,7 +31,7 @@ function formatIso(iso: string | undefined): string {
   })
 }
 
-/** Expandable intent-engine row — all values from API payload, no hard-coded demo rows. */
+/** Expandable intent-engine row - all values from API payload, no hard-coded demo rows. */
 export function IntentEngineDetailPanel({ intent }: { intent: PaymentIntentRecord }) {
   const gov = intent.governance
   const conf =
@@ -39,7 +39,7 @@ export function IntentEngineDetailPanel({ intent }: { intent: PaymentIntentRecor
       ? intent.aggregate_confidence_score <= 1
         ? `${(intent.aggregate_confidence_score * 100).toFixed(1)}%`
         : `${intent.aggregate_confidence_score.toFixed(1)}%`
-      : '—'
+      : '-'
 
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -48,7 +48,7 @@ export function IntentEngineDetailPanel({ intent }: { intent: PaymentIntentRecor
       <DetailField label="Envelope ID" value={apiTrimmedString(intent.envelope_id)} mono />
       <DetailField
         label="Amount"
-        value={`${apiTrimmedString(intent.amount) || '—'} ${apiTrimmedString(intent.currency) || ''}`.trim()}
+        value={`${apiTrimmedString(intent.amount) || '-'} ${apiTrimmedString(intent.currency) || ''}`.trim()}
       />
       <DetailField label="Execution at" value={formatIso(intent.intended_execution_at)} />
       <DetailField
@@ -66,21 +66,21 @@ export function IntentEngineDetailPanel({ intent }: { intent: PaymentIntentRecor
       <DetailField label="Updated at" value={formatIso(intent.updated_at)} />
       <DetailField
         label="Duplicate risk"
-        value={intent.duplicate_risk_flag === true ? 'Yes' : intent.duplicate_risk_flag === false ? 'No' : '—'}
+        value={intent.duplicate_risk_flag === true ? 'Yes' : intent.duplicate_risk_flag === false ? 'No' : '-'}
       />
       {gov ? (
         <>
           <DetailField
             label="Semantic valid"
-            value={gov.semantic_valid === true ? 'Yes' : gov.semantic_valid === false ? 'No' : '—'}
+            value={gov.semantic_valid === true ? 'Yes' : gov.semantic_valid === false ? 'No' : '-'}
           />
           <DetailField
             label="Routing consistent"
-            value={gov.routing_consistent === true ? 'Yes' : gov.routing_consistent === false ? 'No' : '—'}
+            value={gov.routing_consistent === true ? 'Yes' : gov.routing_consistent === false ? 'No' : '-'}
           />
           <DetailField
             label="Execution window valid"
-            value={gov.execution_window_valid === true ? 'Yes' : gov.execution_window_valid === false ? 'No' : '—'}
+            value={gov.execution_window_valid === true ? 'Yes' : gov.execution_window_valid === false ? 'No' : '-'}
           />
           <DetailField label="Duplicate detected" value={gov.duplicate_detected === true ? 'Yes' : 'No'} />
         </>

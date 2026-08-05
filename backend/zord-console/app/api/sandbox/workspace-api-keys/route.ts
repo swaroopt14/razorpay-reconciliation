@@ -12,7 +12,7 @@ type EdgeMePayload = {
 
 /**
  * Sandbox workspace credentials for the signed-in user (zord-edge `/v1/auth/me`).
- * No fabricated keys — full API secret is only available client-side if saved at signup.
+ * No fabricated keys - full API secret is only available client-side if saved at signup.
  */
 export async function GET(request: NextRequest) {
   const { edgeResponse, errorResponse, refreshedPayload } = await authorizedEdgeFetch(

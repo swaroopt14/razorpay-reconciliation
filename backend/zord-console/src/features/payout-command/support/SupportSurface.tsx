@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   useSessionAccountProfile,
@@ -19,7 +20,7 @@ import {
   postSupportChatReply,
   postSupportEmailMessage,
 } from '@/services/payout-command/support/supportTicketsApi'
-import { SANDBOX_API_KEYS, SANDBOX_RECENT_REQUESTS } from '@/services/payout-command/sandbox-data'
+import { SANDBOX_RECENT_REQUESTS } from '@/services/payout-command/sandbox-data'
 import { getAmbiguityHeatmap, getPatternsKpis } from '@/services/payout-command/prod-api/getIntelligenceKpis'
 import { isDataAvailable, type AmbiguityHeatmapBatchRow } from '@/services/payout-command/prod-api/intelligenceTypes'
 import { getProdIntentEngineBatchesForSession } from '@/services/payout-command/prod-api/getProdIntentEngineBatches'
@@ -68,7 +69,7 @@ type ProcessingOverview = {
 
 function relativeTime(iso: string): string {
   const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return '—'
+  if (Number.isNaN(d.getTime())) return '-'
   const diffMs = Date.now() - d.getTime()
   const mins = Math.floor(diffMs / 60_000)
   if (mins < 2) return 'Just now'
@@ -81,7 +82,7 @@ function relativeTime(iso: string): string {
 
 function formatHeaderDate(iso: string) {
   const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return '—'
+  if (Number.isNaN(d.getTime())) return '-'
   return d
     .toLocaleString('en-IN', {
       month: 'short',
@@ -127,8 +128,8 @@ function money(n: number) {
 
 function statusTone(status: string) {
   const s = status.toUpperCase()
-  if (s.includes('FAIL')) return 'text-rose-600'
-  if (s.includes('PEND') || s.includes('PROC')) return 'text-amber-600'
+  if (s.includes('FAIL')) return 'text-[#0B1324]'
+  if (s.includes('PEND') || s.includes('PROC')) return 'text-[#0B1324]'
   if (s.includes('SUCCESS') || s.includes('SETTL') || s.includes('CONFIRM')) return 'text-black'
   return 'text-slate-600'
 }
@@ -156,11 +157,11 @@ function StatusBadge({ ticket, compact }: { ticket: SupportTicket; compact?: boo
   if (ticket.state === 'awaiting_customer') {
     return (
       <span
-        className={`inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-900 ${
+        className={`inline-flex items-center gap-1 rounded-full bg-[#F1F5F9] px-2 py-0.5 font-semibold text-[#0B1324] ${
           compact ? 'text-[10px]' : 'text-[11px]'
         }`}
       >
-        <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden />
+        <span className="h-1.5 w-1.5 rounded-full bg-[#0B1324]" aria-hidden />
         Awaiting your reply
       </span>
     )
@@ -297,42 +298,26 @@ function FieldCard({ title, subtitle, children }: { title: string; subtitle?: st
   )
 }
 
-function ProfileTab({ profile, tenantApiKey }: { profile: ProfileInfo | null; tenantApiKey: string | null }) {
-  const [showSecret, setShowSecret] = useState(false)
-  const [copied, setCopied] = useState<'key' | 'secret' | null>(null)
-
-  const publishable = SANDBOX_API_KEYS.find((k) => k.type === 'publishable' && k.mode === 'sandbox')?.value ?? 'pk_test_unavailable'
-  const secret = tenantApiKey || SANDBOX_API_KEYS.find((k) => k.type === 'secret' && k.mode === 'sandbox')?.value || 'sk_test_unavailable'
-
-  const copy = async (v: string, kind: 'key' | 'secret') => {
-    try {
-      await navigator.clipboard.writeText(v)
-      setCopied(kind)
-      window.setTimeout(() => setCopied(null), 1200)
-    } catch {
-      // ignore
-    }
-  }
-
+function ProfileTab({ profile }: { profile: ProfileInfo | null; tenantApiKey?: string | null }) {
   return (
     <div className="space-y-4">
       <FieldCard title="My Profile" subtitle="Mapped from /api/auth/me">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Name</p>
-            <p className={`mt-1 text-[15px] font-semibold ${HOME_TITLE_BLACK}`}>{profile?.name || '—'}</p>
+            <p className={`mt-1 text-[15px] font-semibold ${HOME_TITLE_BLACK}`}>{profile?.name || '-'}</p>
           </div>
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Email</p>
-            <p className={`mt-1 text-[15px] font-semibold ${HOME_TITLE_BLACK}`}>{profile?.email || '—'}</p>
+            <p className={`mt-1 text-[15px] font-semibold ${HOME_TITLE_BLACK}`}>{profile?.email || '-'}</p>
           </div>
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Role</p>
-            <p className={`mt-1 text-[15px] ${HOME_TITLE_BLACK}`}>{profile?.role || '—'}</p>
+            <p className={`mt-1 text-[15px] ${HOME_TITLE_BLACK}`}>{profile?.role || '-'}</p>
           </div>
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Tenant</p>
-            <p className={`mt-1 font-mono text-[14px] ${HOME_TITLE_BLACK}`}>{profile?.tenantId || '—'}</p>
+            <p className={`mt-1 font-mono text-[14px] ${HOME_TITLE_BLACK}`}>{profile?.tenantId || '-'}</p>
           </div>
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Workspace</p>
@@ -341,32 +326,26 @@ function ProfileTab({ profile, tenantApiKey }: { profile: ProfileInfo | null; te
                 ? [profile?.tenantName, profile?.workspaceCode ? `(${profile.workspaceCode})` : null]
                     .filter(Boolean)
                     .join(' ')
-                : '—'}
+                : '-'}
             </p>
           </div>
         </div>
       </FieldCard>
 
-      <FieldCard title="Zord Access Credentials" subtitle="From API keys state + local tenant key cache">
-        <div className="space-y-3 text-[13px]">
-          <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Publishable key</p>
-              <code className="text-[13px] text-slate-800">{publishable}</code>
-            </div>
-            <button type="button" onClick={() => void copy(publishable, 'key')} className="rounded-md border border-slate-200 px-2 py-1 text-[12px] font-semibold">{copyLabel(copied === 'key','Copy')}</button>
-          </div>
-          <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">API secret</p>
-              <code className="text-[13px] text-slate-800">{showSecret ? secret : `${secret.slice(0, 8)}••••••••••••${secret.slice(-4)}`}</code>
-            </div>
-            <div className="flex gap-2">
-              <button type="button" onClick={() => setShowSecret((v) => !v)} className="rounded-md border border-slate-200 px-2 py-1 text-[12px] font-semibold">{showSecret ? 'Hide' : 'Reveal'}</button>
-              <button type="button" onClick={() => void copy(secret, 'secret')} className="rounded-md border border-slate-200 px-2 py-1 text-[12px] font-semibold">{copyLabel(copied === 'secret','Copy')}</button>
-            </div>
-          </div>
-        </div>
+      <FieldCard
+        title="API credentials"
+        subtitle="Moved to Developer & Integrations - secrets are not revealed on profile"
+      >
+        <p className="text-[13px] text-slate-600">
+          Create, rotate, and revoke scoped keys under Developer. Secrets are shown once at creation and are not
+          recoverable from Support or My Account.
+        </p>
+        <Link
+          href="/developer?demo=sandbox&tab=keys"
+          className="mt-3 inline-flex h-9 items-center rounded-md bg-[#0B1324] px-3.5 text-[13px] font-semibold text-white hover:bg-[#1E293B]"
+        >
+          Open Developer
+        </Link>
       </FieldCard>
     </div>
   )
@@ -385,7 +364,7 @@ function CreditsTab({ tickets }: { tickets: SupportTicket[] }) {
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Available credits</p>
             <p className="mt-1 text-[28px] font-bold text-[#000000]">{money(available)}</p>
           </div>
-          <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold text-amber-800">Mock / estimated</span>
+          <span className="rounded-full bg-[#F1F5F9] px-2.5 py-1 text-[11px] font-semibold text-[#0B1324]">Mock / estimated</span>
         </div>
       </FieldCard>
 
@@ -445,9 +424,9 @@ function ProcessingOverviewTab({ overview, loading }: { overview: ProcessingOver
       <FieldCard title="Status breakdown">
         <div className="grid gap-3 sm:grid-cols-4 text-[14px]">
           <div>✔ Success <span className="font-semibold text-black">{overview.successPct.toFixed(1)}%</span></div>
-          <div>⚠ Failed <span className="font-semibold text-rose-700">{overview.failedPct.toFixed(1)}%</span></div>
-          <div>⏳ Processing <span className="font-semibold text-amber-700">{overview.processingPct.toFixed(1)}%</span></div>
-          <div>❓ Unresolved <span className="font-semibold text-blue-700">{overview.unresolvedPct.toFixed(1)}%</span></div>
+          <div>⚠ Failed <span className="font-semibold text-[#0B1324]">{overview.failedPct.toFixed(1)}%</span></div>
+          <div>⏳ Processing <span className="font-semibold text-[#0B1324]">{overview.processingPct.toFixed(1)}%</span></div>
+          <div>❓ Unresolved <span className="font-semibold text-[#0B1324]">{overview.unresolvedPct.toFixed(1)}%</span></div>
         </div>
       </FieldCard>
 
@@ -456,7 +435,7 @@ function ProcessingOverviewTab({ overview, loading }: { overview: ProcessingOver
           <div className="grid grid-cols-12 gap-1">
             {overview.heatmap.flatMap((row, rowIdx) =>
               row.map((cell, colIdx) => {
-                const color = cell === 0 ? 'bg-slate-200' : cell === 1 ? 'bg-neutral-700' : cell === 2 ? 'bg-amber-400' : 'bg-rose-500'
+                const color = cell === 0 ? 'bg-slate-200' : cell === 1 ? 'bg-neutral-700' : cell === 2 ? 'bg-[#0B1324]' : 'bg-[#0B1324]'
                 return <span key={`${rowIdx}-${colIdx}`} className={`h-3.5 rounded-sm ${color}`} title={`${overview.heatmapLabels[rowIdx] || 'Day'} intensity ${cell}`} />
               }),
             )}
@@ -504,7 +483,7 @@ function ProcessingOverviewTab({ overview, loading }: { overview: ProcessingOver
 
 function ManageTeamTab({ profile }: { profile: ProfileInfo | null }) {
   const members = [
-    { name: profile?.name || 'Current User', email: profile?.email || '—', role: profile?.role || 'Admin', status: 'Active' },
+    { name: profile?.name || 'Current User', email: profile?.email || '-', role: profile?.role || 'Admin', status: 'Active' },
     { name: 'Ops Reviewer', email: 'ops@company.com', role: 'Ops', status: 'Active' },
     { name: 'Finance Owner', email: 'finance@company.com', role: 'Finance', status: 'Invited' },
   ]
@@ -883,7 +862,7 @@ export function SupportSurface({ initialAccountTab }: SupportSurfaceProps) {
           time: relativeTime(it.created_at || it.observation_timestamp || new Date().toISOString()),
           intentId: it.matched_intent_id || `INT_${String(idx + 1).padStart(5, '0')}`,
           status: (it.settlement_status || 'Processing').replace(/_/g, ' '),
-          batchId: it.client_batch_id || settlementIds[0] || '—',
+          batchId: it.client_batch_id || settlementIds[0] || '-',
         }))
 
         const heatmapBatches = isDataAvailable(heatmap) ? heatmap.batches : []
@@ -1051,10 +1030,10 @@ export function SupportSurface({ initialAccountTab }: SupportSurfaceProps) {
           <div className="flex items-center justify-between px-5 py-3">
             <p className={`text-[26px] font-semibold tracking-tight ${HOME_TITLE_BLACK}`}>My account</p>
             <div className="hidden items-center gap-5 text-[13px] font-medium text-slate-600 lg:flex">
-              <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#ca8a04]" />Test Mode</span>
+              <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#0B1324]" />Test Mode</span>
               <button type="button" className="hover:text-[#00239C]">Switch Merchant</button>
               <button type="button" onClick={() => setDocsOpen(true)} className="hover:text-[#00239C]">Documentation</button>
-              <span>Announcements <span className="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] text-white">1</span></span>
+              <span>Announcements <span className="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[#0B1324] px-1 text-[10px] text-white">1</span></span>
             </div>
           </div>
           <div className="flex items-center gap-7 border-t border-slate-100 px-5">
@@ -1090,7 +1069,7 @@ export function SupportSurface({ initialAccountTab }: SupportSurfaceProps) {
             ) : (
               <>
                 {ticketsError ? (
-                  <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] font-medium text-red-700">
+                  <p className="mb-3 rounded-lg border border-[#0B1324]/20 bg-[#F1F5F9] px-3 py-2 text-[13px] font-medium text-[#0B1324]">
                     {ticketsError}
                   </p>
                 ) : null}
@@ -1125,7 +1104,7 @@ export function SupportSurface({ initialAccountTab }: SupportSurfaceProps) {
         open={mailOpen}
         onClose={() => setMailOpen(false)}
         defaultTo={selected?.contactEmail || ZORD_SUPPORT_EMAIL}
-        defaultSubject={selected ? `Payment Failure — #${selected.ticketNumber}` : 'Zord support follow-up'}
+        defaultSubject={selected ? `Payment Failure - #${selected.ticketNumber}` : 'Zord support follow-up'}
         onSend={handleSendEmail}
       />
     </>

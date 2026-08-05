@@ -52,7 +52,7 @@ export function PricingValueSection() {
               <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-white/10 text-[#6EE7B7] ring-1 ring-white/20 backdrop-blur-md sm:h-7 sm:w-7">
                 <Sparkles className="h-3 w-3 sm:h-3.5 sm:w-3.5" strokeWidth={2.25} />
               </span>
-              <span>What commercials are built around</span>
+              <span>How pricing works</span>
             </div>
 
             <h2 className="mt-5 text-[1.85rem] font-semibold leading-[1.05] tracking-[-0.055em] text-white sm:mt-6 sm:text-[2.5rem] md:text-[2.85rem]">

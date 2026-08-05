@@ -111,9 +111,9 @@ export function formatInr(value: number) {
   }).format(Math.round(value))
 }
 
-/** Table / summary amounts — preserve paise (no integer rounding). */
+/** Table / summary amounts - preserve paise (no integer rounding). */
 export function formatInrPrecise(value: number) {
-  if (!Number.isFinite(value)) return '—'
+  if (!Number.isFinite(value)) return '-'
   return new Intl.NumberFormat('en-IN', {
     style: 'currency',
     currency: 'INR',
@@ -209,7 +209,7 @@ const ZORD_PIPELINE_LABELS = [
 ] as const
 
 /**
- * Batch Command Center pipeline — driven by bulk ingest / settlement intake and grid summary.
+ * Batch Command Center pipeline - driven by bulk ingest / settlement intake and grid summary.
  * `active` is used as the loader step; bank backlog uses `warning` on “Bank confirmation pending”.
  */
 export function deriveZordPipelineTimeline(
@@ -479,20 +479,20 @@ export function sortRowsByLatest(rows: BatchRow[], sortMode: 'Latest' | 'Oldest'
   return sortMode === 'Latest' ? sorted : sorted.reverse()
 }
 
-/** Neutral row for missing cells — no random “demo” grid. */
+/** Neutral row for missing cells - no random “demo” grid. */
 function emptyBatchRowSkeleton(index: number): BatchRow {
   return {
     refId: `R${index + 1}`,
     amount: 0,
-    beneficiary: '—',
+    beneficiary: '-',
     status: 'Pending',
     stage: STAGES_BY_STATUS.Pending,
     reason: '-',
     time: '-',
     actionLabel: actionFor('Pending'),
     provider: 'RazorpayX',
-    dispatchId: '—',
-    bankReference: '—',
+    dispatchId: '-',
+    bankReference: '-',
     timeline: buildTimeline('Pending', '-'),
   }
 }
@@ -504,14 +504,33 @@ function parseMatrixToBatchRows(matrix: string[][]): BatchRow[] {
   const [headerRow, ...dataRows] = rows
   const headers = headerRow.map((h) => h.toLowerCase())
 
-  const refIdx = headers.findIndex((header) => header.includes('ref') || header.includes('request'))
-  const invoiceIdx = headers.findIndex(
-    (header) => header.includes('invoice') || header === 'inv' || header.includes('invoice_id'),
+  const pickHeader = (...candidates: string[]) => {
+    for (const c of candidates) {
+      const exact = headers.findIndex((h) => h === c)
+      if (exact >= 0) return exact
+    }
+    for (const c of candidates) {
+      const partial = headers.findIndex((h) => h.includes(c))
+      if (partial >= 0) return partial
+    }
+    return -1
+  }
+
+  // Prefer payout/obligation refs over batch refs (YC sample has both).
+  const refIdx = pickHeader(
+    'client_payout_ref',
+    'obligation_id',
+    'payout_ref',
+    'request_id',
+    'requestid',
+    'ref_id',
+    'ref',
   )
-  const amountIdx = headers.findIndex((header) => header.includes('amount'))
-  const beneficiaryIdx = headers.findIndex((header) => header.includes('beneficiary') || header.includes('account'))
-  const statusIdx = headers.findIndex((header) => header.includes('status'))
-  const reasonIdx = headers.findIndex((header) => header.includes('reason') || header.includes('error'))
+  const invoiceIdx = pickHeader('invoice_id', 'invoice', 'inv')
+  const amountIdx = pickHeader('amount.value', 'amount', 'amount_value')
+  const beneficiaryIdx = pickHeader('beneficiary.name', 'beneficiary', 'payee', 'account_number')
+  const statusIdx = pickHeader('status')
+  const reasonIdx = pickHeader('reason', 'error', 'error_detail')
 
   return dataRows.slice(0, 1200).map((cells, index) => {
     const base = emptyBatchRowSkeleton(index)

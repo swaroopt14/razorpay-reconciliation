@@ -4,13 +4,13 @@
 const IMPERIAL_BLUE = '#002395'
 
 /**
- * Stripe-style sandbox strip: imperial blue bar, white “Sandbox” + info, centered
- * message, white boxed “Verify your business” CTA. Compact height.
- */
+  * Stripe-style sandbox strip: imperial blue bar, white “Sandbox” + info, centered
+  * message, white boxed “Verify your business” CTA. Compact height.
+  */
 export function SandboxStripeBanner({ onVerify }: { onVerify: () => void }) {
   return (
     <div
-      className="flex flex-col gap-2 rounded-t-[1.15rem] px-3 py-2 text-[13px] text-white sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-5 sm:py-2.5 lg:px-8"
+      className="flex flex-col gap-2 border-b border-black/15 px-3 py-2 text-[13px] text-white sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-5 sm:py-2.5 lg:px-8"
       style={{ backgroundColor: IMPERIAL_BLUE }}
     >
       <span className="flex shrink-0 items-center gap-2">
@@ -24,7 +24,7 @@ export function SandboxStripeBanner({ onVerify }: { onVerify: () => void }) {
       </span>
 
       <p className="min-w-0 flex-1 text-left text-[13px] font-bold leading-snug text-white sm:text-center sm:text-[14px] sm:leading-normal">
-        Sandbox mode, testing only. No real payments will be sent.
+        Sandbox mode - testing only. No real payments will be sent.
       </p>
 
       <button

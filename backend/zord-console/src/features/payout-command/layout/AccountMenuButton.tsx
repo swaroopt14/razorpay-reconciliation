@@ -9,6 +9,10 @@ import { Glyph } from '../shared'
 
 type AccountMenuButtonProps = {
   deskRole: string
+  /** Use on dark product top bars. */
+  tone?: 'default' | 'onDark'
+  /** Square icon button (person mark) instead of initials. */
+  iconOnly?: boolean
 }
 
 function userInitials(email: string | undefined, name: string | undefined): string {
@@ -21,7 +25,11 @@ function userInitials(email: string | undefined, name: string | undefined): stri
   return 'Z'
 }
 
-export function AccountMenuButton({ deskRole }: AccountMenuButtonProps) {
+export function AccountMenuButton({
+  deskRole,
+  tone = 'onDark',
+  iconOnly = false,
+}: AccountMenuButtonProps) {
   const router = useRouter()
   const { user } = useAuth()
   const [open, setOpen] = useState(false)
@@ -65,14 +73,28 @@ export function AccountMenuButton({ deskRole }: AccountMenuButtonProps) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className={`flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-violet-200 via-sky-100 to-amber-100 text-[13px] font-bold text-neutral-800 shadow-sm ring-2 ring-white transition hover:ring-neutral-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-400 sm:h-11 sm:w-11 ${
-          open ? 'ring-neutral-400' : ''
+        className={`flex h-10 w-10 items-center justify-center text-[12px] font-bold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${
+          tone === 'onDark'
+            ? `rounded-[10px] border border-[#2F2F2F] bg-[#1C1C1C] text-[#D4D4D4] hover:border-[#3A3A3A] hover:bg-[#242424] hover:text-white focus-visible:outline-white/40 ${open ? 'border-[#4A4A4A] bg-[#242424] text-white' : ''}`
+            : `rounded-none border border-[#CBD5E1] bg-[#E2E8F0] text-[#0F172A] hover:bg-[#CBD5E1] focus-visible:outline-neutral-400 ${open ? 'border-[#94A3B8]' : ''}`
         }`}
         aria-label="Account menu"
         aria-expanded={open}
         aria-haspopup="menu"
       >
-        {initials}
+        {iconOnly ? (
+          <svg className="h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" aria-hidden>
+            <circle cx="12" cy="8" r="3.2" stroke="currentColor" strokeWidth="1.7" />
+            <path
+              d="M5.5 18.5c1.2-2.8 3.4-4.2 6.5-4.2s5.3 1.4 6.5 4.2"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+            />
+          </svg>
+        ) : (
+          initials
+        )}
       </button>
 
       {open ? (
@@ -85,7 +107,7 @@ export function AccountMenuButton({ deskRole }: AccountMenuButtonProps) {
           />
           <div
             role="menu"
-            className="absolute right-0 top-full z-[60] mt-2 w-[min(calc(100vw-1.5rem),17.5rem)] origin-top-right overflow-hidden rounded-xl border border-neutral-200/90 bg-white shadow-[0_18px_48px_rgba(15,23,42,0.14)] animate-[alerts-pop_0.18s_ease-out]"
+            className="absolute right-0 top-full z-[60] mt-2 w-[min(calc(100vw-1.5rem),17.5rem)] origin-top-right overflow-hidden rounded-none border border-neutral-200/90 bg-white shadow-[0_18px_48px_rgba(15,23,42,0.14)] animate-[alerts-pop_0.18s_ease-out]"
           >
             <div className="border-b border-neutral-100 px-4 py-3.5">
               <p className="truncate text-[14px] font-semibold text-neutral-900">{displayEmail}</p>
@@ -99,31 +121,31 @@ export function AccountMenuButton({ deskRole }: AccountMenuButtonProps) {
 
             <div className="p-1.5">
               <Link
-                href="/payout-command-view/today?dock=support&accountTab=Profile"
+                href="/admin?demo=sandbox&tab=team"
                 role="menuitem"
                 onClick={() => setOpen(false)}
                 className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-[14px] font-medium text-neutral-800 transition hover:bg-neutral-50"
               >
                 <Glyph name="users" className="h-4 w-4 text-neutral-500" />
-                Profile
+                Team & Access
               </Link>
               <Link
-                href="/payout-command-view/settings/account"
+                href="/admin?demo=sandbox&tab=support"
                 role="menuitem"
                 onClick={() => setOpen(false)}
                 className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-[14px] font-medium text-neutral-800 transition hover:bg-neutral-50"
               >
-                <Glyph name="document" className="h-4 w-4 text-neutral-500" />
-                Settings
+                <Glyph name="support" className="h-4 w-4 text-neutral-500" />
+                Support
               </Link>
               <Link
-                href="/payout-command-view/settings/api-keys"
+                href="/developer?demo=sandbox&tab=keys"
                 role="menuitem"
                 onClick={() => setOpen(false)}
                 className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-[14px] font-medium text-neutral-800 transition hover:bg-neutral-50"
               >
                 <Glyph name="key" className="h-4 w-4 text-neutral-500" />
-                API keys
+                Developer
               </Link>
             </div>
 
@@ -133,9 +155,9 @@ export function AccountMenuButton({ deskRole }: AccountMenuButtonProps) {
                 role="menuitem"
                 disabled={signingOut}
                 onClick={() => void handleSignOut()}
-                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-[14px] font-semibold text-red-700 transition hover:bg-red-50 disabled:opacity-60"
+                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-[14px] font-semibold text-[#0B1324] transition hover:bg-[#F1F5F9] disabled:opacity-60"
               >
-                <Glyph name="arrow-up-right" className="h-4 w-4 rotate-45 text-red-600" />
+                <Glyph name="arrow-up-right" className="h-4 w-4 rotate-45 text-[#0B1324]" />
                 {signingOut ? 'Signing out…' : 'Log out'}
               </button>
             </div>

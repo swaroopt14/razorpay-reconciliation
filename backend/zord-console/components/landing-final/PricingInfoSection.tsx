@@ -19,7 +19,7 @@ export function PricingInfoSection() {
           <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#34D399]/15 text-[#059669]">
             <Layers className="h-3.5 w-3.5" strokeWidth={2.25} />
           </span>
-          <p>Enterprise commercials for payout intelligence, not payments, payroll, or banking SKUs.</p>
+          <p>Enterprise pricing for seeing payouts clearly and proving what happened - not a payments or banking product.</p>
         </motion.div>
 
         <motion.h2
@@ -29,7 +29,7 @@ export function PricingInfoSection() {
           transition={{ duration: 0.6, delay: 0.06 }}
           className="mt-10 text-[2.35rem] font-semibold leading-[1.02] tracking-[-0.055em] text-[#111111] sm:text-5xl lg:text-[3.75rem]"
         >
-          Price the operating layer.
+          Price the workspace.
           <span className="mt-2 block">
             Not a{' '}
             <span className="text-[#047857]">checkout rate card.</span>
@@ -43,8 +43,8 @@ export function PricingInfoSection() {
           transition={{ duration: 0.55, delay: 0.12 }}
           className="mt-8 max-w-2xl text-base leading-relaxed text-[#6B7280] sm:text-lg sm:leading-8"
         >
-          Commercials follow workspace depth, connector coverage, Evidence Pack workflows, and rollout support,
-          shaped after your team validates fit in sandbox.
+          Pricing follows how your teams use proof packs, matching and review, and support needs - shaped after you
+          try it first with sample data.
         </motion.p>
       </div>
     </section>

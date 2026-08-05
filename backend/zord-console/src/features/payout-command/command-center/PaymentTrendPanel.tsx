@@ -13,7 +13,7 @@ import type { PaymentTrendChartPoint } from './PaymentValueTrendChart'
 import type { DisbursementTrendRange } from '@/services/payout-command/prod-api/disbursementTrendTypes'
 
 type Props = {
-  /** One point per calendar bucket from API — no resampling or value duplication. */
+  /** One point per calendar bucket from API - no resampling or value duplication. */
   series: PaymentTrendChartPoint[]
   loading?: boolean
   period: DisbursementTrendRange

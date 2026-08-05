@@ -1,12 +1,12 @@
 /**
- * Intent Journal — stable type contract.
+ * Intent Journal - stable type contract.
  *
  * These are the shapes the UI depends on. When the real backend ships,
  * the swap is one mapping function per type. Do not break these without
  * a coordinated migration.
  *
  * Vocabulary (from Zord product definition):
- *   - intent: a requested payout — the atomic unit
+ *   - intent: a requested payout - the atomic unit
  *   - batch: a group of intents processed together
  *   - signal: a webhook / poll / settlement-file event from PSP or bank
  *   - evidence: per-intent trace + cryptographic proof
@@ -127,7 +127,7 @@ export type EvidencePackStatus = {
 
 // ─── Service 2 truth-build fields (ZORD SERVICE 2 §6, §9.3, §12) ──────────────
 
-/** Service 2 / Service 6 mode — what kind of lifecycle this intent runs. */
+/** Service 2 / Service 6 mode - what kind of lifecycle this intent runs. */
 export type EvidenceMode = 'INTELLIGENCE_ATTACH' | 'SECONDARY_DISPATCH' | 'FULL_CONTROL'
 
 /** What the enterprise meant by this intent (Service 2 §9.3 `intent_kind`). */
@@ -155,7 +155,7 @@ export type FieldConfidenceSummary = {
   unmappedExtrasCount: number
 }
 
-/** NIR / mapping provenance — §6.1, §6.11, §9.2. */
+/** NIR / mapping provenance - §6.1, §6.11, §9.2. */
 export type MappingProvenance = {
   nirId: string
   mappingProfileId: string
@@ -165,7 +165,7 @@ export type MappingProvenance = {
   fieldConfidence: FieldConfidenceSummary
 }
 
-/** Business idempotency outputs — §6.7, §11.3. */
+/** Business idempotency outputs - §6.7, §11.3. */
 export type BusinessIdempotency = {
   businessIdempotencyKey: string
   duplicateRiskFlag: boolean
@@ -174,14 +174,14 @@ export type BusinessIdempotency = {
   possibleDuplicateClusterId: string | null
 }
 
-/** Deterministic structural scores Service 2 computes — §12, §15. */
+/** Deterministic structural scores Service 2 computes - §12, §15. */
 export type CanonicalScores = {
   proofReadinessScore: number // 0-100 (§12.2)
-  matchabilityScore: number // 0-100 (§12.3) — likelihood of later settlement attachment
+  matchabilityScore: number // 0-100 (§12.3) - likelihood of later settlement attachment
   intentQualityScore: number // 0-100 (§12.4)
 }
 
-/** Governance outcome with reason codes — §9.3. */
+/** Governance outcome with reason codes - §9.3. */
 export type GovernanceOutcome = {
   state: GovernanceState
   reasonCodes: string[]
@@ -190,7 +190,7 @@ export type GovernanceOutcome = {
 /**
  * The deep per-intent detail. Returned by `getIntentDetail(intentId)` when
  * the user expands a row. The lightweight row shape (existing
- * `IntentJournalIntentRow`) doesn't carry these — they're fetched lazily.
+ * `IntentJournalIntentRow`) doesn't carry these - they're fetched lazily.
  */
 export type IntentDetail = {
   intentId: string
@@ -242,7 +242,7 @@ export type IntentDetail = {
 }
 
 /**
- * Sandbox-seeded batch wrapper — what `seeded-batches-store` persists.
+ * Sandbox-seeded batch wrapper - what `seeded-batches-store` persists.
  * The `batch` field matches the existing `IntentJournalBatchRecord` shape
  * so the Intent Journal sidebar can render it without a different code path.
  */
@@ -267,6 +267,6 @@ export type SeededBatch = {
     mismatchCount: number
     unresolvedCount: number
   }
-  /** All intent details for this batch — populated up-front so the journal can render rows immediately. */
+  /** All intent details for this batch - populated up-front so the journal can render rows immediately. */
   intents: IntentDetail[]
 }

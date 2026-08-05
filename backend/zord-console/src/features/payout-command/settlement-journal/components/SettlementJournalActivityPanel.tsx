@@ -35,12 +35,12 @@ const JOURNAL_FILTER_LABEL =
   'mb-1 block text-[11px] font-semibold uppercase tracking-[0.08em] text-[#888888]'
 
 const filterInputClass =
-  'h-9 w-full rounded-xl border border-slate-200/90 bg-slate-50 px-3 text-[14px] text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-400/55 focus:bg-white focus:ring-2 focus:ring-sky-400/15'
+  'h-9 w-full rounded-xl border border-slate-200/90 bg-slate-50 px-3 text-[14px] text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#0B1324]/20/55 focus:bg-white focus:ring-2 focus:ring-[#0B1324]/20'
 
 const filterSelectClass =
-  'h-9 w-full min-w-[7.5rem] rounded-xl border border-slate-200/90 bg-slate-50 px-2.5 text-[14px] text-slate-900 outline-none transition focus:border-sky-400/55 focus:bg-white focus:ring-2 focus:ring-sky-400/15'
+  'h-9 w-full min-w-[7.5rem] rounded-xl border border-slate-200/90 bg-slate-50 px-2.5 text-[14px] text-slate-900 outline-none transition focus:border-[#0B1324]/20/55 focus:bg-white focus:ring-2 focus:ring-[#0B1324]/20'
 
-const ROW_SIZE_OPTIONS = [25, 50, 100, 200] as const
+const ROW_SIZE_OPTIONS = [20, 50, 100, 200] as const
 const TABLE_TH =
   'px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-[#888888] whitespace-nowrap'
 const TABLE_COL_COUNT = 8
@@ -423,16 +423,16 @@ export function SettlementJournalActivityPanel({ vm }: SettlementJournalActivity
                         <p>
                           <span className="text-[#888888]">{settlementJournalCopy.table.matchedPayment}</span>
                           <br />
-                          {row.matchedIntentId && row.matchedIntentId !== '—' ? (
+                          {row.matchedIntentId && row.matchedIntentId !== '-' ? (
                             <Link
                               href={`/payout-command-view/today?dock=grid&batch_id=${encodeURIComponent(row.clientBatchId)}`}
-                              className="font-mono text-[13px] text-sky-800 underline"
+                              className="font-mono text-[13px] text-[#0B1324] underline"
                               onClick={(e) => e.stopPropagation()}
                             >
                               {row.matchedIntentId}
                             </Link>
                           ) : (
-                            '—'
+                            '-'
                           )}
                         </p>
                         <p>
@@ -471,7 +471,7 @@ export function SettlementJournalActivityPanel({ vm }: SettlementJournalActivity
                           {row.retryFlag ? 'Retry ' : ''}
                           {row.reversalFlag ? 'Reversal ' : ''}
                           {row.returnFlag ? 'Return ' : ''}
-                          {!row.retryFlag && !row.reversalFlag && !row.returnFlag ? '—' : ''}
+                          {!row.retryFlag && !row.reversalFlag && !row.returnFlag ? '-' : ''}
                         </p>
                         <p>
                           <span className="text-[#888888]">Provider / failure code</span>
@@ -481,11 +481,11 @@ export function SettlementJournalActivityPanel({ vm }: SettlementJournalActivity
                         <p>
                           <span className="text-[#888888]">Parse / mapping confidence</span>
                           <br />
-                          {row.parseConfidence != null ? `${(row.parseConfidence * 100).toFixed(0)}%` : '—'}{' '}
+                          {row.parseConfidence != null ? `${(row.parseConfidence * 100).toFixed(0)}%` : '-'}{' '}
                           /{' '}
                           {row.mappingConfidence != null
                             ? `${(row.mappingConfidence * 100).toFixed(0)}%`
-                            : '—'}
+                            : '-'}
                         </p>
                         <p>
                           <span className="text-[#888888]">Value date</span>
@@ -543,11 +543,11 @@ export function SettlementJournalActivityPanel({ vm }: SettlementJournalActivity
                           <br />
                           {row.carrierRichnessScore != null
                             ? `${(row.carrierRichnessScore * 100).toFixed(0)}%`
-                            : '—'}{' '}
+                            : '-'}{' '}
                           /{' '}
                           {row.attachmentReadinessScore != null
                             ? `${(row.attachmentReadinessScore * 100).toFixed(0)}%`
-                            : '—'}{' '}
+                            : '-'}{' '}
                           · {row.scoreVersion}
                         </p>
                         <p>
@@ -651,7 +651,7 @@ export function SettlementJournalActivityPanel({ vm }: SettlementJournalActivity
       {settlementJournalCopy.tabs.parseErrors}
     </p>
     <p className={HOME_BODY_IMPERIAL_SM}>
-      <span className="rounded-full border border-rose-200/70 bg-rose-50 px-2 py-0.5 text-[12px] font-semibold text-rose-800">
+      <span className="rounded-full border border-[#0B1324]/20/70 bg-[#F1F5F9] px-2 py-0.5 text-[12px] font-semibold text-[#0B1324]">
         {parseErrorTotal != null
           ? parseErrorTotal.toLocaleString('en-US')
           : parseErrorTotalLoading

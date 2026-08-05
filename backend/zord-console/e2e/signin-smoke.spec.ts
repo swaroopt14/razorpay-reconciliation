@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
 
 /**
- * Live sign-in smoke — canonical /signin (live payout command by default).
+ * Live sign-in smoke - canonical /signin (live payout command by default).
  *
  * Creates the account first if it does not exist (same email/password env vars as signup smoke).
  *

@@ -1,6 +1,6 @@
 /**
  * Maps live `/api/prod/intents/:id` payloads + table row context into the
- * `IntentDetail` contract for the Intent Journal drawer — without using canned
+ * `IntentDetail` contract for the Intent Journal drawer - without using canned
  * mock generators.
  */
 
@@ -28,7 +28,7 @@ export type LiveJournalDrawerRowInput = {
   clientPayoutRef?: string
   sourceRowNum?: number | null
   amount: number
-  method: 'Bank Transfer' | 'LSM' | 'NACH' | '—'
+  method: 'Bank Transfer' | 'LSM' | 'NACH' | '-'
   rail?: string
   beneficiaryName?: string | null
   paymentPartner: string
@@ -71,14 +71,14 @@ function beneficiaryNameFromApi(b: unknown): { first: string; last: string } | n
   const raw = (b as { name?: unknown }).name
   if (typeof raw !== 'string' || !raw.trim()) return null
   const parts = raw.trim().split(/\s+/)
-  if (parts.length === 1) return { first: parts[0]!, last: '—' }
+  if (parts.length === 1) return { first: parts[0]!, last: '-' }
   return { first: parts[0]!, last: parts.slice(1).join(' ') }
 }
 
 function beneficiaryNameFromHint(name: string | null | undefined): { first: string; last: string } | null {
   if (typeof name !== 'string' || !name.trim()) return null
   const parts = name.trim().split(/\s+/)
-  if (parts.length === 1) return { first: parts[0]!, last: '—' }
+  if (parts.length === 1) return { first: parts[0]!, last: '-' }
   return { first: parts[0]!, last: parts.slice(1).join(' ') }
 }
 
@@ -92,7 +92,7 @@ function railFromRow(method: LiveJournalDrawerRowInput['method'], railHint?: str
   if (hint.includes('LSM') || hint.includes('INSTA')) return 'LSM'
   if (method === 'LSM') return 'IMPS'
   if (method === 'NACH') return 'NACH'
-  return '—'
+  return '-'
 }
 
 function connectorFromRow(partner: string, bank: string): string {

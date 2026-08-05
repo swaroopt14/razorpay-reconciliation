@@ -1,4 +1,4 @@
-/** Full INR with Indian digit grouping — never L/Cr/K abbreviations. */
+/** Full INR with Indian digit grouping - never L/Cr/K abbreviations. */
 export type FmtInrFullOptions = {
   /** 0 = whole rupees (KPI heroes); 2 = paise preserved (table rows). */
   decimals?: 0 | 2
@@ -9,7 +9,7 @@ export function fmtInrFull(
   options: FmtInrFullOptions = {},
 ): string {
   const { decimals = 0 } = options
-  if (amount === null || amount === undefined || !Number.isFinite(amount)) return '—'
+  if (amount === null || amount === undefined || !Number.isFinite(amount)) return '-'
   if (amount === 0) return decimals === 2 ? '₹0.00' : '₹0'
   return new Intl.NumberFormat('en-IN', {
     style: 'currency',
@@ -31,23 +31,23 @@ export function fmtInrFromMinor(
   options: FmtInrFullOptions = {},
 ): string {
   const rupees = minorToRupees(minor)
-  if (rupees === null) return '—'
+  if (rupees === null) return '-'
   return fmtInrFull(rupees, options)
 }
 
 /**
- * Displays the amount EXACTLY as returned by the backend — NO calculation.
- * The value is shown as-is (no ÷100 paise→rupee conversion, no rounding); we
- * only add the ₹ symbol and Indian digit grouping for readability and keep
- * the decimals exactly as the API sent them.
- *
- * Example: backend `527228.11` → "₹5,27,228.11" (value untouched).
- *
- * Float-safe: we read the digits from `String(value)`, which round-trips the
- * parsed number exactly, instead of doing any arithmetic.
- */
+  * Displays the amount EXACTLY as returned by the backend - NO calculation.
+  * The value is shown as-is (no ÷100 paise→rupee conversion, no rounding); we
+  * only add the ₹ symbol and Indian digit grouping for readability and keep
+  * the decimals exactly as the API sent them.
+  *
+  * Example: backend `527228.11` → "₹5,27,228.11" (value untouched).
+  *
+  * Float-safe: we read the digits from `String(value)`, which round-trips the
+  * parsed number exactly, instead of doing any arithmetic.
+  */
 export function fmtInrFromMinorExact(value: number | null | undefined): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) return '—'
+  if (value === null || value === undefined || !Number.isFinite(value)) return '-'
   const neg = value < 0
   const [intRaw, fracRaw = ''] = String(Math.abs(value)).split('.')
   const grouped = Number(intRaw).toLocaleString('en-IN')
@@ -55,9 +55,9 @@ export function fmtInrFromMinorExact(value: number | null | undefined): string {
 }
 
 /**
- * Chart Y-axis scale: API money fields → thousands of rupees (₹50,000 → 50).
- * Intelligence/leakage payloads use rupee-scale numbers in `*_minor` fields for this console.
- */
+  * Chart Y-axis scale: API money fields → thousands of rupees (₹50,000 → 50).
+  * Intelligence/leakage payloads use rupee-scale numbers in `*_minor` fields for this console.
+  */
 export function chartThousandsFromMinor(minor: number): number {
   if (!Number.isFinite(minor) || minor <= 0) return 0
   return minor / 1000
@@ -69,7 +69,7 @@ export function chartYAxisMaxThousands(peakThousands: number): number {
   return Math.max(10, Math.ceil(padded / 10) * 10)
 }
 
-/** @deprecated Use fmtInrFull — kept as alias to prevent L/Cr regressions. */
+/** @deprecated Use fmtInrFull - kept as alias to prevent L/Cr regressions. */
 export function fmtInrCompact(minor: number | null): string {
   return fmtInrFull(minor, { decimals: 0 })
 }

@@ -40,7 +40,6 @@ import {
 import { apiTrimmedString } from '@/services/payout-command/prod-api/coerceApiField'
 import {
   getActiveDemoBatchId,
-  isDemoSession,
   setActiveDemoBatchId,
   withDemoBatchScope,
 } from '@/services/payout-command/demo/ycDemoConstants'
@@ -174,9 +173,7 @@ export default function PayoutCommandViewClient({
           params.set('client_batch_id', batch)
           setActiveDemoBatchId(batch)
         }
-        // Never force demo fixtures after password login — only keep demo when already in one.
-        if (!params.get('demo') && isDemoSession()) params.set('demo', 'sandbox')
-        else if (params.get('demo') && !isDemoSession()) params.delete('demo')
+        if (!params.get('demo')) params.set('demo', 'sandbox')
         const newUrl = `${window.location.pathname}?${params.toString()}`
         router.push(newUrl)
       }

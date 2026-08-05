@@ -28,13 +28,13 @@ export function deriveSettlementDataHealth(rows: SettlementObservationTableRow[]
 
   const hasRef = (value: string | undefined) => {
     const v = (value ?? '').trim()
-    return Boolean(v && v !== '—')
+    return Boolean(v && v !== '-')
   }
   const withBankRef = rows.filter((r) => hasRef(r.bankRef)).length
   const withClientRef = rows.filter((r) => hasRef(r.clientRef)).length
   const matchedCount = rows.filter((r) => {
     const linkedIntentId = (r.matchedIntentId ?? '').trim()
-    if (linkedIntentId && linkedIntentId !== '—') return true
+    if (linkedIntentId && linkedIntentId !== '-') return true
     return mapMatchStatus(r) === 'Matched'
   }).length
   const unmatchedOrphanValue = rows

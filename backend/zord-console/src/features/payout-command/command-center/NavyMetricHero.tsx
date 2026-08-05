@@ -55,9 +55,9 @@ function resolveBucketCols(explicit: BucketCols | undefined, bucketCount: number
 }
 
 /**
- * Shared dark navy hero — matches Ambiguity & Leakage “Total ambiguity cost” card.
- * Use across Connector Intelligence and related finance surfaces.
- */
+  * Shared dark navy hero - matches Ambiguity & Leakage “Total ambiguity cost” card.
+  * Use across Connector Intelligence and related finance surfaces.
+  */
 export function NavyMetricHero({
   eyebrow,
   value,
@@ -127,7 +127,7 @@ export function NavyMetricHero({
 
 const SPARK_STROKE: Record<NonNullable<NavyHeroBucket['sparkTone']>, string> = {
   good: '#000000',
-  warn: '#fbbf24',
+  warn: '#0B1324',
   bad: '#f87171',
   neutral: 'rgba(255,255,255,0.65)',
 }

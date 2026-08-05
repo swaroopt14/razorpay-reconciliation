@@ -6,10 +6,10 @@ import { ArrowRight, Info } from 'lucide-react'
 const SLOW_EASE = [0.22, 1, 0.36, 1] as const
 
 const INTELLIGENCE_METRICS = [
-  { label: 'Settlement Health', value: 'Healthy', accent: true },
-  { label: 'Network Latency', value: '142 ms' },
-  { label: 'Retry Candidates', value: '41' },
-  { label: 'Routing Confidence', value: '96%' },
+  { label: 'Settlement health', value: 'Healthy', accent: true },
+  { label: 'Waiting on bank', value: '18' },
+  { label: 'Needs a person', value: '41' },
+  { label: 'Lined up this week', value: '96%' },
 ] as const
 
 function GlassDivider({ delay = 0, animate }: { delay?: number; animate: boolean }) {
@@ -27,7 +27,7 @@ function GlassDivider({ delay = 0, animate }: { delay?: number; animate: boolean
   )
 }
 
-/** Premium glassmorphism intelligence card, floats above the branch stage. */
+/** Premium glassmorphism intelligence card - floats above the branch stage. */
 export function RiskIntelligenceCard({ animate }: { animate: boolean }) {
   const shouldReduceMotion = useReducedMotion()
   const show = shouldReduceMotion || animate
@@ -53,15 +53,15 @@ export function RiskIntelligenceCard({ animate }: { animate: boolean }) {
         >
           <div className="min-w-0 flex-1">
             <h3 className="text-[22px] font-semibold leading-tight tracking-[-0.03em] text-white">
-              Cross-border payout status
+              Payment health
             </h3>
             <p className="mt-3 max-w-[30ch] text-sm font-medium leading-[1.55] text-white/80">
-              Compare authorised value, provider acknowledgements, fees, deductions and final settlement across the payout lifecycle.
+              A live view of payment health, bank confirmations, and items that need a person.
             </p>
           </div>
           <button
             type="button"
-            aria-label="About Risk Intelligence"
+            aria-label="About Payment health"
             className="mt-0.5 flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full border border-white/[0.12] bg-white/[0.06] text-white/55 transition-colors duration-150 hover:border-white/20 hover:bg-white/[0.1] hover:text-white/80 focus:outline-none focus:ring-2 focus:ring-white/25"
           >
             <Info className="h-3.5 w-3.5" strokeWidth={1.75} />
@@ -99,9 +99,9 @@ export function RiskIntelligenceCard({ animate }: { animate: boolean }) {
           transition={{ duration: 0.85, delay: 0.62, ease: SLOW_EASE }}
           className="space-y-2"
         >
-          <p className="text-[13px] font-medium uppercase tracking-[0.08em] text-white/45">AI Recommendation</p>
+          <p className="text-[13px] font-medium uppercase tracking-[0.08em] text-white/45">Suggested next check</p>
           <p className="text-sm font-medium leading-[1.55] text-white/88">
-            Shift 18% of traffic to IMPS until latency normalizes.
+            18 payments are waiting on bank confirmation longer than usual.
           </p>
         </motion.div>
 
@@ -117,7 +117,7 @@ export function RiskIntelligenceCard({ animate }: { animate: boolean }) {
             ) : null}
             <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
           </span>
-          <p className="text-[13px] font-normal text-white/65">Optimizing payment flow in real time.</p>
+          <p className="text-[13px] font-normal text-white/65">Watching payment health in real time.</p>
         </motion.div>
       </div>
     </motion.div>
@@ -138,16 +138,16 @@ export function SignalFloatingOverlays({ opacity }: { opacity?: MotionValue<numb
       >
         <div className="flex items-start justify-between">
           <span className="text-[1.55rem] font-semibold leading-none tracking-[-0.04em] text-[#1A1A1A]">
-            +$12,840
+            +₹12,840
           </span>
           <Info className="mt-0.5 h-3.5 w-3.5 text-[#9CA3AF]" strokeWidth={1.75} />
         </div>
-        <p className="mt-1.5 text-[12px] text-[#666666]">Potential settlement variance</p>
+        <p className="mt-1.5 text-[12px] text-[#666666]">Recovered gap amount</p>
         <button
           type="button"
           className="mt-3 flex w-full cursor-pointer items-center justify-between rounded-full bg-[#111111] py-2.5 pl-4 pr-2 text-[12.5px] font-semibold text-white transition-colors duration-150 hover:bg-black focus:outline-none focus:ring-2 focus:ring-[#111] focus:ring-offset-2"
         >
-          View insight
+          Open gap
           <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/16">
             <ArrowRight className="h-3.5 w-3.5" strokeWidth={2.2} />
           </span>
@@ -164,7 +164,7 @@ export function SignalFloatingOverlays({ opacity }: { opacity?: MotionValue<numb
           Risk alert
         </div>
         <p className="px-4 py-3 text-[12px] leading-relaxed text-[#374151]">
-          Provider acknowledgement received, final settlement pending
+          Confirmation delay detected on UPI
         </p>
       </motion.div>
     </>

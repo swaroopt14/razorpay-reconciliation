@@ -75,7 +75,7 @@ export function HomeSurface({
   onYearChange,
   onQuarterChange,
 }: {
-  /** Optional URL `batch_id` — scopes patterns KPI only. */
+  /** Optional URL `batch_id` - scopes patterns KPI only. */
   batchId?: string
   snapshot: HomeOverviewSnapshot
   timeframe: HomeTimeframe
@@ -291,7 +291,7 @@ export function HomeSurface({
       ? fmtInrFromMinorExact(reviewMinor)
       : loading
         ? '…'
-        : '—'
+        : '-'
 
   const insightCarouselCards = useMemo(
     () =>
@@ -348,7 +348,7 @@ export function HomeSurface({
   }, [insightCarouselCards, tenantReady, insightCarouselLoading])
 
   const matchConfidencePct = useMemo(() => {
-    const withPct = (v: string) => (v === '—' || v === '…' ? v : `${v}%`)
+    const withPct = (v: string) => (v === '-' || v === '…' ? v : `${v}%`)
     return withPct(displayApiField(ambData?.avg_attachment_confidence, loading))
   }, [ambData, loading])
 
@@ -358,7 +358,7 @@ export function HomeSurface({
 
   const multiMatchRate = displayApiField(ambData?.candidate_collision_rate, loading)
 
-  const withPct = (v: string) => (v === '—' || v === '…' ? v : `${v}%`)
+  const withPct = (v: string) => (v === '-' || v === '…' ? v : `${v}%`)
   const proofCoveragePct = withPct(displayApiField(defData?.evidence_pack_rate, loading))
   const proofReadyRow = withPct(displayApiField(defData?.audit_ready_pct, loading))
   const incompleteProofRow = displayApiField(defData?.weak_evidence_count, loading)
@@ -373,7 +373,7 @@ export function HomeSurface({
       actions.push({
         title: 'Upload bank confirmation file',
         description: 'Required to complete proof for this period.',
-        href: '/payout-command-view/today?dock=settlement',
+        href: '/settlement/journal?demo=sandbox',
         emphasis: true,
       })
     }
@@ -441,7 +441,7 @@ export function HomeSurface({
         {heroMetric === 'intended' ? (
           <>
             <div className={`text-[64px] font-extrabold leading-none tabular-nums text-[#000000] sm:text-[72px]`}>
-              {intendedMinor !== null ? fmtInrFromMinorExact(intendedMinor) : loading || trendLoading ? '₹…' : '—'}
+              {intendedMinor !== null ? fmtInrFromMinorExact(intendedMinor) : loading || trendLoading ? '₹…' : '-'}
             </div>
             <div className="mt-3 text-[18px] font-bold text-[#000000]">Intended Payment Value</div>
             <p className={`mt-2 max-w-xs ${HOME_BODY_IMPERIAL_CENTERED}`}>
@@ -449,7 +449,7 @@ export function HomeSurface({
                 ? `${intentCountLabel} payment instructions received in this period.`
                 : loading || trendLoading
                   ? '…'
-                  : '—'}
+                  : '-'}
             </p>
           </>
         ) : (
@@ -594,7 +594,7 @@ export function HomeSurface({
         </div>
 
         <section
-          className="mt-8 space-y-3 bg-[#f4f4f1] px-2 pb-3 pt-1.5 sm:px-3 lg:px-4"
+          className="mt-8 space-y-3 bg-[#F8FAFC] px-2 pb-3 pt-1.5 sm:px-3 lg:px-4"
           aria-labelledby="home-today-command-center-title"
         >
           <PaymentCommandCenterBand

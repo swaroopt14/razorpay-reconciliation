@@ -62,19 +62,19 @@ export function SettlementParseErrorsTable({
                 className="border-t border-slate-100"
               >
                 <td className="px-3 py-2.5 font-mono text-[12px] text-[#334155]">
-                  {row.source_row_ref || '—'}
+                  {row.source_row_ref || '-'}
                 </td>
-                <td className="px-3 py-2.5 text-[#334155]">{row.error_stage || '—'}</td>
-                <td className="px-3 py-2.5 text-rose-700">{row.reason_code || '—'}</td>
+                <td className="px-3 py-2.5 text-[#334155]">{row.error_stage || '-'}</td>
+                <td className="px-3 py-2.5 text-[#0B1324]">{row.reason_code || '-'}</td>
                 <td className="px-3 py-2.5">
                   <span
                     className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
                       (row.severity || '').toUpperCase() === 'ERROR'
-                        ? 'border-rose-200 bg-rose-50 text-rose-700'
-                        : 'border-amber-200 bg-amber-50 text-amber-700'
+                        ? 'border-[#0B1324]/20 bg-[#F1F5F9] text-[#0B1324]'
+                        : 'border-[#0B1324]/20 bg-[#F1F5F9] text-[#0B1324]'
                     }`}
                   >
-                    {row.severity || '—'}
+                    {row.severity || '-'}
                   </span>
                 </td>
               </tr>

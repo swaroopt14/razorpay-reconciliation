@@ -19,10 +19,10 @@ export function currentUtcQuarterStartMonth(now = new Date()): number {
 
 /**
  * Chart window bounds (UTC):
- * - week: last 7 days inclusive (e.g. 16 Jun–22 Jun when today is 22 Jun)
- * - month: 1st–last day of current calendar month
- * - quarter: current calendar quarter (Q1 Jan–Mar, Q2 Apr–Jun, …)
- * - year: 1 Jan–31 Dec of current calendar year
+ * - week: last 7 days inclusive (e.g. 16 Jun-22 Jun when today is 22 Jun)
+ * - month: 1st-last day of current calendar month
+ * - quarter: current calendar quarter (Q1 Jan-Mar, Q2 Apr-Jun, …)
+ * - year: 1 Jan-31 Dec of current calendar year
  */
 export function trendWindowBounds(range: DisbursementTrendRange, now = new Date()): { from: Date; to: Date } {
   const today = startOfUtcDay(now)

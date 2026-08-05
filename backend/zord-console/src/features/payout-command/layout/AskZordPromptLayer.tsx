@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { HomeCommandStatus } from '@/services/payout-command/model'
@@ -26,6 +26,45 @@ export type AskZordPromptLayerProps = {
   archivedTurns: AskZordArchivedTurn[]
   tenantReady: boolean
   tenantId: string
+}
+
+const INVESTIGATION_STEPS = [
+  'Searching workspace payouts…',
+  'Reading sealed contracts and policy decisions…',
+  'Checking settlement journal signals…',
+  'Looking up evidence packs…',
+  'Composing answer with citations…',
+] as const
+
+function investigationStepsFor(prompt: string | null): string[] {
+  const p = (prompt ?? '').toLowerCase()
+  if (p.includes('trace') || p.includes('payment') || p.includes('disburs')) {
+    return [
+      'Searching payouts in this batch…',
+      'Opening sealed Payment Action Contract…',
+      'Reading dispatch attempts and provider ack…',
+      'Checking settlement / outcome signals…',
+      'Attaching evidence pack citations…',
+    ]
+  }
+  if (p.includes('proof') || p.includes('verify') || p.includes('evidence')) {
+    return [
+      'Searching evidence packs…',
+      'Checking integrity hash and coverage…',
+      'Linking contract and outcome artefacts…',
+      'Preparing citation list…',
+    ]
+  }
+  if (p.includes('exception') || p.includes('short') || p.includes('gap') || p.includes('pending')) {
+    return [
+      'Searching outcome exceptions…',
+      'Loading sealed expected amounts…',
+      'Comparing observed settlement credits…',
+      'Ranking review candidates (non-binding)…',
+      'Citing Outcome Review and Settlement Journal…',
+    ]
+  }
+  return [...INVESTIGATION_STEPS]
 }
 
 function ZordAssistantAvatar({ className = '' }: { className?: string }) {
@@ -141,8 +180,8 @@ function AssistantBubble({
   )
 }
 
-function footerCaption(status: HomeCommandStatus, tenantReady: boolean, tenantId: string) {
-  if (status === 'loading') return "Searching your workspace's payment data…"
+function footerCaption(status: HomeCommandStatus, tenantReady: boolean, tenantId: string, step?: string) {
+  if (status === 'loading') return step ?? "Searching your workspace's payment data…"
   if (status === 'typing') return 'Drafting answer from your workspace data…'
   if (tenantReady && tenantId.trim()) {
     return 'Charts load from your payment data · Ask Zord answers from your workspace context'
@@ -150,7 +189,7 @@ function footerCaption(status: HomeCommandStatus, tenantReady: boolean, tenantId
   return 'Sign in and select a workspace to use Ask Zord.'
 }
 
-/** Single Ask Zord chat shell — only mounted inside `AskZordPanel` when opened. */
+/** Single Ask Zord chat shell - only mounted inside `AskZordPanel` when opened. */
 export function AskZordPromptLayer({
   onClose,
   promptInput,
@@ -167,12 +206,29 @@ export function AskZordPromptLayer({
   const isThinking = status === 'loading' || status === 'typing'
   const scrollRef = useRef<HTMLDivElement>(null)
   const now = formatTime()
+  const [thinkSteps, setThinkSteps] = useState<string[]>([])
+  const [thinkIndex, setThinkIndex] = useState(0)
+
+  useEffect(() => {
+    if (status !== 'loading') {
+      setThinkSteps([])
+      setThinkIndex(0)
+      return
+    }
+    const steps = investigationStepsFor(lastPrompt)
+    setThinkSteps(steps)
+    setThinkIndex(0)
+    const timers = steps.slice(1).map((_, i) =>
+      window.setTimeout(() => setThinkIndex(i + 1), 700 * (i + 1)),
+    )
+    return () => timers.forEach((id) => window.clearTimeout(id))
+  }, [status, lastPrompt])
 
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
     el.scrollTop = el.scrollHeight
-  }, [archivedTurns, lastPrompt, response?.body, status])
+  }, [archivedTurns, lastPrompt, response?.body, status, thinkIndex])
 
   return (
     <div className="flex max-h-[min(88vh,40rem)] w-full flex-col overflow-hidden rounded-[20px] border border-slate-200/90 bg-white shadow-[0_24px_64px_rgba(15,23,42,0.18)] ring-1 ring-black/[0.04]">
@@ -214,7 +270,32 @@ export function AskZordPromptLayer({
 
         {lastPrompt ? <UserBubble text={lastPrompt} time={now} /> : null}
 
-        {response && (status !== 'idle' || response.body) ? (
+        {status === 'loading' && thinkSteps.length > 0 ? (
+          <div className="rounded-2xl border border-[#DBEAFE] bg-[#F8FBFF] px-4 py-3">
+            <p className="text-[13px] font-semibold text-[#0066FF]">
+              {thinkSteps[Math.min(thinkIndex, thinkSteps.length - 1)]}
+            </p>
+            <ul className="mt-2 space-y-1">
+              {thinkSteps.map((step, i) => (
+                <li
+                  key={step}
+                  className={`text-[11px] ${
+                    i < thinkIndex
+                      ? 'text-[#94A3B8] line-through'
+                      : i === thinkIndex
+                        ? 'font-medium text-slate-900'
+                        : 'text-[#CBD5E1]'
+                  }`}
+                >
+                  {i < thinkIndex ? '✓ ' : i === thinkIndex ? '→ ' : '· '}
+                  {step}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        {response && status !== 'loading' && (status !== 'idle' || response.body) ? (
           <AssistantBubble
             title={response.title}
             body={response.body}
@@ -236,7 +317,7 @@ export function AskZordPromptLayer({
                 disabled={isThinking}
                 className={`inline-flex items-center rounded-full border px-3 py-1.5 text-[12px] font-medium transition disabled:cursor-not-allowed disabled:opacity-60 sm:text-[13px] ${
                   selected
-                    ? 'border-sky-400 bg-sky-50 text-slate-900 ring-1 ring-sky-400/30'
+                    ? 'border-[#0B1324]/20 bg-[#0B1324] text-slate-900 ring-1 ring-[#0B1324]/20'
                     : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'
                 }`}
               >
@@ -262,7 +343,12 @@ export function AskZordPromptLayer({
               className="w-full bg-transparent text-[15px] text-slate-900 outline-none placeholder:text-slate-400 disabled:opacity-60"
             />
             <p className="mt-1 text-[11px] leading-snug text-slate-500">
-              {footerCaption(status, tenantReady, tenantId)}
+              {footerCaption(
+                status,
+                tenantReady,
+                tenantId,
+                thinkSteps[Math.min(thinkIndex, Math.max(thinkSteps.length - 1, 0))],
+              )}
             </p>
           </div>
           <button

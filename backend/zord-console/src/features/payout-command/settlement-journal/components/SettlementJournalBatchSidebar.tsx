@@ -81,7 +81,7 @@ export function SettlementJournalBatchSidebar({
                 ? 'Loading observations…'
                 : cached
                   ? cached.label
-                  : '—'
+                  : '-'
 
           return (
             <button

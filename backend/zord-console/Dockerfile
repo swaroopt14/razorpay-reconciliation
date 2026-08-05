@@ -51,6 +51,9 @@ RUN chown nextjs:nodejs .next
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
+# Writable dir for Zord Support tickets (console-owned, not smoke simulator)
+RUN mkdir -p .data/support-tickets && chown -R nextjs:nodejs .data
+
 USER nextjs
 
 EXPOSE 3000

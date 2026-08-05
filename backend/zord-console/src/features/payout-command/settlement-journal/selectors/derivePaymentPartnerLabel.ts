@@ -2,7 +2,7 @@ import type { SettlementObservationTableRow } from '@/services/payout-command/pr
 
 function isPresent(value: string | undefined): boolean {
   const v = (value ?? '').trim()
-  return Boolean(v && v !== '—')
+  return Boolean(v && v !== '-')
 }
 
 function formatPartnerLabel(raw: string): string {
@@ -15,7 +15,7 @@ function formatPartnerLabel(raw: string): string {
 
 /** Dominant payment partner label from settlement observation rows. */
 export function derivePaymentPartnerLabel(rows: SettlementObservationTableRow[]): string {
-  if (!rows.length) return '—'
+  if (!rows.length) return '-'
 
   const counts = new Map<string, number>()
   for (const row of rows) {
@@ -26,7 +26,7 @@ export function derivePaymentPartnerLabel(rows: SettlementObservationTableRow[])
     counts.set(key, (counts.get(key) ?? 0) + 1)
   }
 
-  if (!counts.size) return '—'
+  if (!counts.size) return '-'
 
   const [topKey] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]
   return formatPartnerLabel(topKey)

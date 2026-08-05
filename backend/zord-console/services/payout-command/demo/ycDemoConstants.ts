@@ -220,32 +220,19 @@ export function setActiveDemoBatchId(batchId: string) {
 }
 
 /**
- * Keep menu destinations on the same batch.
- * Only attaches `demo=sandbox` when the user is already in an explicit demo session
- * (from `/login` “Enter demo workspace”). Password /signin must not opt into fixtures.
+ * Keep menu destinations on the same batch (and demo session).
+ * Safe for Spec routes and `/sandbox?dock=` links.
  */
 export function withDemoBatchScope(href: string, batchId?: string): string {
   const [path, rawQs = ''] = href.split('?')
   const q = new URLSearchParams(rawQs)
-  if (!q.has('demo') && isDemoSession()) q.set('demo', DEMO_QUERY_VALUE)
-  let batch = batchId?.trim() || ''
-  if (!batch && typeof window !== 'undefined') {
-    try {
-      const stored = sessionStorage.getItem(DEMO_BATCH_STORAGE_KEY)?.trim()
-      if (stored) batch = stored
-      else if (isDemoSession()) batch = getActiveDemoBatchId()
-    } catch {
-      /* ignore */
-    }
-  } else if (!batch && isDemoSession()) {
-    batch = DEMO_SMOKE_BATCH_ID
-  }
-  if (batch) {
-    q.set('batch_id', batch)
-    q.set('client_batch_id', batch)
-  }
-  const qs = q.toString()
-  return qs ? `${path}?${qs}` : path
+  if (!q.has('demo')) q.set('demo', DEMO_QUERY_VALUE)
+  const batch =
+    batchId?.trim() ||
+    (typeof window !== 'undefined' ? getActiveDemoBatchId() : DEMO_SMOKE_BATCH_ID)
+  q.set('batch_id', batch)
+  q.set('client_batch_id', batch)
+  return `${path}?${q.toString()}`
 }
 
 export function sandboxDockHref(dock: string, batchId?: string): string {
@@ -253,17 +240,16 @@ export function sandboxDockHref(dock: string, batchId?: string): string {
 }
 
 /**
- * Establish a demo session.
- * - `seedUploads: true` — only for `/login` “Enter demo workspace” (populated spine)
- * - `seedUploads: false` — force clear readiness (upload-first)
- * - omitted — leave existing readiness untouched (Spec route bootstraps)
+ * Establish a demo session. Upload readiness is NOT pre-seeded by default —
+ * overview/journals stay empty until obligation + settlement files are uploaded.
+ * Pass `seedUploads: true` only for the explicit “Enter demo workspace” path.
  */
 export function enterDemoSession(opts?: { guide?: boolean; seedUploads?: boolean }) {
   if (typeof window === 'undefined') return
   try {
     sessionStorage.setItem(DEMO_SESSION_KEY, '1')
     sessionStorage.setItem(DEMO_BATCH_STORAGE_KEY, DEMO_SMOKE_BATCH_ID)
-    if (opts?.seedUploads === true) {
+    if (opts?.seedUploads) {
       sessionStorage.setItem(
         'zord_demo_batch_ready',
         JSON.stringify({
@@ -287,7 +273,7 @@ export function enterDemoSession(opts?: { guide?: boolean; seedUploads?: boolean
       } catch {
         /* ignore */
       }
-    } else if (opts?.seedUploads === false) {
+    } else {
       sessionStorage.removeItem('zord_demo_batch_ready')
       try {
         window.dispatchEvent(new CustomEvent('zord:demo-batch-ready', { detail: null }))

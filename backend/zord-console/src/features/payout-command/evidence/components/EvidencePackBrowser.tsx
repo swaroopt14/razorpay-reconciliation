@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { Glyph } from '../../shared'
 import { JOURNAL_DM_SANS } from '../../journal/journalFonts'
@@ -57,19 +57,34 @@ function sortCatalogEntries(entries: CatalogEntry[]): CatalogEntry[] {
   return [...ready, ...unavailable]
 }
 
+function matchesFilter(entry: CatalogEntry, query: string): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+  if (entry.status === 'unavailable') return entry.batchId.toLowerCase().includes(q)
+  const { row } = entry
+  return (
+    row.packId.toLowerCase().includes(q) ||
+    row.batchId.toLowerCase().includes(q) ||
+    row.proofRoot.toLowerCase().includes(q)
+  )
+}
+
 function BatchProofRow({ row }: { row: PackTableRowVm }) {
   const merkleShort = shortHash(row.proofRoot)
   const href = `/payout-command-view/evidence-pack/${encodeURIComponent(row.packId)}?tab=graph${
-    row.batchId && row.batchId !== '—' ? `&batch_id=${encodeURIComponent(row.batchId)}` : ''
+    row.batchId && row.batchId !== '-' ? `&batch_id=${encodeURIComponent(row.batchId)}` : ''
   }`
 
   return (
-    <tr className="group align-top bg-sky-50/40 transition-colors hover:bg-sky-50/70">
+    <tr className="group align-top bg-[#0B1324]/40 transition-colors hover:bg-[#0B1324]/70">
       <td className="px-5 py-4">
         <p className="font-mono text-[13px] font-semibold text-slate-900">{row.packId}</p>
         <div className="mt-2 flex flex-wrap gap-1.5">
-          <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-800">
+          <span className="inline-flex items-center gap-1 rounded-full border border-[#0B1324]/20 bg-[#0B1324] px-2 py-0.5 text-[11px] font-semibold text-white">
             Batch proof
+          </span>
+          <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600">
+            {row.modeLabel}
           </span>
         </div>
       </td>
@@ -85,11 +100,11 @@ function BatchProofRow({ row }: { row: PackTableRowVm }) {
         </div>
       </td>
       <td className="px-4 py-4 text-right tabular-nums">
-        <span className="text-[14px] font-semibold text-slate-900">{row.proofScore ?? '—'}</span>
+        <span className="text-[14px] font-semibold text-slate-900">{row.proofScore ?? '-'}</span>
         {row.proofScore != null ? <span className="text-[11px] text-slate-500">/100</span> : null}
       </td>
       <td className="px-4 py-4 text-right tabular-nums text-[13px] text-slate-700">
-        {row.itemCount ?? '—'}/{row.totalItems}
+        {row.itemCount ?? '-'}/{row.totalItems}
       </td>
       <td className="px-4 py-4 text-right text-[13px] tabular-nums text-slate-600">
         {formatIsoDate(row.generatedAt)}
@@ -97,7 +112,7 @@ function BatchProofRow({ row }: { row: PackTableRowVm }) {
       <td className="px-5 py-4 text-right">
         <Link
           href={href}
-          className="inline-flex items-center gap-1.5 rounded-[0.65rem] border border-slate-200 bg-white px-3 py-1.5 text-[13px] font-semibold text-slate-900 transition hover:border-slate-900 hover:bg-slate-900 hover:text-white"
+          className="inline-flex items-center gap-1.5 rounded-[0.65rem] border border-slate-200 bg-white px-3 py-1.5 text-[13px] font-semibold text-slate-900 transition group-hover:border-slate-900 group-hover:bg-slate-900 group-hover:text-white"
         >
           {evidenceCopy.browser.viewBatchProof}
           <Glyph name="arrow-up-right" className="h-3 w-3" />
@@ -119,11 +134,11 @@ function UnavailableBatchProofRow({ batchId }: { batchId: string }) {
         </div>
       </td>
       <td className="px-4 py-4 text-[13px] font-medium text-slate-500">Batch-wide</td>
-      <td className="px-4 py-4 text-[13px] text-slate-400">—</td>
-      <td className="px-4 py-4 text-right text-[13px] text-slate-400">—</td>
-      <td className="px-4 py-4 text-right text-[13px] text-slate-400">—</td>
-      <td className="px-4 py-4 text-right text-[13px] text-slate-400">—</td>
-      <td className="px-5 py-4 text-right text-[13px] font-medium text-slate-400">—</td>
+      <td className="px-4 py-4 text-[13px] text-slate-400">-</td>
+      <td className="px-4 py-4 text-right text-[13px] text-slate-400">-</td>
+      <td className="px-4 py-4 text-right text-[13px] text-slate-400">-</td>
+      <td className="px-4 py-4 text-right text-[13px] text-slate-400">-</td>
+      <td className="px-5 py-4 text-right text-[13px] font-medium text-slate-400">-</td>
     </tr>
   )
 }
@@ -133,9 +148,7 @@ export function EvidencePackBrowser({
   tenantReady,
   packListError,
 }: EvidencePackBrowserProps) {
-  const [catalogById, setCatalogById] = useState<Record<string, CatalogEntry>>({})
-  const catalogByIdRef = useRef(catalogById)
-  catalogByIdRef.current = catalogById
+  const [catalog, setCatalog] = useState<CatalogEntry[]>([])
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [fetchErrors, setFetchErrors] = useState<string[]>([])
   const [filterQuery, setFilterQuery] = useState('')
@@ -150,102 +163,76 @@ export function EvidencePackBrowser({
     [batchOptions],
   )
 
-  const orderedBatchIds = useMemo(
-    () => batchOptions.map((b) => b.batch_id.trim()).filter(Boolean),
-    [batchIdsKey, batchOptions],
-  )
-
-  const filteredIds = useMemo(() => {
-    const q = filterQuery.trim().toLowerCase()
-    if (!q) return orderedBatchIds
-    return orderedBatchIds.filter((id) => id.toLowerCase().includes(q))
-  }, [orderedBatchIds, filterQuery])
-
   useEffect(() => {
     setPage(1)
-    setCatalogById({})
-    setFetchErrors([])
-  }, [batchIdsKey])
+  }, [batchIdsKey, filterQuery])
 
   useEffect(() => {
-    setPage(1)
-  }, [filterQuery])
-
-  const totalPages = Math.max(1, Math.ceil(filteredIds.length / PAGE_SIZE))
-  const safePage = Math.min(page, totalPages)
-  const pageIds = filteredIds.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
-  const pageIdsKey = pageIds.join('\u0001')
-
-  useEffect(() => {
-    if (!tenantReady || pageIds.length === 0) {
-      setCatalogLoading(false)
-      return
-    }
-
-    const missing = pageIds.filter((id) => !catalogByIdRef.current[id])
-    if (missing.length === 0) {
+    if (!tenantReady || !batchOptions.length) {
+      setCatalog([])
+      setFetchErrors([])
       setCatalogLoading(false)
       return
     }
 
     let cancelled = false
     setCatalogLoading(true)
+    setFetchErrors([])
 
     void Promise.all(
-      missing.map(async (bid) => {
+      batchOptions.map(async (option) => {
+        const bid = option.batch_id.trim()
+        if (!bid) return null
         const { packs, errors } = await listEvidencePacksForBatch(bid)
         const batchPack = packs.find(isBatchEvidencePack)
         if (batchPack) {
           const itemCount = batchPack.leaf_count ?? batchPack.artifact_count ?? undefined
           return {
-            bid,
             entry: { status: 'ready' as const, row: mapPackTableRow(batchPack, itemCount, null) },
             errors,
           }
         }
         return {
-          bid,
           entry: { status: 'unavailable' as const, batchId: bid },
           errors,
         }
       }),
     ).then((results) => {
       if (cancelled) return
-      setCatalogById((prev) => {
-        const next = { ...prev }
-        for (const result of results) {
-          if (!result) continue
-          next[result.bid] = result.entry
-        }
-        return next
-      })
-      const errors = results.flatMap((r) => r?.errors ?? [])
-      if (errors.length) setFetchErrors((prev) => [...prev, ...errors])
+      const entries: CatalogEntry[] = []
+      const errors: string[] = []
+      for (const result of results) {
+        if (!result) continue
+        entries.push(result.entry)
+        if (result.errors.length) errors.push(...result.errors)
+      }
+      setCatalog(sortCatalogEntries(entries))
+      setFetchErrors(errors)
       setCatalogLoading(false)
     })
 
     return () => {
       cancelled = true
     }
-  }, [tenantReady, safePage, pageIdsKey])
+  }, [tenantReady, batchIdsKey, batchOptions])
 
-  const pageRows = useMemo(
-    () => sortCatalogEntries(pageIds.map((id) => catalogById[id]).filter((e): e is CatalogEntry => Boolean(e))),
-    [catalogById, pageIds],
+  const filtered = useMemo(
+    () => catalog.filter((entry) => matchesFilter(entry, filterQuery)),
+    [catalog, filterQuery],
   )
 
-  const readyCount = useMemo(
-    () => Object.values(catalogById).filter((e) => e.status === 'ready').length,
-    [catalogById],
-  )
-  const unavailableCount = Object.keys(catalogById).length - readyCount
+  const readyCount = useMemo(() => catalog.filter((e) => e.status === 'ready').length, [catalog])
+  const unavailableCount = catalog.length - readyCount
 
-  const pageStart = filteredIds.length === 0 ? 0 : (safePage - 1) * PAGE_SIZE + 1
-  const pageEnd = Math.min(safePage * PAGE_SIZE, filteredIds.length)
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const safePage = Math.min(page, totalPages)
+  const pageStart = filtered.length === 0 ? 0 : (safePage - 1) * PAGE_SIZE + 1
+  const pageEnd = Math.min(safePage * PAGE_SIZE, filtered.length)
+  const pageRows = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
 
   const countLine = catalogLoading ? (
     <span className="font-medium text-slate-900">Loading batch proofs…</span>
-  ) : filteredIds.length === 0 ? (
+  ) : catalog.length === 0 ? (
     <>No batch proofs yet</>
   ) : (
     <>
@@ -259,7 +246,7 @@ export function EvidencePackBrowser({
       {filterQuery.trim() ? (
         <>
           {' '}
-          · <span className="font-semibold text-slate-900">{filteredIds.length}</span> match filter
+          · <span className="font-semibold text-slate-900">{filtered.length}</span> match filter
         </>
       ) : null}
     </>
@@ -278,7 +265,7 @@ export function EvidencePackBrowser({
         <div className="flex flex-col gap-4">
           <div className="min-w-0">
             <p className="text-[12.5px] tabular-nums text-slate-500">{countLine}</p>
-            {errorLine ? <p className="mt-2 text-[13px] font-medium text-amber-800">{errorLine}</p> : null}
+            {errorLine ? <p className="mt-2 text-[13px] font-medium text-[#0B1324]">{errorLine}</p> : null}
           </div>
           <label className="block max-w-md">
             <span className="sr-only">{evidenceCopy.browser.searchPlaceholder}</span>
@@ -325,7 +312,7 @@ export function EvidencePackBrowser({
                   ),
                 )
               : null}
-            {!catalogLoading && filteredIds.length === 0 ? (
+            {!catalogLoading && filtered.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-5 py-14 text-center">
                   <p className="text-[15px] font-semibold text-slate-900">
@@ -342,11 +329,11 @@ export function EvidencePackBrowser({
           </tbody>
         </table>
       </div>
-      {!catalogLoading && filteredIds.length > 0 ? (
+      {!catalogLoading && filtered.length > 0 ? (
         <div className="border-t border-slate-200/80 bg-slate-50/40 px-5 py-3 text-[13px] text-slate-600">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <span className="tabular-nums">
-              Showing {pageStart}–{pageEnd} of {filteredIds.length} batch proofs
+              Showing {pageStart}-{pageEnd} of {filtered.length} batch proofs
             </span>
             <div className="flex items-center gap-2">
               <button

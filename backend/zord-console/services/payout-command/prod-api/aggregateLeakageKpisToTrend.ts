@@ -62,7 +62,7 @@ function mapLeakageToBucket(spec: LeakageTrendBucketSpec, body: LeakageKpiResolv
   }
 }
 
-/** Rolling bucket windows aligned to the home chart — each maps to leakage dashboard date filters. */
+/** Rolling bucket windows aligned to the home chart - each maps to leakage dashboard date filters. */
 export function buildLeakageTrendBucketSpecs(range: DisbursementTrendRange): LeakageTrendBucketSpec[] {
   const { from, to } = trendWindowBounds(range)
   const fromDay = startOfUtcDay(from)

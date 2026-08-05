@@ -15,7 +15,7 @@ type LeakageBatchWatchlistTableProps = {
   loading?: boolean
   selectedBatchId?: string
   onSelectBatch?: (batchId: string) => void
-  /** leakage_percentage keyed by batch_id — pre-fetched for all rows */
+  /** leakage_percentage keyed by batch_id - pre-fetched for all rows */
   leakagePctCache?: Record<string, number>
 }
 
@@ -104,8 +104,8 @@ export function LeakageBatchWatchlistTable({
                 return (
                   <tr
                     key={b.batch_id}
-                    className={`cursor-pointer border-t border-slate-200 transition hover:bg-sky-50/50 ${
-                      selected ? 'bg-sky-50/80' : ''
+                    className={`cursor-pointer border-t border-slate-200 transition hover:bg-[#0B1324]/50 ${
+                      selected ? 'bg-[#0B1324]/80' : ''
                     }`}
                     onClick={() => onSelectBatch?.(b.batch_id)}
                   >
@@ -126,7 +126,7 @@ export function LeakageBatchWatchlistTable({
                     <td className="px-3 py-3 text-right text-[15px] font-semibold tabular-nums text-slate-700">
                       {leakagePctCache[b.batch_id] != null
                         ? `${leakagePctCache[b.batch_id]}%`
-                        : '—'}
+                        : '-'}
                     </td>
                     <td className="px-3 py-3 text-right text-[15px] font-semibold tabular-nums text-slate-700">
                       {displayApiField(b.reversal_exposure_minor)}
@@ -151,7 +151,7 @@ export function LeakageBatchWatchlistTable({
       {!loading && filtered.length > WATCHLIST_PAGE_SIZE ? (
         <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
           <p className="text-[13px] font-medium text-[#00239C]">
-            {rangeStart}–{rangeEnd} of {filtered.length}
+            {rangeStart}-{rangeEnd} of {filtered.length}
           </p>
           <div className="flex items-center gap-2">
             <button

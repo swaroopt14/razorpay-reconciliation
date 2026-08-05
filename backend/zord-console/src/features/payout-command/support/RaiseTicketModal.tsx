@@ -170,7 +170,7 @@ export function RaiseTicketModal({ onClose, onSubmit }: RaiseTicketModalProps) {
           </fieldset>
         </div>
 
-        {error ? <p className="mt-3 text-[13px] font-medium text-red-600">{error}</p> : null}
+        {error ? <p className="mt-3 text-[13px] font-medium text-[#0B1324]">{error}</p> : null}
 
         <div className="mt-6 flex flex-wrap justify-end gap-2">
           <button

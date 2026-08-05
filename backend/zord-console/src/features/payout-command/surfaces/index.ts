@@ -1,6 +1,7 @@
 export { BillingSurface } from './BillingSurface'
 export { EvidenceSurface } from './EvidenceSurface'
 export { HomeSurface } from './HomeSurface'
+export { OperationsOverviewSurface } from '../overview/OperationsOverviewSurface'
 export { IntentJournalSurface } from './IntentJournalSurface'
 export { SettlementJournalSurface } from './SettlementJournalSurface'
 export { LeakageSurface } from './LeakageSurface'
