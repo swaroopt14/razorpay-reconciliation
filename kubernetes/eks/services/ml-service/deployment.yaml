@@ -20,10 +20,21 @@ spec:
     spec:
       serviceAccountName: zord-aws-access
       terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: zord-ml-service
           image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/ml-service:v12
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           env:
             - name: KAFKA_BROKERS
               valueFrom:
@@ -54,6 +65,8 @@ spec:
           volumeMounts:
             - name: model-data
               mountPath: /data
+            - name: tmp
+              mountPath: /tmp
           readinessProbe:
             exec:
               command:
@@ -77,4 +90,6 @@ spec:
               memory: 1Gi
       volumes:
         - name: model-data
+          emptyDir: {}
+        - name: tmp
           emptyDir: {}
