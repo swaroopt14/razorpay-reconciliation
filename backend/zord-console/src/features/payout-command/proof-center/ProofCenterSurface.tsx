@@ -278,7 +278,7 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
     if (!ready) {
         return (
             <div className="min-h-0 flex-1 overflow-y-auto bg-[#F4F6F9]">
-                <div className="mx-auto w-full max-w-[1120px] space-y-5 px-5 py-6 sm:px-6 lg:px-8">
+                <div className="mx-auto w-full max-w-[1600px] space-y-5 px-5 py-6 sm:px-6 lg:px-8">
                     <PageExplainerBanner page="proof" />
                     <div>
                         <h1 className="text-[22px] font-semibold tracking-[-0.02em] text-[#1A1A1A]">
@@ -298,7 +298,7 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
     if (!batchDispatched) {
         return (
             <div className="min-h-0 flex-1 overflow-y-auto bg-[#F4F6F9]">
-                <div className="mx-auto w-full max-w-[1120px] space-y-5 px-5 py-6 sm:px-6 lg:px-8">
+                <div className="mx-auto w-full max-w-[1600px] space-y-5 px-5 py-6 sm:px-6 lg:px-8">
                     <PageExplainerBanner page="proof" />
                     <div>
                         <h1 className="text-[22px] font-semibold tracking-[-0.02em] text-[#1A1A1A]">
@@ -330,7 +330,7 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
     if (!selected && !activeBatch) {
         return (
             <div className="min-h-0 flex-1 overflow-y-auto bg-[#F4F6F9]">
-                <div className="mx-auto w-full max-w-[1120px] px-5 py-6 sm:px-6 lg:px-8">
+                <div className="mx-auto w-full max-w-[1600px] px-5 py-6 sm:px-6 lg:px-8">
                     <PageExplainerBanner page="proof" />
                     <div>
                         <h1 className="text-[22px] font-semibold tracking-[-0.02em] text-[#1A1A1A]">
@@ -388,7 +388,7 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
     if (!selected && activeBatch) {
         return (
             <div className="min-h-0 flex-1 overflow-y-auto bg-[#F4F6F9]">
-                <div className="mx-auto w-full max-w-[1120px] px-5 py-6 sm:px-6 lg:px-8">
+                <div className="mx-auto w-full max-w-[1600px] px-5 py-6 sm:px-6 lg:px-8">
                     <PageExplainerBanner page="proof" />
                     <button
                         type="button"
@@ -526,9 +526,7 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
     return (
         <div className="min-h-0 flex-1 overflow-y-auto bg-[#F4F6F9]">
             <div
-                className={`mx-auto w-full px-5 py-6 sm:px-6 lg:px-8 ${
-                    tab === 'graph' ? 'max-w-[1280px]' : 'max-w-[1120px]'
-                }`}
+                className="mx-auto w-full max-w-[1600px] px-5 py-6 sm:px-6 lg:px-8"
             >
                 <button
                     type="button"

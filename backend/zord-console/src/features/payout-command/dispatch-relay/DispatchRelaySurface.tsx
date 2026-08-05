@@ -360,7 +360,7 @@ export function DispatchRelaySurface() {
 
       <div>
         {view === 'list' ? (
-          <div className="mx-auto max-w-[1120px] space-y-4 p-4 sm:p-6">
+          <div className="mx-auto max-w-[1600px] space-y-4 p-4 sm:p-6">
             <LifecycleSummaryStrip
               heroLabel="Dispatched instruction value"
               heroValue={new Intl.NumberFormat('en-IN', {

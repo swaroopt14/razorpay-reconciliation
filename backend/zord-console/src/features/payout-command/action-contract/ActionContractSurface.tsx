@@ -44,7 +44,7 @@ export function ActionContractSurface({ contractId }: { contractId: string }) {
   if (!ready) {
     return (
       <div className="bg-[#F8FAFC] pb-10">
-        <div className="mx-auto w-full max-w-[1080px] space-y-5 px-5 py-5 sm:px-6 sm:py-6">
+        <div className="mx-auto w-full max-w-[1600px] space-y-5 px-5 py-5 sm:px-6 sm:py-6">
           <PageExplainerBanner page="contract" />
           <header>
             <h1 className="text-[1.5rem] font-semibold tracking-[-0.03em] text-[#0B1324]">
@@ -151,7 +151,7 @@ export function ActionContractSurface({ contractId }: { contractId: string }) {
         </div>
       </div>
 
-      <div className="mx-auto max-w-[1080px] px-5 py-5 sm:px-6 sm:py-6">
+      <div className="mx-auto max-w-[1600px] px-5 py-5 sm:px-6 sm:py-6">
           <PageExplainerBanner page="contract" />
           <header className="flex flex-wrap items-start justify-between gap-4">
             <div className="min-w-0 max-w-2xl">

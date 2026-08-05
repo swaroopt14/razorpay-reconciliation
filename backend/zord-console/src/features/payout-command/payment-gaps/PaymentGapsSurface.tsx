@@ -123,7 +123,7 @@ export function PaymentGapsSurface() {
   if (!ready) {
     return (
       <div className="min-h-0 flex-1 overflow-y-auto bg-[#F4F6F9]">
-        <div className="mx-auto w-full max-w-[1120px] space-y-5 px-5 py-6 sm:px-6 lg:px-8">
+        <div className="mx-auto w-full max-w-[1600px] space-y-5 px-5 py-6 sm:px-6 lg:px-8">
           <PageExplainerBanner page="gaps" />
           <div>
             <h1 className="text-[22px] font-semibold tracking-[-0.02em] text-[#1A1A1A]">
@@ -141,7 +141,7 @@ export function PaymentGapsSurface() {
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto bg-[#F4F6F9]">
-      <div className="mx-auto w-full max-w-[1120px] px-5 py-6 sm:px-6 lg:px-8">
+      <div className="mx-auto w-full max-w-[1600px] px-5 py-6 sm:px-6 lg:px-8">
         <PageExplainerBanner page="gaps" />
         {/* Header - Razorpay-style: title + one-line + primary CTA row */}
         <div className="flex flex-wrap items-start justify-between gap-4">

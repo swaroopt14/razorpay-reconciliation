@@ -161,7 +161,7 @@ export function PaymentTraceSurface({ paymentId }: { paymentId?: string }) {
     return (
       <div className="bg-[#F8FAFC] pb-10">
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
-          <div className="mx-auto max-w-[1120px] space-y-5">
+          <div className="mx-auto max-w-[1600px] space-y-5">
             <PageExplainerBanner page="trace" />
             <header>
               <h1 className="text-[1.35rem] font-semibold tracking-[-0.02em] text-[#0B1324]">
@@ -186,7 +186,7 @@ export function PaymentTraceSurface({ paymentId }: { paymentId?: string }) {
 
   return (
     <div className="bg-[#F8FAFC] pb-10">
-      <div className="mx-auto max-w-[1120px] space-y-5 px-5 py-5 sm:px-6">
+      <div className="mx-auto max-w-[1600px] space-y-5 px-5 py-5 sm:px-6">
           {view !== 'detail' ? <PageExplainerBanner page="trace" /> : null}
 
           {notice ? (

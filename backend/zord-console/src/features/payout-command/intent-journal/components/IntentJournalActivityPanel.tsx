@@ -78,26 +78,42 @@ const INTENT_TABLE_HEADERS: { key: string; label: string }[] = [
 ]
 
 const TABLE_HEAD_CELL =
-  'px-5 py-3.5 text-left text-[11px] font-semibold uppercase tracking-[0.08em] text-[#94A3B8] whitespace-nowrap'
-const TABLE_CELL = 'px-5 py-4 align-middle text-[14px] text-[#334155]'
+  'px-6 py-4 text-left text-[13px] font-semibold text-[#64748B] whitespace-nowrap'
+const TABLE_CELL = 'px-6 py-5 align-middle text-[14px] text-[#334155]'
 const TABLE_ROW = 'cursor-pointer border-t border-[#EEF1F5] transition hover:bg-[#F8FAFC]'
+
+/** Reference-style amount: full value with muted decimals. */
+function MoneyCell({ amount, currency }: { amount: number; currency: string }) {
+  const formatted = formatJournalMoney(amount, currency)
+  if (formatted === '-') return <span className="text-[#94A3B8]">-</span>
+  const match = formatted.match(/^(.*)(\.\d{2})$/)
+  if (!match) return <span>{formatted}</span>
+  return (
+    <span>
+      {match[1]}
+      <span className="text-[13px] text-[#94A3B8]">{match[2]}</span>
+    </span>
+  )
+}
 
 function intentStatusLabel(row: JournalIntentRow): string {
   return row.lifecycleStage || intentRowCustomerStatus(row.status) || row.status || '-'
 }
 
+/** Solid status chips, matching the payments-dashboard reference. */
 function statusPillClass(label: string): string {
   const s = label.toLowerCase()
-  if (s.includes('block')) return 'bg-[#FEF2F2] text-[#B91C1C] ring-[#FECACA]'
-  if (s.includes('review')) return 'bg-[#FFFBEB] text-[#B45309] ring-[#FDE68A]'
-  if (s.includes('dispatch') || s.includes('sealed')) return 'bg-[#ECFDF5] text-[#047857] ring-[#A7F3D0]'
-  return 'bg-[#F1F5F9] text-[#334155] ring-[#E2E8F0]'
+  if (s.includes('block') || s.includes('fail')) return 'bg-[#EF4444] text-white'
+  if (s.includes('review') || s.includes('pend')) return 'bg-[#F59E0B] text-white'
+  if (s.includes('dispatch') || s.includes('sealed') || s.includes('captur')) return 'bg-[#16A34A] text-white'
+  return 'bg-[#E8EEF9] text-[#1E3A8A]'
 }
 
 function StatusPill({ label }: { label: string }) {
+  if (!label || label === '-') return <span className="text-[#94A3B8]">-</span>
   return (
     <span
-      className={`inline-flex items-center whitespace-nowrap rounded-full px-2.5 py-1 text-[12px] font-medium ring-1 ring-inset ${statusPillClass(label)}`}
+      className={`inline-flex items-center whitespace-nowrap rounded-full px-3 py-1 text-[12px] font-semibold ${statusPillClass(label)}`}
     >
       {label}
     </span>
@@ -106,11 +122,7 @@ function StatusPill({ label }: { label: string }) {
 
 function RailChip({ label }: { label: string }) {
   if (!label || label === '-') return <span className="text-[#94A3B8]">-</span>
-  return (
-    <span className="inline-flex items-center whitespace-nowrap rounded-md bg-[#F8FAFC] px-2.5 py-1 text-[12px] font-medium text-[#475569] ring-1 ring-inset ring-[#E2E8F0]">
-      {label}
-    </span>
-  )
+  return <span className="whitespace-nowrap font-medium text-[#475569]">{label}</span>
 }
 
 function formatDispatchScore(score: number | null | undefined): string {
@@ -367,8 +379,8 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                   </p>
                 </div>
                 <div className="min-w-0 overflow-x-auto">
-                    <table className={`w-full min-w-[62rem] border-collapse text-[14px] ${HOME_TITLE_BLACK}`}>
-                      <thead className="bg-[#FBFCFE]">
+                    <table className={`w-full min-w-[72rem] border-collapse text-[14px] ${HOME_TITLE_BLACK}`}>
+                      <thead className="border-b border-[#E5E9F0] bg-[#F5F7FA]">
                         <tr>
                           {INTENT_TABLE_HEADERS.map((h) => (
                             <th
@@ -399,17 +411,23 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                               }}
                               className={`${TABLE_ROW} ${selectedIntentId === row.requestId ? 'bg-[#F8FAFC]' : ''}`}
                             >
-                              <td className={`${TABLE_CELL} font-mono text-[13px] tracking-tight text-[#0F172A]`} title={row.zordId ?? row.requestId}>
+                              <td
+                                className={`${TABLE_CELL} whitespace-nowrap font-mono text-[13px] font-medium text-[#2563EB]`}
+                                title={row.zordId ?? row.requestId}
+                              >
                                 {row.zordId ?? row.requestId}
                               </td>
-                              <td className={`${TABLE_CELL} whitespace-nowrap font-medium text-[#475569]`} title={row.reference}>
+                              <td
+                                className={`${TABLE_CELL} whitespace-nowrap font-mono text-[13px] text-[#2563EB]`}
+                                title={row.reference}
+                              >
                                 {row.reference}
                               </td>
-                              <td className={`${TABLE_CELL} whitespace-nowrap text-right font-semibold tabular-nums text-[#0F172A]`}>
-                                {formatJournalMoney(
-                                  row.amount,
-                                  row.currency ?? (journalUsesBackendFeed ? 'INR' : 'USD'),
-                                )}
+                              <td className={`${TABLE_CELL} whitespace-nowrap text-right font-medium tabular-nums text-[#0F172A]`}>
+                                <MoneyCell
+                                  amount={row.amount}
+                                  currency={row.currency ?? (journalUsesBackendFeed ? 'INR' : 'USD')}
+                                />
                               </td>
                               <td className={TABLE_CELL}>
                                 <StatusPill label={intentStatusLabel(row)} />
@@ -504,8 +522,8 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                       </tbody>
                     </table>
                 </div>
-                <div className="border-t border-slate-200/80 bg-[#f8fbff] px-3 py-2 text-[15px] text-[#64748b]">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="border-t border-[#E5E9F0] bg-[#FBFCFE] px-6 py-4 text-[14px] text-[#64748b]">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
                       <span>
                         Showing {(intentTotal === 0 ? 0 : (safePage - 1) * rowsPerPage + 1)}-
                         {intentTotal === 0 ? 0 : Math.min(safePage * rowsPerPage, intentTotal)} of{' '}
@@ -596,8 +614,8 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                   </div>
                 </div>
                 <div className="min-w-0 overflow-x-auto">
-                  <table className={`w-full min-w-[62rem] border-collapse text-[14px] ${HOME_TITLE_BLACK}`}>
-                    <thead className="bg-[#FBFCFE]">
+                  <table className={`w-full min-w-[72rem] border-collapse text-[14px] ${HOME_TITLE_BLACK}`}>
+                    <thead className="border-b border-[#E5E9F0] bg-[#F5F7FA]">
                       <tr>
                         {INTENT_TABLE_HEADERS.map((h) => (
                           <th
@@ -627,18 +645,19 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                             title={row.failureReason}
                           >
                             <td
-                              className={`${TABLE_CELL} font-mono text-[13px] tracking-tight text-[#0F172A]`}
+                              className={`${TABLE_CELL} whitespace-nowrap font-mono text-[13px] font-medium text-[#2563EB]`}
                               title={row.zordId ?? row.requestId}
                             >
                               {row.zordId ?? row.requestId}
                             </td>
-                            <td className={`${TABLE_CELL} whitespace-nowrap font-medium text-[#475569]`} title={row.reference}>
+                            <td
+                              className={`${TABLE_CELL} whitespace-nowrap font-mono text-[13px] text-[#2563EB]`}
+                              title={row.reference}
+                            >
                               {row.reference}
                             </td>
-                            <td className={`${TABLE_CELL} whitespace-nowrap text-right font-semibold tabular-nums text-[#0F172A]`}>
-                              {Number.isFinite(row.amount)
-                                ? formatJournalMoney(row.amount, row.currency ?? 'INR')
-                                : '-'}
+                            <td className={`${TABLE_CELL} whitespace-nowrap text-right font-medium tabular-nums text-[#0F172A]`}>
+                              <MoneyCell amount={row.amount} currency={row.currency ?? 'INR'} />
                             </td>
                             <td className={TABLE_CELL}>
                               <StatusPill label={row.dlqStatusLabel || row.failureStage || '-'} />
@@ -659,8 +678,8 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                     </tbody>
                   </table>
                 </div>
-                <div className="border-t border-slate-200/80 bg-[#f8fbff] px-3 py-2 text-[15px] text-[#64748b]">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="border-t border-[#E5E9F0] bg-[#FBFCFE] px-6 py-4 text-[14px] text-[#64748b]">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
                     <span>
                       Showing {(failureTotal === 0 ? 0 : (safeFailurePage - 1) * rowsPerPage + 1)}-
                       {failureTotal === 0 ? 0 : Math.min(safeFailurePage * rowsPerPage, failureTotal)} of{' '}

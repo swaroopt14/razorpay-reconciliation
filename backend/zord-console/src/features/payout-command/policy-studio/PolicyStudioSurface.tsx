@@ -561,7 +561,7 @@ export function PolicyStudioSurface() {
 
   if (!studioReady) {
     return (
-      <div className="mx-auto max-w-[1200px] space-y-4">
+      <div className="mx-auto max-w-[1600px] space-y-4">
         <PageExplainerBanner page="policies" />
         <div className="border border-[#E2E8F0] bg-white px-5 py-10 text-center text-[13px] text-[#64748B]">
           Loading Policy Studio…
@@ -573,7 +573,7 @@ export function PolicyStudioSurface() {
   /* Empty studio - nothing exists until the first draft is created (spec 7.5). */
   if (packs.length === 0 || !selectedPack || !selectedVersion) {
     return (
-      <div className="mx-auto max-w-[1200px] space-y-4">
+      <div className="mx-auto max-w-[1600px] space-y-4">
         <PageExplainerBanner page="policies" />
         <header className="flex flex-wrap items-end justify-between gap-3 border border-[#E2E8F0] bg-white px-5 py-4">
           <div>
@@ -622,7 +622,7 @@ export function PolicyStudioSurface() {
   const canEdit = selectedVersion.status === 'draft' && !selectedVersion.immutable
 
   return (
-    <div className="mx-auto max-w-[1200px] space-y-4">
+    <div className="mx-auto max-w-[1600px] space-y-4">
       <PageExplainerBanner page="policies" />
       <header className="flex flex-wrap items-end justify-between gap-3 border border-[#E2E8F0] bg-white px-5 py-4">
         <div>

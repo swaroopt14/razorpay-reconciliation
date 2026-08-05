@@ -274,7 +274,7 @@ export function SettlementJournalSurface() {
   if (!ready) {
     return (
       <div className="flex min-h-0 flex-1 flex-col" style={{ background: '#F8FAFC' }}>
-        <div className="mx-auto w-full max-w-[1280px] flex-1 space-y-4 px-5 py-5 sm:px-6 lg:px-8">
+        <div className="mx-auto w-full max-w-[1600px] flex-1 space-y-4 px-5 py-5 sm:px-6 lg:px-8">
           <PageExplainerBanner page="settlement" />
           <div>
             <p className="text-[11px] font-medium uppercase tracking-wide" style={{ color: '#64748B' }}>
@@ -297,7 +297,7 @@ export function SettlementJournalSurface() {
     const overview = settlementSummary(DEMO_SETTLEMENT_ROWS)
     return (
       <div className="flex min-h-0 flex-1 flex-col" style={{ background: '#F8FAFC' }}>
-        <div className="mx-auto w-full max-w-[1280px] flex-1 space-y-5 px-5 py-5 sm:px-6 lg:px-8">
+        <div className="mx-auto w-full max-w-[1600px] flex-1 space-y-5 px-5 py-5 sm:px-6 lg:px-8">
           <PageExplainerBanner page="settlement" />
           <div>
             <p className="text-[11px] font-medium uppercase tracking-wide" style={{ color: '#64748B' }}>
@@ -345,7 +345,7 @@ export function SettlementJournalSurface() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" style={{ background: '#F8FAFC' }}>
-      <div className="mx-auto w-full max-w-[1280px] flex-1 px-5 py-5 sm:px-6 lg:px-8">
+      <div className="mx-auto w-full max-w-[1600px] flex-1 px-5 py-5 sm:px-6 lg:px-8">
         <PageExplainerBanner page="settlement" />
         <button
           type="button"

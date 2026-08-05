@@ -161,7 +161,7 @@ export function WorkspaceAdminSurface() {
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto bg-[#F4F6F9]">
-      <div className="mx-auto w-full max-w-[1120px] px-5 py-6 sm:px-6 lg:px-8">
+      <div className="mx-auto w-full max-w-[1600px] px-5 py-6 sm:px-6 lg:px-8">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-[22px] font-semibold tracking-[-0.02em] text-[#0B1324]">

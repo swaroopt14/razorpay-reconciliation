@@ -407,7 +407,7 @@ export function ConnectionsSurface() {
   ]
 
   return (
-    <div className="mx-auto max-w-[1120px] space-y-5">
+    <div className="mx-auto max-w-[1600px] space-y-5">
       <PageExplainerBanner page="connections" />
       <header className="border border-[#E2E8F0] bg-white px-5 py-5">
         <h1 className="max-w-3xl text-[1.45rem] font-semibold tracking-[-0.02em] text-[#0B1324] sm:text-[1.6rem]">

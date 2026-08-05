@@ -941,7 +941,7 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
       >
       <div className="flex min-w-0 flex-col">
         <main className="flex min-w-0 flex-col">
-          <div className="mx-auto w-full max-w-[1120px] p-4 sm:p-6">
+          <div className="mx-auto w-full max-w-[1600px] p-4 sm:p-6">
             {journalUsesBackendFeed && !tenantReady ? (
               <p className={`mb-4 rounded-xl border border-slate-200/90 bg-slate-50 px-3.5 py-2.5 ${HOME_BODY_IMPERIAL_SM}`}>
                 Resolving your workspace…

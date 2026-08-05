@@ -63,7 +63,7 @@ export function OperationsOverviewSurface() {
   })
 
   return (
-    <div className="mx-auto max-w-[1120px] space-y-4 bg-[#F8FAFC]">
+    <div className="mx-auto max-w-[1600px] space-y-4 bg-[#F8FAFC]">
       <PageExplainerBanner page="overview" />
       <header className="flex flex-wrap items-end justify-between gap-3 border border-[#E2E8F0] bg-white px-5 py-4">
         <div>

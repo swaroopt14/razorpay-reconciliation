@@ -253,7 +253,7 @@ export default function BatchCommandCenterClient() {
       className="payout-command-console text-[13px] font-normal leading-relaxed text-[#1A1A1A] antialiased"
       data-testid="batch-review-page"
     >
-      <div className="mx-auto w-full max-w-[1120px] space-y-5 p-4 sm:p-5 lg:p-6">
+      <div className="mx-auto w-full max-w-[1600px] space-y-5 p-4 sm:p-5 lg:p-6">
         <PageExplainerBanner page="upload" />
         <BatchGetStartedCard />
 
