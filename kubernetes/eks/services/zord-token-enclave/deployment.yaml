@@ -51,7 +51,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: zord-token-enclave
-          image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-token-enclave:v12
+          image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-token-enclave:v2
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false

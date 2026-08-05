@@ -51,7 +51,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: zord-relay
-          image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-relay:v12
+          image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-relay:v2
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false

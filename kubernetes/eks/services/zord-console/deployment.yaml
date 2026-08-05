@@ -51,7 +51,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: zord-console
-          image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-console:v12
+          image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-console:v2
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
