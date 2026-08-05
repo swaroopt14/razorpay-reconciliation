@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -260,10 +261,18 @@ func main() {
 				}
 				savedDLQ, err := dlqRepo.Save(ctx, *dlq)
 				if err != nil {
+					// INT-01: a rejected intent must never be acknowledged
+					// without a durable DLQ record — that's silent
+					// financial-data loss (no intent row, no DLQ row) and it
+					// breaks batch counts/auditability. Returning the error
+					// sends this message back through callWithRetry; if every
+					// attempt fails, kafka.ConsumeClaim durably records it in
+					// consumer_failure_receipts (R-03) before the offset is
+					// allowed to advance, instead of marking it here.
 					log.Printf("Failed to save DLQ entry: %v", err)
-				} else {
-					intentService.EmitDLQVectorIndexRequest(savedDLQ)
+					return fmt.Errorf("failed to persist DLQ entry for envelope=%s: %w", event.EnvelopeID, err)
 				}
+				intentService.EmitDLQVectorIndexRequest(savedDLQ)
 			}
 			return nil // Reject is a terminal state, return nil so message is marked
 		}
