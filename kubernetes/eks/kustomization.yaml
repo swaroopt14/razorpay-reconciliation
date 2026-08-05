@@ -78,3 +78,4 @@ resources:
   - network-policies/allow-monitoring.yaml
   - network-policies/allow-egress-internal.yaml
   - network-policies/allow-egress-infrastructure.yaml
+  - network-policies/allow-egress-otel.yaml
