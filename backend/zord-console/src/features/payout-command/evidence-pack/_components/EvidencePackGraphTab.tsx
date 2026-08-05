@@ -140,20 +140,20 @@ export function EvidencePackGraphTab({ packId, batchId, intentId }: EvidencePack
         <div className="flex flex-wrap gap-4 rounded-xl border border-[#E5E5E5] bg-[#fafafa] px-4 py-3 text-[13px]">
           {bid ? (
             <span>
-              <span className="font-semibold text-[#333333]">Batch </span>
+              <span className="font-semibold text-slate-500">Batch </span>
               <span className="font-mono font-semibold text-slate-900">{bid}</span>
             </span>
           ) : null}
           {intentId ? (
             <span>
-              <span className="font-semibold text-[#333333]">Opened from intent </span>
+              <span className="font-semibold text-slate-500">Opened from intent </span>
               <span className="font-mono font-semibold text-slate-900" title={intentId}>
                 {intentId.length > 24 ? `${intentId.slice(0, 24)}…` : intentId}
               </span>
             </span>
           ) : null}
           <span className="text-slate-500">
-            Use <strong className="text-[#111111]">Intent · pack</strong> below to switch to another payment in this batch.
+            Use <strong className="text-slate-700">Intent · pack</strong> below to switch to another payment in this batch.
           </span>
         </div>
       ) : null}
@@ -165,38 +165,20 @@ export function EvidencePackGraphTab({ packId, batchId, intentId }: EvidencePack
               <button
                 type="button"
                 onClick={() => setScope('batch')}
-                className={`inline-flex items-center rounded-full px-3 py-1 text-[12px] font-semibold transition ${
-                  scope === 'batch'
-                    ? 'bg-[#111111] text-white shadow-sm'
-                    : 'text-[#333333] hover:text-[#111111]'
+                className={`rounded-full px-3 py-1 text-[12px] font-semibold transition ${
+                  scope === 'batch' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
-                Batch graph
-                <span
-                  className={`ml-1.5 rounded-full px-1.5 py-0.5 font-mono text-[11px] tabular-nums ${
-                    scope === 'batch' ? 'bg-white/15' : 'bg-white text-[#111111]'
-                  }`}
-                >
-                  {bid ? 1 : batchPacks.length || 0}
-                </span>
+                Batch graph ({batchPacks[0]?.leaf_count != null ? batchPacks[0].leaf_count + 2 : batchPacks.length})
               </button>
               <button
                 type="button"
                 onClick={() => setScope('intent')}
-                className={`inline-flex items-center rounded-full px-3 py-1 text-[12px] font-semibold transition ${
-                  scope === 'intent'
-                    ? 'bg-[#111111] text-white shadow-sm'
-                    : 'text-[#333333] hover:text-[#111111]'
+                className={`rounded-full px-3 py-1 text-[12px] font-semibold transition ${
+                  scope === 'intent' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
-                Intent graph
-                <span
-                  className={`ml-1.5 rounded-full px-1.5 py-0.5 font-mono text-[11px] tabular-nums ${
-                    scope === 'intent' ? 'bg-white/15' : 'bg-[#f4f4f5] text-[#111111]'
-                  }`}
-                >
-                  {intentPacks.length}
-                </span>
+                Intent graph ({intentPacks.length})
               </button>
             </div>
 
@@ -204,7 +186,7 @@ export function EvidencePackGraphTab({ packId, batchId, intentId }: EvidencePack
               <select
                 value={selectedIntentPackId}
                 onChange={(e) => setSelectedIntentPackId(e.target.value)}
-                className="min-w-[16rem] rounded-md border border-slate-200 bg-white px-2 py-1.5 font-mono text-[12px] text-[#111111] outline-none focus:border-[#111111]/40"
+                className="min-w-[16rem] rounded-md border border-slate-200 bg-white px-2 py-1.5 font-mono text-[12px] text-slate-900"
                 disabled={packLoading || intentPacks.length === 0}
               >
                 {intentPacks.length === 0 ? (
@@ -238,19 +220,22 @@ export function EvidencePackGraphTab({ packId, batchId, intentId }: EvidencePack
               </select>
             ) : null}
           </div>
-          {packError ? <p className="mt-2 text-[12px] font-medium text-[#0B1324]">{packError}</p> : null}
+          {packError ? <p className="mt-2 text-[12px] font-medium text-amber-700">{packError}</p> : null}
         </div>
       ) : null}
 
       {batchUnavailable ? (
-        <div className="rounded-xl border border-[#0B1324]/20 bg-[#F1F5F9] px-4 py-3 text-[13px] text-[#0B1324]">
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">
           Batch pack not available for this batch. Intent graph remains available.
         </div>
       ) : null}
 
-      <div className="space-y-3">
-        {!batchUnavailable ? (
-          <div className="min-w-0">
+      <div className="grid gap-5 lg:grid-cols-[minmax(280px,320px)_minmax(0,1fr)]">
+        <div className="space-y-4">
+          {!batchUnavailable ? <EvidencePackVerifyCard packId={viewPackId} /> : null}
+        </div>
+        <div className="min-w-0">
+          {!batchUnavailable ? (
             <MerkleGraphSurface
               initialPackId={packId}
               embedMode
@@ -260,13 +245,8 @@ export function EvidencePackGraphTab({ packId, batchId, intentId }: EvidencePack
               hideScopePickers
               onActivePackIdChange={handleActivePackIdChange}
             />
-          </div>
-        ) : null}
-        {!batchUnavailable ? (
-          <div className="sm:max-w-lg">
-            <EvidencePackVerifyCard packId={viewPackId} />
-          </div>
-        ) : null}
+          ) : null}
+        </div>
       </div>
     </div>
   )

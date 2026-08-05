@@ -7,7 +7,7 @@ export type SupportSlackEvent =
   | { kind: 'manual_review'; tenantId: string; ticket: SupportTicket }
 
 function fieldsLine(label: string, value: string | null | undefined) {
-  return `*${label}:* ${value && value.trim().length ? value.trim() : '-'}`
+  return `*${label}:* ${value && value.trim().length ? value.trim() : '—'}`
 }
 
 function previewText(body: string, max = 400) {
@@ -51,7 +51,7 @@ export async function notifySupportSlack(event: SupportSlackEvent): Promise<bool
         { type: 'mrkdwn', text: fieldsLine('Category', ticket.category) },
         { type: 'mrkdwn', text: fieldsLine('Topic', ticket.topic) },
         { type: 'mrkdwn', text: fieldsLine('Status', ticket.status) },
-        { type: 'mrkdwn', text: fieldsLine('Priority', event.kind === 'manual_review' ? 'urgent' : '-') },
+        { type: 'mrkdwn', text: fieldsLine('Priority', event.kind === 'manual_review' ? 'urgent' : '—') },
       ],
     },
   ]

@@ -7,7 +7,7 @@ export const metadata: Metadata = {
 }
 
 /**
- * `/sandbox/batch-command-center` - same shell as `/sandbox` (strip + DockNav) with batch body.
+ * `/sandbox/batch-command-center` — same shell as `/sandbox` (strip + DockNav) with batch body.
  */
 export default function SandboxBatchCommandCenterPage() {
   return <BatchCommandCenterShell forceMode="sandbox" />

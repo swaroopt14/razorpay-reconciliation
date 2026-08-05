@@ -4,12 +4,7 @@ import Link from 'next/link'
 import { type ReactNode, type Ref, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useDebouncedValue } from '@/app/hooks/useDebouncedValue'
 import { useSessionTenant } from '@/services/auth/useSessionTenantId'
-import {
-  markDemoIntentUploaded,
-  markDemoSettlementUploaded,
-} from '@/services/payout-command/demo/demoBatchReadiness'
-import { markSandboxSetupStep, openSandboxSetupPanel } from '@/services/payout-command/sandbox-setup-guide'
-import { PostUploadStepsCard } from './PostUploadStepsCard'
+import { markSandboxSetupStep } from '@/services/payout-command/sandbox-setup-guide'
 import { COMMAND_CENTER_LABEL_GREEN, HOME_BODY_IMPERIAL_SM } from '../../command-center/homeCommandCenterTokens'
 import { parseUploadedSheet, type BatchRow, type ZordPipelineIntake } from '@/services/payout-command/batch-model'
 import { postIntentBulkIngest } from '@/services/payout-command/batch-intake/postIntentBulkIngest'
@@ -20,7 +15,6 @@ import {
 } from '@/services/payout-command/batch-intake/postSettlementFileUpload'
 import { BatchPortalUploadZone } from './portal/BatchPortalUploadZone'
 import { PORTAL_BLUE_TITLE, PORTAL_PRIMARY_BTN } from './portal/batchPortalTokens'
-import { SampleFileDownloads } from './SampleFileDownloads'
 import { BATCH_REVIEW_COPY, type SourceTypeOption } from '../copy/batchCommandCenterCopy'
 
 const INTENT_FILE_ACCEPT =
@@ -71,10 +65,10 @@ export type BatchUploadStatus = {
 const BATCH_REFERENCE_DEBOUNCE_MS = 450
 
 type BatchIntakePanelProps = {
-  /** Committed batch id from URL / parent - syncs into the local draft when it changes externally. */
+  /** Committed batch id from URL / parent — syncs into the local draft when it changes externally. */
   committedBatchId: string
   batchReferenceRef?: Ref<HTMLInputElement>
-  /** Called after the user pauses typing - drives API load and URL without blocking the input. */
+  /** Called after the user pauses typing — drives API load and URL without blocking the input. */
   onBatchIdCommit: (value: string) => void
   isSandboxRoute: boolean
   onIntentIngestSuccess: (payload: IntentIngestSuccessPayload) => void
@@ -82,10 +76,6 @@ type BatchIntakePanelProps = {
   onSnapshotChange: (snapshot: BatchIntakeSnapshot) => void
   onUploadStatusChange?: (status: BatchUploadStatus) => void
   onIntentUploadFailed?: (batchId: string) => void
-  /**
-    * Spec 7.4 owns intent upload - use `settlement-only` so this panel is outcome confirmation.
-    */
-  mode?: 'full' | 'settlement-only'
 }
 
 export function BatchIntakePanel({
@@ -98,9 +88,7 @@ export function BatchIntakePanel({
   onSnapshotChange,
   onUploadStatusChange,
   onIntentUploadFailed,
-  mode = 'full',
 }: BatchIntakePanelProps) {
-  const settlementOnly = mode === 'settlement-only'
   const { tenantId, tenantReady, refreshTenant } = useSessionTenant()
   const [draftBatchRef, setDraftBatchRef] = useState(committedBatchId)
   const debouncedDraftBatchRef = useDebouncedValue(draftBatchRef, BATCH_REFERENCE_DEBOUNCE_MS)
@@ -260,7 +248,7 @@ export function BatchIntakePanel({
         }
         const detail = result.errorMessage?.trim() || `HTTP ${result.httpStatus}`
         const extra = result.responseText.trim().slice(0, 280)
-        throw new Error(extra && !detail.includes(extra) ? `${detail} - ${extra}` : detail)
+        throw new Error(extra && !detail.includes(extra) ? `${detail} — ${extra}` : detail)
       }
       const ingestAckParsed = parseBulkIngestAcceptedResponse(result.responseText)
       if (ingestAckParsed && ingestAckParsed.accepted === 0) {
@@ -276,8 +264,6 @@ export function BatchIntakePanel({
       setIntentIngestOk(true)
       void refreshTenant()
       markSandboxSetupStep('intent-ingest')
-      markDemoIntentUploaded(effectiveBatch)
-      openSandboxSetupPanel()
       reportUploadStatus('synced', `Payment file accepted. Batch reference: ${effectiveBatch}.`)
       setUploadState('ready')
       setUploadedFileName(file.name)
@@ -349,14 +335,11 @@ export function BatchIntakePanel({
         const parts = [detail]
         if (extra && !detail.includes(extra)) parts.push(extra)
         if (result.httpStatus) parts.unshift(`[${result.httpStatus}]`)
-        throw new Error(parts.join(' - '))
+        throw new Error(parts.join(' — '))
       }
       setSettlementIngestOk(true)
       reportUploadStatus('synced', BATCH_REVIEW_COPY.dialogs.settlementBody(bid))
       markSandboxSetupStep('settlement')
-      markSandboxSetupStep('settlement-journal')
-      markDemoSettlementUploaded(bid)
-      openSandboxSetupPanel()
       setIntakeStep('closed')
       onSettlementIngestSuccess({ batchId: bid, fileName: file.name, parsedRows: parsed })
     } catch (error) {
@@ -386,18 +369,10 @@ export function BatchIntakePanel({
     <div className="space-y-4">
       <Card className="p-5">
         <div className="flex items-baseline justify-between gap-2">
-          <SectionLabel>
-            {settlementOnly ? 'Settlement confirmation' : c.intake.title}
-          </SectionLabel>
-          <span className="text-[11px] font-medium uppercase tracking-[0.1em] text-[#888888]">
-            {settlementOnly ? 'After draft intents' : c.intake.stepBadge}
-          </span>
+          <SectionLabel>{c.intake.title}</SectionLabel>
+          <span className="text-[11px] font-medium uppercase tracking-[0.1em] text-[#888888]">{c.intake.stepBadge}</span>
         </div>
-        <p className={`mt-1 ${HOME_BODY_IMPERIAL_SM}`}>
-          {settlementOnly
-            ? 'Upload bank or settlement confirmation for the batch created above. Outcomes are verified against sealed obligations.'
-            : c.intake.helper}
-        </p>
+        <p className={`mt-1 ${HOME_BODY_IMPERIAL_SM}`}>{c.intake.helper}</p>
 
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <label className="flex flex-col gap-1">
@@ -464,13 +439,10 @@ export function BatchIntakePanel({
           </p>
         ) : null}
         {settlementBlockedReason && !settlementCredentialsReady ? (
-          <p className="mt-2 text-[12px] font-medium text-[#0B1324]">{settlementBlockedReason}</p>
+          <p className="mt-2 text-[12px] font-medium text-amber-800">{settlementBlockedReason}</p>
         ) : null}
 
-        {!settlementOnly ? <SampleFileDownloads /> : null}
-
-        <div className={`mt-5 grid gap-4 ${settlementOnly ? '' : 'md:grid-cols-2'}`}>
-          {!settlementOnly ? (
+        <div className="mt-5 grid gap-4 md:grid-cols-2">
           <div
             id="batch-intake-step-1"
             className={`scroll-mt-24 rounded-2xl border p-4 ${
@@ -485,7 +457,7 @@ export function BatchIntakePanel({
                 accept={INTENT_FILE_ACCEPT}
                 busy={intakeStep === 'intent_uploading'}
                 selectedFileName={selectedIntentFile?.name ?? intentFileName}
-                hint="CSV, XLS, or XLSX - one row per payment"
+                hint="CSV, XLS, or XLSX — one row per payment"
                 inputLabel={c.intake.step1Title}
                 onFileChosen={onIntentFileChosen}
               />
@@ -501,7 +473,6 @@ export function BatchIntakePanel({
               </button>
             ) : null}
           </div>
-          ) : null}
 
           <div
             id="batch-intake-step-2"
@@ -539,7 +510,11 @@ export function BatchIntakePanel({
             ) : null}
             {settlementIngestOk && settlementBatchIdResolved ? (
               <Link
-                href={`/settlement/journal?demo=sandbox&client_batch_id=${encodeURIComponent(settlementBatchIdResolved)}`}
+                href={
+                  isSandboxRoute
+                    ? `/sandbox?dock=settlement&client_batch_id=${encodeURIComponent(settlementBatchIdResolved)}`
+                    : `/payout-command-view/today?dock=settlement&client_batch_id=${encodeURIComponent(settlementBatchIdResolved)}`
+                }
                 className="mt-3 inline-flex text-[12px] font-semibold text-[#2563eb] underline"
               >
                 {c.dialogs.openSettlementJournal}
@@ -547,8 +522,6 @@ export function BatchIntakePanel({
             ) : null}
           </div>
         </div>
-
-        <PostUploadStepsCard visible={intentIngestOk || settlementIngestOk} batchId={settlementBatchIdResolved} />
       </Card>
     </div>
   )

@@ -4,7 +4,7 @@
  */
 export const PROMPT_LAYER_QUERY_PATH = '/api/prompt-layer/query'
 
-/** Session tenant required for prompt-layer - no demo / mock fallback. */
+/** Session tenant required for prompt-layer — no demo / mock fallback. */
 export function sessionTenantForPromptLayer(
   tenantId: string,
   tenantReady: boolean,

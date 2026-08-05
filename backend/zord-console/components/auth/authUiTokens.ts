@@ -1,4 +1,4 @@
-/** Razorpay-inspired auth palette - light marketing panel + blue primary CTA. */
+/** Razorpay-inspired auth palette — light marketing panel + blue primary CTA. */
 export const AUTH_UI = {
   primary: '#2B55E8',
   primaryHover: '#2348C9',

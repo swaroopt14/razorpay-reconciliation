@@ -1,6 +1,6 @@
 # Payout KPI API Wiring
 
-Frontend wiring map for the payout KPI UI overhaul. **All KPI values must come from API fields** - show `-` when missing.
+Frontend wiring map for the payout KPI UI overhaul. **All KPI values must come from API fields** — show `—` when missing.
 
 ## Home (`?dock=home`)
 
@@ -22,7 +22,7 @@ Frontend wiring map for the payout KPI UI overhaul. **All KPI values must come f
 |-----------|-----------|
 | `AskZordWorkspaceLayout` | `POST /api/prompt-layer/query` only via `useAskZordState` |
 
-Financial exception counts are **not** on this surface - they live on Home Exception queue card.
+Financial exception counts are **not** on this surface — they live on Home Exception queue card.
 
 ## Payment Gaps (`?dock=leakage`)
 

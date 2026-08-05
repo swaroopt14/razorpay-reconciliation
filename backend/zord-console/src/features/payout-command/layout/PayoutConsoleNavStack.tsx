@@ -1,8 +1,7 @@
 'use client'
 
-import type { ReactNode } from 'react'
+import { SandboxStripeBanner } from '../sandbox/SandboxStripeBanner'
 import { DockNav } from './DockNav'
-import { GuidedDemoBanner } from '../demo/GuidedDemoBanner'
 import type { OpsInsightAlert } from '../command-center/types'
 import type { DockId } from '@/services/payout-command/model'
 
@@ -10,33 +9,43 @@ type PayoutConsoleNavStackProps = {
   activeDock: DockId
   onDockChange: (id: DockId) => void
   onActivateClick: () => void
-  /** @deprecated Imperial sandbox strip removed - guided demo banner used instead when demo=sandbox. */
+  /** When true, renders the imperial-blue Sandbox strip above DockNav. */
   showSandboxStrip?: boolean
   alerts?: readonly OpsInsightAlert[]
-  children: ReactNode
+  /** Optional dock list override (e.g. landing preview). */
+  dockIds?: readonly DockId[]
+  /** Keep Sandbox/Live pill visual without leaving the page. */
+  lockModeSwitch?: boolean
+  /** Extra classes for the sticky chrome (e.g. rounded top on landing). */
+  className?: string
+  /** Extra classes for DockNav header. */
+  navClassName?: string
 }
 
-/**
-  * Shared sidebar + top bar shell.
-  * Do not wrap DockNav in Suspense - a blank fallback makes the menu feel stuck on every click.
-  * GuidedDemoBanner carries its own Suspense for search params.
-  */
+/** Shared sticky strip + DockNav — used on Home, Sandbox, and Batch Command Center. */
 export function PayoutConsoleNavStack({
   activeDock,
   onDockChange,
   onActivateClick,
+  showSandboxStrip = false,
   alerts,
-  children,
+  dockIds,
+  lockModeSwitch = false,
+  className = '',
+  navClassName = '',
 }: PayoutConsoleNavStackProps) {
   return (
-    <DockNav
-      activeDock={activeDock}
-      onDockChange={onDockChange}
-      onActivateClick={onActivateClick}
-      alerts={alerts}
-    >
-      <GuidedDemoBanner />
-      {children}
-    </DockNav>
+    <div className={`sticky top-0 z-40 ${className}`.trim()}>
+      {showSandboxStrip ? <SandboxStripeBanner onVerify={onActivateClick} /> : null}
+      <DockNav
+        activeDock={activeDock}
+        onDockChange={onDockChange}
+        onActivateClick={onActivateClick}
+        alerts={alerts}
+        dockIds={dockIds}
+        lockModeSwitch={lockModeSwitch}
+        className={navClassName}
+      />
+    </div>
   )
 }

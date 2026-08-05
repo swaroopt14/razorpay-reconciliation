@@ -30,10 +30,10 @@ function BentoCard({
 }
 
 const resourceLinks = [
-  { label: 'How it works', href: '/final-landing/how-it-works', detail: 'Step-by-step walkthrough' },
-  { label: 'Security', href: '/#security', detail: 'Controls and proof finance can use' },
-  { label: 'Pricing', href: '/final-landing/pricing', detail: 'Plans and pricing' },
-  { label: 'Contact', href: 'mailto:Support@zordnet.com?subject=ZORD%20resources%20request', detail: 'Demos and setup support' },
+  { label: 'How it works', href: '/final-landing/how-it-works', detail: 'Operating model walkthrough' },
+  { label: 'Security', href: '/#security', detail: 'Controls and finance-ready evidence' },
+  { label: 'Pricing', href: '/final-landing/pricing', detail: 'Rollout paths and commercials' },
+  { label: 'Contact', href: 'mailto:Support@zordnet.com?subject=ZORD%20resources%20request', detail: 'Demos and implementation support' },
 ] as const
 
 export function ResourcesInstitutionalSection() {
@@ -63,8 +63,8 @@ export function ResourcesInstitutionalSection() {
             transition={{ duration: 0.55, delay: 0.05 }}
             className="mt-6 text-[2.35rem] font-semibold leading-[1.02] tracking-[-0.055em] text-[#111111] sm:text-5xl"
           >
-            One set of guides for{' '}
-            <span className="text-[#047857]">every team.</span>
+            One resource layer for{' '}
+            <span className="text-[#047857]">every stakeholder.</span>
           </motion.h2>
 
           <motion.p
@@ -74,7 +74,7 @@ export function ResourcesInstitutionalSection() {
             transition={{ duration: 0.5, delay: 0.1 }}
             className="mt-4 text-base leading-relaxed text-[#6B7280] sm:text-lg"
           >
-            Operators, finance, engineering, and risk can start from the same story - then go deeper where
+            Operators, finance, engineering, and risk can start from the same model, then branch into the depth
             each team needs.
           </motion.p>
         </div>
@@ -85,17 +85,17 @@ export function ResourcesInstitutionalSection() {
               <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-[#34D399]/15 text-[#059669]">
                 <ShieldCheck className="h-4 w-4" strokeWidth={2.25} />
               </span>
-              <h3 className="mt-5 text-xl font-semibold tracking-[-0.03em] text-[#111111]">Trust before you go live</h3>
+              <h3 className="mt-5 text-xl font-semibold tracking-[-0.03em] text-[#111111]">Trust before rollout</h3>
               <p className="mt-3 max-w-sm text-[14px] leading-relaxed text-[#6B7280]">
                 Security and proof resources help procurement and risk teams evaluate ZORD without slowing the
-                product decision.
+                operating decision.
               </p>
             </BentoCard>
 
             <BentoCard delay={0.15} className="flex-1">
               <h3 className="text-xl font-semibold tracking-[-0.03em] text-[#111111]">Quick reference</h3>
               <p className="mt-3 max-w-md text-[14px] leading-relaxed text-[#6B7280]">
-                Jump to the guide that matches where you are right now.
+                Jump to the resource that matches your current evaluation stage.
               </p>
               <div className="mt-6 overflow-hidden rounded-[1.25rem] border border-black/[0.05] bg-white">
                 {resourceLinks.map((link, index) => {
@@ -129,19 +129,19 @@ export function ResourcesInstitutionalSection() {
                 <Layers className="h-4 w-4" strokeWidth={2.25} />
               </span>
               <h3 className="mt-5 text-xl font-semibold tracking-[-0.03em] text-[#111111]">
-                From understanding to getting started
+                From understanding to adoption
               </h3>
               <p className="mt-3 text-[14px] leading-relaxed text-[#6B7280]">
-                These pages help you decide if Zord fits - not replace a hands-on walkthrough. When teams are ready,
-                Arealis walks through go-live, setup, and pricing fit on a demo call.
+                The resource layer is designed for qualification, not self-serve deep dives. When teams are ready,
+                Arealis walks through rollout, integration, and commercial fit on a demo call.
               </p>
             </div>
 
             <div className="mt-8 grid grid-cols-3 gap-3">
               {[
-                ['Operators', 'Status + queues'],
-                ['Finance', 'Bank confirm + proof'],
-                ['Engineering', 'How it fits'],
+                ['Operators', 'Posture + queues'],
+                ['Finance', 'Finality + proof'],
+                ['Engineering', 'System model'],
               ].map(([role, focus]) => (
                 <div
                   key={role}

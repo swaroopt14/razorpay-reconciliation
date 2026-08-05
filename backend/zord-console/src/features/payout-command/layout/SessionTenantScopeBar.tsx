@@ -38,17 +38,17 @@ export function SessionTenantScopeBar({
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
             <span className="text-[12px] font-medium text-slate-600">Workspace ID</span>
             <span className="font-mono text-[13px] text-slate-900" title={tenantId || undefined}>
-              {tenantId.trim() || '-'}
+              {tenantId.trim() || '—'}
             </span>
             {!tenantReady ? <span className="text-[12px] text-slate-500">Resolving session…</span> : null}
           </div>
           {tenantStatus ? (
-            <p className={`text-[12px] leading-relaxed ${showWarning ? 'text-[#0B1324]' : 'text-slate-600'}`}>
+            <p className={`text-[12px] leading-relaxed ${showWarning ? 'text-amber-900' : 'text-slate-600'}`}>
               {tenantStatus}
             </p>
           ) : null}
           {showWarning ? (
-            <p className="text-[12px] leading-relaxed text-[#0B1324]">
+            <p className="text-[12px] leading-relaxed text-amber-900">
               Sign in with a workspace, or enter a Batch-Id and click Resolve workspace.
             </p>
           ) : null}
@@ -62,7 +62,7 @@ export function SessionTenantScopeBar({
                 value={batchId}
                 onChange={(e) => onBatchIdChange(e.target.value)}
                 placeholder="Used to resolve workspace from intelligence"
-                className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 font-mono text-[13px] text-slate-900 outline-none focus:border-[#0B1324]/20/55 focus:ring-2 focus:ring-[#0B1324]/20"
+                className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 font-mono text-[13px] text-slate-900 outline-none focus:border-sky-400/55 focus:ring-2 focus:ring-sky-400/15"
               />
             </label>
           ) : null}

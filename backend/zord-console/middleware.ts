@@ -1,32 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-/** Spec 7.18 workspace admin is exact `/admin`. Platform admin stays under `/admin/tenants` + `/admin/login`. */
-function isWorkspaceAdminPath(pathname: string) {
-  return pathname === '/admin' || pathname === '/admin/'
-}
-
-function isPlatformAdminPath(pathname: string) {
-  return pathname.startsWith('/admin/') && !isWorkspaceAdminPath(pathname)
-}
-
 function getLoginPath(pathname: string) {
-  // Platform /ops keep dedicated login; Spec workspace admin and customer console use /signin.
-  if (isPlatformAdminPath(pathname)) return '/admin/login'
-  if (pathname.startsWith('/ops')) return '/ops/login'
   if (pathname.startsWith('/payout-command-view')) return '/signin'
   if (pathname.startsWith('/sandbox')) return '/signin'
-  if (pathname.startsWith('/overview')) return '/signin'
-  if (pathname.startsWith('/connections')) return '/signin'
-  if (pathname.startsWith('/controls')) return '/signin'
-  if (pathname.startsWith('/payouts')) return '/signin'
-  if (pathname.startsWith('/contracts')) return '/signin'
-  if (pathname.startsWith('/execution')) return '/signin'
-  if (pathname.startsWith('/payments')) return '/signin'
-  if (pathname.startsWith('/settlement')) return '/signin'
-  if (pathname.startsWith('/proof')) return '/signin'
-  if (pathname.startsWith('/developer')) return '/signin'
-  if (pathname.startsWith('/ask')) return '/signin'
-  if (isWorkspaceAdminPath(pathname)) return '/signin'
   return '/signin'
 }
 
@@ -35,26 +11,9 @@ function loginRedirectUrl(request: NextRequest, pathname: string) {
 }
 
 function roleMatchesPath(pathname: string, role: string) {
-  if (isPlatformAdminPath(pathname)) return role === 'ADMIN'
-  if (pathname.startsWith('/ops')) return role === 'OPS'
   if (
-    pathname.startsWith('/customer') ||
-    pathname.startsWith('/console') ||
-    pathname.startsWith('/app-final') ||
     pathname.startsWith('/payout-command-view') ||
-    pathname.startsWith('/sandbox') ||
-    pathname.startsWith('/overview') ||
-    pathname.startsWith('/connections') ||
-    pathname.startsWith('/controls') ||
-    pathname.startsWith('/payouts') ||
-    pathname.startsWith('/contracts') ||
-    pathname.startsWith('/execution') ||
-    pathname.startsWith('/payments') ||
-    pathname.startsWith('/settlement') ||
-    pathname.startsWith('/proof') ||
-    pathname.startsWith('/developer') ||
-    pathname.startsWith('/ask') ||
-    isWorkspaceAdminPath(pathname)
+    pathname.startsWith('/sandbox')
   ) {
     return role === 'CUSTOMER_USER' || role === 'CUSTOMER_ADMIN'
   }
@@ -69,15 +28,7 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/signin', request.url))
   }
 
-  if (
-    pathname === '/signin' ||
-    pathname === '/signup' ||
-    pathname === '/console/login' ||
-    pathname === '/customer/login' ||
-    pathname === '/ops/login' ||
-    pathname === '/admin/login' ||
-    pathname === '/app-final/login'
-  ) {
+  if (pathname === '/signin' || pathname === '/signup' || pathname === '/register') {
     return NextResponse.next()
   }
 
@@ -99,37 +50,9 @@ export const config = {
   matcher: [
     '/signin',
     '/signin/tenant',
-    '/console/:path*',
-    '/customer/:path*',
-    '/ops/:path*',
-    '/admin',
-    '/admin/:path*',
-    '/app-final/:path*',
     '/payout-command-view',
     '/payout-command-view/:path*',
     '/sandbox',
     '/sandbox/:path*',
-    '/overview',
-    '/overview/:path*',
-    '/connections',
-    '/connections/:path*',
-    '/controls',
-    '/controls/:path*',
-    '/payouts',
-    '/payouts/:path*',
-    '/contracts',
-    '/contracts/:path*',
-    '/execution',
-    '/execution/:path*',
-    '/payments',
-    '/payments/:path*',
-    '/settlement',
-    '/settlement/:path*',
-    '/proof',
-    '/proof/:path*',
-    '/developer',
-    '/developer/:path*',
-    '/ask',
-    '/ask/:path*',
   ],
 }

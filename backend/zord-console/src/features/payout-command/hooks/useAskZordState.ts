@@ -3,7 +3,6 @@ import { useAuth } from '@/app/hooks'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { useSessionTenant } from '@/services/auth/useSessionTenantId'
-import { safeRandomId } from '@/shared/lib/safeRandomId'
 import {
   mapPromptLayerAnswer,
   postPromptLayerQuery,
@@ -98,7 +97,7 @@ export function useAskZordState(_activeSurfaceTitle: string): AskZordState {
 
   const snapshotActiveThread = useCallback(
     (complete: boolean) => {
-      const threadId = activeThreadIdRef.current ?? safeRandomId()
+      const threadId = activeThreadIdRef.current ?? crypto.randomUUID()
       const snapshot = buildThreadSnapshot({
         id: threadId,
         turns: archivedTurns,
@@ -147,7 +146,7 @@ export function useAskZordState(_activeSurfaceTitle: string): AskZordState {
 
   useEffect(() => {
     if (status !== 'complete' || !lastUserPrompt || !response?.body.trim()) return
-    const threadId = activeThreadIdRef.current ?? safeRandomId()
+    const threadId = activeThreadIdRef.current ?? crypto.randomUUID()
     const snapshot = buildThreadSnapshot({
       id: threadId,
       turns: archivedTurns,
@@ -217,7 +216,7 @@ export function useAskZordState(_activeSurfaceTitle: string): AskZordState {
         ])
       }
 
-      const threadId = activeThreadIdRef.current ?? safeRandomId()
+      const threadId = activeThreadIdRef.current ?? crypto.randomUUID()
 if (!activeThreadIdRef.current) {
   activeThreadIdRef.current = threadId
   setActiveThreadId(threadId)

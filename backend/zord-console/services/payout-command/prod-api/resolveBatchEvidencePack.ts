@@ -12,7 +12,7 @@ export function batchPackSummaryFromLineage(
 
   return {
     evidence_pack_id: packId,
-    tenant_id: apiTrimmedString(lineage.tenant_id) || '-',
+    tenant_id: apiTrimmedString(lineage.tenant_id) || '—',
     intent_id: apiTrimmedString(lineage.intent_id) || undefined,
     batch_id: batchId,
     mode: 'BATCH_PROOF',
@@ -34,18 +34,11 @@ export async function resolveBatchPackFromLineageGraph(
 }
 
 export function isBatchEvidencePack(summary: EvidencePackSummaryRow): boolean {
-  const packId = apiTrimmedString(summary.evidence_pack_id)
-  const intentId = apiTrimmedString(summary.intent_id)
   const mode = apiTrimmedString(summary.mode).toUpperCase()
-
-  // Intent packs always win - never treat payment attach packs as batch proof.
-  if (intentId) return false
-  if (/-pi-\d+/i.test(packId)) return false
-  if (mode.includes('INTELLIGENCE') || mode.includes('ATTACH')) return false
-
+  // Mode wins: BATCH_PROOF rows can still carry a leftover intent_id from some APIs.
   if (mode.includes('BATCH')) return true
-  if (packId.startsWith('pack-') && !/-pi-\d+/i.test(packId) && mode === '') return true
-  return false
+  const intentId = apiTrimmedString(summary.intent_id)
+  return !intentId && mode === ''
 }
 
 /** Synthetic full pack when GET /packs/:id is empty but batch lineage graph exists. */
@@ -62,7 +55,7 @@ export function evidencePackFullFromBatchLineage(
     ''
   return {
     evidence_pack_id: packId,
-    tenant_id: apiTrimmedString(lineage.tenant_id) || apiTrimmedString(summary?.tenant_id) || '-',
+    tenant_id: apiTrimmedString(lineage.tenant_id) || apiTrimmedString(summary?.tenant_id) || '—',
     intent_id: '',
     batch_id: batchId,
     contract_id: apiTrimmedString(summary?.contract_id) || '-',

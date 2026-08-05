@@ -2,9 +2,9 @@
  * Intent Journal mock builders.
  *
  * Two responsibilities:
- *   1. `buildSeededBatchFromScenario(scenarioId, batchId)` - generates a full
+ *   1. `buildSeededBatchFromScenario(scenarioId, batchId)` — generates a full
  *      `SeededBatch` (batch summary + N intent details) for a sandbox scenario.
- *   2. `getIntentDetail(intentId)` - returns deep details for ANY intent ID,
+ *   2. `getIntentDetail(intentId)` — returns deep details for ANY intent ID,
  *      including canned-batch intents not stored anywhere. Deterministic from
  *      the intent ID so the same row always shows the same drawer content.
  *
@@ -34,7 +34,7 @@ import { generateBenToken, tokenizeBeneficiaryFull } from './tokenize'
 // ─── Deterministic PRNG (mulberry32) ────────────────────────────────────────────
 
 /**
- * mulberry32 - small deterministic PRNG. Same seed → same stream. We use this
+ * mulberry32 — small deterministic PRNG. Same seed → same stream. We use this
  * so the same intent ID always produces the same drawer content.
  */
 function rng(seed: number) {
@@ -258,7 +258,7 @@ function buildSignals(rand: () => number, status: IntentLifecycleStatus, intentI
     ]
   }
 
-  // Confirmed: 3 signals - webhook → settlement → reconcile.
+  // Confirmed: 3 signals — webhook → settlement → reconcile.
   const lat1 = 3_000 + Math.floor(rand() * 1500)
   const lat2 = lat1 + 6_000 + Math.floor(rand() * 3000)
   const lat3 = lat2 + 5_000 + Math.floor(rand() * 2000)
@@ -447,7 +447,7 @@ function buildScores(
   mappingConfidence: number,
   duplicateRiskFlag: boolean,
 ): CanonicalScores {
-  // Deterministic structural scores per Service 2 §12 - derived from the same
+  // Deterministic structural scores per Service 2 §12 — derived from the same
   // signals the UI already exposes, no ML.
   const baseProof = status === 'failed' ? 55 : status === 'ambiguous' ? 70 : 88
   const proofReadinessScore = clamp(Math.round(baseProof + (rand() - 0.5) * 10 + (mappingConfidence - 80) * 0.3))
@@ -539,7 +539,7 @@ function buildIntentDetailFromSeed(intentId: string, batchId: string, shape: Sce
   const scores = buildScores(rand, status, defensibilityScore, mapping.mappingConfidenceScore, idempotency.duplicateRiskFlag)
   const governance = buildGovernance(rand, status, idempotency.duplicateRiskFlag)
 
-  // Service 2 ingests before dispatch - seed ingestedAt slightly earlier.
+  // Service 2 ingests before dispatch — seed ingestedAt slightly earlier.
   const ingestedAt = new Date(dispatchedAt.getTime() - (60 + Math.floor(rand() * 240)) * 1000)
   const intendedExecutionAt = rand() < 0.4
     ? new Date(dispatchedAt.getTime() + Math.floor(rand() * 4 * 60 * 60 * 1000)).toISOString()

@@ -8,7 +8,7 @@ export function readApiScore(raw: unknown): number | null {
   return null
 }
 
-/** Per-row Quality column - `intent_quality_score` only (no fallbacks). */
+/** Per-row Quality column — `intent_quality_score` only (no fallbacks). */
 export function readIntentQualityScore(item: { intent_quality_score?: unknown }): number | null {
   return readApiScore(item.intent_quality_score)
 }

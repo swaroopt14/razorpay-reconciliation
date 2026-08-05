@@ -34,7 +34,7 @@ export type IntentJournalBatchSidebarProps = {
 }
 
 function formatIntentTotal(total: number | null): string {
-  if (total == null) return '-'
+  if (total == null) return '—'
   return `${total.toLocaleString('en-US')} intents`
 }
 
@@ -89,16 +89,16 @@ export function IntentJournalBatchSidebar({
               const intentCount = selected ? selectedEngineIntentTotal : batch.transactions > 0 ? batch.transactions : null
               const engineConfPct = confidencePctFromBatch(batch)
               const status = resolveBatchHealthStatus(batch)
-              const sidebarScoreDisplay = engineConfPct != null ? `${engineConfPct}%` : '-'
+              const sidebarScoreDisplay = engineConfPct != null ? `${engineConfPct}%` : '—'
               const progressWidthPct = engineConfPct ?? 0
               const tone = status ? statusTone(status) : neutralHealthTone()
               const dotColor =
                 status === 'Stable'
                   ? 'bg-black'
                   : status === 'At Risk'
-                    ? 'bg-[#0B1324]'
+                    ? 'bg-amber-500'
                     : status === 'Critical'
-                      ? 'bg-[#0B1324]'
+                      ? 'bg-rose-500'
                       : 'bg-slate-300'
 
               return (
@@ -133,9 +133,9 @@ export function IntentJournalBatchSidebar({
                       <div
                         className={`inline-flex items-center rounded-full px-2 py-0.5 text-[12px] font-semibold ${tone.text} ${
                           status === 'At Risk'
-                            ? 'bg-[#F1F5F9]'
+                            ? 'bg-amber-100'
                             : status === 'Critical'
-                              ? 'bg-[#F1F5F9]'
+                              ? 'bg-rose-100'
                               : 'bg-neutral-100'
                         }`}
                         title={BATCH_AGGREGATE_STATUS_GUIDE}
@@ -153,8 +153,8 @@ export function IntentJournalBatchSidebar({
                             status === 'Stable'
                               ? 'bg-black'
                               : status === 'At Risk'
-                                ? 'bg-[#0B1324]'
-                                : 'bg-[#0B1324]'
+                                ? 'bg-amber-500'
+                                : 'bg-rose-500'
                           }`}
                           style={{ width: `${progressWidthPct}%` }}
                         />

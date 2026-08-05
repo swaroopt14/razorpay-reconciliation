@@ -18,7 +18,7 @@ services:
       - HOSTNAME=0.0.0.0
       - NEXT_PUBLIC_PROMPT_LAYER_URL=${NEXT_PUBLIC_PROMPT_LAYER_URL:-/api/prompt-layer}
       - PROMPT_LAYER_URL=http://zord-prompt-layer:8086
-      # Default 8089 matches zord-intelligence (see config/api.endpoints.ts). 8080 is zord-edge - wrong target for KPI/batch proxies.
+      # Default 8089 matches zord-intelligence (see config/api.endpoints.ts). 8080 is zord-edge — wrong target for KPI/batch proxies.
       - ZORD_INTELLIGENCE_URL=${ZORD_INTELLIGENCE_URL:-http://host.docker.internal:8089}
       - ZORD_BULK_INGEST_API_KEY=${ZORD_BULK_INGEST_API_KEY:-}
       - SLACK_LEADS_WEBHOOK_URL=${SLACK_LEADS_WEBHOOK_URL:-}
@@ -26,12 +26,15 @@ services:
       - ZORD_BULK_INGEST_SOURCE_TYPE=${ZORD_BULK_INGEST_SOURCE_TYPE:-CSV}
       - ZORD_BULK_INGEST_SOURCE_CLASS=${ZORD_BULK_INGEST_SOURCE_CLASS:-INTENT}
       - ZORD_EDGE_URL=${ZORD_EDGE_URL:-http://host.docker.internal:8080}
-      # Outcome-engine settlement upload (BFF default is localhost:8081 - wrong inside this container).
+      # Outcome-engine settlement upload (BFF default is localhost:8081 — wrong inside this container).
       - ZORD_SETTLEMENT_URL=${ZORD_SETTLEMENT_URL:-http://host.docker.internal:8081}
       - ZORD_SETTLEMENT_API_KEY=${ZORD_SETTLEMENT_API_KEY:-}
       - ZORD_VAULT_URL=${ZORD_VAULT_URL:-http://host.docker.internal:8081}
       - ZORD_RELAY_URL=${ZORD_RELAY_URL:-http://host.docker.internal:8082}
       - ZORD_INTENT_ENGINE_URL=${ZORD_INTENT_ENGINE_URL:-http://host.docker.internal:8083}
+      # R-02: must match zord-intent-engine's INTERNAL_SERVICE_TOKEN — sent as
+      # X-Internal-Service-Token on /internal/intents/* calls (services/backend/intents.ts).
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-}
       - ZORD_EVIDENCE_URL=${ZORD_EVIDENCE_URL:-http://host.docker.internal:8088}
       - ZORD_CONTRACTS_URL=${ZORD_CONTRACTS_URL:-http://host.docker.internal:8084}
       - ZORD_PII_ENCLAVE_URL=${ZORD_PII_ENCLAVE_URL:-http://host.docker.internal:8085}

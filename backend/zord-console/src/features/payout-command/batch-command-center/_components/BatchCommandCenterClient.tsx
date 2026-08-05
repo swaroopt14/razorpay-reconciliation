@@ -5,15 +5,13 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSessionTenant } from '@/services/auth/useSessionTenantId'
 import { Glyph, LiveDataHint } from '../../shared'
-import type {
-  BatchIntakeSnapshot,
-  BatchUploadStatus,
-  IntentIngestSuccessPayload,
-  SettlementIngestSuccessPayload,
+import {
+  BatchIntakePanel,
+  type BatchIntakeSnapshot,
+  type BatchUploadStatus,
+  type IntentIngestSuccessPayload,
+  type SettlementIngestSuccessPayload,
 } from './BatchIntakePanel'
-import { CreatePayoutObligationPanel } from './CreatePayoutObligationPanel'
-import { PageExplainerBanner } from '../../demo/PageExplainerBanner'
-import { BatchGetStartedCard } from './BatchGetStartedCard'
 import { HydrationSafeLocaleTime } from '../../command-center/HydrationSafeLocaleTime'
 import {
   derivePaymentProofTimeline,
@@ -79,6 +77,7 @@ export default function BatchCommandCenterClient() {
   const [uploadStatus, setUploadStatus] = useState<BatchUploadStatus>({ state: 'idle', message: null })
   const [toolbarNotice, setToolbarNotice] = useState<string | null>(null)
   const [shareBusy, setShareBusy] = useState(false)
+  const batchReferenceRef = useRef<HTMLInputElement | null>(null)
   const toolbarNoticeTimerRef = useRef<number | null>(null)
 
   const activeBatchId = useMemo(() => {
@@ -92,7 +91,7 @@ export default function BatchCommandCenterClient() {
     batchId: activeBatchId,
   })
 
-  // Browser back/forward or external ?batch_id= link - not fired while the user is typing.
+  // Browser back/forward or external ?batch_id= link — not fired while the user is typing.
   useEffect(() => {
     const urlBatch = searchParams.get('batch_id')?.trim() ?? ''
     setCommittedBatchId(urlBatch)
@@ -160,22 +159,10 @@ export default function BatchCommandCenterClient() {
     el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [])
 
-  // Top-bar Upload / ?upload=1 lands on the intake section.
-  useEffect(() => {
-    if (searchParams.get('upload') !== '1') return
-    let attempts = 0
-    const tryScroll = () => {
-      const el = document.getElementById('batch-intake-step-1')
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-        return
-      }
-      attempts += 1
-      if (attempts < 12) window.setTimeout(tryScroll, 100)
-    }
-    const t = window.setTimeout(tryScroll, 80)
-    return () => window.clearTimeout(t)
-  }, [searchParams])
+  const focusBatchReference = useCallback(() => {
+    batchReferenceRef.current?.focus()
+    batchReferenceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [])
 
   const engineSummary = useMemo(() => {
     const success = feed.intentRows.filter((r) => r.status === 'Confirmed').length
@@ -196,8 +183,11 @@ export default function BatchCommandCenterClient() {
 
   const settlementJournalHref = useMemo(() => {
     if (!activeBatchId) return null
-    return `/settlement/journal?demo=sandbox&client_batch_id=${encodeURIComponent(activeBatchId)}`
-  }, [activeBatchId])
+    const base = isSandboxRoute
+      ? '/sandbox?dock=settlement'
+      : '/payout-command-view/today?dock=settlement'
+    return `${base}&client_batch_id=${encodeURIComponent(activeBatchId)}`
+  }, [activeBatchId, isSandboxRoute])
 
   const pieSlices = useMemo(() => mapPaymentStatusBreakdown(statCardsSummary), [statCardsSummary])
 
@@ -222,10 +212,10 @@ export default function BatchCommandCenterClient() {
 
   const shareBatchSummary = useCallback(async () => {
     const url = typeof window !== 'undefined' ? window.location.href : ''
-    const batchLabel = activeBatchId || '-'
-    const tid = tenantId.trim() || '-'
+    const batchLabel = activeBatchId || '—'
+    const tid = tenantId.trim() || '—'
     const text = [
-      'Zord - Payment Batch Review snapshot',
+      'Zord — Payment Batch Review snapshot',
       '',
       `Tenant: ${tid}`,
       `Batch id: ${batchLabel}`,
@@ -248,61 +238,42 @@ export default function BatchCommandCenterClient() {
     showToolbarNotice('Opened email draft with batch summary.')
   }, [activeBatchId, showToolbarNotice, statCardsSummary, tenantId])
 
+  const createPaymentHref = '/payout-command-view/create-payment'
+
   return (
     <div
       className="payout-command-console text-[13px] font-normal leading-relaxed text-[#1A1A1A] antialiased"
       data-testid="batch-review-page"
     >
-      <div className="mx-auto w-full max-w-[1600px] space-y-5 p-4 sm:p-5 lg:p-6">
-        <PageExplainerBanner page="upload" />
-        <BatchGetStartedCard />
+      <div className="w-full space-y-5 p-4 sm:p-5 lg:p-6">
+        <header>
+          <h1 className="text-[22px] font-bold tracking-tight text-[#0f172a]">{BATCH_REVIEW_COPY.pageTitle}</h1>
+          <p className="mt-1 text-[14px] text-[#64748b]">{BATCH_REVIEW_COPY.pageSubtitle}</p>
+        </header>
 
-        <CreatePayoutObligationPanel
-          batchId={committedBatchId}
-          uploadAnchorId="batch-intake-step-1"
-          onDraftIntentsCreated={(payload) => {
-            handleBatchIdCommit(payload.batchId)
-            setIntentFilePreviewRows(payload.parsedRows)
-            setIntakeSnapshot((prev) => ({
-              ...prev,
-              intakeStep: 'intent_ready',
-              intentFileName: payload.fileName,
-              intentIngestOk: true,
-              uploadedFileName: payload.fileName,
-              uploadState: 'ready',
-              settlementBatchId: payload.batchId,
-            }))
-            setUploadStatus({
-              state: 'synced',
-              message: `Draft intents created · batch ${payload.batchId}`,
-            })
-            onIntentIngestSuccess({
-              batchId: payload.batchId,
-              effectiveBatch: payload.batchId,
-              parsedRows: payload.parsedRows,
-              fileName: payload.fileName,
-            })
-            void feed.refreshBatchFeed()
-          }}
-          onSettlementUploaded={(payload) => {
-            setSettlementFilePreviewRows(payload.parsedRows)
-            setIntakeSnapshot((prev) => ({
-              ...prev,
-              intakeStep: 'closed',
-              settlementFileName: payload.fileName,
-              settlementIngestOk: true,
-              settlementBatchId: payload.batchId,
-            }))
-            setUploadStatus({
-              state: 'synced',
-              message: `Settlement confirmation accepted · ${payload.fileName}`,
-            })
-            onSettlementIngestSuccess(payload)
-            void feed.refreshBatchFeed()
-          }}
-        />
-
-        <div className="flex flex-wrap items-center justify-between gap-2 border border-[#E2E8F0] bg-white px-4 py-3">
+        <div className="flex flex-col gap-3 rounded-xl border border-[#e2e8f0] bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => scrollToIntakeStep(1)}
+              className="h-9 rounded-lg border border-[#e2e8f0] bg-white px-3 text-[13px] font-medium text-[#0f172a] transition hover:bg-slate-50"
+            >
+              {BATCH_REVIEW_COPY.toolbar.uploadPaymentFile}
+            </button>
+            <button
+              type="button"
+              onClick={() => scrollToIntakeStep(2)}
+              className="h-9 rounded-lg border border-[#e2e8f0] bg-white px-3 text-[13px] font-medium text-[#0f172a] transition hover:bg-slate-50"
+            >
+              {BATCH_REVIEW_COPY.toolbar.uploadSettlementFile}
+            </button>
+            <Link
+              href={createPaymentHref}
+              className="inline-flex h-9 items-center rounded-lg border border-[#e2e8f0] bg-white px-3 text-[13px] font-medium text-[#0f172a] transition hover:bg-slate-50"
+            >
+              {BATCH_REVIEW_COPY.toolbar.createPaymentManually}
+            </Link>
+          </div>
           <div className="flex flex-wrap items-center gap-3">
             <LiveDataHint isLive={Boolean(tenantReady && feed.feedLoaded)} source={BATCH_REVIEW_COPY.toolbar.liveSource} />
             {feed.syncAt ? (
@@ -314,14 +285,14 @@ export default function BatchCommandCenterClient() {
           <div className="flex flex-wrap items-center gap-2">
             <Link
               href={intentJournalHref}
-              className="inline-flex h-9 items-center border border-[#CBD5E1] bg-white px-3 text-[13px] font-semibold text-[#0B1324] hover:bg-[#F8FAFC]"
+              className="h-9 rounded-lg border border-[#e2e8f0] bg-white px-3.5 text-[14px] font-medium text-[#0f172a] transition hover:bg-slate-50"
             >
               {BATCH_REVIEW_COPY.toolbar.intentJournal}
             </Link>
             {settlementJournalHref ? (
               <Link
                 href={settlementJournalHref}
-                className="inline-flex h-9 items-center border border-[#CBD5E1] bg-white px-3 text-[13px] font-semibold text-[#0B1324] hover:bg-[#F8FAFC]"
+                className="h-9 rounded-lg border border-[#e2e8f0] bg-white px-3.5 text-[14px] font-medium text-[#0f172a] transition hover:bg-slate-50"
               >
                 {BATCH_REVIEW_COPY.toolbar.settlementJournal}
               </Link>
@@ -331,7 +302,7 @@ export default function BatchCommandCenterClient() {
               onClick={() => void feed.refreshBatchFeed()}
               disabled={feed.detailLoading}
               title={BATCH_REVIEW_COPY.toolbar.refresh}
-              className="flex h-9 w-9 items-center justify-center border border-[#CBD5E1] bg-white text-[#64748b] hover:bg-[#F8FAFC] disabled:opacity-50"
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#e2e8f0] bg-white text-[#64748b] transition hover:bg-slate-50 disabled:opacity-50"
             >
               <Glyph name="refresh" className={`h-[15px] w-[15px] ${feed.detailLoading ? 'animate-spin' : ''}`} />
             </button>
@@ -348,7 +319,7 @@ export default function BatchCommandCenterClient() {
                   }
                 })()
               }}
-              className="flex h-9 items-center gap-2 bg-[#0B1324] px-4 text-[13px] font-semibold text-white hover:bg-[#1E293B] disabled:opacity-70"
+              className="flex h-9 items-center gap-2 rounded-lg bg-[#2563eb] px-4 text-[14px] font-medium text-white transition hover:bg-[#1d4ed8] disabled:opacity-70"
             >
               {shareBusy ? 'Opening…' : BATCH_REVIEW_COPY.toolbar.share}
             </button>
@@ -356,13 +327,13 @@ export default function BatchCommandCenterClient() {
         </div>
 
         {toolbarNotice ? (
-          <div role="status" className="border border-slate-200 bg-slate-50 px-4 py-2.5 text-[13px] font-medium text-slate-800">
+          <div role="status" className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-[13px] font-medium text-slate-800">
             {toolbarNotice}
           </div>
         ) : null}
 
         {feed.feedError ? (
-          <div role="alert" className="border border-[#0B1324]/20 bg-[#F1F5F9] px-4 py-2.5 text-[13px] text-[#0B1324]">
+          <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-[13px] text-amber-900">
             {feed.feedError}
           </div>
         ) : null}
@@ -371,6 +342,18 @@ export default function BatchCommandCenterClient() {
           batchId={committedBatchId}
           onBatchIdChange={handleBatchIdCommit}
           onAfterFetch={() => void feed.refreshBatchFeed()}
+        />
+
+        <BatchIntakePanel
+          committedBatchId={committedBatchId}
+          batchReferenceRef={batchReferenceRef}
+          onBatchIdCommit={handleBatchIdCommit}
+          isSandboxRoute={isSandboxRoute}
+          onIntentIngestSuccess={onIntentIngestSuccess}
+          onSettlementIngestSuccess={onSettlementIngestSuccess}
+          onSnapshotChange={setIntakeSnapshot}
+          onUploadStatusChange={setUploadStatus}
+          onIntentUploadFailed={() => void feed.refreshBatchFeed()}
         />
 
         <BatchProgressPanel
@@ -384,14 +367,14 @@ export default function BatchCommandCenterClient() {
             role="status"
             className={`flex items-center gap-3 rounded-xl border px-4 py-3 text-[13px] font-medium ${
               uploadStatus.state === 'failed'
-                ? 'border-[#0B1324]/20 bg-[#F1F5F9] text-[#0B1324]'
+                ? 'border-red-200 bg-red-50 text-red-900'
                 : uploadStatus.state === 'synced'
-                  ? 'border-[#0B1324]/20 bg-[#F1F5F9] text-[#0B1324]'
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
                   : 'border-slate-200 bg-slate-50 text-slate-800'
             }`}
           >
             {uploadStatus.state === 'synced' && (
-              <svg className="h-4 w-4 shrink-0 text-[#0B1324]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+              <svg className="h-4 w-4 shrink-0 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             )}

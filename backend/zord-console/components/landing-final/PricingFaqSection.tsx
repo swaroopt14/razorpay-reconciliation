@@ -30,7 +30,7 @@ export function PricingFaqSection() {
           transition={{ duration: 0.55, delay: 0.05 }}
           className="mt-4 text-[2rem] font-semibold leading-[1.05] tracking-[-0.05em] text-[#111111] sm:text-[2.5rem]"
         >
-          Pricing questions teams{' '}
+          Commercial questions buyers{' '}
           <span className="text-[#047857]">actually ask</span>
         </motion.h2>
       </div>

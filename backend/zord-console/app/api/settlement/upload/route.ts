@@ -8,13 +8,10 @@ import {
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
-/** Outcome-engine settlement ingest (smoke fallback when set). */
+/** Outcome-engine settlement ingest (default local: :8081). */
 function settlementBase() {
-  const raw =
-    process.env.ZORD_SETTLEMENT_URL ||
-    process.env.SMOKE_SIMULATOR_URL ||
-    'http://localhost:8081'
-  return raw.replace(/\/$/, '')
+  if (process.env.ZORD_SETTLEMENT_URL) return process.env.ZORD_SETTLEMENT_URL.replace(/\/$/, '')
+  return 'http://localhost:8081'
 }
 
 /**

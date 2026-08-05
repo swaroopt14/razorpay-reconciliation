@@ -19,7 +19,7 @@ export function ResourcesInfoSection() {
           <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#34D399]/15 text-[#059669]">
             <BookOpen className="h-3.5 w-3.5" strokeWidth={2.25} />
           </span>
-          <p>From first look to a confident evaluation - without scattered documents.</p>
+          <p>From high-level understanding to rollout confidence, without scattered documents.</p>
         </motion.div>
 
         <motion.h2
@@ -31,8 +31,8 @@ export function ResourcesInfoSection() {
         >
           Everything teams need to
           <span className="mt-2 block">
-            understand and{' '}
-            <span className="text-[#047857]">try ZORD.</span>
+            evaluate, learn, and{' '}
+            <span className="text-[#047857]">roll out ZORD.</span>
           </span>
         </motion.h2>
 
@@ -43,8 +43,8 @@ export function ResourcesInfoSection() {
           transition={{ duration: 0.55, delay: 0.12 }}
           className="mt-8 max-w-2xl text-base leading-relaxed text-[#6B7280] sm:text-lg sm:leading-8"
         >
-          Learn how Zord helps teams see, check, match, and prove payouts - then review security, pricing, and the
-          fastest path to talking with the Arealis team.
+          Use the resource layer to understand the operating model, security posture, commercial fit, and the
+          fastest path to working with the Arealis team.
         </motion.p>
       </div>
     </section>

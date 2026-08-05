@@ -22,7 +22,7 @@ export function columnFullLabel(short: string): string {
   return COLUMN_FULL_LABELS[short] ?? short
 }
 
-/** Derive column intensity counts from heatmap cells only - not tenant KPI math. */
+/** Derive column intensity counts from heatmap cells only — not tenant KPI math. */
 export function buildHeatmapColumnStats(heatmap: MatchingExecutionHeatmap): HeatmapColumnStat[] {
   const { x_labels, cells, column_totals } = heatmap
   return x_labels.map((label, colIdx) => {

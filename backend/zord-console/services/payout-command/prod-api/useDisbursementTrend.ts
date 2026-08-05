@@ -12,7 +12,7 @@ export type UseDisbursementTrendOptions = {
   intervalMs?: number
 }
 
-/** Disbursement trend chart - session-scoped BFF; polls every 30s by default. */
+/** Disbursement trend chart — session-scoped BFF; polls every 30s by default. */
 export function useDisbursementTrend(options: UseDisbursementTrendOptions) {
   const { tenantReady, range, intervalMs = DEFAULT_POLL_MS } = options
   const [data, setData] = useState<DisbursementTrendResponse | null>(null)

@@ -41,7 +41,7 @@ export const PROOF_SCORE_TOOLTIP =
 export const evidenceCopy = {
   pageTitle: 'Evidence & Dispute Resolution',
   pageSubtitle:
-    'Build, verify, and export proof for payments, settlements, disputes, and audit review - one structured Evidence Pack instead of screenshots and PSP log chases.',
+    'Build, verify, and export proof for payments, settlements, disputes, and audit review — one structured Evidence Pack instead of screenshots and PSP log chases.',
   mainDescription:
     'Zord links the original payment instruction, settlement record, match decision, and final outcome into one Evidence Pack. Use this page to see what is proof-ready, what is incomplete, and what can be exported.',
   salesLine:
@@ -132,7 +132,7 @@ export const evidenceCopy = {
   },
   dispute: {
     title: 'Create Dispute / Evidence Case',
-    apiBanner: 'Dispute case tracking API not connected - exports use loaded evidence pack data.',
+    apiBanner: 'Dispute case tracking API not connected — exports use loaded evidence pack data.',
     paymentRef: 'Payment reference / invoice / UTR',
     reason: 'Dispute reason',
     selectPack: 'Select evidence pack',
@@ -150,7 +150,7 @@ export const evidenceCopy = {
   export: {
     centerTitle: 'Export Center',
     centerSubtitle: 'Generate evidence exports for finance, audit, bank, and dispute review.',
-    apiPending: 'Export request failed - verify dispute export service and payload mapping.',
+    apiPending: 'Export request failed — verify dispute export service and payload mapping.',
     financePdf: 'Finance Summary (.pdf)',
     auditPdf: 'Audit Evidence Pack (.pdf)',
     bankPack: 'Bank / PSP Dispute Pack (.xlsx)',
@@ -211,6 +211,7 @@ export function mapProofTierLabel(tier: string | undefined): string {
 
 export function humanizePackMode(mode: string): string {
   const m = (mode || '').toUpperCase()
+  if (m.includes('BATCH')) return 'Batch proof'
   if (m.includes('INTELLIGENCE')) return 'Evidence Generated'
   if (m.includes('ATTACH')) return 'Evidence Generated'
   if (m.includes('DISPATCH')) return 'Dispatch Evidence'

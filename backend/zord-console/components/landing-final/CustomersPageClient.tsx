@@ -6,9 +6,9 @@ import { buyerPersonas } from '@/components/landing-final/copy/landingPagesCopy'
 import { FinalLandingPageScaffold } from '@/components/landing-final/FinalLandingPageScaffold'
 
 const adoptionSignals = [
-  { value: 'Shared workspace', label: 'ops and finance follow the same payout record' },
-  { value: 'Proof packs', label: 'ready for close, disputes, and audit' },
-  { value: 'Try first', label: 'try the workflow before you commit to production' },
+  { value: 'Shared workspace', label: 'ops, finance, and engineering on one payout record' },
+  { value: 'Evidence Packs', label: 'exportable proof for close, disputes, and audit' },
+  { value: 'Sandbox first', label: 'evaluate the operating model before production rollout' },
 ] as const
 
 const pageCardStyle = {
@@ -21,9 +21,9 @@ export default function CustomersPageClient() {
   return (
     <FinalLandingPageScaffold
       active="Customers"
-      eyebrow="Who uses Zord"
-      title="Built for the teams who must explain payouts - not for logo walls."
-      description="Roles and job problems only. No customer names, testimonials, or outcome statistics. Zord helps finance, operations, and related teams see, check, match, and prove payouts together."
+      eyebrow="Buyers"
+      title="Who brings ZORD into payout environments, and what problem they are solving."
+      description="This page describes buyer lenses, not customer logos or outcome statistics. Teams adopt ZORD when payout accountability spans operations, finance, engineering, and risk at the same time."
       primaryAction={{ label: 'Book demo', href: '/signup' }}
       secondaryAction={{ label: 'Back to product', href: '/' }}
     >
@@ -40,14 +40,13 @@ export default function CustomersPageClient() {
               <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(5,7,10,0.10)_0%,rgba(5,7,10,0.75)_100%)]" />
               <div className="absolute inset-x-0 bottom-0 p-8">
                 <div className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-black/20 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/72 backdrop-blur-md">
-                  Who uses Zord
+                  Buyer context
                 </div>
                 <h2 className="mt-5 max-w-xl text-4xl font-semibold tracking-[-0.05em] text-white">
-                  One working view for finance, ops, and the teams around them.
+                  One working view for ops, finance, engineering, and risk.
                 </h2>
                 <p className="mt-4 max-w-xl text-[15px] leading-7 text-white/78">
-                  Zord fits when payout questions stop being “someone else’s ticket” and start touching close, compliance,
-                  and day-to-day operations at the same time.
+                  ZORD fits when payout incidents are no longer isolated technical issues and start becoming customer, finance, and compliance problems at the same time.
                 </p>
               </div>
             </div>
@@ -79,8 +78,8 @@ export default function CustomersPageClient() {
 
       <section className="mx-auto mt-8 max-w-6xl">
         <div className="mb-8 max-w-2xl">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Roles</div>
-          <h2 className="mt-4 text-3xl font-semibold tracking-tight text-white">Start from the job your team has to do.</h2>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Buyer lenses</div>
+          <h2 className="mt-4 text-3xl font-semibold tracking-tight text-white">Start from the accountability your team carries.</h2>
         </div>
         <div className="grid gap-6 md:grid-cols-2">
           {buyerPersonas.map((persona) => (

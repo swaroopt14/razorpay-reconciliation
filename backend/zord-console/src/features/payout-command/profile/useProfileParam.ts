@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useState } from 'react'
 
 /**
-  * URL-synced profile selection (`?borrower=` / `?loan=`) for full-page 360 views.
-  * Keeps the surface mounted so queue filters/page survive open → back.
-  */
+ * URL-synced profile selection (`?borrower=` / `?loan=`) for full-page 360 views.
+ * Keeps the surface mounted so queue filters/page survive open → back.
+ */
 export function useProfileParam(param: string) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
 

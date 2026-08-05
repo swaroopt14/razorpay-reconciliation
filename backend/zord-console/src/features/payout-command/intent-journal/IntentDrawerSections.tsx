@@ -1,9 +1,9 @@
 'use client'
 
 /**
-  * Intent drawer - expanded row detail for the Intent Journal.
-  * Shows only tokenized banking / payment metadata (no lineage, signals, routing, or evidence UI).
-  */
+ * Intent drawer — expanded row detail for the Intent Journal.
+ * Shows only tokenized banking / payment metadata (no lineage, signals, routing, or evidence UI).
+ */
 
 import type { ReactNode } from 'react'
 
@@ -14,7 +14,7 @@ export function BankingInformationTokensBlock({ detail }: { detail: IntentDetail
   return (
     <Section
       title="Banking (tokenized)"
-      subtitle="Masked beneficiary and stable tokens only - no full account numbers or raw payloads."
+      subtitle="Masked beneficiary and stable tokens only — no full account numbers or raw payloads."
     >
       <dl className="grid gap-3 sm:grid-cols-2">
         <TokenRow label="Beneficiary" value={detail.beneficiaryFull} wide />

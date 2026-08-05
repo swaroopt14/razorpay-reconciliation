@@ -21,15 +21,15 @@ export function PricingDemoCta() {
         </span>
 
         <h2 className="mt-8 text-[2rem] font-semibold leading-[1.08] tracking-[-0.05em] text-[#111111] sm:text-[2.65rem]">
-          Ready to talk pricing
+          Ready for production
           <br />
           <span className="bg-[linear-gradient(90deg,#059669_0%,#34D399_50%,#10B981_100%)] bg-clip-text text-transparent">
-            for production?
+            commercials?
           </span>
         </h2>
 
         <p className="mt-5 max-w-lg text-[15px] leading-relaxed text-[#6B7280] sm:text-base">
-          Try first with sample data, or put pricing, going live, and security review into one sales conversation.
+          Start in sandbox, or put pricing, rollout, and security review into one sales conversation.
         </p>
 
         <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
@@ -43,7 +43,7 @@ export function PricingDemoCta() {
             href="/signin"
             className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-full border border-black/10 bg-white px-8 py-3.5 text-[14px] font-semibold text-[#111111] transition hover:bg-black/[0.02] sm:w-auto"
           >
-            Try first
+            Start in sandbox
             <ArrowRight className="h-4 w-4" />
           </Link>
         </div>

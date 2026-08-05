@@ -77,7 +77,7 @@ export async function getRecommendationHistory(
   )
 }
 
-/** Latest recommendation snapshot - detail first, newest history snapshot as fallback. */
+/** Latest recommendation snapshot — detail first, newest history snapshot as fallback. */
 export function recommendationDataFrom(
   detail: RecommendationDetailResponse | null,
   history: RecommendationHistoryResponse | null,

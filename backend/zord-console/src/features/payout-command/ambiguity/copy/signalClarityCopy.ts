@@ -1,8 +1,8 @@
 /**
-  * Canonical Signal clarity band language for Match Review.
-  * Payment-domain labels only - no RBI DPD / SMA / NPA jargon in the UI.
-  * Keep in sync with `landingHolyGrailCopy.ts` → `signalClarity`.
-  */
+ * Canonical Signal clarity band language for Match Review.
+ * Payment-domain labels only — no RBI DPD / SMA / NPA jargon in the UI.
+ * Keep in sync with `landingHolyGrailCopy.ts` → `signalClarity`.
+ */
 
 export type SignalClarityBandKey =
   | 'settlement'
@@ -78,7 +78,7 @@ export const SIGNAL_CLARITY_COPY = {
       countField: 'unresolved_count',
     },
   } satisfies Record<SignalClarityBandKey, SignalClarityBandSpec>,
-  /** Matches API `from_band` / `to_band` - roll % values come from API only */
+  /** Matches API `from_band` / `to_band` — roll % values come from API only */
   rollPills: [
     { from_band: 'Current', to_band: 'SMA-0', rollLabel: 'Settlement→Ambiguous %' },
     { from_band: 'SMA-0', to_band: 'SMA-1', rollLabel: 'Ambiguous→Variance %' },

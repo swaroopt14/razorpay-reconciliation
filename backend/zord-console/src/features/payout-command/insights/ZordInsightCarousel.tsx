@@ -6,7 +6,7 @@ import { Line, LineChart, ResponsiveContainer } from 'recharts'
 import type { InsightDelta, ZordInsightCard } from './zordInsightCarouselTypes'
 import { INTELLIGENCE_BLUE_GRADIENT } from '../command-center/homeCommandCenterTokens'
 
-/** Home insight carousel - dark blue card surface. */
+/** Home insight carousel — dark blue card surface. */
 const G = {
   grad: '#1e3a8a',
   glow0: 'radial-gradient(ellipse at 72% 18%,rgba(255,255,255,0.06) 0%,transparent 55%)',
@@ -195,7 +195,7 @@ function InsightBody({ card }: { card: Extract<ZordInsightCard, { type: 'insight
         >
           <span
             className="h-[7px] w-[7px] rounded-full"
-            style={{ background: '#0B1324', flexShrink: 0 }}
+            style={{ background: '#ef4444', flexShrink: 0 }}
           />
           Payment gap rate: {card.gapRate}
         </div>
@@ -311,7 +311,7 @@ function SkeletonBody() {
 
 function EmptyBody() {
   const text =
-    'No live trend or intelligence KPI payload yet for this workspace - numbers appear when leakage or patterns APIs return data.'
+    'No live trend or intelligence KPI payload yet for this workspace — numbers appear when leakage or patterns APIs return data.'
   return (
     <div className="text-[20px] font-normal leading-[1.45] tracking-[0]" style={{ color: G.muted }}>
       {boldNumbersAppear(text)}

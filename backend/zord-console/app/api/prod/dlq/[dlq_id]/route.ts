@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { fetchDLQItemById } from '@/services/backend/dlq'
+import {
+  applyRefreshedSessionCookies,
+  requireSessionTenantForProdProxy,
+  resolveProxyForwardAuthorization,
+} from '@/services/auth/resolvePayoutTenant.server'
 
 export const dynamic = 'force-dynamic'
 
@@ -7,6 +12,12 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ dlq_id: string }> }
 ) {
+  const gate = await requireSessionTenantForProdProxy(request)
+  if (!gate.ok) return gate.response
+
+  const auth = await resolveProxyForwardAuthorization(request, undefined)
+  if (!auth.ok) return auth.response
+
   try {
     const { dlq_id } = await params
 
@@ -15,13 +26,12 @@ export async function GET(
     }
 
     // Fetch from real backend (zord-intent-engine)
-    const dlqItem = await fetchDLQItemById(dlq_id)
+    const dlqItem = await fetchDLQItemById(dlq_id, gate.tenantId, auth.authorization)
 
     if (!dlqItem) {
-      return NextResponse.json(
-        { error: 'DLQ item not found' },
-        { status: 404 }
-      )
+      const res = NextResponse.json({ error: 'DLQ item not found' }, { status: 404 })
+      applyRefreshedSessionCookies(res, auth.refreshedPayload ?? gate.refreshedPayload)
+      return res
     }
 
     // Transform backend response to match frontend DLQItemDetail type
@@ -50,12 +60,16 @@ export async function GET(
       },
     }
 
-    return NextResponse.json(detail)
+    const res = NextResponse.json(detail)
+    applyRefreshedSessionCookies(res, auth.refreshedPayload ?? gate.refreshedPayload)
+    return res
   } catch (error) {
     console.error('Error fetching DLQ item from backend:', error)
-    return NextResponse.json(
+    const res = NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to fetch DLQ item' },
       { status: 500 }
     )
+    applyRefreshedSessionCookies(res, auth.refreshedPayload ?? gate.refreshedPayload)
+    return res
   }
 }

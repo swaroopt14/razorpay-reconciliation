@@ -1,6 +1,6 @@
 import type { EmptyKpiResponse, MinorAmountField, Resolved } from './intelligenceTypes'
 
-/** Legacy timeseries row - GET /v1/intelligence/timeseries/ambiguity-velocity */
+/** Legacy timeseries row — GET /v1/intelligence/timeseries/ambiguity-velocity */
 export type AmbiguityVelocityScatterRow = {
   /** Calendar date YYYY-MM-DD. */
   date: string
@@ -9,7 +9,7 @@ export type AmbiguityVelocityScatterRow = {
   batch_id: string
   total_amount_minor: MinorAmountField
   ambiguous_amount_minor: MinorAmountField
-  /** Optional 0-100; if omitted, UI derives from ambiguous ÷ total. */
+  /** Optional 0–100; if omitted, UI derives from ambiguous ÷ total. */
   ambiguity_level_pct?: number
 }
 
@@ -21,7 +21,7 @@ export type AmbiguityVelocityScatterResolved = Resolved<{
   points: AmbiguityVelocityScatterRow[]
 }>
 
-/** Live bubble-map batch - GET /v1/intelligence/dashboard/bubble-map */
+/** Live bubble-map batch — GET /v1/intelligence/dashboard/bubble-map */
 export type AmbiguityBubbleMapBatch = {
   batch_id: string
   /** Total batch value in minor units (paise). */

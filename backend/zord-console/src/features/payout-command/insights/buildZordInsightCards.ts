@@ -9,7 +9,7 @@ import { fmtInrFromMinorExact } from '../command-center/commandCenterFormat'
 import { formatApiPct } from '../shared/formatApiKpiFields'
 import type { InsightDelta, ZordInsightCard } from './zordInsightCarouselTypes'
 
-/** Home command center - number of insight carousel slots rendered. */
+/** Home command center — number of insight carousel slots rendered. */
 export const HOME_ZORD_INSIGHT_SLOT_COUNT = 6
 
 type MinorField = string | number | null | undefined
@@ -22,7 +22,7 @@ function readMinor(value: MinorField): number | null {
 
 function formatMinorDisplay(value: MinorField): string {
   const minor = readMinor(value)
-  return minor == null ? '-' : fmtInrFromMinorExact(minor)
+  return minor == null ? '—' : fmtInrFromMinorExact(minor)
 }
 
 function metricCard(
@@ -66,11 +66,11 @@ function buildAccountInsightParagraph(
   const settled = formatMinorDisplay(leakageData?.total_observed_settled_amount_minor)
   const openException = formatMinorDisplay(leakageData?.total_amount_minor)
 
-  if (intended !== '-' && settled !== '-') {
+  if (intended !== '—' && settled !== '—') {
     return `${intended} was intended and ${settled} was observed in settlement records for the ${carouselPeriod} period.`
   }
 
-  if (openException !== '-') {
+  if (openException !== '—') {
     return `${openException} in open financial exception value needs review this ${carouselPeriod} period.`
   }
 
@@ -86,9 +86,9 @@ function buildAccountInsightParagraph(
 }
 
 /**
-  * Maps live intelligence + disbursement trend payloads into carousel cards.
-  * Amounts use API minor fields only - formatted with fmtInrFromMinorExact.
-  */
+ * Maps live intelligence + disbursement trend payloads into carousel cards.
+ * Amounts use API minor fields only — formatted with fmtInrFromMinorExact.
+ */
 export function buildZordInsightCards(params: {
   tenantReady: boolean
   kpiLoading: boolean
@@ -134,7 +134,7 @@ export function buildZordInsightCards(params: {
         id: 'value-needing-review',
         label: 'Value needing review',
         valueRupee: 0,
-        valueDisplay: '-',
+        valueDisplay: '—',
         subtext: 'Open financial exception value from leakage API.',
         count: 0,
         countLabel: 'awaiting data',
@@ -252,7 +252,7 @@ export function buildZordInsightCards(params: {
       id: 'leakage',
       label: 'Payments needing attention',
       count: ambiguousIntentCount,
-      topPattern: riskLabel || '-',
+      topPattern: riskLabel || '—',
       exposureRupee: exposureMinor ?? 0,
     })
   }

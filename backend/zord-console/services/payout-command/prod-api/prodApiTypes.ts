@@ -61,7 +61,7 @@ export type ApiProdIntentDetailPayload = {
   pii_tokens?: Record<string, unknown>
 }
 
-/** @deprecated Prefer `ApiProdIntentDetailPayload` - kept for older imports. */
+/** @deprecated Prefer `ApiProdIntentDetailPayload` — kept for older imports. */
 export type ApiIntentDetail = ApiProdIntentDetailPayload
 
 export type ApiEnvelopeRow = {

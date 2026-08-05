@@ -70,9 +70,9 @@ export function ZordInsightsPanel({
           {insights.map((insight) => {
             const isHigh = insight.severity === 'high'
             const isMedium = insight.severity === 'medium'
-            const borderColor = isHigh ? '#f87171' : isMedium ? '#0B1324' : 'rgba(255,255,255,0.2)'
+            const borderColor = isHigh ? '#f87171' : isMedium ? '#fbbf24' : 'rgba(255,255,255,0.2)'
             const rowBg = isHigh ? 'rgba(248,113,113,0.08)' : isMedium ? 'rgba(251,191,36,0.07)' : undefined
-            const dotColor = isHigh ? '#f87171' : isMedium ? '#0B1324' : '#cbd5e1'
+            const dotColor = isHigh ? '#f87171' : isMedium ? '#fbbf24' : '#cbd5e1'
             const dotShadow = isHigh
               ? '0 0 6px rgba(248,113,113,0.7)'
               : isMedium

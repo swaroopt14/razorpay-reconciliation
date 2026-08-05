@@ -48,6 +48,7 @@ export const BACKEND_SERVICES = {
       DLQ_MANUAL_REVIEW: '/v1/dlq/manual-review',
       DLQ_TERMINAL_COUNT: '/v1/dlq/terminal/count',
       DLQ_BY_ID: (id: string) => `/v1/dlq/${id}`,
+      DLQ_COUNT_ALL: '/internal/dlq/count',
     },
   },
 
@@ -111,10 +112,7 @@ export const BACKEND_SERVICES = {
 
   // zord-evidence: evidence packs + Merkle (Port 8088)
   EVIDENCE: {
-    BASE_URL:
-      process.env.ZORD_EVIDENCE_URL ||
-      process.env.SMOKE_SIMULATOR_URL ||
-      'http://localhost:8088',
+    BASE_URL: process.env.ZORD_EVIDENCE_URL || 'http://localhost:8088',
     ENDPOINTS: {
       PACKS: '/v1/evidence/packs',
       PACK_BY_ID: (packId: string) => `/v1/evidence/packs/${encodeURIComponent(packId)}`,

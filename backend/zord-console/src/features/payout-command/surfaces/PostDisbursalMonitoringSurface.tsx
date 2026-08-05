@@ -32,9 +32,9 @@ const STATUS_ORDER: Record<MonitoringQueueStatus, number> = {
 const DPD_TONE_BG: Record<DpdBucket['tone'], string> = {
   green: '#000000',
   lime: '#525252',
-  amber: '#0B1324',
-  orange: '#0B1324',
-  red: '#0B1324',
+  amber: '#f59e0b',
+  orange: '#f97316',
+  red: '#ef4444',
 }
 
 const dmMono = DM_Mono({
@@ -201,7 +201,7 @@ function RepaymentTrendChart() {
       ) : null}
       <div className="mt-1 flex justify-between">
         <span className="text-[11px] font-semibold text-slate-400">{trend.weeks[0].label}</span>
-        <span className="text-[11px] font-semibold text-slate-400">- baseline {trend.baselinePct}% -</span>
+        <span className="text-[11px] font-semibold text-slate-400">— baseline {trend.baselinePct}% —</span>
         <span className="text-[11px] font-semibold text-slate-400">{trend.weeks[trend.weeks.length - 1].label}</span>
       </div>
     </div>
@@ -346,7 +346,7 @@ export function PostDisbursalMonitoringSurface() {
 
       <JournalIntelligenceKpiHero
         eyebrow="Post-disbursal monitoring"
-        value={data.summaryCards[0]?.value ?? '-'}
+        value={data.summaryCards[0]?.value ?? '—'}
         deltaPill={data.header.statusPill}
         subcopy={`Portfolio queue: ${data.queueCounts.All.toLocaleString('en-IN')} loans · Last check ${lastRunLabel}`}
         buckets={heroBuckets}
@@ -354,10 +354,10 @@ export function PostDisbursalMonitoringSurface() {
       />
 
       <section className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#000000] via-[#0B1324] to-[#0B1324]" />
+        <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#000000] via-[#f59e0b] to-[#ef4444]" />
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h3 className={`text-[1.2rem] font-semibold tracking-[-0.01em] ${HOME_TITLE_BLACK}`}>Portfolio delinquency - RBI DPD / SMA</h3>
+            <h3 className={`text-[1.2rem] font-semibold tracking-[-0.01em] ${HOME_TITLE_BLACK}`}>Portfolio delinquency — RBI DPD / SMA</h3>
             <p className={`mt-0.5 ${ZORD_SURFACE_MUTED}`}>₹{dpdTotalCr.toFixed(1)}Cr book across 780 loans · ₹{overdueCr.toFixed(1)}Cr past due</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -425,7 +425,7 @@ export function PostDisbursalMonitoringSurface() {
 
       <section className="grid gap-3 xl:grid-cols-2">
         <article className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#0B1324] via-[#0B1324] to-[#0B1324]" />
+          <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#f59e0b] via-[#f97316] to-[#ef4444]" />
           <div className="flex items-start justify-between gap-3">
             <div>
               <h3 className={`text-[1.2rem] font-semibold tracking-[-0.01em] ${HOME_TITLE_BLACK}`}>eNACH repayment health</h3>
@@ -442,7 +442,7 @@ export function PostDisbursalMonitoringSurface() {
                 <span className="text-[13px] font-semibold text-[#00239C]">{reason.label}</span>
                 <div className="h-3 overflow-hidden rounded-full bg-slate-100">
                   <div
-                    className={`h-full rounded-full ${reason.tone === 'red' ? 'bg-[#0B1324]' : 'bg-[#0B1324]'}`}
+                    className={`h-full rounded-full ${reason.tone === 'red' ? 'bg-[#ef4444]' : 'bg-[#f59e0b]'}`}
                     style={{ width: `${(reason.value / bounceMax) * 100}%` }}
                   />
                 </div>
@@ -473,7 +473,7 @@ export function PostDisbursalMonitoringSurface() {
               <p className={`mt-0.5 ${ZORD_SURFACE_MUTED}`}>Real-time post-disbursal risk events</p>
             </div>
             <span className="inline-flex items-center gap-1.5 rounded-full border border-[#fecaca] bg-[#fef2f2] px-2.5 py-0.5 text-[12px] font-semibold text-[#b91c1c]">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#0B1324]" />
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#dc2626]" />
               {data.alerts.filter((a) => a.severity === 'high').length} high
             </span>
           </div>
@@ -487,7 +487,7 @@ export function PostDisbursalMonitoringSurface() {
                 <span className={`mt-0.5 w-11 shrink-0 text-[12px] font-medium text-[#00239C] ${dmMono.className}`}>{alert.time}</span>
                 <span
                   className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
-                    alert.severity === 'high' ? 'bg-[#0B1324]' : alert.severity === 'medium' ? 'bg-[#0B1324]' : 'bg-slate-400'
+                    alert.severity === 'high' ? 'bg-[#dc2626]' : alert.severity === 'medium' ? 'bg-[#d97706]' : 'bg-slate-400'
                   }`}
                 />
                 <div className="min-w-0">
@@ -510,7 +510,7 @@ export function PostDisbursalMonitoringSurface() {
               <p className={`mt-0.5 ${ZORD_SURFACE_MUTED}`}>On-time rate over 12 weeks vs portfolio baseline</p>
             </div>
             <div className="text-right">
-              <p className={`text-[26px] font-semibold leading-none text-[#0B1324] ${dmMono.className}`}>
+              <p className={`text-[26px] font-semibold leading-none text-[#ef4444] ${dmMono.className}`}>
                 {data.repaymentTrend.weeks[data.repaymentTrend.weeks.length - 1].pct}%
               </p>
               <p className="text-[12px] font-semibold text-[#00239C]">this week</p>
@@ -535,9 +535,9 @@ export function PostDisbursalMonitoringSurface() {
                   : row.tone === 'green'
                     ? 'bg-[#000000]'
                     : row.tone === 'amber'
-                      ? 'bg-[#0B1324]'
+                      ? 'bg-[#f59e0b]'
                       : row.tone === 'red'
-                        ? 'bg-[#0B1324]'
+                        ? 'bg-[#ef4444]'
                         : 'bg-[#65a30d]'
               return (
                 <div key={row.label}>
@@ -578,7 +578,7 @@ export function PostDisbursalMonitoringSurface() {
                 <span className="text-[13px] font-semibold text-[#00239C]">{row.label}</span>
                 <div className="h-3 overflow-hidden rounded-full bg-slate-100">
                   <div
-                    className={`h-full rounded-full ${row.tone === 'red' ? 'bg-[#0B1324]' : 'bg-[#0B1324]'}`}
+                    className={`h-full rounded-full ${row.tone === 'red' ? 'bg-[#ef4444]' : 'bg-[#f59e0b]'}`}
                     style={{ width: `${(row.value / suspiciousMax) * 100}%` }}
                   />
                 </div>
@@ -695,7 +695,7 @@ export function PostDisbursalMonitoringSurface() {
                   <tr
                     key={row.loanId}
                     onClick={() => profile.open(row.loanId)}
-                    className="cursor-pointer border-t border-slate-100 transition hover:bg-[#0B1324]/50"
+                    className="cursor-pointer border-t border-slate-100 transition hover:bg-sky-50/50"
                   >
                     <td className="px-3 py-2.5">
                       <p className="text-[14px] font-semibold text-[#000000]">{row.borrowerName}</p>

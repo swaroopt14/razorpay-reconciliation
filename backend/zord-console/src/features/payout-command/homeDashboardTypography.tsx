@@ -19,9 +19,9 @@ export function DashboardDeltaPercent({ value }: { value: number }) {
 }
 
 /**
-  * Large KPI line: if `text` ends with `%`, renders `%` as superscript; otherwise plain tabular display.
-  * Use for command-center hero strings like `12,34%` or rupee amounts.
-  */
+ * Large KPI line: if `text` ends with `%`, renders `%` as superscript; otherwise plain tabular display.
+ * Use for command-center hero strings like `12,34%` or rupee amounts.
+ */
 export function HeroMetricWithSuperPercent({ text }: { text: string }) {
   if (text.endsWith('%')) {
     const head = text.slice(0, -1)

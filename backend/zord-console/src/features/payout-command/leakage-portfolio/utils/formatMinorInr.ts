@@ -8,8 +8,8 @@ export function coerceMinor(value: MinorAmountField | null | undefined): number 
 }
 
 export function formatMinorInr(value: MinorAmountField | number | null | undefined): string {
-  if (value == null || value === '') return '-'
+  if (value == null || value === '') return '—'
   const minor = coerceMinor(value)
-  if (!Number.isFinite(minor)) return '-'
+  if (!Number.isFinite(minor)) return '—'
   return formatInrPrecise(minor)
 }

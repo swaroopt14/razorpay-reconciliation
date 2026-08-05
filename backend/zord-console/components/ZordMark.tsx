@@ -3,7 +3,7 @@ type ZordMarkProps = {
   title?: string
 }
 
-/** Exact tilted Zord mark - color via `text-*` / `currentColor`. */
+/** Exact tilted Zord mark — color via `text-*` / `currentColor`. */
 export function ZordMark({ className, title = 'Zord' }: ZordMarkProps) {
   return (
     <svg

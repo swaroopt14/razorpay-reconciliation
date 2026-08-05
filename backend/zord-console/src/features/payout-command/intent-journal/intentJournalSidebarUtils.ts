@@ -3,19 +3,19 @@ import type { IntelligenceBatchRow } from '@/services/payout-command/prod-api/in
 
 export type BatchType = 'Disbursement' | 'Settlement'
 
-/** Sidebar health from batch `aggregate_confidence_score` (0-1). */
+/** Sidebar health from batch `aggregate_confidence_score` (0–1). */
 export type BatchStatus = 'Stable' | 'At Risk' | 'Critical'
 
 /** Aggregate score bands for sidebar status pills. */
 export const BATCH_AGGREGATE_STATUS_THRESHOLDS = {
   /** Below 50% aggregate → Critical */
   criticalBelowPct: 50,
-  /** 50%-75% aggregate → At Risk; 75%+ → Stable */
+  /** 50%–75% aggregate → At Risk; 75%+ → Stable */
   stableFromPct: 75,
 } as const
 
 export const BATCH_AGGREGATE_STATUS_GUIDE =
-  'Critical <50% · At Risk 50-75% · Stable ≥75% aggregate confidence'
+  'Critical <50% · At Risk 50–75% · Stable ≥75% aggregate confidence'
 
 /** Customer-facing sidebar health labels (maps from BatchStatus + DLQ context). */
 export type CustomerBatchHealthLabel =
@@ -30,7 +30,7 @@ export function customerHealthLabelFromStatus(status: BatchStatus, dlqCount = 0)
   return 'Ready'
 }
 
-/** Map aggregate confidence (0-1 or 0-100) to sidebar status tier. */
+/** Map aggregate confidence (0–1 or 0–100) to sidebar status tier. */
 export function batchStatusFromAggregateScore(score: number): BatchStatus {
   if (!Number.isFinite(score)) return 'At Risk'
   const pct = score <= 1 ? score * 100 : score
@@ -49,7 +49,7 @@ export type BatchRecord = {
   transactions: number
   confirmedCount: number
   highConfidenceCount: number
-  /** Batch-level aggregate confidence 0-1 (`aggregate_confidence_score`). */
+  /** Batch-level aggregate confidence 0–1 (`aggregate_confidence_score`). */
   aggregateConfidenceScore?: number
   mismatchCount: number
   unresolvedCount: number
@@ -75,9 +75,9 @@ export function usdCompact(value: number) {
   }).format(value)
 }
 
-/** Normalize aggregate / quality score to 0-100 for display. */
+/** Normalize aggregate / quality score to 0–100 for display. */
 export function formatConfidencePct(score: number | null | undefined): string {
-  if (score == null || !Number.isFinite(score)) return '-'
+  if (score == null || !Number.isFinite(score)) return '—'
   const pct = score <= 1 ? score * 100 : score
   return `${Math.min(100, Math.max(0, pct)).toFixed(0)}%`
 }
@@ -101,14 +101,14 @@ export function formatInrRupees(rupees: number): string {
 }
 
 /**
-  * Pre-dispatch readiness score per Service 7 KPI doc §4.5:
-  *  0.25*avg_intent_quality + 0.20*avg_matchability + 0.20*avg_proof_readiness
-  *  + 0.15*(1-dup_rate) + 0.10*carrier_completeness + 0.10*parse_success
-  *
-  * Requires per-intent canonical scores (Service 2 §12). When intents aren't
-  * loaded (sidebar list before drilldown), fall back to the legacy proxy from
-  * batch row counts so the sidebar still ranks reasonably.
-  */
+ * Batch quality score per Service 7 KPI doc §4.5:
+ *   0.25*avg_intent_quality + 0.20*avg_matchability + 0.20*avg_proof_readiness
+ *   + 0.15*(1-dup_rate) + 0.10*carrier_completeness + 0.10*parse_success
+ *
+ * Requires per-intent canonical scores (Service 2 §12). When intents aren't
+ * loaded (sidebar list before drilldown), fall back to the legacy proxy from
+ * batch row counts so the sidebar still ranks reasonably.
+ */
 export function batchQualityScore(batch: BatchRecord, intents?: IntentDetail[]): number {
   // Live intents from /api/prod may not yet carry the Service 2 enrichment block
   // (scores / idempotency / mapping). Bail to the row-count fallback in that case
@@ -140,7 +140,7 @@ export function batchQualityScore(batch: BatchRecord, intents?: IntentDetail[]):
       (s / total) * 100 - (f / total) * 28 - (p / total) * 12 - (remainder / total) * 18
     return Math.max(0, Math.min(100, Math.round(score)))
   }
-  // Intent-engine sidebar: `highConfidenceCount` in API is avg confidence 0-1.
+  // Intent-engine sidebar: `highConfidenceCount` in API is avg confidence 0–1.
   const total = Math.max(batch.transactions, 1)
   if (batch.engineSidebar && typeof batch.aggregateConfidenceScore === 'number') {
     const confPct = batch.aggregateConfidenceScore * 100
@@ -156,7 +156,7 @@ export function batchStatus(score: number): BatchStatus {
   return batchStatusFromAggregateScore(score)
 }
 
-/** Sidebar batch score: API aggregate_confidence_score only - no fallback calculation. */
+/** Sidebar batch score: API aggregate_confidence_score only — no fallback calculation. */
 export function confidencePctFromBatch(batch: BatchRecord): number | null {
   if (typeof batch.aggregateConfidenceScore !== 'number' || !Number.isFinite(batch.aggregateConfidenceScore)) {
     return null
@@ -198,7 +198,7 @@ export function mergeBatchAggregateScore(
   return batch
 }
 
-/** Sidebar health - aggregate_confidence_score thresholds only. */
+/** Sidebar health — aggregate_confidence_score thresholds only. */
 export function resolveBatchHealthStatus(batch: BatchRecord): BatchStatus | null {
   const confPct = confidencePctFromBatch(batch)
   if (confPct == null) return null
@@ -210,7 +210,13 @@ export function neutralHealthTone() {
   return { text: 'text-slate-500', left: 'border-l-4 border-l-slate-300', ring: '#94a3b8' }
 }
 
-export function statusTone(_status: BatchStatus) {
-  return { text: 'text-[#0B1324]', left: 'border-l-4 border-l-[#0B1324]', ring: '#0B1324' }
+export function statusTone(status: BatchStatus) {
+  if (status === 'Stable') {
+    return { text: 'text-black', left: 'border-l-4 border-l-black', ring: '#000000' }
+  }
+  if (status === 'At Risk') {
+    return { text: 'text-amber-700', left: 'border-l-4 border-l-amber-500', ring: '#d97706' }
+  }
+  return { text: 'text-rose-700', left: 'border-l-4 border-l-rose-600', ring: '#dc2626' }
 }
 

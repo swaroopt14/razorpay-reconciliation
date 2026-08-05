@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic'
 
 type ProxyOptions = {
   upstreamPath: string
-  /** Extra query params forwarded upstream (tenant_id is never forwarded - headers only). */
+  /** Extra query params forwarded upstream (tenant_id is never forwarded — headers only). */
   query?: Record<string, string | undefined>
 }
 

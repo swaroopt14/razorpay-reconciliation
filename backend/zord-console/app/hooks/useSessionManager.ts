@@ -68,7 +68,7 @@ export function useSessionManager() {
   }
 
   useEffect(() => {
-    // Use the session hint cookie as an eager signal - it is set server-side at
+    // Use the session hint cookie as an eager signal — it is set server-side at
     // login and is immediately readable, unlike localStorage which is written
     // asynchronously by hydrateSession(). This prevents timers from being skipped
     // when this hook mounts before AuthSessionBootstrap has finished hydrating.

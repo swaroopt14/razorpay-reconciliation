@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { Fragment, useState, type Dispatch, type SetStateAction } from 'react'
+import { EntityLogo } from '../../entity-logo'
 import { BankingInformationTokensBlock } from '../IntentDrawerSections'
 import { formatJournalMoney } from '../formatJournalMoney'
 import { downloadFailuresCsv } from '../journalExport'
@@ -11,6 +12,8 @@ import { buildLiveIntentDetailFromRowAndApi } from '@/services/payout-command/li
 import { CommandCenterCardGlow } from '../../command-center/CommandCenterCardGlow'
 import {
   COMMAND_CENTER_KPI_CARD,
+  COMMAND_CENTER_LABEL_GREEN,
+  HOME_BODY_IMPERIAL_SM,
   HOME_TITLE_BLACK,
 } from '../../command-center/homeCommandCenterTokens'
 import { intentJournalCopy } from '../copy/intentJournalCopy'
@@ -42,7 +45,7 @@ const DISPATCH_OPTIONS = ['All', 'Bank Transfer', 'LSM', 'NACH'] as const
 const AMOUNT_RANGE_OPTIONS = [
   'All',
   'Under ₹10,000',
-  '₹10,000 - ₹1,00,000',
+  '₹10,000 – ₹1,00,000',
   'Over ₹1,00,000',
 ] as const
 type AmountRangeFilter = (typeof AMOUNT_RANGE_OPTIONS)[number]
@@ -51,91 +54,88 @@ type FailureRow = JournalFailureRow
 type StateSetter<T> = Dispatch<SetStateAction<T>>
 
 const filterSelectClass =
-  'h-9 w-full min-w-[7.5rem] rounded-xl border border-slate-200/90 bg-slate-50 px-2.5 text-[14px] text-slate-900 outline-none transition focus:border-[#0B1324]/20/55 focus:bg-white focus:ring-2 focus:ring-[#0B1324]/20'
+  'h-9 w-full min-w-[7.5rem] rounded-xl border border-slate-200/90 bg-slate-50 px-2.5 text-[14px] text-slate-900 outline-none transition focus:border-sky-400/55 focus:bg-white focus:ring-2 focus:ring-sky-400/15'
 
 const filterInputClass =
-  'h-9 w-full rounded-xl border border-slate-200/90 bg-slate-50 px-3 text-[14px] text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#0B1324]/20/55 focus:bg-white focus:ring-2 focus:ring-[#0B1324]/20'
+  'h-9 w-full rounded-xl border border-slate-200/90 bg-slate-50 px-3 text-[14px] text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-400/55 focus:bg-white focus:ring-2 focus:ring-sky-400/15'
+
+function intentStatusClass(status: IntentStatus) {
+  if (status === 'Ready to Process') return 'text-sky-700'
+  if (status === 'Confirmed') return 'text-black'
+  if (status === 'Pending') return 'text-amber-600'
+  if (status === 'Needs Review') return 'text-orange-600'
+  if (status === 'In Progress') return 'text-sky-700'
+  return 'text-slate-700'
+}
+
+function intentStatusLabel(status: IntentStatus) {
+  if (status === 'Pending') return intentJournalCopy.status.awaitingBankConfirmation
+  if (status === 'Ready to Process') return intentJournalCopy.status.readyForDispatch
+  return intentRowCustomerStatus(status)
+}
 
 const TAB_ITEMS: { key: TabKey; label: string }[] = [
   { key: 'transactions', label: intentJournalCopy.tabs.instructions },
   { key: 'failures', label: intentJournalCopy.tabs.reviewItems },
 ]
 
-const ROW_SIZE_OPTIONS = [20, 50, 100, 200] as const
+const ROW_SIZE_OPTIONS = [25, 50, 100, 200] as const
 
-const INTENT_TABLE_COL_COUNT = 8
+const INTENT_TABLE_COL_COUNT = 7
 
-/** Original journal columns + currency / dispatch score. Payment Mode = API rail_hint. */
 const INTENT_TABLE_HEADERS: { key: string; label: string }[] = [
-  { key: 'zordId', label: intentJournalCopy.table.headers.zordId },
-  { key: 'paymentRef', label: intentJournalCopy.table.headers.paymentRef },
+  { key: 'intentId', label: intentJournalCopy.table.headers.zordId },
+  { key: 'reference', label: intentJournalCopy.table.headers.paymentRef },
   { key: 'amount', label: intentJournalCopy.table.headers.amount },
-  { key: 'currentStatus', label: intentJournalCopy.table.headers.currentStatus },
-  { key: 'plannedPaymentDate', label: intentJournalCopy.table.headers.plannedPaymentDate },
-  { key: 'paymentMode', label: intentJournalCopy.table.headers.paymentMode },
-  { key: 'currency', label: intentJournalCopy.table.headers.currency },
-  { key: 'dispatchScore', label: intentJournalCopy.table.headers.dispatchScore },
+  { key: 'status', label: intentJournalCopy.table.headers.status },
+  { key: 'execution', label: intentJournalCopy.table.headers.plannedDate },
+  { key: 'rail', label: intentJournalCopy.table.headers.paymentMode },
+  { key: 'score', label: intentJournalCopy.table.headers.readiness },
 ]
 
-const TABLE_HEAD_CELL =
-  'px-6 py-4 text-left text-[13px] font-semibold text-[#64748B] whitespace-nowrap'
-const TABLE_CELL = 'px-6 py-5 align-middle text-[14px] text-[#334155]'
-const TABLE_ROW = 'cursor-pointer border-t border-[#EEF1F5] transition hover:bg-[#F8FAFC]'
 
-/** Reference-style amount: full value with muted decimals. */
-function MoneyCell({ amount, currency }: { amount: number; currency: string }) {
-  const formatted = formatJournalMoney(amount, currency)
-  if (formatted === '-') return <span className="text-[#94A3B8]">-</span>
-  const match = formatted.match(/^(.*)(\.\d{2})$/)
-  if (!match) return <span>{formatted}</span>
+
+function HeaderIcon({ kind }: { kind: 'request' | 'reference' | 'amount' | 'payment' | 'status' | 'updated' }) {
+  const cls = 'h-3.5 w-3.5 text-[#888888]'
+  if (kind === 'request')
+    return (
+      <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M8 7V4h8v3M6 7h12l1 13H5L6 7Z" />
+      </svg>
+    )
+  if (kind === 'reference')
+    return (
+      <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M7 7h10v10H7z" />
+        <path d="M4 4h10v10" />
+      </svg>
+    )
+  if (kind === 'amount')
+    return (
+      <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M12 3v18M16 7.5c0-1.9-1.8-3.5-4-3.5s-4 1.6-4 3.5 1.8 3.5 4 3.5 4 1.6 4 3.5-1.8 3.5-4 3.5-4-1.6-4-3.5" />
+      </svg>
+    )
+  if (kind === 'payment')
+    return (
+      <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <rect x="3" y="6" width="18" height="12" rx="2" />
+        <path d="M3 10h18" />
+      </svg>
+    )
+  if (kind === 'status')
+    return (
+      <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <circle cx="12" cy="12" r="8" />
+        <path d="m9 12 2 2 4-4" />
+      </svg>
+    )
   return (
-    <span>
-      {match[1]}
-      <span className="text-[13px] text-[#94A3B8]">{match[2]}</span>
-    </span>
+    <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="3" y="5" width="18" height="16" rx="2" />
+      <path d="M16 3v4M8 3v4M3 10h18" />
+    </svg>
   )
-}
-
-function intentStatusLabel(row: JournalIntentRow): string {
-  return row.lifecycleStage || intentRowCustomerStatus(row.status) || row.status || '-'
-}
-
-/** Solid status chips, matching the payments-dashboard reference. */
-function statusPillClass(label: string): string {
-  const s = label.toLowerCase()
-  if (s.includes('block') || s.includes('fail')) return 'bg-[#EF4444] text-white'
-  if (s.includes('review') || s.includes('pend')) return 'bg-[#F59E0B] text-white'
-  if (s.includes('dispatch') || s.includes('sealed') || s.includes('captur')) return 'bg-[#16A34A] text-white'
-  return 'bg-[#E8EEF9] text-[#1E3A8A]'
-}
-
-function StatusPill({ label }: { label: string }) {
-  if (!label || label === '-') return <span className="text-[#94A3B8]">-</span>
-  return (
-    <span
-      className={`inline-flex items-center whitespace-nowrap rounded-full px-3 py-1 text-[12px] font-semibold ${statusPillClass(label)}`}
-    >
-      {label}
-    </span>
-  )
-}
-
-function RailChip({ label }: { label: string }) {
-  if (!label || label === '-') return <span className="text-[#94A3B8]">-</span>
-  return <span className="whitespace-nowrap font-medium text-[#475569]">{label}</span>
-}
-
-function formatDispatchScore(score: number | null | undefined): string {
-  if (score == null || !Number.isFinite(score)) return '-'
-  const pct = score <= 1 ? score * 100 : score
-  return `${pct.toFixed(0)}%`
-}
-
-function failureRailLabel(row: FailureRow): string {
-  if (row.rail && row.rail !== '-') return row.rail
-  if (row.method && row.method !== '-') return row.method
-  if (row.paymentPartner && row.paymentPartner !== '-') return row.paymentPartner
-  return '-'
 }
 
 
@@ -243,7 +243,7 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                       placeholder={
                         activeTab === 'transactions'
                           ? intentJournalCopy.table.searchPlaceholder
-                          : 'Search review items - reason, stage, envelope…'
+                          : 'Search review items — reason, stage, envelope…'
                       }
                       className={`${filterInputClass} pl-9`}
                     />
@@ -367,27 +367,31 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
 
             {activeTab === 'transactions' ? (
               <section className={`overflow-hidden ${COMMAND_CENTER_KPI_CARD}`}>
-                <div className="border-b border-[#EEF1F5] bg-white px-5 py-4">
-                  <p className={`text-[15px] font-semibold ${HOME_TITLE_BLACK}`}>
-                    {intentTotal.toLocaleString('en-IN')} instruction{intentTotal === 1 ? '' : 's'}
-                    {tableFiltersActive && apiIntentTotal != null
-                      ? ` · filtered from ${apiIntentTotal.toLocaleString('en-IN')}`
-                      : ''}
-                  </p>
-                  <p className="mt-1 text-[13px] text-[#94A3B8]">
-                    Click a row for details · status · planned date · payment mode · currency · dispatch score
+                <div className="border-b border-slate-100 bg-slate-50 px-4 py-3">
+                  <p className={`text-[14px] font-semibold ${HOME_TITLE_BLACK}`}>Intent table — selected batch</p>
+                  <p className={`mt-1 ${HOME_BODY_IMPERIAL_SM}`}>
+                    {tableFiltersActive && apiIntentTotal != null ? (
+                      <>
+                        <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[12px] font-semibold text-slate-700">
+                          {apiIntentTotal.toLocaleString('en-US')} total
+                        </span>{' '}
+                        ·{' '}
+                      </>
+                    ) : null}
+                    <span className="rounded-full border border-black/30 bg-black px-2 py-0.5 text-[12px] font-semibold text-white">
+                      {intentTotal.toLocaleString('en-US')} rows
+                    </span>{' '}
+                    match filters
                   </p>
                 </div>
                 <div className="min-w-0 overflow-x-auto">
-                    <table className={`w-full min-w-[72rem] border-collapse text-[14px] ${HOME_TITLE_BLACK}`}>
-                      <thead className="border-b border-[#E5E9F0] bg-[#F5F7FA]">
+                    <table className={`w-full border-collapse text-[14px] ${HOME_TITLE_BLACK}`}>
+                      <thead className="bg-[#f8fafc]">
                         <tr>
                           {INTENT_TABLE_HEADERS.map((h) => (
                             <th
                               key={h.key}
-                              className={`${TABLE_HEAD_CELL} ${
-                                h.key === 'amount' || h.key === 'dispatchScore' ? 'text-right' : ''
-                              }`}
+                              className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-[#888888] whitespace-nowrap"
                             >
                               {h.label}
                             </th>
@@ -397,53 +401,44 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                       <tbody>
                         {pageRows.length === 0 ? (
                           <tr>
-                            <td colSpan={INTENT_TABLE_COL_COUNT} className="px-5 py-16 text-center text-[14px] text-[#94A3B8]">
+                            <td colSpan={INTENT_TABLE_COL_COUNT} className="px-4 py-12 text-center text-[14px] text-[#64748b]">
                               No intents match your filters for this batch.
                             </td>
                           </tr>
                         ) : (
-                          pageRows.map((row) => (
+                          pageRows.map((row, rowIndex) => (
                           <Fragment key={row.requestId}>
                             <tr
                               onClick={() => {
                                 setSelectedIntentId(row.requestId)
                                 setExpandedId((current) => (current === row.requestId ? null : row.requestId))
                               }}
-                              className={`${TABLE_ROW} ${selectedIntentId === row.requestId ? 'bg-[#F8FAFC]' : ''}`}
+                              className={`cursor-pointer border-t border-[#f3f4f6] ${selectedIntentId === row.requestId ? 'bg-[#f8fafc]' : rowIndex % 2 === 1 ? 'bg-slate-50/40 hover:bg-[#f9fafb]' : 'hover:bg-[#f9fafb]'}`}
                             >
-                              <td
-                                className={`${TABLE_CELL} whitespace-nowrap font-mono text-[13px] font-medium text-[#2563EB]`}
-                                title={row.zordId ?? row.requestId}
-                              >
+                              <td className="truncate px-3 py-2.5 font-mono text-[12px] text-[#334155]" title={row.zordId ?? row.requestId}>
                                 {row.zordId ?? row.requestId}
                               </td>
-                              <td
-                                className={`${TABLE_CELL} whitespace-nowrap font-mono text-[13px] text-[#2563EB]`}
-                                title={row.reference}
-                              >
+                              <td className="truncate px-3 py-2.5 text-[13px] text-[#334155]" title={row.reference}>
                                 {row.reference}
                               </td>
-                              <td className={`${TABLE_CELL} whitespace-nowrap text-right font-medium tabular-nums text-[#0F172A]`}>
-                                <MoneyCell
-                                  amount={row.amount}
-                                  currency={row.currency ?? (journalUsesBackendFeed ? 'INR' : 'USD')}
-                                />
+                              <td className="px-3 py-2.5 tabular-nums whitespace-nowrap">
+                                {formatJournalMoney(
+                                  row.amount,
+                                  row.currency ?? (journalUsesBackendFeed ? 'INR' : 'USD'),
+                                )}
                               </td>
-                              <td className={TABLE_CELL}>
-                                <StatusPill label={intentStatusLabel(row)} />
+                              <td className="px-3 py-2.5">
+                                <span className={`text-[13px] font-medium ${intentStatusClass(row.status)}`}>
+                                  {intentStatusLabel(row.status)}
+                                </span>
                               </td>
-                              <td className={`${TABLE_CELL} whitespace-nowrap text-[#64748B]`}>
-                                {row.intendedExecutionAt || '-'}
+                              <td className="truncate px-3 py-2.5 text-[13px] text-[#334155]" title={row.intendedExecutionAt}>
+                                {row.intendedExecutionAt}
                               </td>
-                              <td className={TABLE_CELL}>
-                                <RailChip label={row.rail && row.rail !== '-' ? row.rail : row.paymentMethodDetail || '-'} />
+                              <td className="truncate px-3 py-2.5 text-[13px] font-medium text-[#334155]" title={row.rail && row.rail !== '—' ? row.rail : row.method}>
+                                {row.rail && row.rail !== '—' ? row.rail : row.method}
                               </td>
-                              <td className={`${TABLE_CELL} uppercase tracking-wide text-[#64748B]`}>
-                                {row.currency ?? 'INR'}
-                              </td>
-                              <td className={`${TABLE_CELL} text-right font-semibold tabular-nums text-[#0F172A]`}>
-                                {formatDispatchScore(row.confidenceScore)}
-                              </td>
+                              <td className="px-3 py-2.5 tabular-nums font-semibold text-[#0f172a]">{row.confidenceLabel}</td>
                             </tr>
                             {expandedId === row.requestId ? (
                               <tr className="bg-slate-50">
@@ -451,12 +446,6 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                                   {row.rawIntent ? (
                                     <div className="space-y-3">
                                       <p className="text-[14px] font-semibold text-[#0f172a]">Intent details</p>
-                                      <p className="text-[13px] text-[#475569]">
-                                        {row.readinessReason || row.infoSummary}
-                                      </p>
-                                      <p className="text-[12px] text-[#64748B]">
-                                        Change signal · {row.changeSignal || 'No material change'}
-                                      </p>
                                       <IntentEngineDetailPanel intent={row.rawIntent} />
                                     </div>
                                   ) : (
@@ -485,26 +474,12 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                                             <p className="mt-0.5 font-mono text-[13px] text-[#64748b]">
                                               {detail.intentId} · {detail.beneficiaryToken}
                                             </p>
-                                            <p className="mt-2 text-[13px] text-[#475569]">
-                                              {row.readinessReason || 'See policy and source integrity for seal readiness.'}
-                                            </p>
-                                            <p className="mt-1 text-[12px] text-[#64748B]">
-                                              Change signal · {row.changeSignal || 'No material change'}
-                                              {row.actionContract === 'Ready' || row.actionContract === 'Sealed' ? (
-                                                <>
-                                                  {' · '}
-                                                  <span className="font-semibold text-[#0B1324]">
-                                                    {intentJournalCopy.actions.openContract}
-                                                  </span>
-                                                </>
-                                              ) : null}
-                                            </p>
                                           </div>
                                           <BankingInformationTokensBlock detail={detail} />
                                           {(row.clientBatchRef || row.batchId) ? (
                                             <Link
-                                              href={`/settlement/journal?demo=sandbox&client_batch_id=${encodeURIComponent(row.clientBatchRef || row.batchId)}`}
-                                              className="inline-flex text-[13px] font-semibold text-[#0B1324] underline decoration-[#0B1324]/30 underline-offset-4"
+                                              href={`/payout-command-view/today?dock=settlement&client_batch_id=${encodeURIComponent(row.clientBatchRef || row.batchId)}`}
+                                              className="inline-flex text-[13px] font-semibold text-sky-800 underline decoration-sky-300 underline-offset-4"
                                             >
                                               Open settlement journal for this batch →
                                             </Link>
@@ -522,8 +497,8 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                       </tbody>
                     </table>
                 </div>
-                <div className="border-t border-[#E5E9F0] bg-[#FBFCFE] px-6 py-4 text-[14px] text-[#64748b]">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="border-t border-slate-200/80 bg-[#f8fbff] px-3 py-2 text-[15px] text-[#64748b]">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <span>
                         Showing {(intentTotal === 0 ? 0 : (safePage - 1) * rowsPerPage + 1)}-
                         {intentTotal === 0 ? 0 : Math.min(safePage * rowsPerPage, intentTotal)} of{' '}
@@ -590,41 +565,66 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
 
             {activeTab === 'failures' ? (
               <section className={`overflow-hidden ${COMMAND_CENTER_KPI_CARD}`}>
-                <div className="border-b border-[#EEF1F5] bg-white px-5 py-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <p className={`text-[15px] font-semibold ${HOME_TITLE_BLACK}`}>
-                        {failureTotal.toLocaleString('en-IN')} review item{failureTotal === 1 ? '' : 's'}
-                        {tableFiltersActive && apiFailureTotal != null
-                          ? ` · filtered from ${apiFailureTotal.toLocaleString('en-IN')}`
-                          : ''}
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50 px-4 py-3">
+                  <div>
+                    <p className={`text-[14px] font-medium ${HOME_TITLE_BLACK}`}>Failed intents (DLQ)</p>
+                    <p className={HOME_BODY_IMPERIAL_SM}>
+                      {tableFiltersActive && apiFailureTotal != null ? (
+                        <>
+                          <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[12px] font-semibold text-slate-700">
+                            {apiFailureTotal.toLocaleString('en-US')} total
+                          </span>{' '}
+                          ·{' '}
+                        </>
+                      ) : null}
+                      <span className="rounded-full border border-red-200/80 bg-red-50 px-2 py-0.5 text-[12px] font-semibold text-red-800">
+                        {failureTotal.toLocaleString('en-US')} rows
+                      </span>{' '}
+                      match filters
+                    </p>
+                    <p className={`mt-1 max-w-3xl ${HOME_BODY_IMPERIAL_SM}`}>
+                      This table is only{' '}
+                      <span className="font-medium text-[#475569]">intent-engine DLQ</span> (dead-lettered envelopes /
+                      ingress failures). One bulk upload can create both payment intents and DLQ rows in the DB — accepted
+                      rows appear under <span className="font-medium text-[#475569]">Intents</span>; dead-lettered rows
+                      appear here.
+                    </p>
+                    {journalUsesBackendFeed && failureTotal === 0 ? (
+                      <p className={`mt-1 max-w-3xl ${HOME_BODY_IMPERIAL_SM}`}>
+                        No DLQ rows for this batch. DLQ from your upload may use a different batch id or workspace than the
+                        session scope above.
                       </p>
-                      <p className="mt-1 text-[13px] text-[#94A3B8]">
-                        Click a row for manual review · status · planned date · payment mode · currency · dispatch score
-                      </p>
-                    </div>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
                       disabled={filteredFailures.length === 0}
                       onClick={() => downloadFailuresCsv(filteredFailures, selectedBatchId)}
-                      className="h-8 rounded-lg border border-[#e2e8f0] bg-white px-2.5 text-[13px] font-medium text-[#475569] shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
+                      className="h-8 rounded-lg border border-[#e2e8f0] bg-white px-2.5 text-[15px] font-medium text-[#475569] shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Export
                     </button>
                   </div>
                 </div>
-                <div className="min-w-0 overflow-x-auto">
-                  <table className={`w-full min-w-[72rem] border-collapse text-[14px] ${HOME_TITLE_BLACK}`}>
-                    <thead className="border-b border-[#E5E9F0] bg-[#F5F7FA]">
+                <div className="overflow-x-auto">
+                  <table className={`w-full border-collapse text-[14px] ${HOME_TITLE_BLACK}`}>
+                    <thead className="bg-[#f8fafc]">
                       <tr>
-                        {INTENT_TABLE_HEADERS.map((h) => (
-                          <th
-                            key={h.key}
-                            className={`${TABLE_HEAD_CELL} ${
-                              h.key === 'amount' || h.key === 'dispatchScore' ? 'text-right' : ''
-                            }`}
-                          >
-                            {h.label}
+                          {[
+                          { key: 'zordId', label: intentJournalCopy.table.headers.zordId, icon: 'reference' as const },
+                            { key: 'rownum', label: 'Row #', icon: 'reference' as const },
+                          { key: 'amount', label: 'Amount', icon: 'amount' as const },
+                          { key: 'connector', label: 'Connector', icon: 'payment' as const },
+                          { key: 'reason', label: 'Failure Reason', icon: 'status' as const },
+                          { key: 'status', label: 'Status', icon: 'status' as const },
+                          { key: 'updated', label: 'Updated', icon: 'updated' as const },
+                        ].map((h) => (
+                          <th key={h.key} className={`px-3 py-2.5 text-left ${COMMAND_CENTER_LABEL_GREEN}`}>
+                            <span className="inline-flex items-center gap-1.5">
+                              <HeaderIcon kind={h.icon} />
+                              {h.label}
+                            </span>
                           </th>
                         ))}
                       </tr>
@@ -632,54 +632,56 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                     <tbody>
                       {failurePageRows.length === 0 ? (
                         <tr>
-                          <td colSpan={INTENT_TABLE_COL_COUNT} className="px-5 py-16 text-center text-[14px] text-[#94A3B8]">
-                            {intentJournalCopy.table.emptyReview}
+                          <td colSpan={7} className="px-4 py-12 text-center text-[14px] text-[#64748b]">
+                            No failures match your filters for this batch.
                           </td>
                         </tr>
                       ) : (
-                        failurePageRows.map((row) => (
-                          <tr
-                            key={row.requestId}
-                            onClick={() => setManualReviewRow(row)}
-                            className={TABLE_ROW}
-                            title={row.failureReason}
+                        failurePageRows.map((row, rowIndex) => (
+                        <tr
+                          key={row.requestId}
+                          className={`border-t border-[#f3f4f6] hover:bg-[#f9fafb] ${rowIndex % 2 === 1 ? 'bg-slate-50/40' : ''}`}
+                        >
+                          <td
+                            className="truncate px-3 py-2.5 font-mono text-[12px] text-[#334155]"
+                            title={row.zordId ?? row.requestId}
                           >
-                            <td
-                              className={`${TABLE_CELL} whitespace-nowrap font-mono text-[13px] font-medium text-[#2563EB]`}
-                              title={row.zordId ?? row.requestId}
+                            {row.zordId ?? row.requestId}
+                          </td>
+                          <td className="px-3 py-2.5 text-[15px] text-[#475569] tabular-nums">
+                            {row.sourceRowNum ?? '—'}
+                          </td>
+                          <td className="px-3 py-2.5 tabular-nums">
+                            {Number.isFinite(row.amount)
+                              ? formatJournalMoney(row.amount, row.currency ?? 'INR')
+                              : '—'}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            {row.paymentPartner && row.paymentPartner !== '—' ? (
+                              <EntityLogo name={row.paymentPartner} kind="psp" size={18} />
+                            ) : (
+                              '—'
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5 text-rose-700">{row.failureReason}</td>
+                          <td className="px-3 py-2.5 min-w-[9.5rem]">
+                            <button
+                              type="button"
+                              onClick={() => setManualReviewRow(row)}
+                              className="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-[#0f172a] bg-[#0f172a] px-3 text-[12px] font-medium text-white transition hover:bg-[#1e293b]"
                             >
-                              {row.zordId ?? row.requestId}
-                            </td>
-                            <td
-                              className={`${TABLE_CELL} whitespace-nowrap font-mono text-[13px] text-[#2563EB]`}
-                              title={row.reference}
-                            >
-                              {row.reference}
-                            </td>
-                            <td className={`${TABLE_CELL} whitespace-nowrap text-right font-medium tabular-nums text-[#0F172A]`}>
-                              <MoneyCell amount={row.amount} currency={row.currency ?? 'INR'} />
-                            </td>
-                            <td className={TABLE_CELL}>
-                              <StatusPill label={row.dlqStatusLabel || row.failureStage || '-'} />
-                            </td>
-                            <td className={`${TABLE_CELL} whitespace-nowrap text-[#64748B]`}>
-                              {row.lastUpdated || '-'}
-                            </td>
-                            <td className={TABLE_CELL}>
-                              <RailChip label={failureRailLabel(row)} />
-                            </td>
-                            <td className={`${TABLE_CELL} uppercase tracking-wide text-[#64748B]`}>
-                              {row.currency ?? 'INR'}
-                            </td>
-                            <td className={`${TABLE_CELL} text-right font-semibold tabular-nums text-[#CBD5E1]`}>-</td>
-                          </tr>
+                              Manual review
+                            </button>
+                          </td>
+                          <td className="px-3 py-2.5 text-[#64748b]">{row.lastUpdated}</td>
+                        </tr>
                         ))
                       )}
                     </tbody>
                   </table>
                 </div>
-                <div className="border-t border-[#E5E9F0] bg-[#FBFCFE] px-6 py-4 text-[14px] text-[#64748b]">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="border-t border-slate-200/80 bg-[#f8fbff] px-3 py-2 text-[15px] text-[#64748b]">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <span>
                       Showing {(failureTotal === 0 ? 0 : (safeFailurePage - 1) * rowsPerPage + 1)}-
                       {failureTotal === 0 ? 0 : Math.min(safeFailurePage * rowsPerPage, failureTotal)} of{' '}

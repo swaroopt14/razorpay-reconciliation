@@ -1395,7 +1395,7 @@ export function evidencePackVerify(packId) {
 }
 
 export function evidencePacksList(searchParams) {
-  const batchId = searchParams.get('batch_id') || searchParams.get('client_batch_id')
+  const batchId = searchParams.get('batch_id')
   const intentIdParam = searchParams.get('intent_id')
   if (intentIdParam) {
     return {
