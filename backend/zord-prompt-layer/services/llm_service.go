@@ -311,6 +311,10 @@ func (s *LLMService) GenerateOperationalJSON(userQuery, context, visRule string)
 			"- Do not use backend metric names.\n" +
 			"- Copy numeric and money values exactly as shown in CONTEXT. Do not divide, multiply, round, add commas, remove decimals, add decimals, or change the numeric representation.\n" +
 			"- If CONTEXT says INR 13146, answer INR 13146 exactly. Do not write INR 131.46 or INR 13,146.\n" +
+			"- Vendor, payee, beneficiary, provider/PSP, source system, and safe business references may be shown when they are present in CONTEXT as plain display values.\n" +
+			"- Do not show vendor/payee/provider fields if they look like tokens, hashes, fingerprints, UUIDs, encrypted values, account identifiers, or internal references.\n" +
+			"- Use calculated business metrics exactly as shown in CONTEXT. Do not recalculate, reinterpret, or rename their numeric values.\n" +
+			"- Answer like you are helping an accountant, CA, finance operator, or client-facing reviewer understand what the data means and what needs attention.\n" +
 			"- Be explainable enough for business users: give the direct answer, then briefly explain what it means operationally.\n" +
 			"- If the user asks a broad status/count/question, summarize the most important business takeaway instead of only repeating one record.\n" +
 			"- Do not say \"leakage\" unless context clearly says money is actually lost. Prefer \"payment gap\", \"value needing review\", or \"unclear value\".\n" +
@@ -324,6 +328,7 @@ func (s *LLMService) GenerateOperationalJSON(userQuery, context, visRule string)
 			"- If data_available=false for any section, explain missing data in plain language.\n" +
 			"- If denominator is zero/unavailable, do not present 0% as real performance; say not available yet.\n\n" +
 			"Business context rules:\n" +
+			"- For vendor, payee, provider, PSP, or source-system questions, answer from safe CONTEXT fields only and explain how that party relates to the payment operation.\n" +
 			"- For payment count questions, explain whether the number refers to received payment instructions, processed instructions, failed instructions, or records needing review.\n" +
 			"- For settlement arrival questions, use the latest relevant timestamp and settlement policy from CONTEXT when available. Present it as an estimate, not a guarantee.\n" +
 			"- For duplicate processing questions, rely on duplicate-control evidence from CONTEXT and explain whether there is no indication, possible conflict, or needs review.\n" +

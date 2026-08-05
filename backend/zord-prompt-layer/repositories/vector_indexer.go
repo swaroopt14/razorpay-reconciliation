@@ -17,6 +17,8 @@ type VectorIndexer struct {
 	liveRetriever      *LiveSQLRetriever
 	gemini             *client.GeminiClient
 	pinecone           *client.PineconeClient
+	state              VectorIndexStateRepository
+	pineconeNamespace  string
 	embeddingModel     string
 	embeddingDimension int
 	interval           time.Duration
@@ -28,6 +30,8 @@ func NewVectorIndexer(
 	liveRetriever *LiveSQLRetriever,
 	gemini *client.GeminiClient,
 	pinecone *client.PineconeClient,
+	state VectorIndexStateRepository,
+	pineconeNamespace string,
 	embeddingModel string,
 	embeddingDimension int,
 	intervalSeconds int,
@@ -53,6 +57,8 @@ func NewVectorIndexer(
 		liveRetriever:      liveRetriever,
 		gemini:             gemini,
 		pinecone:           pinecone,
+		state:              state,
+		pineconeNamespace:  strings.TrimSpace(pineconeNamespace),
 		embeddingModel:     embeddingModel,
 		embeddingDimension: embeddingDimension,
 		interval:           time.Duration(intervalSeconds) * time.Second,
@@ -98,23 +104,48 @@ func (i *VectorIndexer) upsertEventVectors(ctx context.Context, event VectorInde
 		return nil
 	}
 
-	vectors, err := i.embedEventChunks(ctx, event, chunks)
+	vectors, states, skipped, err := i.embedChangedEventChunks(ctx, event, chunks)
 	if err != nil {
 		return err
+	}
+
+	if len(vectors) == 0 {
+		log.Printf(
+			"[prompt-layer][vector-index] event skipped unchanged tenant=%s source=%s entity=%s id=%s chunks=%d skipped=%d duration_ms=%d",
+			tenantID,
+			event.SourceService,
+			event.EntityType,
+			event.EntityID,
+			len(chunks),
+			skipped,
+			time.Since(start).Milliseconds(),
+		)
+		return nil
 	}
 
 	upserted, err := i.pinecone.Upsert(ctx, vectors)
 	if err != nil {
+		for _, state := range states {
+			_ = i.markVectorStateFailed(ctx, state, err)
+		}
 		return err
 	}
 
+	for _, state := range states {
+		if err := i.markVectorStateUpserted(ctx, state); err != nil {
+			log.Printf("[prompt-layer][vector-index] state save failed tenant=%s entity=%s id=%s vector=%s err=%v", state.TenantID, state.EntityType, state.EntityID, state.VectorID, err)
+		}
+	}
+
 	log.Printf(
-		"[prompt-layer][vector-index] event upserted tenant=%s source=%s entity=%s id=%s chunks=%d upserted=%d duration_ms=%d",
+		"[prompt-layer][vector-index] event upserted tenant=%s source=%s entity=%s id=%s chunks=%d changed=%d skipped=%d upserted=%d duration_ms=%d",
 		tenantID,
 		event.SourceService,
 		event.EntityType,
 		event.EntityID,
 		len(chunks),
+		len(vectors),
+		skipped,
 		upserted,
 		time.Since(start).Milliseconds(),
 	)
@@ -143,6 +174,12 @@ func (i *VectorIndexer) deleteEventVectors(ctx context.Context, event VectorInde
 
 	if err := i.pinecone.DeleteByFilter(ctx, filter); err != nil {
 		return err
+	}
+
+	if i.state != nil && i.state.Enabled() {
+		if err := i.state.DeleteForEntity(ctx, tenantID, entityType, entityID); err != nil {
+			log.Printf("[prompt-layer][vector-index] state delete failed tenant=%s entity=%s id=%s err=%v", tenantID, entityType, entityID, err)
+		}
 	}
 
 	log.Printf(
@@ -179,17 +216,19 @@ func sanitizeVectorIndexChunks(tenantID string, chunks []model.RetrievedChunk) [
 	return safe
 }
 
-func (i *VectorIndexer) embedEventChunks(ctx context.Context, event VectorIndexRequestEvent, chunks []model.RetrievedChunk) ([]client.PineconeVector, error) {
+func (i *VectorIndexer) embedChangedEventChunks(ctx context.Context, event VectorIndexRequestEvent, chunks []model.RetrievedChunk) ([]client.PineconeVector, []VectorIndexState, int, error) {
 	tenantID := strings.ToLower(strings.TrimSpace(event.TenantID))
 	entityType := strings.ToLower(strings.TrimSpace(event.EntityType))
 	entityID := strings.TrimSpace(event.EntityID)
 
 	vectors := make([]client.PineconeVector, 0, len(chunks))
+	states := make([]VectorIndexState, 0, len(chunks))
+	skipped := 0
 
-	for _, chunk := range chunks {
+	for chunkIndex, chunk := range chunks {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, nil, skipped, ctx.Err()
 		default:
 		}
 
@@ -198,13 +237,52 @@ func (i *VectorIndexer) embedEventChunks(ctx context.Context, event VectorIndexR
 			continue
 		}
 
+		vectorID := stableEventVectorID(event, chunk.SourceType, chunkIndex)
+		contentHash := stableEventContentHash(event, chunk.SourceType, text, i.embeddingModel, i.embeddingDimension)
+
+		state := VectorIndexState{
+			VectorID:           vectorID,
+			TenantID:           tenantID,
+			SourceService:      strings.TrimSpace(event.SourceService),
+			EntityType:         entityType,
+			EntityID:           entityID,
+			SourceType:         strings.TrimSpace(chunk.SourceType),
+			ContentHash:        contentHash,
+			ContentVersion:     strings.TrimSpace(event.ContentVersion),
+			PineconeNamespace:  i.pineconeNamespace,
+			EmbeddingModel:     strings.TrimSpace(i.embeddingModel),
+			EmbeddingDimension: i.embeddingDimension,
+			LastEventID:        strings.TrimSpace(event.EventID),
+			Status:             "indexed",
+		}
+
+		if i.state != nil && i.state.Enabled() {
+			existing, found, err := i.state.Get(ctx, vectorID)
+			if err != nil {
+				log.Printf("[prompt-layer][vector-index] state lookup failed tenant=%s entity=%s id=%s vector=%s err=%v", tenantID, entityType, entityID, vectorID, err)
+			}
+
+			if found &&
+				existing.ContentHash == contentHash &&
+				existing.EmbeddingModel == i.embeddingModel &&
+				existing.EmbeddingDimension == i.embeddingDimension &&
+				existing.Status == "indexed" {
+				skipped++
+				log.Printf("[prompt-layer][vector-index] chunk skipped unchanged tenant=%s entity=%s id=%s vector=%s", tenantID, entityType, entityID, vectorID)
+				continue
+			}
+
+			log.Printf("[prompt-layer][vector-index] chunk changed embedding tenant=%s entity=%s id=%s vector=%s found=%t", tenantID, entityType, entityID, vectorID, found)
+		}
+
 		values, err := i.gemini.Embed(text, i.embeddingModel, i.embeddingDimension)
 		if err != nil {
-			return nil, err
+			_ = i.markVectorStateFailed(ctx, state, err)
+			return nil, nil, skipped, err
 		}
 
 		vectors = append(vectors, client.PineconeVector{
-			ID:     stableEventVectorID(event, chunk.SourceType, text),
+			ID:     vectorID,
 			Values: values,
 			Metadata: map[string]any{
 				"tenant_id":         tenantID,
@@ -215,13 +293,15 @@ func (i *VectorIndexer) embedEventChunks(ctx context.Context, event VectorIndexR
 				"entity_id":         entityID,
 				"batch_id":          strings.TrimSpace(event.BatchID),
 				"content_version":   strings.TrimSpace(event.ContentVersion),
+				"content_hash":      contentHash,
 				"text":              text,
 				"indexed_at":        time.Now().UTC().Format(time.RFC3339),
 			},
 		})
+		states = append(states, state)
 	}
 
-	return vectors, nil
+	return vectors, states, skipped, nil
 }
 
 func buildIndexDocumentText(chunk model.RetrievedChunk) string {
@@ -239,16 +319,47 @@ func buildIndexDocumentText(chunk model.RetrievedChunk) string {
 	return fmt.Sprintf("Source: %s\n%s", source, text)
 }
 
-func stableEventVectorID(event VectorIndexRequestEvent, sourceType, text string) string {
+func stableEventVectorID(event VectorIndexRequestEvent, sourceType string, chunkIndex int) string {
 	raw := strings.Join([]string{
 		strings.ToLower(strings.TrimSpace(event.TenantID)),
+		strings.ToLower(strings.TrimSpace(event.SourceService)),
 		strings.ToLower(strings.TrimSpace(event.EntityType)),
 		strings.TrimSpace(event.EntityID),
 		strings.ToLower(strings.TrimSpace(sourceType)),
 		strings.TrimSpace(event.ContentVersion),
-		strings.TrimSpace(text),
+		fmt.Sprintf("%d", chunkIndex),
 	}, "|")
 
 	sum := sha256.Sum256([]byte(raw))
 	return "zord_" + hex.EncodeToString(sum[:])
+}
+
+func stableEventContentHash(event VectorIndexRequestEvent, sourceType, text, embeddingModel string, embeddingDimension int) string {
+	raw := strings.Join([]string{
+		strings.ToLower(strings.TrimSpace(event.SourceService)),
+		strings.ToLower(strings.TrimSpace(event.EntityType)),
+		strings.TrimSpace(event.EntityID),
+		strings.ToLower(strings.TrimSpace(sourceType)),
+		strings.TrimSpace(event.ContentVersion),
+		strings.TrimSpace(embeddingModel),
+		fmt.Sprintf("%d", embeddingDimension),
+		strings.TrimSpace(text),
+	}, "|")
+
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
+}
+
+func (i *VectorIndexer) markVectorStateUpserted(ctx context.Context, state VectorIndexState) error {
+	if i == nil || i.state == nil || !i.state.Enabled() {
+		return nil
+	}
+	return i.state.MarkUpserted(ctx, state)
+}
+
+func (i *VectorIndexer) markVectorStateFailed(ctx context.Context, state VectorIndexState, cause error) error {
+	if i == nil || i.state == nil || !i.state.Enabled() {
+		return nil
+	}
+	return i.state.MarkFailed(ctx, state, cause)
 }

@@ -16,8 +16,19 @@ func (r *LiveSQLRetriever) fetchFromIntent(tenantID, intentID, traceID string, t
 
 	args := []any{}
 	q := `
-		SELECT intent_id::text, envelope_id::text, trace_id::text, status, intent_type,
-		       amount::text, currency, confidence_score::text, created_at::text
+			SELECT intent_id::text, envelope_id::text, trace_id::text, status, intent_type,
+		       amount::text, currency, confidence_score::text, created_at::text,
+		       COALESCE(provider_hint, '') AS provider_hint,
+		       COALESCE(source_system, '') AS source_system,
+		       COALESCE(client_payout_ref, '') AS client_payout_ref,
+		       COALESCE(
+		       	beneficiary->>'name',
+		       	beneficiary->>'display_name',
+		       	beneficiary->>'vendor_name',
+		       	beneficiary->>'payee_name',
+		       	beneficiary->>'beneficiary_name',
+		       	''
+		       ) AS beneficiary_display_name
 		FROM payment_intents
 		WHERE 1=1
 	`
@@ -52,9 +63,23 @@ func (r *LiveSQLRetriever) fetchFromIntent(tenantID, intentID, traceID string, t
 	out := make([]model.RetrievedChunk, 0, topK*2)
 	for rows.Next() {
 		var id, envelopeID, tr, status, intentType, amount, currency, createdAt string
-		var confidence sql.NullString
+		var confidence, providerHint, sourceSystem, clientPayoutRef, beneficiaryName sql.NullString
 
-		if err := rows.Scan(&id, &envelopeID, &tr, &status, &intentType, &amount, &currency, &confidence, &createdAt); err != nil {
+		if err := rows.Scan(
+			&id,
+			&envelopeID,
+			&tr,
+			&status,
+			&intentType,
+			&amount,
+			&currency,
+			&confidence,
+			&createdAt,
+			&providerHint,
+			&sourceSystem,
+			&clientPayoutRef,
+			&beneficiaryName,
+		); err != nil {
 			return nil, err
 		}
 
@@ -71,8 +96,18 @@ func (r *LiveSQLRetriever) fetchFromIntent(tenantID, intentID, traceID string, t
 			TraceID:    "",
 			TenantID:   "",
 			Score:      1.0,
-			Text: fmt.Sprintf("Intent event: status=%s type=%s amount=%s %s confidence=%s created_at=%s",
-				status, intentType, amount, currency, confidenceVal, createdAt),
+			Text: strings.Join(nonEmptyParts([]string{
+				"Payment instruction",
+				"Status: " + status,
+				"Type: " + intentType,
+				fmt.Sprintf("Amount: %s %s", amount, currency),
+				"Provider/PSP: " + safeBusinessContextValue(nullText(providerHint)),
+				"Source system: " + safeBusinessContextValue(nullText(sourceSystem)),
+				"Payee/Vendor: " + safeBusinessContextValue(nullText(beneficiaryName)),
+				"Business reference: " + safeBusinessContextValue(nullText(clientPayoutRef)),
+				"Confidence: " + confidenceVal,
+				"Received: " + readableTime(createdAt),
+			}), " . "),
 		})
 	}
 	if err := rows.Err(); err != nil {

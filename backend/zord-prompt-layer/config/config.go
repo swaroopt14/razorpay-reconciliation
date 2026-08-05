@@ -43,6 +43,7 @@ type AppConfig struct {
 	VectorIndexKafkaTopic       string
 	VectorIndexKafkaGroupID     string
 	VectorIndexKafkaMaxRetries  int
+	VectorIndexStateDSN         string
 }
 
 func parseCSVKeys(v string) []string {
@@ -180,5 +181,6 @@ func Load() AppConfig {
 		VectorIndexKafkaTopic:       get("VECTOR_INDEX_KAFKA_TOPIC", "zord.vector.index.request.v1"),
 		VectorIndexKafkaGroupID:     get("VECTOR_INDEX_KAFKA_GROUP_ID", "zord-prompt-layer-vector-indexer"),
 		VectorIndexKafkaMaxRetries:  vectorIndexKafkaMaxRetries,
+		VectorIndexStateDSN:         os.Getenv("VECTOR_INDEX_STATE_DSN"),
 	}
 }

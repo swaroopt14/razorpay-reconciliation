@@ -39,7 +39,7 @@ func (r *LiveSQLRetriever) BuildVectorIndexChunks(ctx context.Context, event Vec
 		return r.fetchVectorOutcomeBatchSummary(ctx, tenantID, entityID)
 
 	case "intelligence_snapshot":
-		return r.fetchVectorIntelligenceSnapshot(ctx, tenantID, entityID)
+		return r.fetchVectorIntelligenceSnapshot(ctx, tenantID, entityID, event.Metadata)
 
 	case "intelligence_projection", "projection_state":
 		return r.fetchVectorProjectionState(ctx, tenantID, entityID)
@@ -62,7 +62,18 @@ func (r *LiveSQLRetriever) fetchVectorPaymentIntent(ctx context.Context, tenantI
 
 	args := []any{tenantID}
 	q := `
-		SELECT status, intent_type, amount::text, currency, confidence_score::text, created_at::text
+				SELECT status, intent_type, amount::text, currency, confidence_score::text, created_at::text,
+		       COALESCE(provider_hint, '') AS provider_hint,
+		       COALESCE(source_system, '') AS source_system,
+		       COALESCE(client_payout_ref, '') AS client_payout_ref,
+		       COALESCE(
+		       	beneficiary->>'name',
+		       	beneficiary->>'display_name',
+		       	beneficiary->>'vendor_name',
+		       	beneficiary->>'payee_name',
+		       	beneficiary->>'beneficiary_name',
+		       	''
+		       ) AS beneficiary_display_name
 		FROM payment_intents
 		WHERE tenant_id::text = $1
 	`
@@ -86,22 +97,38 @@ func (r *LiveSQLRetriever) fetchVectorPaymentIntent(ctx context.Context, tenantI
 	out := make([]model.RetrievedChunk, 0, 25)
 	for rows.Next() {
 		var status, intentType, amount, currency, confidence, createdAt sql.NullString
-		if err := rows.Scan(&status, &intentType, &amount, &currency, &confidence, &createdAt); err != nil {
+		var providerHint, sourceSystem, clientPayoutRef, beneficiaryName sql.NullString
+		if err := rows.Scan(
+			&status,
+			&intentType,
+			&amount,
+			&currency,
+			&confidence,
+			&createdAt,
+			&providerHint,
+			&sourceSystem,
+			&clientPayoutRef,
+			&beneficiaryName,
+		); err != nil {
 			return nil, err
+
 		}
 
 		out = append(out, model.RetrievedChunk{
 			SourceType: "intent_payment_intents",
 			Score:      1.0,
-			Text: fmt.Sprintf(
-				"Payment instruction summary: Status: %s · Type: %s · Amount: %s %s · Confidence: %s · Received: %s",
-				safeOptional(nullText(status)),
-				safeOptional(nullText(intentType)),
-				nullText(amount),
-				safeOptional(nullText(currency)),
-				safeOptional(nullText(confidence)),
-				readableTime(nullText(createdAt)),
-			),
+			Text: strings.Join(nonEmptyParts([]string{
+				"Payment instruction summary",
+				"Status: " + safeOptional(nullText(status)),
+				"Type: " + safeOptional(nullText(intentType)),
+				fmt.Sprintf("Amount: %s %s", nullText(amount), safeOptional(nullText(currency))),
+				"Provider/PSP: " + safeBusinessContextValue(nullText(providerHint)),
+				"Source system: " + safeBusinessContextValue(nullText(sourceSystem)),
+				"Payee/Vendor: " + safeBusinessContextValue(nullText(beneficiaryName)),
+				"Business reference: " + safeBusinessContextValue(nullText(clientPayoutRef)),
+				"Confidence: " + safeOptional(nullText(confidence)),
+				"Received: " + readableTime(nullText(createdAt)),
+			}), " . "),
 		})
 	}
 
@@ -112,6 +139,8 @@ func (r *LiveSQLRetriever) fetchVectorIntentBatch(ctx context.Context, tenantID,
 	if r.intentDB == nil {
 		return []model.RetrievedChunk{}, nil
 	}
+
+	out := make([]model.RetrievedChunk, 0, 4)
 
 	var received, canonicalized, dlqCount, reviewCount, lowMatch, lowProof, dupRisk int
 	var successRate, avgQuality, batchQuality, updatedAt sql.NullString
@@ -146,31 +175,130 @@ func (r *LiveSQLRetriever) fetchVectorIntentBatch(ctx context.Context, tenantID,
 		&updatedAt,
 	)
 
-	if err == sql.ErrNoRows {
-		return []model.RetrievedChunk{}, nil
-	}
-	if err != nil {
+	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("vector intent batch retrieval failed: %w", err)
 	}
 
-	return []model.RetrievedChunk{{
-		SourceType: "intent_canonical_batches",
-		Score:      1.0,
-		Text: fmt.Sprintf(
-			"Batch processing summary: Received payment instructions: %d · Structured successfully: %d · Failed records: %d · Records needing review: %d · Low matchability records: %d · Low proof readiness records: %d · Duplicate risk records: %d · Success rate: %s · Average instruction quality: %s · Batch quality: %s · Updated: %s",
-			received,
-			canonicalized,
-			dlqCount,
-			reviewCount,
-			lowMatch,
-			lowProof,
-			dupRisk,
-			safeOptional(nullText(successRate)),
-			safeOptional(nullText(avgQuality)),
-			safeOptional(nullText(batchQuality)),
-			readableTime(nullText(updatedAt)),
-		),
-	}}, nil
+	if err == nil {
+		out = append(out, model.RetrievedChunk{
+			SourceType: "intent_canonical_batches",
+			Score:      1.0,
+			Text: fmt.Sprintf(
+				"Batch processing summary: Received payment instructions: %d · Structured successfully: %d · Failed records: %d · Records needing review: %d · Low matchability records: %d · Low proof readiness records: %d · Duplicate risk records: %d · Success rate: %s · Average instruction quality: %s · Batch quality: %s · Updated: %s",
+				received,
+				canonicalized,
+				dlqCount,
+				reviewCount,
+				lowMatch,
+				lowProof,
+				dupRisk,
+				safeOptional(nullText(successRate)),
+				safeOptional(nullText(avgQuality)),
+				safeOptional(nullText(batchQuality)),
+				readableTime(nullText(updatedAt)),
+			),
+		})
+	}
+
+	intentRows, err := r.intentDB.QueryContext(ctx, `
+		SELECT
+			COALESCE(status, '') AS status,
+			COALESCE(governance_state, '') AS governance_state,
+			COALESCE(provider_hint, '') AS provider_hint,
+			COALESCE(source_system, '') AS source_system,
+			COUNT(*)::text AS item_count,
+			COALESCE(SUM(amount), 0)::text AS total_amount,
+			MIN(created_at)::text AS first_received,
+			MAX(created_at)::text AS last_received
+		FROM payment_intents
+		WHERE tenant_id::text = $1 AND batchid = $2
+		GROUP BY status, governance_state, provider_hint, source_system
+		ORDER BY COUNT(*) DESC
+		LIMIT 12
+	`, tenantID, batchID)
+	if err != nil {
+		return nil, fmt.Errorf("vector intent batch distribution retrieval failed: %w", err)
+	}
+	defer intentRows.Close()
+
+	intentParts := make([]string, 0, 12)
+	for intentRows.Next() {
+		var status, governance, provider, sourceSystem, count, totalAmount, firstReceived, lastReceived sql.NullString
+		if err := intentRows.Scan(&status, &governance, &provider, &sourceSystem, &count, &totalAmount, &firstReceived, &lastReceived); err != nil {
+			return nil, err
+		}
+
+		intentParts = append(intentParts, strings.Join(nonEmptyParts([]string{
+			"Status: " + safeOptional(nullText(status)),
+			"Governance: " + safeOptional(nullText(governance)),
+			"Provider/PSP: " + safeBusinessContextValue(nullText(provider)),
+			"Source system: " + safeBusinessContextValue(nullText(sourceSystem)),
+			"Payment instructions: " + safeOptional(nullText(count)),
+			"Total instructed value: " + exactDBMoneyValue(nullText(totalAmount)),
+			"First received: " + readableTime(nullText(firstReceived)),
+			"Last received: " + readableTime(nullText(lastReceived)),
+		}), " · "))
+	}
+	if err := intentRows.Err(); err != nil {
+		return nil, err
+	}
+
+	if len(intentParts) > 0 {
+		out = append(out, model.RetrievedChunk{
+			SourceType: "intent_batch_payment_distribution",
+			Score:      0.99,
+			Text:       "Batch payment instruction distribution: " + strings.Join(intentParts, " | "),
+		})
+	}
+
+	dlqRows, err := r.intentDB.QueryContext(ctx, `
+		SELECT
+			COALESCE(stage, '') AS stage,
+			COALESCE(reason_code, '') AS reason_code,
+			COALESCE(dlq_status, '') AS dlq_status,
+			COUNT(*)::text AS item_count,
+			MIN(created_at)::text AS first_failed,
+			MAX(created_at)::text AS last_failed
+		FROM dlq_items
+		WHERE tenant_id::text = $1 AND batch_id = $2
+		GROUP BY stage, reason_code, dlq_status
+		ORDER BY COUNT(*) DESC
+		LIMIT 12
+	`, tenantID, batchID)
+	if err != nil {
+		return nil, fmt.Errorf("vector intent batch dlq retrieval failed: %w", err)
+	}
+	defer dlqRows.Close()
+
+	dlqParts := make([]string, 0, 12)
+	for dlqRows.Next() {
+		var stage, reason, status, count, firstFailed, lastFailed sql.NullString
+		if err := dlqRows.Scan(&stage, &reason, &status, &count, &firstFailed, &lastFailed); err != nil {
+			return nil, err
+		}
+
+		dlqParts = append(dlqParts, strings.Join(nonEmptyParts([]string{
+			"Stage: " + safeOptional(nullText(stage)),
+			"Reason: " + safeOptional(nullText(reason)),
+			"Status: " + safeOptional(nullText(status)),
+			"Failed records: " + safeOptional(nullText(count)),
+			"First failed: " + readableTime(nullText(firstFailed)),
+			"Last failed: " + readableTime(nullText(lastFailed)),
+		}), " · "))
+	}
+	if err := dlqRows.Err(); err != nil {
+		return nil, err
+	}
+
+	if len(dlqParts) > 0 {
+		out = append(out, model.RetrievedChunk{
+			SourceType: "intent_batch_failure_distribution",
+			Score:      0.98,
+			Text:       "Batch failure distribution: " + strings.Join(dlqParts, " | "),
+		})
+	}
+
+	return out, nil
 }
 
 func (r *LiveSQLRetriever) fetchVectorIntentDLQ(ctx context.Context, tenantID, entityID string) ([]model.RetrievedChunk, error) {
@@ -326,19 +454,28 @@ func (r *LiveSQLRetriever) fetchVectorOutcomeBatchSummary(ctx context.Context, t
 	return out, rows.Err()
 }
 
-func (r *LiveSQLRetriever) fetchVectorIntelligenceSnapshot(ctx context.Context, tenantID, entityID string) ([]model.RetrievedChunk, error) {
+func (r *LiveSQLRetriever) fetchVectorIntelligenceSnapshot(ctx context.Context, tenantID, entityID string, metadata map[string]string) ([]model.RetrievedChunk, error) {
 	if r.intelligenceDB == nil {
 		return []model.RetrievedChunk{}, nil
 	}
+	snapshotType := strings.TrimSpace(metadata["snapshot_type"])
+	scopeType := strings.TrimSpace(metadata["scope_type"])
+	scopeRef := strings.TrimSpace(metadata["scope_ref"])
 
+	lookupValue := entityID
+	if snapshotType != "" {
+		lookupValue = snapshotType
+	}
 	rows, err := r.intelligenceDB.QueryContext(ctx, `
-		SELECT snapshot_type, scope_type, snapshot_json::text, window_start::text, window_end::text, model_version, created_at::text
-		FROM intelligence_snapshots
-		WHERE tenant_id = $1
-		  AND (snapshot_id = $2 OR snapshot_type = $2)
-		ORDER BY created_at DESC
-		LIMIT 10
-	`, tenantID, entityID)
+	SELECT snapshot_type, scope_type, snapshot_json::text, window_start::text, window_end::text, model_version, created_at::text
+	FROM intelligence_snapshots
+	WHERE tenant_id = $1
+	  AND (snapshot_id = $2 OR snapshot_type = $2)
+	  AND ($3 = '' OR scope_type = $3)
+	  AND ($4 = '' OR scope_ref = $4)
+	ORDER BY created_at DESC
+	LIMIT 5
+	`, tenantID, lookupValue, scopeType, scopeRef)
 	if err != nil {
 		return nil, fmt.Errorf("vector intelligence snapshot retrieval failed: %w", err)
 	}
@@ -355,26 +492,71 @@ func (r *LiveSQLRetriever) fetchVectorIntelligenceSnapshot(ctx context.Context, 
 		if strings.TrimSpace(summary) == "" {
 			summary = "Display-safe intelligence summary is not available."
 		}
-
+		rcaContext := ""
+		if !strings.EqualFold(nullText(snapType), "RCA_CLUSTER") {
+			rcaContext = r.fetchLatestVectorRCAContext(ctx, tenantID, scopeRef)
+		}
 		out = append(out, model.RetrievedChunk{
 			SourceType: "intelligence_snapshots",
 			Score:      0.92,
-			Text: fmt.Sprintf(
-				"Intelligence snapshot summary: Type: %s · Scope: %s · %s · Window start: %s · Window end: %s · Computed by: %s · Created: %s",
-				safeOptional(nullText(snapType)),
-				safeOptional(nullText(scopeType)),
-				summary,
-				readableTime(nullText(windowStart)),
-				readableTime(nullText(windowEnd)),
-				safeOptional(nullText(modelVersion)),
-				readableTime(nullText(createdAt)),
-			),
+			Text: strings.Join(nonEmptyParts([]string{
+				fmt.Sprintf(
+					"Intelligence snapshot summary: Type: %s · Scope: %s · %s · Window start: %s · Window end: %s · Computed by: %s · Created: %s",
+					safeOptional(nullText(snapType)),
+					safeOptional(nullText(scopeType)),
+					summary,
+					readableTime(nullText(windowStart)),
+					readableTime(nullText(windowEnd)),
+					safeOptional(nullText(modelVersion)),
+					readableTime(nullText(createdAt)),
+				),
+				rcaContext,
+			}), " · "),
 		})
 	}
 
 	return out, rows.Err()
 }
+func (r *LiveSQLRetriever) fetchLatestVectorRCAContext(ctx context.Context, tenantID, scopeRef string) string {
+	if r == nil || r.intelligenceDB == nil {
+		return ""
+	}
 
+	args := []any{tenantID}
+	query := `
+		SELECT snapshot_json::text, window_start::text, window_end::text, created_at::text
+		FROM intelligence_snapshots
+		WHERE tenant_id = $1
+		  AND snapshot_type = 'RCA_CLUSTER'
+	`
+
+	if strings.TrimSpace(scopeRef) != "" {
+		query += " AND (scope_ref = $2 OR scope_type = 'TENANT')"
+		args = append(args, strings.TrimSpace(scopeRef))
+	} else {
+		query += " AND scope_type = 'TENANT'"
+	}
+
+	query += " ORDER BY created_at DESC LIMIT 1"
+
+	var payload, windowStart, windowEnd, createdAt sql.NullString
+	if err := r.intelligenceDB.QueryRowContext(ctx, query, args...).Scan(&payload, &windowStart, &windowEnd, &createdAt); err != nil {
+		return "RCA context: not available yet"
+	}
+
+	summary := summarizeBusinessJSON(payload.String)
+	if strings.TrimSpace(summary) == "" {
+		return "RCA context: available but no display-safe RCA summary was produced"
+	}
+
+	return fmt.Sprintf(
+		"RCA context: %s · RCA window start: %s · RCA window end: %s · RCA computed: %s",
+		summary,
+		readableTime(nullText(windowStart)),
+		readableTime(nullText(windowEnd)),
+		readableTime(nullText(createdAt)),
+	)
+}
 func (r *LiveSQLRetriever) fetchVectorProjectionState(ctx context.Context, tenantID, entityID string) ([]model.RetrievedChunk, error) {
 	if r.intelligenceDB == nil {
 		return []model.RetrievedChunk{}, nil
@@ -386,7 +568,7 @@ func (r *LiveSQLRetriever) fetchVectorProjectionState(ctx context.Context, tenan
 		WHERE tenant_id = $1
 		  AND projection_family = $2
 		ORDER BY computed_at DESC
-		LIMIT 10
+		LIMIT 5
 	`, tenantID, entityID)
 	if err != nil {
 		return nil, fmt.Errorf("vector projection state retrieval failed: %w", err)
@@ -453,7 +635,7 @@ func (r *LiveSQLRetriever) fetchVectorBatchContract(ctx context.Context, tenantI
 		WHERE tenant_id = $1
 		  AND (batch_id = $2 OR source_reference = $2)
 		ORDER BY last_updated_at DESC
-		LIMIT 10
+		LIMIT 5
 	`, tenantID, entityID)
 	if err != nil {
 		return nil, fmt.Errorf("vector batch contract retrieval failed: %w", err)
