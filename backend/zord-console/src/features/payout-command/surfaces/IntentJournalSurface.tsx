@@ -326,8 +326,10 @@ function failureHaystack(row: FailureRow) {
 
 export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: string } = {}) {
   const { mode } = useEnvironment()
+  // Intent file alone unlocks this journal; settlement is not required to list API batches.
   const { ready: demoBatchReady, readiness: demoBatchReadiness } = useDemoBatchReady(undefined, {
     requireUploads: true,
+    requireSettlement: false,
   })
   const batchCommandCenterHref = payoutBatchCommandCenterHref(mode === 'sandbox')
   /** Same `/api/prod/intelligence/*` + `/api/prod/intents*` + DLQ polling as live - sandbox is not local-only. */
@@ -991,7 +993,7 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
                     eyebrow="Getting started"
                     title="Start with a payout file upload"
                     bodyBold
-                    body="Upload your payment instructions, then add the bank or payment-partner confirmation when it’s ready. Once both are in, this journal shows your live batches and payment progress — nothing staged for demo."
+                    body="Upload your payment instructions to open Intent Journal. Batches and payment detail load from your live API for this workspace — nothing staged for demo. Settlement confirmation unlocks Settlement Journal next."
                     onDismiss={() => {
                       dismissJournalNotice(JOURNAL_SANDBOX_SETUP_DISMISS_KEY)
                       setSandboxSetupNoticeDismissed(true)
@@ -1053,8 +1055,9 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
                   ← Back to batches
                 </button>
                 <AwaitingUploadsEmptyState
-                  title="Batch detail unlocks after both uploads"
+                  title="Upload an intent file to open this batch"
                   readiness={demoBatchReadiness}
+                  requireSettlement={false}
                 />
               </div>
             ) : selectedBatch ? (

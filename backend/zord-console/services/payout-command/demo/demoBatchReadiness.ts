@@ -243,18 +243,20 @@ export function useBatchDispatched(batchId?: string): boolean {
  * React hook - re-renders when uploads complete.
  * Defaults to the active demo batch when checking readiness.
  *
- * `ready` is true only after both obligation + settlement uploads for the batch.
- * Pass `{ requireUploads: false }` to skip the gate (e.g. live mode with API data).
+ * By default `ready` needs both obligation + settlement uploads.
+ * Pass `{ requireSettlement: false }` for Intent Journal (intent file alone unlocks API feed).
+ * Pass `{ requireUploads: false }` to skip the gate entirely.
  */
 export function useDemoBatchReady(
   batchId?: string,
-  opts?: { requireUploads?: boolean },
+  opts?: { requireUploads?: boolean; requireSettlement?: boolean },
 ): {
   ready: boolean
   readiness: DemoBatchReadiness | null
   activeBatchId: string
 } {
   const requireUploads = opts?.requireUploads !== false
+  const requireSettlement = opts?.requireSettlement !== false
   const [readiness, setReadiness] = useState<DemoBatchReadiness | null>(null)
   const [activeBatchId, setActiveBatchId] = useState(DEMO_SMOKE_BATCH_ID)
 
@@ -275,7 +277,7 @@ export function useDemoBatchReady(
   const checkId = batchId?.trim() || activeBatchId
   const uploadsReady = Boolean(
     readiness?.intentOk &&
-      readiness?.settlementOk &&
+      (!requireSettlement || readiness?.settlementOk) &&
       (!checkId || readiness.batchId === checkId),
   )
   const ready = requireUploads ? uploadsReady : true

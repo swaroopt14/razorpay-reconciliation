@@ -73,7 +73,10 @@ export function IntentJournalOverview({
 }: IntentJournalOverviewProps) {
   const router = useRouter()
   const { mode } = useEnvironment()
-  const { ready, readiness } = useDemoBatchReady(undefined, { requireUploads: true })
+  const { ready, readiness } = useDemoBatchReady(undefined, {
+    requireUploads: true,
+    requireSettlement: false,
+  })
   const dispatchedBatchId = useDispatchedBatchId()
 
   function dispatchBatch(batchId: string) {
@@ -123,7 +126,11 @@ export function IntentJournalOverview({
       </header>
 
       {!ready ? (
-        <AwaitingUploadsEmptyState title="No intent journal yet" readiness={readiness} />
+        <AwaitingUploadsEmptyState
+          title="No intent journal yet"
+          readiness={readiness}
+          requireSettlement={false}
+        />
       ) : (
         <>
           <section className="border border-[#E5E5E5] bg-white" aria-label="Overview summary">
