@@ -5,7 +5,7 @@ import type {
 } from './supportTickets'
 import { loadSupportTickets as loadLocalSupportTickets } from './supportTickets'
 
-const STORAGE_PREFIX = 'zord:support-tickets'
+const STORAGE_PREFIX = 'zord:support-tickets:v2'
 
 function localStorageKey(tenantId: string) {
   return `${STORAGE_PREFIX}:${tenantId.trim() || 'default'}`
@@ -69,6 +69,8 @@ export async function fetchSupportTickets(tenantId: string): Promise<SupportTick
         /* keep empty server list */
       }
     }
+    // Demo / empty tenant: show seeded Support Queries so the surface matches product screenshots.
+    if (local.length > 0) return local
   }
 
   return tickets
