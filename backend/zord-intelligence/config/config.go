@@ -45,6 +45,11 @@ type Config struct {
 	// ── Database ────────────────────────────────────────────────
 	DatabaseURL string
 
+	// LeaseDurationSeconds bounds how long an event_receipts PROCESSING
+	// claim is considered live before the sweep treats it as stale and
+	// reclaims it (corrective-action-report P1-03).
+	LeaseDurationSeconds int
+
 	// ── Kafka ───────────────────────────────────────────────────
 	KafkaBrokers string
 	KafkaGroupID string
@@ -126,7 +131,8 @@ func Load() *Config {
 		Environment: getWithDefault("ENVIRONMENT", "development"),
 
 		// ── Database ────────────────────────────────────────────
-		DatabaseURL: getRequired("DATABASE_URL"),
+		DatabaseURL:          getRequired("DATABASE_URL"),
+		LeaseDurationSeconds: getIntWithDefault("EVENT_RECEIPT_LEASE_DURATION_SECONDS", 300),
 
 		// ── Kafka ───────────────────────────────────────────────
 		KafkaBrokers: getRequired("KAFKA_BROKERS"),

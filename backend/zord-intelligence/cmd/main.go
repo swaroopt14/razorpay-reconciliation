@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
@@ -118,7 +119,18 @@ func main() {
 	// ── PHASE 1 REFACTOR: event_receipts idempotency gate ─────────────────
 	// Every event handler claims its receipt and commits all projection
 	// counter writes in one transaction via receiptRepo.RunOnce.
-	receiptRepo := persistence.NewEventReceiptRepo(pool)
+	//
+	// P1-03: leaseOwner identifies this process instance for stuck-receipt
+	// diagnostics (logged on every claim and reclaim); leaseDuration bounds
+	// how long a claim is considered live before the sla_worker's periodic
+	// sweep treats it as stale.
+	leaseHostname, hostErr := os.Hostname()
+	if hostErr != nil || leaseHostname == "" {
+		leaseHostname = "unknown-host"
+	}
+	leaseOwner := fmt.Sprintf("%s-%d-%s", leaseHostname, os.Getpid(), uuid.NewString()[:8])
+	log.Printf("main: event_receipts lease_owner=%s lease_duration=%ds", leaseOwner, cfg.LeaseDurationSeconds)
+	receiptRepo := persistence.NewEventReceiptRepo(pool, leaseOwner, time.Duration(cfg.LeaseDurationSeconds)*time.Second)
 
 	// ── Performance: BatchWriter (5ms flush window for high-volume INSERTs) ──
 	// Groups concurrent intelligence_snapshot writes into single pgx.SendBatch
@@ -200,7 +212,7 @@ func main() {
 
 	// ── Step 7: Create background workers ─────────────────────────────────
 	outboxWorker := worker.NewOutboxWorker(outboxRepo, actionRepo, producer, cfg, projRepo)
-	slaWorker := worker.NewSLAWorker(slaRepo, actionService, projectionService)
+	slaWorker := worker.NewSLAWorker(slaRepo, actionService, projectionService, receiptRepo)
 	cronWorker := worker.NewPolicyCronWorker(projRepo, policyService)
 	// Phase 2 gap-fix pass: clarification doc §11/§14 scheduled jobs.
 	consistencyWorker := worker.NewProjectionConsistencyWorker(projRepo)
