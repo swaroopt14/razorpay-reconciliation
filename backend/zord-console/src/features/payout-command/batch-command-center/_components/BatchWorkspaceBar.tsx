@@ -11,6 +11,8 @@ type BatchWorkspaceBarProps = {
   onSelectBatch: () => void
   onRefresh: () => void
   refreshing?: boolean
+  /** Optional display name for Company (overrides tenant id suffix). */
+  companyName?: string
 }
 
 export function BatchWorkspaceBar({
@@ -21,8 +23,11 @@ export function BatchWorkspaceBar({
   onSelectBatch,
   onRefresh,
   refreshing,
+  companyName,
 }: BatchWorkspaceBarProps) {
-  const companyLabel = tenantReady && tenantId.trim() ? tenantZordIdSuffix(tenantId) : BATCH_REVIEW_COPY.workspace.notLoaded
+  const companyLabel =
+    companyName?.trim() ||
+    (tenantReady && tenantId.trim() ? tenantZordIdSuffix(tenantId) : BATCH_REVIEW_COPY.workspace.notLoaded)
   const batchLabel = activeBatchId.trim() || BATCH_REVIEW_COPY.workspace.notSelected
 
   return (

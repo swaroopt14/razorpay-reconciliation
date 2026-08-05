@@ -17,7 +17,7 @@ function readMinor(value: MinorField): number | null {
 
 function formatMinor(value: MinorField): string {
   const minor = readMinor(value)
-  return minor == null ? '-' : fmtInrFromMinorExact(minor)
+  return minor == null ? '—' : fmtInrFromMinorExact(minor)
 }
 
 function riskSeverity(tier: string | undefined): ZordInsightItem['severity'] {
@@ -51,7 +51,7 @@ function formatApiPercent(value: number | null | undefined): string | null {
 }
 const MAX_INSIGHTS = 6
 
-/** Payment Gaps - insight list from leakage and ambiguity APIs only. */
+/** Payment Gaps — insight list from leakage and ambiguity APIs only. */
 export function buildLeakagePageInsightItems(params: {
   leakage: LeakageKpiResolved | null
   ambiguity: AmbiguityKpiResolved | null
@@ -63,14 +63,14 @@ export function buildLeakagePageInsightItems(params: {
     const body = ambiguity.intelligence_body?.trim()
     items.push({
       title: ambiguity.intelligence_headline.trim(),
-      detail: body || '-',
+      detail: body || '—',
       severity: 'high',
       caseCount: ambiguity.ambiguous_intent_count,
     })
   }
 
   const openException = formatMinor(leakage?.total_amount_minor)
-  if (openException !== '-') {
+  if (openException !== '—') {
     items.push({
       title: 'Open financial exception value',
       detail: `${openException} in open exposure (total_amount_minor).`,
@@ -83,7 +83,7 @@ export function buildLeakagePageInsightItems(params: {
 
   if (leakage?.leakage_percentage != null) {
     const gapRate = `${leakage.leakage_percentage}%`
-    if (gapRate !== '-') {
+    if (gapRate !== '—') {
       items.push({
         title: 'Payment gap rate',
         detail: `Leakage percentage is ${gapRate} for this scope.`,
@@ -93,7 +93,7 @@ export function buildLeakagePageInsightItems(params: {
   }
 
   const unmatched = formatMinor(leakage?.unmatched_amount_minor)
-  if (unmatched !== '-') {
+  if (unmatched !== '—') {
     items.push({
       title: 'Unmatched payment value',
       detail: `${unmatched} in intended payments without a settlement link.`,
@@ -103,7 +103,7 @@ export function buildLeakagePageInsightItems(params: {
   }
 
   const shortSettled = formatMinor(leakage?.under_settlement_amount_minor)
-  if (shortSettled !== '-') {
+  if (shortSettled !== '—') {
     items.push({
       title: 'Short-settled value',
       detail: `${shortSettled} where settlement was below the instructed amount.`,
@@ -112,7 +112,7 @@ export function buildLeakagePageInsightItems(params: {
   }
 
   const reversal = formatMinor(leakage?.reversal_exposure_minor)
-  if (reversal !== '-') {
+  if (reversal !== '—') {
     items.push({
       title: 'Reversal exposure',
       detail: `${reversal} exposed to reversal risk.`,
@@ -132,19 +132,19 @@ export function buildLeakagePageInsightItems(params: {
   return items.slice(0, MAX_INSIGHTS)
 }
 
-/** Match Review - insight list from ambiguity API only. */
+/** Match Review — insight list from ambiguity API only. */
 export function buildMatchReviewInsightItems(params: {
   ambiguity: AmbiguityKpiResolved | null
 }): ZordInsightItem[] {
   const { ambiguity } = params
   const items: ZordInsightItem[] = []
   if (!ambiguity) return items
-    const severity = ambiguitySeverity(ambiguity)
+   const severity = ambiguitySeverity(ambiguity)
   const caseCount = ambiguity.ambiguous_intent_count
   const valueAtRisk = formatMinor(ambiguity.value_at_risk_minor)
   if (readMinor(ambiguity.value_at_risk_minor) != null) {
-      items.push({
-        title: 'Ambiguous match review value',
+     items.push({
+       title: 'Ambiguous match review value',
       detail: `${valueAtRisk} in match-review exposure from ambiguous attachment decisions.`,
       severity,
       caseCount,
@@ -153,9 +153,9 @@ export function buildMatchReviewInsightItems(params: {
   const ambiguityRate = formatApiPercent(ambiguity.ambiguity_rate)
   if (ambiguityRate) {
     items.push({
-        title: 'Ambiguity rate',
+       title: 'Ambiguity rate',
       detail: `${ambiguityRate} of attachment decisions landed in ambiguous review for this scope.`,
-      severity, 
+      severity,  
     })
   }
   const lowConfidenceRate = formatApiPercent(ambiguity.low_confidence_rate)
@@ -169,22 +169,22 @@ export function buildMatchReviewInsightItems(params: {
   const missingRefRate = formatApiPercent(ambiguity.provider_ref_missing_rate)
   if (missingRefRate) {
     items.push({
-        title: 'Missing provider reference rate',
+       title: 'Missing provider reference rate',
       detail: `${missingRefRate} of payment records are missing provider reference coverage.`,
       severity,
     })
   }
-    const candidateCollisionRate = formatApiPercent(ambiguity.candidate_collision_rate)
+   const candidateCollisionRate = formatApiPercent(ambiguity.candidate_collision_rate)
   if (candidateCollisionRate) {
     items.push({
-        title: 'Candidate collision rate',
+       title: 'Candidate collision rate',
       detail: `${candidateCollisionRate} of decisions have competing candidate matches.`,
       severity,
     })
   }
-    if (caseCount != null) {
+   if (caseCount != null) {
     items.push({
-        title: 'Payments needing review',
+       title: 'Payments needing review',
       detail: `${caseCount} payment intents need ambiguity review in this scope.`,
       severity,
     })

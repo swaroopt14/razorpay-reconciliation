@@ -1,4 +1,4 @@
-/** Ask Zord workspace - aligned with Home command center typography. */
+/** Ask Zord workspace — aligned with Home command center typography. */
 import {
   COMMAND_CENTER_KPI_CARD,
   COMMAND_CENTER_LABEL_GREEN,

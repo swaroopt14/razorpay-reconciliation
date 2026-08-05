@@ -6,17 +6,17 @@ import { EntityLogo } from '../entity-logo'
 import { Glyph } from '../shared'
 
 /**
-  * ActivateLiveWizard - 5-step modal that takes a sandbox account and submits it
-  * for live activation. Every step validates required fields before advancing.
-  *
-  * Flow:
-  *  step1 (business) → step2 (KYC)    → step3 (PSPs)
-  *  → step4 (plan)  → step5 (review)   → submitting → submitted
-  *
-  * On submit: sets `liveActivationStatus = 'in_review'` and closes after a 2s
-  * success card. The mode toggle's "Live" option remains locked until the status
-  * is flipped to `'active'` (which would happen server-side after KYC review).
-  */
+ * ActivateLiveWizard — 5-step modal that takes a sandbox account and submits it
+ * for live activation. Every step validates required fields before advancing.
+ *
+ * Flow:
+ *   step1 (business)  → step2 (KYC)        → step3 (PSPs)
+ *   → step4 (plan)    → step5 (review)     → submitting → submitted
+ *
+ * On submit: sets `liveActivationStatus = 'in_review'` and closes after a 2s
+ * success card. The mode toggle's "Live" option remains locked until the status
+ * is flipped to `'active'` (which would happen server-side after KYC review).
+ */
 
 type Step = 1 | 2 | 3 | 4 | 5
 
@@ -28,7 +28,7 @@ const STEP_LABELS: Record<Step, string> = {
   5: 'Review',
 }
 
-// ─── Step 1 - Business info ────────────────────────────────────────────────────
+// ─── Step 1 — Business info ────────────────────────────────────────────────────
 
 type BusinessForm = {
   legalName: string
@@ -62,22 +62,22 @@ function isBusinessValid(b: BusinessForm) {
   )
 }
 
-// ─── Step 2 - KYC docs ─────────────────────────────────────────────────────────
+// ─── Step 2 — KYC docs ─────────────────────────────────────────────────────────
 
 type KycSlot = 'incorporation' | 'gst' | 'director_id'
 type KycFiles = Record<KycSlot, { name: string; size: number } | null>
 const EMPTY_KYC: KycFiles = { incorporation: null, gst: null, director_id: null }
 const KYC_LABELS: Record<KycSlot, { label: string; hint: string }> = {
-  incorporation: { label: 'Certificate of incorporation', hint: 'PDF - issued by registrar' },
-  gst: { label: 'GST registration certificate', hint: 'PDF or image - current period' },
-  director_id: { label: 'Director ID (Aadhaar / passport)', hint: 'PDF or image - at least one director' },
+  incorporation: { label: 'Certificate of incorporation', hint: 'PDF — issued by registrar' },
+  gst: { label: 'GST registration certificate', hint: 'PDF or image — current period' },
+  director_id: { label: 'Director ID (Aadhaar / passport)', hint: 'PDF or image — at least one director' },
 }
 
 function isKycValid(k: KycFiles) {
   return Object.values(k).every((f) => f != null)
 }
 
-// ─── Step 3 - Connectors ───────────────────────────────────────────────────────
+// ─── Step 3 — Connectors ───────────────────────────────────────────────────────
 
 type ConnectorKey = 'Razorpay' | 'Cashfree' | 'PayU' | 'Stripe'
 type ConnectorCreds = Record<ConnectorKey, { keyId: string; keySecret: string; webhookUrl: string }>
@@ -96,7 +96,7 @@ function isConnectorsValid(c: ConnectorCreds) {
   return (Object.keys(c) as ConnectorKey[]).some((k) => isConnectorConnected(c[k]))
 }
 
-// ─── Step 4 - Plan + payment ───────────────────────────────────────────────────
+// ─── Step 4 — Plan + payment ───────────────────────────────────────────────────
 
 type PlanId = 'free' | 'pro' | 'business'
 type PaymentForm = {
@@ -443,7 +443,7 @@ function ConnectorsStep({ value, onChange }: { value: ConnectorCreds; onChange: 
   return (
     <div className="space-y-3">
       <p className="text-[13px] text-[#64748b]">
-        Connect at least one PSP. Paste your <strong>live</strong> credentials - sandbox keys won&apos;t work in production.
+        Connect at least one PSP. Paste your <strong>live</strong> credentials — sandbox keys won&apos;t work in production.
       </p>
       <ul className="space-y-2">
         {psps.map(({ key, rails }) => {
@@ -552,7 +552,7 @@ function PlanStep({ value, onChange }: { value: PaymentForm; onChange: (v: Payme
         <div className="rounded-[12px] border border-[#E5E5E5] bg-white p-4">
           <p className="text-[13px] font-semibold text-[#0f172a]">Payment method</p>
           <p className="mt-0.5 text-[12px] text-[#64748b]">
-            Card details are tokenized - Zord never sees your raw card number. (Demo: any digits accepted.)
+            Card details are tokenized — Zord never sees your raw card number. (Demo: any digits accepted.)
           </p>
           <div className="mt-3 space-y-3">
             <Input
@@ -609,13 +609,13 @@ function ReviewStep({
 
       <ReviewSection title="KYC documents">
         {(Object.keys(KYC_LABELS) as KycSlot[]).map((slot) => (
-          <ReviewField key={slot} label={KYC_LABELS[slot].label} value={kyc[slot]?.name ?? '-'} mono />
+          <ReviewField key={slot} label={KYC_LABELS[slot].label} value={kyc[slot]?.name ?? '—'} mono />
         ))}
       </ReviewSection>
 
       <ReviewSection title={`Connectors (${connectedKeys.length})`}>
         {connectedKeys.length === 0 ? (
-          <p className="text-[12px] text-[#0B1324]">No connectors connected - go back and connect at least one.</p>
+          <p className="text-[12px] text-rose-700">No connectors connected — go back and connect at least one.</p>
         ) : (
           <div className="flex flex-wrap gap-2">
             {connectedKeys.map((k) => (

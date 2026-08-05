@@ -81,7 +81,7 @@ This design system creates an AWS-level serious admin console with Zord's own bl
 - Row hover: `#111827` (zord-base-panel)
 - Selected row: `#1E3A8A` (zord-blue-800, subtle)
 - Links inside tables: `#3B82F6` (zord-blue-500), hover: underline only
-- No pill badges inside tables - use text + icons
+- No pill badges inside tables — use text + icons
 
 ### Navigation (Sidebar)
 

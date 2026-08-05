@@ -34,10 +34,10 @@ const footerColumns = [
   {
     title: 'Solutions',
     links: [
-      { label: 'Large payout batches', href: '/final-landing/solutions/large-payout-batches' },
-      { label: 'Marketplace settlements', href: '/final-landing/solutions/marketplace-settlements' },
-      { label: 'Payroll', href: '/final-landing/solutions/payroll' },
-      { label: 'Reconciliation', href: '/final-landing/solutions/enterprise-reconciliation' },
+      { label: 'Open finance', href: '/final-landing/solutions#solutions-catalog' },
+      { label: 'Fraud & risk', href: '/final-landing/solutions#solutions-catalog' },
+      { label: 'Bank payments', href: '/final-landing/solutions#solutions-catalog' },
+      { label: 'Payout operations', href: '/final-landing/solutions#solutions-catalog' },
     ],
   },
   {
@@ -52,9 +52,9 @@ const footerColumns = [
 ] as const
 
 const socialLinks = [
-  { label: 'YouTube', href: 'https://youtube.com', icon: YoutubeIcon },
-  { label: 'LinkedIn', href: 'https://linkedin.com', icon: LinkedinIcon },
-  { label: 'X', href: 'https://x.com', icon: XIcon },
+  { label: 'YouTube', href: 'https://www.youtube.com/@ArealisNetworks7', icon: YoutubeIcon },
+  { label: 'LinkedIn', href: 'https://www.linkedin.com/company/arealis-network/', icon: LinkedinIcon },
+  { label: 'X', href: 'https://x.com/Abhishek94239', icon: XIcon },
 ] as const
 
 const sectionLabelClass = (isLight: boolean) =>
@@ -117,7 +117,7 @@ export function LandingSiteFooter({ theme = 'light' }: { theme?: 'light' | 'dark
                 isLight ? 'text-[#0A0A0A]' : 'text-white'
               }`}
             >
-              See your payouts clearly with ZORD
+              Start your journey with ZORD
             </h2>
             <Link
               href="/signup"
@@ -127,7 +127,7 @@ export function LandingSiteFooter({ theme = 'light' }: { theme?: 'light' | 'dark
                   : 'bg-white text-[#111111] hover:bg-white/92 focus:ring-offset-[#070B10]'
               }`}
             >
-              Book a demo
+              Join now
             </Link>
           </div>
 
@@ -184,7 +184,8 @@ export function LandingSiteFooter({ theme = 'light' }: { theme?: 'light' | 'dark
                 isLight ? 'text-[#6B7280]' : 'text-white/55'
               }`}
             >
-              One place for teams that need bank confirmation, matching, and proof finance can stand behind.
+              Payout operations workspace for teams that need confirmation, matching, and finance-ready evidence in one
+              place.
             </p>
           </div>
 

@@ -6,11 +6,11 @@ export type DisbursementTrendBucket = {
   key: string
   /** Short label for X axis (e.g. "Mon 5", "Jan"). */
   label: string
-  /** Sum of intent amounts in window - minor units (paise). */
+  /** Sum of intent amounts in window — minor units (paise). */
   total_amount: number
-  /** Sum of amounts for intents considered bank-confirmed / settled - minor units (paise). */
+  /** Sum of amounts for intents considered bank-confirmed / settled — minor units (paise). */
   confirmed_amount: number
-  /** Payment value needing review in this bucket - minor units (paise). */
+  /** Payment value needing review in this bucket — minor units (paise). */
   review_amount: number
   intent_count: number
   confirmed_count: number
@@ -22,7 +22,7 @@ export type DisbursementTrendResponse = {
   range: DisbursementTrendRange
   currency: string
   buckets: DisbursementTrendBucket[]
-  /** How this payload was produced - for debugging / migration. */
+  /** How this payload was produced — for debugging / migration. */
   source: 'intelligence_leakage_windows' | 'intent_engine_aggregate' | 'analytics_service'
   /** When aggregating from paginated intents, caps applied. */
   note?: string

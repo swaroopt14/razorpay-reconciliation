@@ -5,7 +5,7 @@ import { WORKSPACE_TEXT_MUTED, WORKSPACE_TEXT_PRIMARY } from './workspaceTokens'
 
 function formatRelativeTime(iso: string): string {
   const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return '-'
+  if (Number.isNaN(date.getTime())) return '—'
   const diffMs = Date.now() - date.getTime()
   const diffMin = Math.floor(diffMs / 60_000)
   if (diffMin < 1) return 'Just now'
@@ -100,7 +100,7 @@ export function WorkspaceChatHistoryOverlay({
                     <button
                       type="button"
                       onClick={() => onDeleteThread(thread.id)}
-                      className="shrink-0 rounded-[8px] px-2 py-1 text-[11px] font-medium text-[#64748b] transition hover:bg-[#F1F5F9] hover:text-[#0B1324]"
+                      className="shrink-0 rounded-[8px] px-2 py-1 text-[11px] font-medium text-[#64748b] transition hover:bg-red-50 hover:text-red-700"
                       aria-label={`Delete ${thread.title}`}
                     >
                       Remove

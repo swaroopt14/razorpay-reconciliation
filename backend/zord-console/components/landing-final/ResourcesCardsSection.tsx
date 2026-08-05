@@ -39,7 +39,7 @@ export function ResourcesCardsSection() {
             transition={{ duration: 0.5, delay: 0.1 }}
             className="mt-4 text-[15px] leading-relaxed text-[#6B7280] sm:text-base"
           >
-            Product walkthrough, security, pricing, and direct support - without bouncing between scattered documents.
+            Product walkthrough, security, pricing, and direct support, without bouncing between scattered documents.
           </motion.p>
         </div>
 

@@ -7,7 +7,7 @@ const DEFAULT_LOCALE_TIME: Intl.DateTimeFormatOptions = {
   timeStyle: 'short',
 }
 
-/** Renders locale time only after mount - avoids SSR/client clock drift hydration errors. */
+/** Renders locale time only after mount — avoids SSR/client clock drift hydration errors. */
 export function HydrationSafeLocaleTime({
   date,
   locale = 'en-IN',

@@ -7,85 +7,85 @@ import { useEffect, useRef } from 'react'
 import { FinalLandingAssistantButton } from '@/components/landing-final/FinalLandingAssistantButton'
 import { LandingHeroTopBar } from '@/components/landing-final/LandingHeroTopBar'
 
-const dockItems = ['Instructions', 'Batch', 'Confirmations', 'Proof pack']
+const dockItems = ['Intent intake', 'Connector watch', 'Live tracking', 'Evidence Pack']
 
 const metricItems = [
   { label: 'Stages', value: '4', unit: 'steps' },
-  { label: 'View', value: 'Shared', unit: 'ops + finance' },
+  { label: 'Signals', value: 'Multi', unit: 'source' },
   { label: 'Proof', value: 'Export', unit: 'ready' },
-  { label: 'Start', value: 'Try first', unit: '' },
+  { label: 'Preview', value: 'Sandbox', unit: '' },
 ]
 
 const stageDetails = [
   {
     id: '01',
-    nav: 'Instructions',
-    title: 'Bring in payment instructions',
+    nav: 'Intent',
+    title: 'Create the payout intent',
     body:
-      'Your payment file enters Zord with payees, amounts, and batch context. Teams start from one clear record of what the business meant to pay.',
+      'A payout request enters Zord with beneficiary, amount, business rules, and proof requirements. The platform validates instruction details, risk flags, and workspace context before downstream tracking begins.',
     bullets: [
-      'Capture amount, payee, and business context in one place',
-      'Keep the reason for the payout visible for later review',
-      'Organize instructions before bank confirmations arrive',
+      'Validate amount, workspace, beneficiary, and compliance constraints',
+      'Attach business context so later teams understand why the payout exists',
+      'Normalize the request into one shared record before connector signals attach',
     ],
     metrics: [
-      { label: 'Input', value: 'Payment file' },
-      { label: 'Record', value: 'Shared' },
-      { label: 'Ready for', value: 'Batching' },
+      { label: 'Contract checks', value: 'Configured' },
+      { label: 'Risk rules', value: 'Workspace' },
+      { label: 'Prep state', value: 'Validated' },
     ],
     panel: 'intent' as const,
   },
   {
     id: '02',
-    nav: 'Batch',
-    title: 'Organize as a batch',
+    nav: 'Connectors',
+    title: 'Observe connector and rail posture',
     body:
-      'Instructions become a batch so ops can follow one container from intake through confirmation, matching, and proof readiness.',
+      'Zord surfaces connector performance, confirmation trust, and rail posture from live workspace data. Operations can see which paths need review before failures become queue pressure.',
     bullets: [
-      'Group related payments into one operational batch',
-      'Track progress without rebuilding status from multiple tools',
-      'Give finance and ops the same batch story',
+      'Compare primary and fallback connectors for each payout window',
+      'Watch failure signals, slow responses, and confirmation trust in one connector view',
+      'Record posture changes so support and finance can explain what shifted',
     ],
     metrics: [
-      { label: 'Container', value: 'Batch' },
-      { label: 'Progress', value: 'Visible' },
-      { label: 'Ownership', value: 'Shared' },
+      { label: 'Connector view', value: 'Live' },
+      { label: 'Leakage signals', value: 'Surfaced' },
+      { label: 'Review path', value: 'Guided' },
     ],
     panel: 'routing' as const,
   },
   {
     id: '03',
-    nav: 'Confirm',
-    title: 'Match bank confirmations',
+    nav: 'Tracking',
+    title: 'Track every payout state',
     body:
-      'Settlement and bank files arrive next. Zord matches what was supposed to happen with what was confirmed, and sends unclear items to review.',
+      'Once sent to the bank path, Zord keeps the provider acknowledgement, bank confirmation, settlement progress, and exception signals in one timeline. Operations teams see exactly where money is waiting.',
     bullets: [
-      'Compare intended payments with bank confirmations',
-      'Flag gaps and mismatches before month-end pressure builds',
-      'Send ambiguous matches to a clear review path',
+      'Merge provider and bank events into one chronological payout story',
+      'Surface lagging stages before finance starts chasing support teams',
+      'Highlight which failures are provider-side, bank-side, or data-side',
     ],
     metrics: [
-      { label: 'Intended', value: 'Visible' },
-      { label: 'Confirmed', value: 'Matched' },
-      { label: 'Gaps', value: 'Reviewable' },
+      { label: 'States captured', value: 'End-to-end' },
+      { label: 'Sync model', value: 'Workspace' },
+      { label: 'Exception view', value: 'Live' },
     ],
     panel: 'tracking' as const,
   },
   {
     id: '04',
     nav: 'Proof',
-    title: 'Export proof packs',
+    title: 'Confirm delivery and export Evidence Packs',
     body:
-      'Assemble the trail finance, compliance, and audit need - from original instruction through confirmation and decisions. No screenshot chase across five tools.',
+      'Zord confirms whether money actually reached and assembles the evidence pack required by finance, compliance, legal, or support. You don’t need to reopen five systems to defend one payout.',
     bullets: [
-      'Link instructions, confirmations, and review decisions',
-      'Keep proof packs ready for disputes and audit questions',
-      'Export one package instead of rebuilding the story by hand',
+      'Match confirmation signals, provider timeline, and statement evidence together',
+      'Keep Evidence Packs ready for disputes, audits, and merchant questions',
+      'Export one artifact instead of rebuilding the trail manually',
     ],
     metrics: [
-      { label: 'Evidence', value: 'Linked' },
-      { label: 'Pack', value: 'Ready' },
-      { label: 'Export', value: 'One package' },
+      { label: 'Proof sources', value: 'Linked' },
+      { label: 'Pack readiness', value: 'Workspace' },
+      { label: 'Export path', value: 'One click' },
     ],
     panel: 'proof' as const,
   },
@@ -94,18 +94,18 @@ const stageDetails = [
 const teamCards = [
   {
     title: 'Operations',
-    body: 'See where batches stand, which payments still need confirmation, and what needs review right now.',
-    tags: ['Batch status', 'Payment gaps', 'Needs a person'],
+    body: 'See where payouts are stuck, which connector is degrading, and which queue needs attention right now.',
+    tags: ['Live queue', 'Connector lag', 'Exception review'],
   },
   {
     title: 'Finance',
-    body: 'Compare meant-to-pay vs bank-confirmed amounts, reconcile gaps, and keep proof packs ready for close.',
-    tags: ['Meant to pay vs confirmed', 'Proof packs', 'Close'],
+    body: 'Understand whether money moved, reconcile the final state, and keep defensible Evidence Packs for every transfer.',
+    tags: ['Finality', 'Evidence Packs', 'Audit trail'],
   },
   {
     title: 'Engineering',
-    body: 'Keep one shared payout record next to existing payment systems so teams stop rebuilding the same status elsewhere.',
-    tags: ['Shared record', 'Payment sources', 'Integrations'],
+    body: 'Connect payment sources while keeping one shared payout record across providers and banks.',
+    tags: ['Integrations', 'Confirmations', 'Shared record'],
   },
 ]
 
@@ -150,14 +150,14 @@ function PulseIcon() {
 function ConnectorChart() {
   const lanes = [
     { label: 'Cashfree · IMPS', score: 'Stable', width: '82%', gradient: 'from-indigo-300 via-violet-400 to-cyan-400' },
-    { label: 'Razorpay · Watch', score: 'Check', width: '68%', gradient: 'from-sky-300 via-blue-400 to-indigo-500' },
+    { label: 'Razorpay · Failover', score: 'Watch', width: '68%', gradient: 'from-sky-300 via-blue-400 to-indigo-500' },
     { label: 'Yes Bank UPI', score: 'Review', width: '48%', gradient: 'from-amber-300 via-amber-400 to-orange-500' },
   ]
 
   return (
     <div className="rounded-2xl border border-white/8 bg-black/30 p-4">
       <div className="mb-4 flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-slate-500">
-        <span>Payment sources</span>
+        <span>Connector posture</span>
         <span>Product preview</span>
       </div>
 
@@ -190,7 +190,7 @@ function ConnectorChart() {
       </div>
 
       <div className="mt-4 grid grid-cols-3 gap-2">
-        {['Primary source', 'Confirmations in', 'Gap review'].map((chip) => (
+        {['Primary path', 'Fallback ready', 'Leakage watch'].map((chip) => (
           <div key={chip} className="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2 text-center text-[10px] uppercase tracking-[0.18em] text-slate-400">
             {chip}
           </div>
@@ -208,7 +208,7 @@ function ProofChart() {
   return (
     <div className="rounded-2xl border border-white/8 bg-black/30 p-4">
       <div className="mb-4 flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-slate-500">
-        <span>Proof pack completeness</span>
+        <span>Evidence Pack completeness</span>
         <span>Preview</span>
       </div>
 
@@ -246,8 +246,8 @@ function ProofChart() {
 
         <div className="flex-1 space-y-3">
           {[
-            ['Bank confirmation', 'Linked'],
-            ['Instruction trail', 'Linked'],
+            ['Webhook receipt', 'Linked'],
+            ['Provider trail', 'Linked'],
             ['Bank statement', 'Pending'],
           ].map(([label, value], index) => (
             <div key={label}>
@@ -320,7 +320,7 @@ function StagePanel({ panel }: { panel: (typeof stageDetails)[number]['panel'] }
         <ConnectorChart />
         {[
           ['Cashfree', 'Stable', 'Primary IMPS'],
-          ['Razorpay', 'Check', 'Watch lane'],
+          ['Razorpay', 'Watch', 'Failover lane'],
           ['Yes Bank UPI', 'Review', 'Overflow lane'],
         ].map(([name, success, cost], index) => (
           <motion.div
@@ -386,7 +386,7 @@ function StagePanel({ panel }: { panel: (typeof stageDetails)[number]['panel'] }
       {[
         ['Provider timeline', 'Included'],
         ['Bank statement match', 'Included'],
-        ['Bank confirmation', 'Included'],
+        ['Webhook receipt', 'Included'],
         ['Operator action log', 'Included'],
       ].map(([label, status], index) => (
         <motion.div
@@ -412,7 +412,7 @@ function StagePanel({ panel }: { panel: (typeof stageDetails)[number]['panel'] }
         transition={{ duration: 0.42, delay: 0.16 }}
         whileHover={{ y: -2, scale: 1.01 }}
       >
-        Export a proof pack in one click for audit, dispute, or merchant communication.
+        Export Evidence Pack in one click for audit, dispute, or merchant communication.
       </motion.div>
     </div>
   )
@@ -552,7 +552,7 @@ export default function HowItWorksClient() {
                 <h1 className="text-4xl font-normal tracking-[-0.05em] text-slate-800 sm:text-5xl lg:text-[4.15rem] lg:leading-[0.95]">
                   One payout flow.
                   <br />
-                  From payment file to bank confirmation to proof.
+                  Full visibility from intent to proof.
                 </h1>
               </div>
 
@@ -560,7 +560,7 @@ export default function HowItWorksClient() {
                 <PulseIcon />
                 <div className="flex flex-col">
                   <span className="text-[10px] font-medium uppercase tracking-[0.15em] text-slate-500">System status</span>
-                  <span className="text-xs font-light tracking-wide text-indigo-600">Sample payout flow</span>
+                  <span className="text-xs font-light tracking-wide text-indigo-600">Nominal payout flow</span>
                 </div>
               </div>
             </motion.header>
@@ -600,20 +600,20 @@ export default function HowItWorksClient() {
               <div className="pointer-events-none absolute -left-20 top-1/2 h-[300px] w-[300px] -translate-y-1/2 rounded-full bg-indigo-600/8 blur-[80px]" />
 
               <div className="mb-6 inline-block rounded-full border border-indigo-200 bg-white/75 px-3 py-1 shadow-sm">
-                <span className="text-xs font-light uppercase tracking-[0.2em] text-indigo-600">Payout operations</span>
+                <span className="text-xs font-light uppercase tracking-[0.2em] text-indigo-600">Payout infrastructure</span>
               </div>
 
               <h2 className="mb-7 text-4xl font-normal leading-[1.02] tracking-[-0.05em] text-slate-800 sm:text-5xl lg:text-[4.3rem]">
-                See.
+                Observe.
                 <br />
-                <span className="text-slate-600">Check.</span>
+                <span className="text-slate-600">Track.</span>
                 <br />
-                Match. Prove.
+                Confirm. Prove.
               </h2>
 
               <p className="mb-9 max-w-xl text-[16px] font-light leading-8 text-slate-500 sm:text-[17px]">
-                Zord sits next to the systems you already use. Bring in payment instructions, follow batches, match bank
-                confirmations, and export proof - so ops and finance work from the same payout story.
+                Zord receives your payout intent, surfaces connector and bank posture, watches every downstream state change,
+                and confirms whether money actually reached. Finance, operations, and engineering teams see the same truth from one workspace.
               </p>
 
               <div className="flex flex-wrap items-center gap-4">
@@ -728,8 +728,8 @@ export default function HowItWorksClient() {
                     </g>
 
                     {[
-                      { x: -180, y: -50, label: 'Instruction' },
-                      { x: 0, y: -210, label: 'Batch' },
+                      { x: -180, y: -50, label: 'Intent' },
+                      { x: 0, y: -210, label: 'Route' },
                       { x: 160, y: -30, label: 'Provider' },
                       { x: -40, y: 145, label: 'Bank' },
                       { x: 200, y: 82, label: 'Proof' },
@@ -754,7 +754,7 @@ export default function HowItWorksClient() {
                 <div className="absolute bottom-6 left-6 rounded-[1.5rem] border border-white/10 bg-black/35 px-5 py-4 backdrop-blur-xl">
                   <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">proof status</div>
                   <div className="mt-2 text-[26px] font-light tracking-tight text-white">97.8%</div>
-                  <div className="mt-1 text-sm text-slate-400">proof pack ready</div>
+                  <div className="mt-1 text-sm text-slate-400">evidence pack ready</div>
                 </div>
               </div>
             </motion.div>
@@ -815,7 +815,7 @@ export default function HowItWorksClient() {
                         <div className="text-[10px] uppercase tracking-[0.22em] text-indigo-600">{stage.id} · {stage.nav}</div>
                         <div className="mt-2 text-base font-light text-slate-900">{stage.title}</div>
                         <div className="mt-1 text-sm leading-6 text-slate-500">
-                          {index === 0 ? 'Bring in the file' : index === 1 ? 'Organize the batch' : index === 2 ? 'Match bank results' : 'Export the proof'}
+                          {index === 0 ? 'Request intake' : index === 1 ? 'Live decisioning' : index === 2 ? 'State unification' : 'Proof generation'}
                         </div>
                       </motion.div>
                     ))}
@@ -875,7 +875,7 @@ export default function HowItWorksClient() {
 
                     <div className="relative z-10 rounded-[1.85rem] border border-slate-200/20 bg-[linear-gradient(135deg,#0b1220_0%,#111827_45%,#1e1b4b_100%)] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_20px_50px_rgba(15,23,42,0.25)]">
                       <div className="mb-4 flex items-center justify-between">
-                        <div className="text-[10px] uppercase tracking-[0.22em] text-slate-500">What this step looks like</div>
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Live surface</div>
                         <div className="rounded-full border border-white/10 bg-white/[0.05] px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] text-slate-200">
                           {stage.nav}
                         </div>
@@ -899,7 +899,7 @@ export default function HowItWorksClient() {
               viewport={{ once: true, amount: 0.2 }}
               transition={{ duration: 0.6 }}
             >
-              <p className="mb-3 text-sm uppercase tracking-[0.24em] text-indigo-300">Same view for every team</p>
+              <p className="mb-3 text-sm uppercase tracking-[0.24em] text-indigo-300">Shared visibility</p>
               <h3 className="text-3xl font-light tracking-tight text-white sm:text-4xl">
                 Different teams, one payout truth
               </h3>
@@ -948,12 +948,12 @@ export default function HowItWorksClient() {
           >
             <div className="flex flex-col gap-8 md:flex-row md:items-end md:justify-between">
               <div className="max-w-2xl">
-                <p className="mb-3 text-sm uppercase tracking-[0.24em] text-indigo-600">From file to proof</p>
+                <p className="mb-3 text-sm uppercase tracking-[0.24em] text-indigo-600">From request to proof</p>
                 <h3 className="text-3xl font-light tracking-tight text-slate-900 sm:text-4xl">
-                  One shared place to explain your payouts
+                  This is what a payout operating system should feel like
                 </h3>
                 <p className="mt-4 text-base font-light leading-7 text-slate-500">
-                  Zord helps teams see meant-to-pay vs bank-confirmed money, resolve gaps, and export proof packs - without replacing your bank, gateway, or payment processor.
+                  Zord gives your teams a single operating layer for connector visibility, payout confirmation, matching, and Evidence Pack export without the usual reconciliation scramble.
                 </p>
               </div>
 

@@ -3,16 +3,16 @@ import type { OpsInsightAlertTone } from './types'
 const DEFAULT_TONE: OpsInsightAlertTone = 'caution'
 
 const RAIL: Record<OpsInsightAlertTone, string> = {
-  critical: 'bg-[#0B1324]',
-  warning: 'bg-[#0B1324]',
-  caution: 'bg-[#0B1324]',
+  critical: 'bg-[#dc2626]',
+  warning: 'bg-[#f59e0b]',
+  caution: 'bg-[#ca8a04]',
   ok: 'bg-[#000000]',
 }
 
 const SHELL: Record<OpsInsightAlertTone, string> = {
-  critical: 'border-[#0B1324]/20 bg-[#F1F5F9]',
-  warning: 'border-[#0B1324]/20 bg-[#F1F5F9]',
-  caution: 'border-[#0B1324]/15 bg-[#F1F5F9]',
+  critical: 'border-red-200/70 bg-red-50/75',
+  warning: 'border-amber-200/80 bg-amber-50/80',
+  caution: 'border-amber-200/50 bg-amber-50/45',
   ok: 'border-black/30 bg-neutral-100',
 }
 

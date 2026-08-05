@@ -37,8 +37,8 @@ const CURRENT_COLOR = '#4a6fe6'
 const PREDICTED_COLOR = '#334155'
 
 function formatRangeLabel(points: LeakageComparisonChartPoint[]): string {
-  if (!points.length) return '-'
-  return `${points[0].label} - ${points[points.length - 1].label}`
+  if (!points.length) return '—'
+  return `${points[0].label} – ${points[points.length - 1].label}`
 }
 
 function ComparisonTooltip({
@@ -183,7 +183,7 @@ export function RiskAdjustedLeakageCard({ data, loading, batchId }: RiskAdjusted
           </div>
         </div>
         {!seriesLive ? (
-          <span className="rounded-full bg-[#F1F5F9] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#0B1324]">
+          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800">
             Awaiting live data
           </span>
         ) : null}

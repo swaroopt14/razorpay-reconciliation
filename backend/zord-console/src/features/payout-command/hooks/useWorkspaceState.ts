@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth } from '@/app/hooks'
-import { safeRandomId } from '@/shared/lib/safeRandomId'
 import { workspacePromptCopy, type WorkspaceTab } from '@/services/payout-command/model'
 import {
   mapPromptLayerAnswer,
@@ -49,7 +48,7 @@ function newThreadId() {
   return `thread-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 function newSessionId() {
-  return safeRandomId()
+  return crypto.randomUUID()
 }
 function threadTitleFromPrompt(prompt: string) {
   const t = prompt.trim()

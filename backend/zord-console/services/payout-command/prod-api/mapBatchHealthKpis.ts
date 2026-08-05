@@ -33,11 +33,11 @@ export function batchHealthToAmbiguityKpis(health: BatchHealth) {
   }
 }
 
-/** Batch-scoped money context from batch_health (variance only - not orphan/short-settled/reversal). */
+/** Batch-scoped money context from batch_health (variance only — not orphan/short-settled/reversal). */
 export function batchHealthToLeakageViewModel(
   health: BatchHealth,
   batchId: string,
-  tenantId = '-',
+  tenantId = '—',
 ): PortfolioLeakageViewModel {
   const intendedMinor = coerceMinor(health.total_intended_amount_minor)
   const confirmedMinor = coerceMinor(health.total_confirmed_amount_minor)
@@ -73,7 +73,7 @@ export function mergeBatchHealthWithTenantLeakage(
   health: BatchHealth,
   batchId: string,
   tenantLeakage: LeakageKpiResolved | null,
-  tenantId = '-',
+  tenantId = '—',
 ): PortfolioLeakageViewModel {
   const batchVm = batchHealthToLeakageViewModel(health, batchId, tenantId)
   if (!tenantLeakage) return batchVm

@@ -1,4 +1,4 @@
-/** Illustrative data for landing hero dashboard preview only - not live payout APIs. */
+/** Illustrative data for landing hero dashboard preview only, not live payout APIs. */
 
 import type { PaymentTrendChartPoint } from '@/features/payout-command/command-center/PaymentValueTrendChart'
 
@@ -61,9 +61,9 @@ export const landingHeroMockData = {
       panels: {
         ask: { title: 'Ask Zord preview', body: 'Mock answer: Cashfree and PayU have the largest confirmation drift this month.' },
         batches: { title: 'Batch queue preview', body: '3 batches need review · 42 open items · 11 high-value payment instructions.' },
-        export: { title: 'Export preview', body: 'Payment health snapshot, batch CSV, and proof pack summary are ready.' },
+        export: { title: 'Export preview', body: 'Payment health snapshot, batch CSV, and Evidence Pack summary are ready.' },
         alerts: { title: 'Alert preview', body: '2 review alerts · confirmation drift and evidence coverage below threshold.' },
-        search: { title: 'Search preview', body: 'Search batches, provider references, payment instructions, or proof pack IDs.' },
+        search: { title: 'Search preview', body: 'Search batches, PSP references, payment intents, or Evidence Pack IDs.' },
       },
     },
     workspace: {
@@ -87,7 +87,7 @@ export const landingHeroMockData = {
         },
       },
       panels: {
-        ask: { title: 'Ask preview', body: '“Which provider shows the highest unmatched value?” Cashfree, followed by PayU.' },
+        ask: { title: 'Ask preview', body: '“Which PSP caused the highest unmatched value?” Cashfree, followed by PayU.' },
         batches: { title: 'Referenced batches', body: 'BATCH-1042, BATCH-1048, and BATCH-1051 are linked to this answer.' },
         export: { title: 'Conversation export', body: 'Mock answer thread and source links are ready for ops review.' },
         alerts: { title: 'Ask alerts', body: '1 answer needs source refresh because settlement data changed.' },
@@ -106,7 +106,7 @@ export const landingHeroMockData = {
           },
         },
         confirmed: {
-          label: 'Predicted gaps',
+          label: 'Predicted Leakage',
           values: {
             '2026': { value: '₹12.8 L', sub: 'predicted unresolved value after review.' },
             '2027': { value: '₹16.5 L', sub: 'predicted unresolved value after review.' },
@@ -115,11 +115,11 @@ export const landingHeroMockData = {
         },
       },
       panels: {
-        ask: { title: 'Gaps answer', body: 'Top driver is unmatched payment value on Cashfree settlement files.' },
-        batches: { title: 'Gap batches', body: '4 batches contain aging exposure older than 7 days.' },
-        export: { title: 'Gap export', body: 'Sample payment-gaps report with buckets and aging bands is ready.' },
-        alerts: { title: 'Gap alert', body: 'One exposure bucket crossed the high-risk threshold.' },
-        search: { title: 'Gap search', body: 'Search unmatched instructions, short-settled records, and reversal exposure.' },
+        ask: { title: 'Leakage answer', body: 'Top driver is unmatched payment value on Cashfree settlement rails.' },
+        batches: { title: 'Leakage batches', body: '4 batches contain aging exposure older than 7 days.' },
+        export: { title: 'Gap export', body: 'Mock leakage report with buckets and aging bands is ready.' },
+        alerts: { title: 'Leakage alert', body: 'One exposure bucket crossed the high-risk threshold.' },
+        search: { title: 'Leakage search', body: 'Search unmatched intents, short-settled records, and reversal exposure.' },
       },
     },
     ambiguity: {
@@ -128,9 +128,9 @@ export const landingHeroMockData = {
         intended: {
           label: 'Payments Needing Review',
           values: {
-            '2026': { value: '42', sub: 'payment instructions need a person.' },
-            '2027': { value: '58', sub: 'payment instructions need a person.' },
-            '2028': { value: '63', sub: 'payment instructions need a person.' },
+            '2026': { value: '42', sub: 'payment instructions need match review.' },
+            '2027': { value: '58', sub: 'payment instructions need match review.' },
+            '2028': { value: '63', sub: 'payment instructions need match review.' },
           },
         },
         confirmed: {
@@ -143,11 +143,11 @@ export const landingHeroMockData = {
         },
       },
       panels: {
-        ask: { title: 'Match answer', body: 'Missing provider references are the biggest review driver this week.' },
+        ask: { title: 'Match answer', body: 'Missing PSP references are the biggest review driver this week.' },
         batches: { title: 'Review batches', body: 'BATCH-1048 has the largest low-confidence cluster.' },
         export: { title: 'Review export', body: 'Mock ambiguity queue and match-signal matrix are ready.' },
-        alerts: { title: 'Match alert', body: 'Provider reference quality dropped below target on one payment source.' },
-        search: { title: 'Match search', body: 'Search review items, missing refs, provider signals, and batch IDs.' },
+        alerts: { title: 'Match alert', body: 'Provider reference quality dropped below target on one rail.' },
+        search: { title: 'Match search', body: 'Search review items, missing refs, PSP signals, and batch IDs.' },
       },
     },
     verification: {
@@ -266,11 +266,11 @@ export const landingHeroMockData = {
       chartSeed: 8,
       metrics: {
         intended: {
-          label: 'Proof packs',
+          label: 'Evidence Packs',
           values: {
-            '2026': { value: '326', sub: 'Proof packs generated this period.' },
-            '2027': { value: '418', sub: 'Proof packs generated this period.' },
-            '2028': { value: '506', sub: 'Proof packs generated this period.' },
+            '2026': { value: '326', sub: 'Evidence Packs generated this period.' },
+            '2027': { value: '418', sub: 'Evidence Packs generated this period.' },
+            '2028': { value: '506', sub: 'Evidence Packs generated this period.' },
           },
         },
         confirmed: {
@@ -284,10 +284,10 @@ export const landingHeroMockData = {
       },
       panels: {
         ask: { title: 'Evidence answer', body: 'Most proof gaps come from missing settlement attachments.' },
-        batches: { title: 'Evidence batches', body: '7 batches have complete proof packs ready for export.' },
-        export: { title: 'Evidence export', body: 'Sample proof pack archive is ready for finance close.' },
+        batches: { title: 'Evidence batches', body: '7 batches have complete Evidence Packs ready for export.' },
+        export: { title: 'Evidence export', body: 'Mock Evidence Pack archive is ready for finance close.' },
         alerts: { title: 'Evidence alert', body: 'Proof readiness dropped below target for one batch.' },
-        search: { title: 'Evidence search', body: 'Search proof packs, audit events, exports, and attachment gaps.' },
+        search: { title: 'Evidence search', body: 'Search Evidence Packs, audit events, exports, and attachment gaps.' },
       },
     },
     support: {

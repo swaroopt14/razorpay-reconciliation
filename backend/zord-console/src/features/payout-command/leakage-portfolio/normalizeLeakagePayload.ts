@@ -16,9 +16,9 @@ export type PortfolioLeakageViewModel = {
   reversalMinor: number | null
   ambiguousRiskMinor: number
   riskAdjustedMinor: number
-  /** Open financial exception value from API `total_amount_minor` only - null when missing. */
+  /** Open financial exception value from API `total_amount_minor` only — null when missing. */
   openFinancialExceptionValueMinor: number | null
-  /** Exposure amount - leakage `unmatched_amount_minor`. */
+  /** Exposure amount — leakage `unmatched_amount_minor`. */
   exposureAmountMinor: number | null
   /** @deprecated use exposureAmountMinor */
   valueNeedingReviewMinor: number | null
@@ -62,7 +62,7 @@ export function toPortfolioLeakageViewModel(leak: LeakageKpiResolved): Portfolio
     leakageFraction: paymentGapRate,
     riskTier: leak.risk_tier?.trim() ? leak.risk_tier.trim() : null,
     tenantId: leak.tenant_id,
-    snapshotId: leak.snapshot_id?.trim() ? leak.snapshot_id.trim() : '-',
+    snapshotId: leak.snapshot_id?.trim() ? leak.snapshot_id.trim() : '—',
     computedAt: leak.computed_at ?? '',
     windowStart: leak.window_start ?? '',
     windowEnd: leak.window_end ?? '',

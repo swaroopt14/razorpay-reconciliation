@@ -1,206 +1,155 @@
 'use client'
 
 import { Fragment } from 'react'
-import { Grid3X3, RadioTower } from 'lucide-react'
-import type { MatchingExecutionHeatmap } from '@/services/payout-command/prod-api/intelligenceTypes'
-import { displayApiField, formatApiCount } from '../../shared/formatApiKpiFields'
+import type {
+  AmbiguityKpiResolved,
+  MatchingExecutionHeatmap,
+} from '@/services/payout-command/prod-api/intelligenceTypes'
+import { getMatchingHeatmap, getMatchingSummary } from '../utils/ambiguityApiMappers'
+import { HOME_TITLE_BLACK } from '../../command-center/homeCommandCenterTokens'
+import { ZORD_SURFACE_MUTED } from '../../command-center/homeSurfaceFonts'
+import { MatchingHeatmapFocusPanel } from './MatchingHeatmapFocusPanel'
 import { columnFullLabel } from '../utils/matchingHeatmapLayout'
 
-function cellClass(value: number) {
-  if (value === 2) return 'bg-[#0B1324] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.18)]'
-  if (value === 1) return 'bg-[#0B1324] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.18)]'
-  return 'bg-[#F1F5F9] ring-1 ring-[#0B1324]/20'
+function cellClass(v: number) {
+  if (v === 2) return 'bg-violet-700'
+  if (v === 1) return 'bg-violet-300'
+  return 'bg-slate-100 ring-1 ring-slate-200/80'
 }
 
-function cellTitle(value: number) {
-  if (value === 2) return 'Needs review'
-  if (value === 1) return 'In review'
-  return 'Clear'
+function cellTitle(v: number): string {
+  if (v === 2) return 'Needs review'
+  if (v === 1) return 'Syncing'
+  return 'Healthy'
 }
 
-function rowLabel(heatmap: MatchingExecutionHeatmap, rowIdx: number) {
-  return heatmap.y_labels?.[rowIdx] ?? heatmap.batch_ids?.[rowIdx] ?? String(rowIdx + 1)
+function formatBatchDateLabel(year: string, month: string, day: string): string {
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)))
+  return date.toLocaleString('en-IN', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+}
+
+function rowLabel(heatmap: MatchingExecutionHeatmap, rowIdx: number): string {
+  const batchId = heatmap.batch_ids?.[rowIdx]
+  if (batchId) {
+    const isoInId = batchId.match(/(\d{4})-(\d{2})-(\d{2})/)
+    if (isoInId) {
+      const [, year, month, day] = isoInId
+      return formatBatchDateLabel(year, month, day)
+    }
+    return batchId.length <= 14 ? batchId : batchId.slice(-14)
+  }
+  return String(heatmap.y_labels[rowIdx] ?? rowIdx + 1)
 }
 
 type Props = {
+  amb: AmbiguityKpiResolved | null
   heatmap?: MatchingExecutionHeatmap | null
-  summary?: string | null
   heatmapLoading?: boolean
 }
 
-function ExecutionLogEmpty({ loading }: { loading?: boolean }) {
-  return (
-    <section
-      className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.05)]"
-      data-testid="matching-execution-log"
-    >
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 p-4 sm:p-5">
-        <div className="flex items-start gap-3">
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-slate-950 text-white">
-            <Grid3X3 className="h-4 w-4" aria-hidden="true" />
-          </span>
-          <div>
-            <p className="text-[10px] font-bold uppercase text-slate-400">Execution log</p>
-            <h3 className="mt-1 text-[1.2rem] font-semibold leading-tight text-slate-950">
-              Match signal matrix
-            </h3>
-            <p className="mt-1 text-[13px] font-medium text-slate-500">
-              Batch rows by API-provided match-signal states.
-            </p>
-          </div>
-        </div>
-        <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[10px] font-bold uppercase text-slate-500">
-          API heatmap
-        </span>
-      </div>
-
-      <div className="grid min-h-[338px] place-items-center bg-slate-50 p-5">
-        <div className="max-w-[24rem] rounded-2xl border border-dashed border-slate-200 bg-white p-5 text-center">
-          <Grid3X3 className="mx-auto h-5 w-5 text-slate-300" aria-hidden="true" />
-          <p className="mt-3 text-[13px] font-semibold text-slate-600">
-            {loading
-              ? 'Loading matching execution heatmap.'
-              : 'Matching execution heatmap was not returned by the ambiguity API.'}
-          </p>
-          <p className="mt-1 text-[12px] font-medium leading-relaxed text-slate-400">
-            This panel will render the matrix when `matching_execution_heatmap` is present.
-          </p>
-        </div>
-      </div>
-    </section>
-  )
-}
-
-export function MatchingExecutionLog({ heatmap, summary, heatmapLoading }: Props) {
+export function MatchingExecutionLog({ amb, heatmap: heatmapProp, heatmapLoading }: Props) {
+  const heatmap = getMatchingHeatmap(amb, heatmapProp)
+  const summary = getMatchingSummary(amb, heatmapProp)
   const xLabels = heatmap?.x_labels ?? []
   const cells = heatmap?.cells ?? []
   const rowCount = cells.length
   const colCount = Math.max(xLabels.length, cells[0]?.length ?? 1)
-  const columnTotals = heatmap?.column_totals ?? []
 
   if (heatmapLoading && !heatmap) {
-    return <ExecutionLogEmpty loading />
+    return (
+      <div
+        className="flex min-h-[360px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white p-5"
+        data-testid="matching-execution-log"
+      >
+        <p className="text-[14px] font-medium text-slate-500">Loading matching execution heatmap…</p>
+      </div>
+    )
   }
 
-  if (!heatmap || cells.length === 0 || xLabels.length === 0) {
-    return <ExecutionLogEmpty />
+  if (!heatmap) {
+    return (
+      <div
+        className="flex min-h-[360px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white p-5"
+        data-testid="matching-execution-log"
+      >
+        <p className="text-[14px] font-medium text-[#00239C]">Heatmap not available for this tenant yet.</p>
+      </div>
+    )
   }
 
   return (
     <section
-      className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.05)]"
+      className="grid gap-3 md:grid-cols-5 md:items-stretch"
       data-testid="matching-execution-log"
     >
-      <div className="grid gap-0 xl:grid-cols-[minmax(0,1fr)_260px]">
-        <div className="p-4 sm:p-5">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="flex items-start gap-3">
-              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-slate-950 text-white">
-                <Grid3X3 className="h-4 w-4" aria-hidden="true" />
-              </span>
-              <div>
-                <p className="text-[10px] font-bold uppercase text-slate-400">Execution log</p>
-                <h3 className="mt-1 text-[1.2rem] font-semibold leading-tight text-slate-950">
-                  Match signal matrix
-                </h3>
-                <p className="mt-1 text-[13px] font-medium text-slate-500">
-                  Batch rows by API-provided match-signal states.
-                </p>
-              </div>
-            </div>
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-[#0B1324]/15 bg-[#F1F5F9] px-3 py-1 text-[10px] font-bold uppercase text-[#0B1324]">
-              <span className="h-1.5 w-1.5 rounded-full bg-[#0B1324]" />
-              Live
-            </span>
-          </div>
+      <article className="relative flex min-h-[340px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:col-span-3">
+        <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#000000] via-[#7c3aed] to-[#4c1d95]" />
 
-          <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-            <div
-              className="w-full"
-              style={{
-                display: 'grid',
-                gridTemplateColumns: `3.25rem repeat(${colCount}, minmax(0, 1fr))`,
-                gridTemplateRows: `repeat(${rowCount}, 2rem) 2.25rem`,
-                gap: '5px',
-              }}
-            >
-              {cells.map((row, rowIdx) => (
-                <Fragment key={heatmap.batch_ids?.[rowIdx] ?? rowIdx}>
-                  <span
-                    className="flex items-center truncate pr-2 text-[11px] font-semibold text-slate-500"
-                    title={heatmap.batch_ids?.[rowIdx]}
-                  >
-                    {rowLabel(heatmap, rowIdx)}
-                  </span>
-                  {row.map((cell, colIdx) => (
-                    <span
-                      key={`${rowIdx}-${colIdx}`}
-                      className={`rounded-md ${cellClass(cell)}`}
-                      title={`${rowLabel(heatmap, rowIdx)} · ${columnFullLabel(xLabels[colIdx] ?? '')}: ${cellTitle(cell)}`}
-                    />
-                  ))}
-                </Fragment>
-              ))}
-
-              <span aria-hidden />
-              {xLabels.map((label) => (
-                <span
-                  key={label}
-                  className="truncate text-center text-[10px] font-bold uppercase text-slate-400"
-                  title={columnFullLabel(label)}
-                >
-                  {label}
-                </span>
-              ))}
-            </div>
-          </div>
-
-          {summary ? (
-            <p className="mt-4 rounded-2xl bg-slate-50 px-4 py-3 text-[13px] font-medium leading-relaxed text-slate-600">
-              {summary}
+        <div className="flex shrink-0 items-start justify-between gap-3">
+          <div>
+            <h3 className={`text-[1.2rem] font-semibold tracking-[-0.01em] ${HOME_TITLE_BLACK}`}>
+              Matching execution log
+            </h3>
+            <p className={`mt-0.5 text-[13px] ${ZORD_SURFACE_MUTED}`}>
+              Batch × match-signal grid — darker cells need attention
             </p>
-          ) : null}
+          </div>
+          <div className="flex items-center gap-1.5 rounded-full bg-violet-700 px-2.5 py-1">
+            <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
+            <span className="text-[10px] font-bold uppercase tracking-wider text-white">Live</span>
+          </div>
         </div>
 
-        <aside className="border-t border-slate-100 bg-slate-950 p-4 text-white xl:border-l xl:border-t-0 sm:p-5">
-          <div className="flex items-center gap-2">
-            <span className="grid h-9 w-9 place-items-center rounded-xl bg-white/10 text-white">
-              <RadioTower className="h-4 w-4" aria-hidden="true" />
+        {/* Fluid grid — fills card interior; card outer size unchanged */}
+        <div
+          className="mt-3 min-h-0 flex-1"
+          style={{
+            display: 'grid',
+            gridTemplateColumns: `1.75rem repeat(${colCount}, minmax(0, 1fr))`,
+            gridTemplateRows: `repeat(${rowCount}, minmax(0, 1fr)) auto`,
+            gap: '3px',
+          }}
+        >
+          {cells.map((row, rIdx) => (
+            <Fragment key={rIdx}>
+              <span
+                className="flex items-center justify-end pr-0.5 text-[11px] font-semibold tabular-nums leading-none text-slate-500"
+                title={heatmap.batch_ids?.[rIdx]}
+              >
+                {rowLabel(heatmap, rIdx)}
+              </span>
+              {row.map((cell, cIdx) => (
+                <div
+                  key={cIdx}
+                  className={`min-h-0 min-w-0 rounded-[3px] ${cellClass(cell)}`}
+                  title={`Batch ${rowLabel(heatmap, rIdx)} · ${columnFullLabel(xLabels[cIdx] ?? '')}: ${cellTitle(cell)}`}
+                />
+              ))}
+            </Fragment>
+          ))}
+
+          <span aria-hidden className="min-h-0" />
+          {xLabels.map((l) => (
+            <span
+              key={`x-${l}`}
+              className="truncate pt-0.5 text-center text-[10px] font-semibold leading-tight text-slate-500"
+              title={columnFullLabel(l)}
+            >
+              {l}
             </span>
-            <div>
-              <p className="text-[10px] font-bold uppercase text-white/45">API focus</p>
-              <p className="text-[13px] font-semibold text-white">Execution summary</p>
-            </div>
-          </div>
+          ))}
+        </div>
 
-          <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-4">
-            <p className="text-[10px] font-bold uppercase text-white/45">Intents under evaluation</p>
-            <p className="mt-3 text-[2.2rem] font-semibold leading-none tabular-nums text-white">
-              {formatApiCount(heatmap.intents_under_evaluation_count)}
-            </p>
-          </div>
+        {summary ? (
+          <p className="mt-3 shrink-0 border-t border-slate-100 pt-3 text-[12px] font-medium leading-relaxed text-[#00239C]">
+            {summary}
+          </p>
+        ) : null}
+      </article>
 
-          {columnTotals.length > 0 ? (
-            <div className="mt-3 space-y-2">
-              {columnTotals.map((value, index) => {
-                const label = xLabels[index] ?? String(index + 1)
-                return (
-                  <div key={label} className="flex items-center justify-between gap-3 rounded-xl bg-white/5 px-3 py-2">
-                    <span className="truncate text-[12px] font-semibold text-white/65" title={columnFullLabel(label)}>
-                      {label}
-                    </span>
-                    <span className="text-[12px] font-bold tabular-nums text-white">{displayApiField(value)}</span>
-                  </div>
-                )
-              })}
-            </div>
-          ) : (
-            <p className="mt-3 rounded-2xl border border-dashed border-white/15 p-4 text-[12px] font-semibold text-white/45">
-              Column totals were not returned for this scope.
-            </p>
-          )}
-        </aside>
-      </div>
+      <article className="flex min-h-[340px] flex-col md:col-span-2">
+        <MatchingHeatmapFocusPanel heatmap={heatmap} />
+      </article>
     </section>
   )
 }

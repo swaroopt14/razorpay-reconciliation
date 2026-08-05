@@ -4,13 +4,13 @@ This package keeps the original tilted Zord mark geometry from the uploaded Canv
 
 ## Files
 
-- `zord-mark-exact-currentColor.svg` - best for React/Next.js; color controlled by CSS `color`.
-- `zord-mark-exact-black.svg` - black mark for light backgrounds.
-- `zord-mark-exact-white.svg` - white mark for dark backgrounds.
-- `zord-mark-exact-tight-black.svg` - tight viewBox for compact UI usage.
-- `zord-app-icon-dark.svg` - square safe-area app icon.
-- `zord-favicon-dark.svg` - favicon-safe square mark.
-- `ZordMark.tsx` - React/TypeScript component.
+- `zord-mark-exact-currentColor.svg` — best for React/Next.js; color controlled by CSS `color`.
+- `zord-mark-exact-black.svg` — black mark for light backgrounds.
+- `zord-mark-exact-white.svg` — white mark for dark backgrounds.
+- `zord-mark-exact-tight-black.svg` — tight viewBox for compact UI usage.
+- `zord-app-icon-dark.svg` — square safe-area app icon.
+- `zord-favicon-dark.svg` — favicon-safe square mark.
+- `ZordMark.tsx` — React/TypeScript component.
 
 ## Recommended usage
 

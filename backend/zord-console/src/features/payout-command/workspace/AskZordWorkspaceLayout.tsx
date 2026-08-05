@@ -259,7 +259,7 @@ export function AskZordWorkspaceLayout({ askZord, batchId }: AskZordWorkspaceLay
             <Link href="/payout-command-view/batch-command-center" className="font-medium text-neutral-500 hover:text-neutral-800">
               View Batches
             </Link>
-            {/* Connectors temporarily hidden - see CONNECTORS_DOCK_TEMPORARILY_HIDDEN
+            {/* Connectors temporarily hidden — see CONNECTORS_DOCK_TEMPORARILY_HIDDEN
             <Link href="/payout-command-view/today?dock=connectors" className="font-medium text-neutral-500 hover:text-neutral-800">
               Integrations
             </Link>

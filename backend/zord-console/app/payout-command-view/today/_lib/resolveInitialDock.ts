@@ -1,6 +1,6 @@
 import { dockItems, type DockId } from '@/services/payout-command/model'
 
-/** Resolve `?dock=` for the payout command shell - safe for Server Components (no `window`). */
+/** Resolve `?dock=` for the payout command shell — safe for Server Components (no `window`). */
 export function resolveInitialDock(
   raw: string | string[] | undefined,
   /** When set, unknown or disallowed ids fall back to `home` (e.g. sandbox hides Connectors). */

@@ -29,7 +29,7 @@ export function ResourcesDemoCta() {
         </h2>
 
         <p className="mt-5 max-w-lg text-[15px] leading-relaxed text-[#6B7280] sm:text-base">
-          Book a demo to plan getting started, or reach out directly for product access and setup questions.
+          Book a demo for rollout depth, or reach out directly for product access and technical questions.
         </p>
 
         <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">

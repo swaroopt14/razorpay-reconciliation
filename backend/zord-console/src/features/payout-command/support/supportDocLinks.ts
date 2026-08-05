@@ -62,12 +62,10 @@ export const SUPPORT_DOC_NAV: SupportDocLink[] = [
 ]
 
 export const SUPPORT_TICKET_CATEGORIES = [
-  'Integrations Support',
-  'Plugins',
-  'Transaction and Settlement Related',
-  'Integrations',
   'Account configuration',
+  'Settlement related',
   'Payment instructions / Intent',
+  'API & integrations',
   'Evidence & audit',
   'Billing',
   'Other',

@@ -19,7 +19,7 @@ export async function readExternalSyncContext(request: NextRequest): Promise<Ext
       if (typeof b.psp === 'string') psp = b.psp
     }
   } catch {
-    /* empty body or invalid JSON - query string only */
+    /* empty body or invalid JSON — query string only */
   }
   return { tenant_id, batch_id, psp }
 }

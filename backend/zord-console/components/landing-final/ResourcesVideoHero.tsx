@@ -59,12 +59,11 @@ export function ResourcesVideoHero() {
               ZORD Resources
             </p>
             <h1 className="mt-5 text-[2.6rem] font-semibold leading-[0.95] tracking-[-0.06em] text-white sm:text-6xl lg:text-[5.5rem]">
-              Learn how Zord works.
-              <span className="block text-white">Then try it yourself.</span>
+              Learn the model.
+              <span className="block text-white">Roll out with confidence.</span>
             </h1>
             <p className="mt-6 max-w-2xl text-base leading-relaxed text-white sm:text-lg">
-              Guides and paths for evaluating Zord - how teams keep payouts easy to see, how matching and review work, how proof is
-              built, plus security and support.
+              Explore the payout lifecycle, Payment Action Contracts, exception handling, cross-border controls, evidence verification, integrations and security architecture.
             </p>
 
             <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">

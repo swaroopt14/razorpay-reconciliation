@@ -20,7 +20,7 @@ export function SolutionsInfoSection() {
             <Layers className="h-3.5 w-3.5" strokeWidth={2.25} />
           </span>
           <p>
-            ZORD helps ops and finance see, check, match, and prove payouts in one shared place.
+            Zord connects authorised payment instructions with execution, settlement and final accounting outcomes.
           </p>
         </motion.div>
 
@@ -31,10 +31,10 @@ export function SolutionsInfoSection() {
           transition={{ duration: 0.6, delay: 0.06 }}
           className="mt-10 text-[2.35rem] font-semibold leading-[1.02] tracking-[-0.055em] text-[#111111] sm:text-5xl lg:text-[3.75rem]"
         >
-          Your payments already move.
+          Your payments cross systems.
           <span className="mt-2 block">
-            Zord makes them{' '}
-            <span className="text-[#34D399]">explainable.</span>
+            Zord preserves their {' '}
+            <span className="text-[#34D399]">integrity.</span>
           </span>
         </motion.h2>
 
@@ -45,8 +45,8 @@ export function SolutionsInfoSection() {
           transition={{ duration: 0.55, delay: 0.12 }}
           className="mt-8 max-w-2xl text-base leading-relaxed text-[#6B7280] sm:text-lg sm:leading-8"
         >
-          Sit next to the bank and gateway systems you already use. Follow batches, resolve gaps, and keep proof packs
-          ready - built for proof, not guesswork.
+          Handles payouts at scale. Observable through one workspace. Deployed across banks, PSPs, and treasury
+          teams, built for proof, not guesswork.
         </motion.p>
       </div>
     </section>

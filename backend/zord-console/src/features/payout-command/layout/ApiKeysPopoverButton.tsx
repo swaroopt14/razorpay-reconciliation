@@ -70,11 +70,11 @@ export function ApiKeysPopoverButton({ label = 'API keys' }: { label?: string })
     }
   }, [open])
 
-  const publishableDisplay = keys?.publishable_key ?? keys?.workspace_code ?? '-'
+  const publishableDisplay = keys?.publishable_key ?? keys?.workspace_code ?? '—'
   const secretFull = storedSecret
   const secretDisplay =
     secretFull ??
-    (keys?.secret_key_prefix ? `${keys.secret_key_prefix.slice(0, 16)}…` : '-')
+    (keys?.secret_key_prefix ? `${keys.secret_key_prefix.slice(0, 16)}…` : '—')
 
   const docsBase =
     typeof process.env.NEXT_PUBLIC_ZORD_DOCS_URL === 'string' && process.env.NEXT_PUBLIC_ZORD_DOCS_URL.trim()
@@ -216,7 +216,7 @@ export function CompactKeyRow({
   /** When masked preview differs from clipboard (full key in localStorage). */
   copyValue?: string
   helper?: string
-  /** `imperial` - bold white on blue glass. `sky` - soft blue tint on light cards. */
+  /** `imperial` — bold white on blue glass. `sky` — soft blue tint on light cards. */
   tone?: 'default' | 'imperial' | 'sky'
 }) {
   const [revealed, setRevealed] = useState(!masked)
@@ -227,7 +227,7 @@ export function CompactKeyRow({
     revealed || !masked ? value : `${value.slice(0, 12)}${value.length > 16 ? '…' : ''}${value.slice(-4)}`
 
   const copy = async () => {
-    if (!clipboardText || clipboardText === '-') return
+    if (!clipboardText || clipboardText === '—') return
     try {
       await navigator.clipboard.writeText(clipboardText)
       setCopied(true)
@@ -272,7 +272,7 @@ export function CompactKeyRow({
           <button
             type="button"
             onClick={copy}
-            disabled={!clipboardText || clipboardText === '-'}
+            disabled={!clipboardText || clipboardText === '—'}
             className={
               imperial
                 ? 'inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] font-bold text-white transition hover:bg-white/15 disabled:pointer-events-none disabled:opacity-40'

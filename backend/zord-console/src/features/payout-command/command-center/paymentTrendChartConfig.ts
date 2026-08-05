@@ -1,7 +1,7 @@
 import type { PaymentTrendChartPoint } from './PaymentValueTrendChart'
 import type { DisbursementTrendRange } from '@/services/payout-command/prod-api/disbursementTrendTypes'
 
-/** Chart period tabs - calendar windows (see disbursementTrendWindow.ts). */
+/** Chart period tabs — calendar windows (see disbursementTrendWindow.ts). */
 export type PaymentTrendGranularity = DisbursementTrendRange
 
 export const PAYMENT_TREND_GRANULARITY: Record<PaymentTrendGranularity, { label: string }> = {
@@ -13,7 +13,7 @@ export const PAYMENT_TREND_GRANULARITY: Record<PaymentTrendGranularity, { label:
 
 export const PAYMENT_TREND_GRAN_ORDER: PaymentTrendGranularity[] = ['week', 'month', 'quarter', 'year']
 
-/** Bar width from slot spacing - wider when the visible window has fewer days (auto-zoom). */
+/** Bar width from slot spacing — wider when the visible window has fewer days (auto-zoom). */
 export function paymentTrendBarWidthPx(spacing: number): number {
   return Math.max(2, Math.min(14, spacing * 0.58))
 }
@@ -23,7 +23,7 @@ export function trendPointHasData(point: PaymentTrendChartPoint): boolean {
   return point.intendedMinor > 0 || point.confirmedMinor > 0 || point.reviewMinor > 0
 }
 
-/** Each tab shows its full rolling window - density from bucket count (7/30/90/365), not auto-zoom. */
+/** Each tab shows its full rolling window — density from bucket count (7/30/90/365), not auto-zoom. */
 export function computeDataFocusedBrushRange(
   _points: PaymentTrendChartPoint[],
   _range?: DisbursementTrendRange,
@@ -47,9 +47,9 @@ export function mapDisbursementBucketsToTrendPoints(
     review_amount?: number | string | null
   }>,
 ): PaymentTrendChartPoint[] {
-  /** Passthrough only - one chart point per leakage API bucket; no client math or fill. */
+  /** Passthrough only — one chart point per leakage API bucket; no client math or fill. */
   return buckets.map((b) => ({
-    label: b.label?.trim() || '-',
+    label: b.label?.trim() || '—',
     intendedMinor: Number(b.total_amount) || 0,
     confirmedMinor: Number(b.confirmed_amount) || 0,
     reviewMinor: Number(b.review_amount) || 0,

@@ -16,7 +16,7 @@ export function EvidenceKpiStrip({ cards, loading, defensibilityTier }: Evidence
   }
 
   const readiness = cards.find((c) => c.id === 'readiness')
-  const primaryValue = readiness?.value ?? '-'
+  const primaryValue = readiness?.value ?? '—'
   const primarySubcopy =
     [readiness?.sub, readiness?.explanation].filter(Boolean).join(' · ') ||
     evidenceCopy.proofReadinessHelper

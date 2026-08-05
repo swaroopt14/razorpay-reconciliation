@@ -50,15 +50,14 @@ export function ResourcesValueSection() {
               <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-white/10 text-[#6EE7B7] ring-1 ring-white/20 backdrop-blur-md sm:h-7 sm:w-7">
                 <BookMarked className="h-3 w-3 sm:h-3.5 sm:w-3.5" strokeWidth={2.25} />
               </span>
-              <span>What these resources help with</span>
+              <span>What the resource layer is built for</span>
             </div>
 
             <h2 className="mt-5 text-[1.85rem] font-semibold leading-[1.05] tracking-[-0.055em] text-white sm:mt-6 sm:text-[2.5rem] md:text-[2.85rem]">
-              One clear story for ops, finance, and engineering.
+              How the Payment Action Contract preserves payout intent
             </h2>
             <p className="mx-auto mt-4 max-w-lg text-[14px] leading-relaxed text-white/70 sm:text-[15px]">
-              Move from a first overview to a confident evaluation - then go deeper into security, pricing, and
-              implementation when your team is ready.
+              See the exact object Zord creates after validating authority, beneficiary, amount, commercial terms, policy and permitted execution conditions.
             </p>
 
             <div className="mt-8 flex flex-col gap-3 sm:mt-9 sm:gap-3.5">
@@ -78,8 +77,8 @@ export function ResourcesValueSection() {
 
             <div className="mt-8 grid gap-3 sm:grid-cols-3">
               {[
-                ['Team paths', '3'],
-                ['One shared flow', '1'],
+                ['Buyer paths', '3'],
+                ['Operating model', '1'],
                 ['Support path', 'Demo'],
               ].map(([label, value]) => (
                 <div

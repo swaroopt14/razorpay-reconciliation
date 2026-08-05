@@ -132,28 +132,8 @@ export async function handleRequest(request) {
     return jsonResponse(settlementObservationsRoute(url))
   }
   if (method === 'GET' && pathname === '/v1/settlement/errors') {
-    const batchId =
-      url.searchParams.get('client_batch_id')?.trim() ||
-      url.searchParams.get('batch_id')?.trim()
+    const batchId = url.searchParams.get('client_batch_id')?.trim()
     return jsonResponse(buildSettlementErrors(batchId))
-  }
-  if (method === 'POST' && pathname === '/v1/settlement/upload') {
-    if (LATENCY_MS > 0) await sleep(LATENCY_MS)
-    const batchId =
-      url.searchParams.get('batch_id')?.trim() ||
-      request.headers.get('batch-id')?.trim() ||
-      request.headers.get('Batch-Id')?.trim() ||
-      PRIMARY_BATCH
-    const psp = url.searchParams.get('psp')?.trim() || 'UNKNOWN'
-    return jsonResponse({
-      ok: true,
-      status: 'ACCEPTED',
-      client_batch_id: batchId,
-      batch_id: batchId,
-      psp,
-      ingest_run_id: `smoke-settlement-${Date.now()}`,
-      message: 'Settlement upload accepted by payout-smoke-simulator',
-    })
   }
 
   // ── zord-intelligence ──────────────────────────────────────────────────────

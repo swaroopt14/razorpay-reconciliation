@@ -1,4 +1,4 @@
-/** Ask Zord in-card chat - Claude/ChatGPT-style tokens scoped to the inner panel only. */
+/** Ask Zord in-card chat — Claude/ChatGPT-style tokens scoped to the inner panel only. */
 
 export const CHAT_CARD_INNER =
   'flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.5rem] border border-black/10 bg-[#fbfbfc]'

@@ -21,15 +21,15 @@ export function SolutionsDemoCta() {
         </span>
 
         <h2 className="mt-8 text-[2rem] font-semibold leading-[1.08] tracking-[-0.05em] text-[#111111] sm:text-[2.65rem]">
-          Need help going live,
+          Ready to prove a payout ,
           <br />
           <span className="bg-[linear-gradient(90deg,#059669_0%,#34D399_50%,#10B981_100%)] bg-clip-text text-transparent">
-            proving payouts, or connecting systems?
+            from authorisation to settlement?
           </span>
         </h2>
 
         <p className="mt-5 max-w-lg text-[15px] leading-relaxed text-[#6B7280] sm:text-base">
-          That conversation happens on a demo - not buried in documentation.
+          That conversation happens on a demo, not buried in documentation.
         </p>
 
         <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">

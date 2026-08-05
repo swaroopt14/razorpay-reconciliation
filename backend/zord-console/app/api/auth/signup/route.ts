@@ -12,7 +12,7 @@ import {
 
 export const dynamic = 'force-dynamic'
 
-// Public signup route - creates a tenant + first admin user in one call.
+// Public signup route — creates a tenant + first admin user in one call.
 // Mirrors /login but hits /v1/auth/signup on zord-edge.
 export async function POST(request: NextRequest) {
   let requestBody: unknown

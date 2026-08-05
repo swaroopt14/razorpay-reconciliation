@@ -42,17 +42,17 @@ function docStateChip(state: DocumentState) {
 
 function resultDot(result: 'pass' | 'warn' | 'fail' | 'pending') {
   const tone =
-    result === 'pass' ? 'bg-[#000000]' : result === 'warn' ? 'bg-[#0B1324]' : result === 'fail' ? 'bg-[#0B1324]' : 'bg-slate-300'
+    result === 'pass' ? 'bg-[#000000]' : result === 'warn' ? 'bg-[#d97706]' : result === 'fail' ? 'bg-[#dc2626]' : 'bg-slate-300'
   return <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${tone}`} />
 }
 
 function checklistGlyph(state: ChecklistItem['state']) {
   if (state === 'done') return <span className="font-semibold text-[#000000]">✓</span>
-  if (state === 'pending') return <span className="font-semibold text-[#0B1324]">○</span>
-  return <span className="font-semibold text-slate-400">-</span>
+  if (state === 'pending') return <span className="font-semibold text-[#d97706]">○</span>
+  return <span className="font-semibold text-slate-400">—</span>
 }
 
-/** Stylized mock document preview - CSS-drawn, clearly demo data. */
+/** Stylized mock document preview — CSS-drawn, clearly demo data. */
 function DocumentSampleCard({ doc }: { doc: BorrowerDocument }) {
   const accent =
     doc.kind === 'pan'
@@ -163,8 +163,8 @@ function BackBar({ onBack, label }: { onBack: () => void; label: string }) {
 
 function statusPillTone(status: string): string {
   if (status === 'Safe' || status === 'Confirmed') return 'bg-[#000000]/15 text-[#cbd5e1] ring-1 ring-[#000000]/40'
-  if (status === 'Review' || status === 'Pending') return 'bg-[#0B1324]/15 text-[#fcd34d] ring-1 ring-[#0B1324]/40'
-  return 'bg-[#0B1324]/15 text-[#fca5a5] ring-1 ring-[#0B1324]/40'
+  if (status === 'Review' || status === 'Pending') return 'bg-[#d97706]/15 text-[#fcd34d] ring-1 ring-[#d97706]/40'
+  return 'bg-[#dc2626]/15 text-[#fca5a5] ring-1 ring-[#dc2626]/40'
 }
 
 // ── Borrower 360 (verification dock) ─────────────────────────────────────────
@@ -231,7 +231,7 @@ export function BorrowerProfilePage({ borrowerId, onBack }: { borrowerId: string
           </section>
 
           <section className={CARD}>
-            <p className={SECTION_LABEL}>Coverage - Sumsub vs NBFC</p>
+            <p className={SECTION_LABEL}>Coverage — Sumsub vs NBFC</p>
             <p className={`mt-1 ${ZORD_SURFACE_MUTED}`}>What the KYC provider verifies vs what this NBFC runs in-house.</p>
             <div className="mt-3 grid gap-4 rounded-xl border border-slate-200 bg-[#f8fafc] p-4 sm:grid-cols-2">
               <ChecklistColumn title="Sumsub verifies" items={profile.sumsubChecks} accent="text-[#1d4ed8]" />
@@ -325,7 +325,7 @@ function emiChipTone(status: EmiHistoryEntry['status']): string {
 }
 
 function severityDot(severity: 'high' | 'medium' | 'low') {
-  const tone = severity === 'high' ? 'bg-[#0B1324]' : severity === 'medium' ? 'bg-[#0B1324]' : 'bg-slate-400'
+  const tone = severity === 'high' ? 'bg-[#dc2626]' : severity === 'medium' ? 'bg-[#d97706]' : 'bg-slate-400'
   return <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${tone}`} />
 }
 
@@ -347,8 +347,8 @@ export function LoanProfilePage({ loanId, onBack }: { loanId: string; onBack: ()
     profile.dpd === 0
       ? 'bg-[#000000]/15 text-[#cbd5e1] ring-1 ring-[#000000]/40'
       : profile.dpd <= 30
-        ? 'bg-[#0B1324]/15 text-[#fcd34d] ring-1 ring-[#0B1324]/40'
-        : 'bg-[#0B1324]/15 text-[#fca5a5] ring-1 ring-[#0B1324]/40'
+        ? 'bg-[#d97706]/15 text-[#fcd34d] ring-1 ring-[#d97706]/40'
+        : 'bg-[#dc2626]/15 text-[#fca5a5] ring-1 ring-[#dc2626]/40'
 
   return (
     <div className={`mt-2 space-y-4 ${ZORD_SURFACE_CLASS}`} data-testid="loan-360-page">
@@ -365,7 +365,7 @@ export function LoanProfilePage({ loanId, onBack }: { loanId: string; onBack: ()
           </>
         }
         actions={
-          profile.nextAction !== '-' ? (
+          profile.nextAction !== '—' ? (
             <span className="inline-flex h-9 items-center rounded-xl border border-white/25 bg-white/10 px-3.5 text-[13px] font-semibold text-white">
               Next action: {profile.nextAction}
             </span>
@@ -405,7 +405,7 @@ export function LoanProfilePage({ loanId, onBack }: { loanId: string; onBack: ()
 
           <section className={CARD}>
             <p className={SECTION_LABEL}>EMI history</p>
-            <p className={`mt-1 ${ZORD_SURFACE_MUTED}`}>Repayment via {profile.rail} - presentation on the {profile.emiDay}th.</p>
+            <p className={`mt-1 ${ZORD_SURFACE_MUTED}`}>Repayment via {profile.rail} — presentation on the {profile.emiDay}th.</p>
             <div className="mt-3 flex flex-wrap gap-2">
               {profile.emiHistory.map((entry) => (
                 <div key={entry.month} className={`min-w-[72px] rounded-xl border px-3 py-2 text-center ${emiChipTone(entry.status)}`}>
@@ -452,7 +452,7 @@ export function LoanProfilePage({ loanId, onBack }: { loanId: string; onBack: ()
             <section className="rounded-2xl border border-[#fecaca] bg-[#fef2f2] p-4">
               <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-[#b91c1c]">Active risk signal</p>
               <p className="mt-1.5 text-[14px] font-semibold text-[#7f1d1d]">{profile.riskSignal}</p>
-              {profile.nextAction !== '-' ? (
+              {profile.nextAction !== '—' ? (
                 <p className="mt-1 text-[13px] font-medium text-[#991b1b]">Recommended: {profile.nextAction}</p>
               ) : null}
             </section>

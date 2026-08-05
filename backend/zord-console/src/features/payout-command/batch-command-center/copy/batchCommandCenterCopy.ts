@@ -1,15 +1,15 @@
 /**
-  * Business-facing copy for Payment Batch Review.
-  * Avoid visible UI strings: intent-engine, intelligence, close readiness, sign-off,
-  * disbursement processing, Fetch tenant id (main surface), 0.0% with zero denominator.
-  */
+ * Business-facing copy for Payment Batch Review.
+ * Avoid visible UI strings: intent-engine, intelligence, close readiness, sign-off,
+ * disbursement processing, Fetch tenant id (main surface), 0.0% with zero denominator.
+ */
 
 export const BATCH_REVIEW_COPY = {
   pageTitle: 'Payment Batch Review',
   pageSubtitle:
     'Upload payment files, verify bank confirmations, and review issues before closing a batch.',
 
-  sandboxBanner: 'Sandbox mode - testing only. No real payments will be sent.',
+  sandboxBanner: 'Sandbox mode, testing only. No real payments will be sent.',
 
   workspace: {
     title: 'Workspace',

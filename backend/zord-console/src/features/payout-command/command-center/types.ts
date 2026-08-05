@@ -1,4 +1,4 @@
-/** Ops Morning View - PAGE 1 Command Center (product copy + shape). */
+/** Ops Morning View — PAGE 1 Command Center (product copy + shape). */
 
 export type AlertStripStatus = 'GREEN' | 'AMBER' | 'RED'
 

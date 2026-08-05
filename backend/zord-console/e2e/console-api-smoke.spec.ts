@@ -16,7 +16,7 @@ const BFF_PATHS = [
   '/api/prod/intelligence/batches?limit=1',
   '/api/prod/evidence/packs?page=1&page_size=1',
   '/api/prod/intents/batches?page=1&page_size=1',
-  '/api/prod/intents/payment-intents?batch_id=batch-001',
+  '/api/prod/intents/payment-intents?batch_id=batch-2026-06-12-payroll',
   '/api/prod/settlement/observations/batches?page=1&page_size=1',
   '/api/prod/ingest-status',
   '/api/prod/dlq',
@@ -41,7 +41,7 @@ test.describe('console BFF smoke', () => {
     const res = await request.post('/api/prompt-layer/query', {
       data: { query: 'smoke test', tenant_id: 'smoke-tenant', top_k: 1 },
     })
-    // 502 when prompt-layer service is not running locally - still not a console crash
+    // 502 when prompt-layer service is not running locally — still not a console crash
     expect(res.status()).toBeLessThan(503)
   })
 })

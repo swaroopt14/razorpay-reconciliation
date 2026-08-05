@@ -36,9 +36,9 @@ export function normalizeVerificationState(value: unknown): NormalizedVerificati
 }
 
 /**
-  * Explicit proof signals are authoritative when present.
-  * Returns `undefined` when no explicit signal exists so callers can fallback to item inference.
-  */
+ * Explicit proof signals are authoritative when present.
+ * Returns `undefined` when no explicit signal exists so callers can fallback to item inference.
+ */
 export function resolveExplicitSignal(
   source: EvidenceSignals | null | undefined,
   opts: { component?: ProofComponentKey; flag?: FlagKey },

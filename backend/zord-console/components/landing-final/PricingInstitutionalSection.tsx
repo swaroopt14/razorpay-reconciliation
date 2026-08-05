@@ -29,10 +29,10 @@ function BentoCard({
 }
 
 const comparison = [
-  { label: 'Pricing', sandbox: 'Evaluation', growth: 'Annual agreement', enterprise: 'Custom bands' },
-  { label: 'Workspace access', sandbox: 'Sample data', growth: 'Live', enterprise: 'Live + custom' },
-  { label: 'Proof packs', sandbox: 'Preview flows', growth: 'Live exports', enterprise: 'Custom export design' },
-  { label: 'Setup help', sandbox: 'Docs + demo', growth: 'Priority onboarding', enterprise: 'Hands-on go-live' },
+  { label: 'Commercial model', sandbox: 'Evaluation', growth: 'Annual agreement', enterprise: 'Custom bands' },
+  { label: 'Workspace access', sandbox: 'Preview data', growth: 'Production', enterprise: 'Production + custom' },
+  { label: 'Evidence Packs', sandbox: 'Preview flows', growth: 'Production exports', enterprise: 'Custom export design' },
+  { label: 'Implementation', sandbox: 'Docs + demo', growth: 'Priority onboarding', enterprise: 'White-glove rollout' },
   { label: 'Security review', sandbox: 'Self-serve docs', growth: 'Guided responses', enterprise: 'Dedicated review help' },
 ] as const
 
@@ -53,7 +53,7 @@ export function PricingInstitutionalSection() {
             <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[#34D399]/15 text-[#059669]">
               <Building2 className="h-3.5 w-3.5" strokeWidth={2.25} />
             </span>
-            <span>Built for enterprise teams</span>
+            <span>Built for enterprise buyers</span>
           </motion.div>
 
           <motion.h2
@@ -63,7 +63,7 @@ export function PricingInstitutionalSection() {
             transition={{ duration: 0.55, delay: 0.05 }}
             className="mt-6 text-[2.35rem] font-semibold leading-[1.02] tracking-[-0.055em] text-[#111111] sm:text-5xl"
           >
-            Compare pricing shape before{' '}
+            Compare commercial shape before{' '}
             <span className="text-[#047857]">contracts</span>
           </motion.h2>
 
@@ -74,8 +74,8 @@ export function PricingInstitutionalSection() {
             transition={{ duration: 0.5, delay: 0.1 }}
             className="mt-4 text-base leading-relaxed text-[#6B7280] sm:text-lg"
           >
-            Ops, finance, engineering, and risk evaluate the same workspace - then pricing follows how much you use
-            and how much help you need.
+            Ops, finance, engineering, and risk evaluate the same workspace, then commercials follow coverage and
+            rollout depth.
           </motion.p>
         </div>
 
@@ -87,7 +87,7 @@ export function PricingInstitutionalSection() {
               </span>
               <h3 className="mt-5 text-xl font-semibold tracking-[-0.03em] text-[#111111]">Security review ready</h3>
               <p className="mt-3 max-w-sm text-[14px] leading-relaxed text-[#6B7280]">
-                Guided responses for Growth; dedicated review help on Enterprise - so procurement doesn&apos;t stall
+                Guided responses for Growth; dedicated review help on Enterprise, so procurement doesn&apos;t stall
                 the operating decision.
               </p>
             </BentoCard>
@@ -95,12 +95,12 @@ export function PricingInstitutionalSection() {
             <BentoCard delay={0.15} className="flex-1">
               <h3 className="text-xl font-semibold tracking-[-0.03em] text-[#111111]">Plan comparison</h3>
               <p className="mt-3 max-w-md text-[14px] leading-relaxed text-[#6B7280]">
-                Keep the pricing discussion clear before legal drafts arrive.
+                Keep the commercial discussion clear before legal drafts arrive.
               </p>
               <div className="mt-6 overflow-hidden rounded-[1.25rem] border border-black/[0.05] bg-white">
                 <div className="grid grid-cols-[1.2fr_0.9fr_0.9fr_1fr] gap-2 border-b border-black/[0.05] bg-[#F7F8FA] px-3 py-2.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#9CA3AF]">
                   <span>Category</span>
-                  <span>Try first</span>
+                  <span>Sandbox</span>
                   <span>Growth</span>
                   <span>Enterprise</span>
                 </div>
@@ -121,12 +121,12 @@ export function PricingInstitutionalSection() {
 
           <div className="flex flex-col gap-4">
             <BentoCard delay={0.1}>
-              <h3 className="text-xl font-semibold tracking-[-0.03em] text-[#111111]">What each team cares about</h3>
+              <h3 className="text-xl font-semibold tracking-[-0.03em] text-[#111111]">Shared buyer lenses</h3>
               <p className="mt-3 max-w-md text-[14px] leading-relaxed text-[#6B7280]">
-                One pricing conversation across the teams that share payout answers.
+                One commercial conversation across the teams that share payout accountability.
               </p>
               <div className="mt-6 flex flex-wrap gap-2">
-                {['Marketplaces', 'NBFCs', 'Treasury', 'Finance ops', 'Payroll ops', 'Vendor payouts'].map((label) => (
+                {['Marketplaces', 'NBFCs', 'PSPs', 'Treasury', 'Finance ops', 'Payout platforms'].map((label) => (
                   <span
                     key={label}
                     className="rounded-full border border-black/8 bg-white px-3 py-1.5 text-[12px] font-medium text-[#374151]"
@@ -137,9 +137,9 @@ export function PricingInstitutionalSection() {
               </div>
               <div className="mt-6 space-y-3">
                 {[
-                  { role: 'Operations', body: 'See which batches need confirmation or review in one place.' },
-                  { role: 'Finance', body: 'Proof packs ready for close - not screenshot hunts.' },
-                  { role: 'Engineering', body: 'One shared payout record next to systems you already run.' },
+                  { role: 'Operations', body: 'Queue connector drift and confirmation delays in one workspace.' },
+                  { role: 'Finance', body: 'Evidence Packs ready for close, not screenshot hunts.' },
+                  { role: 'Engineering', body: 'One shared payout record across providers and banks.' },
                 ].map((item) => (
                   <div key={item.role} className="rounded-[1rem] border border-black/[0.05] bg-white px-4 py-3">
                     <p className="text-[13px] font-semibold text-[#111111]">{item.role}</p>
@@ -155,8 +155,8 @@ export function PricingInstitutionalSection() {
               </span>
               <h3 className="mt-5 text-xl font-semibold tracking-[-0.03em] text-[#111111]">Account coverage that scales</h3>
               <p className="mt-3 max-w-sm text-[14px] leading-relaxed text-[#6B7280]">
-                From pricing check-ins on Growth to dedicated coverage on Enterprise - when multi-team go-live
-                and regulated partners need a human contact.
+                From commercial review cadence on Growth to dedicated coverage on Enterprise, when multi-team rollout
+                and regulated partners need a human spine.
               </p>
               <div className="mt-5 inline-flex items-center gap-2 rounded-full border border-[#34D399]/25 bg-[#E8F8F5] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#059669]">
                 <Users className="h-3.5 w-3.5" />

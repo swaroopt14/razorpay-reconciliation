@@ -192,7 +192,7 @@ export async function resolveProxyForwardAuthorization(
       }
       return { ok: true, authorization: incoming, refreshedPayload }
     }
-    // Stale/wrong client Authorization - fall through to session cookie or server env key.
+    // Stale/wrong client Authorization — fall through to session cookie or server env key.
   }
 
   if (cookieBearer) {

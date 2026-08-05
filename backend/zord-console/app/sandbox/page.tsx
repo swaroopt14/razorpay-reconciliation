@@ -25,10 +25,10 @@ const PayoutCommandViewClient = dynamic(
 )
 
 /**
- * /sandbox - sandbox mode. Same Home command center layout as live (`/payout-command-view/today`),
+ * /sandbox — sandbox mode. Same Home command center layout as live (`/payout-command-view/today`),
  * plus the sandbox banner and mode toggle. API keys and batch flows use the header and other docks.
  *
- * The heavy client tree is loaded with `next/dynamic` so the route chunk stays small - reduces
+ * The heavy client tree is loaded with `next/dynamic` so the route chunk stays small — reduces
  * dev-time ChunkLoadError (timeouts) when the main bundle is large. If you still see stale chunks
  * after `next dev` restarts, hard-refresh or run `rm -rf .next` once.
  */

@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic'
  *
  * Validates the payload, logs the lead, and pings the sales Slack channel via an
  * Incoming Webhook (set SLACK_LEADS_WEBHOOK_URL). There is no account/tenant created
- * here - provisioning happens later via /register once sales has qualified the lead.
+ * here — provisioning happens later via /register once sales has qualified the lead.
  *
  * Slack delivery is best-effort: a webhook failure never fails the lead submission.
  */
@@ -44,10 +44,10 @@ async function notifySlack(lead: NormalizedLead): Promise<boolean> {
 
   const useCaseText = lead.useCases.length
     ? lead.useCases.map((id) => USE_CASE_LABELS[id] ?? id).join(', ')
-    : '-'
+    : '—'
 
   const fieldsLine = (label: string, value: string | null) =>
-    `*${label}:* ${value && value.length ? value : '-'}`
+    `*${label}:* ${value && value.length ? value : '—'}`
 
   const blocks: unknown[] = [
     {

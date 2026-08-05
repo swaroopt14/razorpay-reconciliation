@@ -18,7 +18,7 @@ export type ListEvidencePacksOptions = {
   intentId?: string
 }
 
-/** Evidence pack list - BFF injects session tenant. */
+/** Evidence pack list — BFF injects session tenant. */
 export async function listEvidencePacks(opts: ListEvidencePacksOptions = {}): Promise<ListPacksResponse | null> {
   const extra: Record<string, string> = {}
   const batchId = apiTrimmedString(opts.batchId)
@@ -28,7 +28,7 @@ export async function listEvidencePacks(opts: ListEvidencePacksOptions = {}): Pr
   const path = evidenceQueryPath(`${EVIDENCE_BASE}/packs`, extra)
   const res = await fetchProdJsonGetWithMeta<ListPacksResponse>(path)
   if (!res.ok && res.status === 401) {
-    console.warn('[evidence] packs list unauthorized - sign in so BFF can inject session tenant', res.url)
+    console.warn('[evidence] packs list unauthorized — sign in so BFF can inject session tenant', res.url)
   } else if (!res.ok) {
     console.warn('[evidence] packs list failed', res.status, res.errorText?.slice(0, 200) ?? res.url)
   }

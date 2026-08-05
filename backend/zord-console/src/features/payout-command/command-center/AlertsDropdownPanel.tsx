@@ -11,8 +11,8 @@ type AlertsDropdownPanelProps = {
 }
 
 /**
-  * Shared shell for bell / inbox popovers: header, count, scroll region, consistent chrome.
-  */
+ * Shared shell for bell / inbox popovers: header, count, scroll region, consistent chrome.
+ */
 export function AlertsDropdownPanel({ title, subtitle, activeCount, children }: AlertsDropdownPanelProps) {
   return (
     <div className="pointer-events-auto overflow-hidden rounded-2xl border border-black/[0.08] bg-white shadow-[0_22px_45px_-16px_rgba(15,23,42,0.28),0_0_0_1px_rgba(15,23,42,0.04)]">

@@ -4,7 +4,7 @@ import { forwardIntelligence } from '../../intelligence/_shared'
 
 export const dynamic = 'force-dynamic'
 
-/** Ambiguity Velocity scatter - GET /v1/intelligence/dashboard/bubble-map */
+/** Ambiguity Velocity scatter — GET /v1/intelligence/dashboard/bubble-map */
 export async function GET(request: NextRequest) {
   const res = await forwardIntelligence(request, BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.BUBBLE_MAP)
   if (res.status === 200) return res

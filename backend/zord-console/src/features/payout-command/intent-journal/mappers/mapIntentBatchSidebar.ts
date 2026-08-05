@@ -10,11 +10,11 @@ export function parseIntentBatchTotalAmount(item: IntentJournalBatchIdItem | Rec
 
 /** Minimal sidebar row from batch-ids list (counts/value enriched after batch select). */
 export function mapBatchIdItemToBatchRecord(item: IntentJournalBatchIdItem): JournalBatchRecord {
-  const batchId = String(item.batch_id ?? '').trim() || '-'
+  const batchId = String(item.batch_id ?? '').trim() || '—'
   return {
     batchId,
     type: 'Disbursement',
-    apiType: '-',
+    apiType: '—',
     source: 'Intent engine',
     totalValue: parseIntentBatchTotalAmount(item),
     transactions: 0,

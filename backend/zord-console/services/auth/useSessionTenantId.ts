@@ -16,7 +16,7 @@ function readEnvTenant(): string {
 }
 
 /**
- * Tenant id for `/api/prod/*` reads - no mock fallback.
+ * Tenant id for `/api/prod/*` reads — no mock fallback.
  * Resolution: `NEXT_PUBLIC_ZORD_TENANT_ID` → `/api/auth/me` session → `localStorage.zord_tenant_id`.
  * Returns empty string until a real tenant is resolved (sign in or set env).
  */

@@ -3,13 +3,13 @@ import Link from 'next/link'
 import { DASHBOARD_FONT_STACK } from '@/services/payout-command/model'
 
 /**
-  * Settings shell - left sidebar with sections, right pane renders the active page.
-  * Sections that aren't wired this sprint are visible-but-disabled so the IA reads complete.
-  */
+ * Settings shell — left sidebar with sections, right pane renders the active page.
+ * Sections that aren't wired this sprint are visible-but-disabled so the IA reads complete.
+ */
 
 const SECTIONS = [
   { id: 'account', label: 'Account', href: '/payout-command-view/settings/account', enabled: true },
-  { id: 'api-keys', label: 'API keys', href: '/developer?demo=sandbox&tab=keys', enabled: true },
+  { id: 'api-keys', label: 'API keys', href: '/payout-command-view/settings/api-keys', enabled: true },
   {
     id: 'support',
     label: 'Support',

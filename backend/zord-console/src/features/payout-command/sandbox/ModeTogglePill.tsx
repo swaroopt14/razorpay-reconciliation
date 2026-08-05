@@ -6,20 +6,23 @@ import { useEnvironment } from '@/services/auth/EnvironmentProvider'
 import { Glyph } from '../shared'
 
 /**
-  * ModeTogglePill - Stripe-style mode picker that lives in the dock nav.
-  * Click to drop down a 2-row menu (Sandbox / Live). Live is locked unless
-  * `canSwitchToLive` is true; the locked option points at the activate wizard.
-  *
-  * Sandbox + live live at separate URLs (`/sandbox` and `/payout-command-view/today`).
-  * Switching mode = navigating between routes, not flipping local state.
-  */
+ * ModeTogglePill — Stripe-style mode picker that lives in the dock nav.
+ * Click to drop down a 2-row menu (Sandbox / Live). Live is locked unless
+ * `canSwitchToLive` is true; the locked option points at the activate wizard.
+ *
+ * Sandbox + live live at separate URLs (`/sandbox` and `/payout-command-view/today`).
+ * Switching mode = navigating between routes, not flipping local state.
+ */
 export function ModeTogglePill({
   onActivateClick,
   compact,
+  lockModeSwitch = false,
 }: {
   onActivateClick: () => void
   /** Slim control for thin top nav (Ledger-style). */
   compact?: boolean
+  /** Show the pill, but do not navigate between /sandbox and live routes. */
+  lockModeSwitch?: boolean
 }) {
   const { mode, canSwitchToLive, liveActivationStatus } = useEnvironment()
   const pathname = usePathname()
@@ -57,37 +60,29 @@ export function ModeTogglePill({
         onClick={() => setOpen((o) => !o)}
         className={
           compact
-            ? `flex h-10 items-center gap-2 rounded-[10px] border px-3.5 text-left transition ${
+            ? `flex h-11 items-center gap-1.5 rounded-xl border px-3.5 text-left shadow-sm transition ${
                 isSandbox
-                  ? 'border-[#2F2F2F] bg-[#1C1C1C] text-white hover:border-[#3A3A3A] hover:bg-[#242424]'
-                  : 'border-[#2F2F2F] bg-[#1C1C1C] text-[#D4D4D4] hover:border-[#3A3A3A] hover:bg-[#242424]'
+                  ? 'border-neutral-800 bg-neutral-900 text-white hover:border-neutral-700'
+                  : 'border-neutral-200/90 bg-white text-neutral-900 hover:border-neutral-300 hover:shadow'
               }`
             : `flex h-11 items-center gap-2 rounded-xl border px-3.5 shadow-[0_3px_10px_-2px_rgba(15,23,42,0.08),inset_0_1px_0_rgba(255,255,255,0.85)] transition ${
                 isSandbox
                   ? 'border-neutral-800 bg-neutral-900 text-white shadow-[0_3px_12px_-2px_rgba(0,0,0,0.2)] hover:border-neutral-700'
-                  : 'border-[#0B1324]/20 bg-[#F1F5F9] text-[#0B1324] shadow-[0_3px_12px_-2px_rgba(37,99,235,0.1),inset_0_1px_0_rgba(255,255,255,0.9)] hover:border-[#93C5FD]'
+                  : 'border-violet-400/75 bg-gradient-to-b from-[#f5f3ff] to-[#ede9fe] text-[#5b21b6] shadow-[0_3px_12px_-2px_rgba(91,33,182,0.12),inset_0_1px_0_rgba(255,255,255,0.9)] hover:border-violet-500/85'
               }`
         }
         aria-expanded={open}
         aria-haspopup="listbox"
       >
         {compact ? (
-          <>
-            <span
-              className="h-2 w-2 shrink-0 rounded-full bg-[#0B1324]"
-              aria-hidden
-            />
-            <span className="text-[13px] font-semibold tracking-[0.02em]">
-              {isSandbox ? 'Demo' : 'Live'}
-            </span>
-          </>
+          <span className="text-[13px] font-bold tracking-tight">{isSandbox ? 'Sandbox' : 'Live'}</span>
         ) : (
           <span className="flex flex-col items-start leading-none">
             <span className="text-[12px] font-semibold uppercase tracking-[0.08em] opacity-70">Mode</span>
-            <span className="mt-0.5 text-[15px] font-bold tracking-[-0.02em]">{isSandbox ? 'Demo' : 'Live'}</span>
+            <span className="mt-0.5 text-[15px] font-bold tracking-[-0.02em]">{isSandbox ? 'Sandbox' : 'Live'}</span>
           </span>
         )}
-        <svg className="h-3.5 w-3.5 shrink-0 opacity-70" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+        <svg className="h-3.5 w-3.5 shrink-0 opacity-60" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
           <path d="m3 4.5 3 3 3-3" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
@@ -95,13 +90,13 @@ export function ModeTogglePill({
       {open ? (
         <div
           role="listbox"
-          className="absolute left-0 top-full z-[60] mt-1.5 w-[18rem] origin-top-left rounded-none border border-[#E5E5E5] bg-white p-1.5 shadow-[0_12px_32px_rgba(15,23,42,0.12)]"
+          className="absolute left-0 top-full z-[60] mt-1.5 w-[18rem] origin-top-left rounded-[12px] border border-[#E5E5E5] bg-white p-1.5 shadow-[0_12px_32px_rgba(15,23,42,0.12)]"
         >
-          {/* Demo workspace row */}
+          {/* Sandbox row */}
           <button
             type="button"
             onClick={() => {
-              router.push('/sandbox')
+              if (!lockModeSwitch) router.push('/sandbox')
               setOpen(false)
             }}
             className={`flex w-full items-start gap-2.5 rounded-[8px] px-2.5 py-2 text-left transition ${
@@ -115,13 +110,13 @@ export function ModeTogglePill({
             </span>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5">
-                <p className="text-[13px] font-semibold text-[#0f172a]">Demo</p>
+                <p className="text-[13px] font-semibold text-[#0f172a]">Sandbox</p>
                 {isSandbox ? (
                   <Glyph name="check" className="h-3 w-3 text-neutral-700" />
                 ) : null}
               </div>
               <p className="mt-0.5 text-[12px] leading-relaxed text-[#64748b]">
-                Illustrative data · smoke / test keys · no real funds
+                Test mode · pk_test_… keys · no real funds
               </p>
             </div>
           </button>
@@ -131,7 +126,7 @@ export function ModeTogglePill({
             <button
               type="button"
               onClick={() => {
-                router.push('/payout-command-view/today')
+                if (!lockModeSwitch) router.push('/payout-command-view/today')
                 setOpen(false)
               }}
               className={`mt-1 flex w-full items-start gap-2.5 rounded-[8px] px-2.5 py-2 text-left transition ${

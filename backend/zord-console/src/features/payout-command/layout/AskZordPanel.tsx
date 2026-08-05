@@ -19,7 +19,7 @@ type AskZordPanelProps = Pick<
   onQuickPrompt: (prompt: string) => void
 }
 
-/** Ask Zord opens only here - triggered from header or other explicit Ask Zord actions. */
+/** Ask Zord opens only here — triggered from header or other explicit Ask Zord actions. */
 export function AskZordPanel({
   isOpen,
   close,

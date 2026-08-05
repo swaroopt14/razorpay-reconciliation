@@ -39,7 +39,13 @@ import {
 } from '@/services/payout-command/model'
 import type { DisbursementTrendRange } from '@/services/payout-command/prod-api/disbursementTrendTypes'
 
+/** Landing hero mirrors sandbox dock rail: Today, Intent Journal, Settlement Journal. */
+const LANDING_SANDBOX_DOCK_IDS = ['home', 'grid', 'settlement'] as const satisfies readonly DockId[]
+
 const homeDock = dockItems.find((item) => item.id === 'home')!
+const previewDockItems = LANDING_SANDBOX_DOCK_IDS.map((id) => dockItems.find((item) => item.id === id)).filter(
+  (item): item is (typeof dockItems)[number] => Boolean(item),
+)
 const liveDockItems = dockItems.filter(
   (item) =>
     item.id !== 'sandbox' &&
@@ -60,7 +66,7 @@ const PREVIEW_ALERTS: readonly OpsInsightAlert[] = [
   },
   {
     id: 'landing-preview-proof',
-    title: 'Proof pack ready',
+    title: 'Evidence pack ready',
     body: 'Finance close pack is ready for export in the preview.',
     createdAt: '7 min ago',
     tone: 'ok',
@@ -69,7 +75,7 @@ const PREVIEW_ALERTS: readonly OpsInsightAlert[] = [
 
 const PREVIEW_INTEGRATIONS = [
   { name: 'Cashfree', status: 'Connected', detail: 'Settlement file sync · last 2 min ago' },
-  { name: 'Razorpay', status: 'Connected', detail: 'Bank confirmations · healthy' },
+  { name: 'Razorpay', status: 'Connected', detail: 'Payout webhooks · healthy' },
   { name: 'HDFC Bank', status: 'Needs attention', detail: 'Statement upload pending for BATCH-1048' },
 ] as const
 
@@ -103,9 +109,9 @@ function LandingHeroDemoPanel({
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Integrations</p>
-            <h4 className={`mt-1 text-sm font-bold ${HOME_TITLE_BLACK}`}>Connected payment sources (preview)</h4>
+            <h4 className={`mt-1 text-sm font-bold ${HOME_TITLE_BLACK}`}>Connected rails (preview)</h4>
             <p className="mt-1 text-[11px] text-slate-500">
-              Sample bank and payment-provider connections shown inside this product preview.
+              Mock PSP, bank, and API connections shown inside this product preview.
             </p>
           </div>
           <button
@@ -225,6 +231,12 @@ function resolvePreviewHref(href: string): { dock?: DockId; panel?: Exclude<Prev
   if (dock && liveDockItems.some((item) => item.id === dock)) {
     return { dock }
   }
+  if (path.includes('/sandbox') && path.includes('intent')) {
+    return { dock: 'grid' }
+  }
+  if (path.includes('/sandbox') && path.includes('settlement')) {
+    return { dock: 'settlement' }
+  }
   if (path.startsWith('/payout-command-view') || path.startsWith('/sandbox')) {
     return { batchCenter: true }
   }
@@ -239,7 +251,7 @@ export function LandingHeroDashboardPreview() {
   const [period, setPeriod] = useState<DisbursementTrendRange>(M.chartPeriod)
   const [activePanel, setActivePanel] = useState<PreviewPanel>(null)
   const [refreshSeed, setRefreshSeed] = useState(0)
-  const activeDock = liveDockItems.find((item) => item.id === activeDockId) ?? homeDock
+  const activeDock = previewDockItems.find((item) => item.id === activeDockId) ?? homeDock
   const pageProfile = M.pageProfiles[activeDockId as keyof typeof M.pageProfiles] ?? M.pageProfiles.home
   const selectedMetric = pageProfile.metrics[metric].values[year]
   const chartSeries = useMemo(
@@ -261,7 +273,7 @@ export function LandingHeroDashboardPreview() {
     setActivePanel('integrations')
   }, [])
 
-  /** Keep landing mockups on-page - never navigate to live payout routes (404 when logged out). */
+  /** Keep landing mockups on-page, never navigate to live payout routes (404 when logged out). */
   const handlePreviewNavigation = useCallback((event: MouseEvent<HTMLElement>) => {
     const target = event.target as HTMLElement | null
     const anchor = target?.closest('a')
@@ -281,88 +293,94 @@ export function LandingHeroDashboardPreview() {
       return
     }
     setShowBatchCommandCenter(false)
+    // Only sandbox-style docks (Today / Intent / Settlement) switch in the landing preview.
+    if (mapped.dock && !(LANDING_SANDBOX_DOCK_IDS as readonly string[]).includes(mapped.dock)) return
     if (mapped.dock) setActiveDockId(mapped.dock)
     if (mapped.panel) setActivePanel(mapped.panel)
     else if (mapped.dock) setActivePanel(null)
   }, [])
 
   return (
-    <EnvironmentProvider routeMode="live">
+    <EnvironmentProvider routeMode="sandbox">
       <section
-        className={`payout-command-console relative ${PAYOUT_PAGE_BG_CLASS}`}
+        className={`payout-command-console relative overflow-hidden rounded-[2rem] ${PAYOUT_PAGE_BG_CLASS}`}
         style={{ fontFamily: DASHBOARD_FONT_STACK }}
-        aria-label="Product preview of the Zord payout workspace with sample data"
+        aria-label="Product preview of Zord sandbox payout console with illustrative data"
         onClickCapture={handlePreviewNavigation}
       >
-        <div className={`${PAYOUT_CONSOLE_CARD_CLASS} overflow-hidden rounded-[1.15rem]`}>
+        <div className={`${PAYOUT_CONSOLE_CARD_CLASS} isolate overflow-hidden rounded-[2rem] border-0 shadow-[0_24px_64px_rgba(0,0,0,0.18)]`}>
           <PayoutConsoleNavStack
             activeDock={showBatchCommandCenter ? 'grid' : activeDockId}
+            dockIds={LANDING_SANDBOX_DOCK_IDS}
+            lockModeSwitch
+            navClassName="rounded-t-[2rem]"
             onDockChange={(dock) => {
+              if (!(LANDING_SANDBOX_DOCK_IDS as readonly string[]).includes(dock)) return
               setShowBatchCommandCenter(false)
               setActiveDockId(dock)
               setActivePanel(null)
             }}
             onActivateClick={() => setActivePanel('export')}
             alerts={PREVIEW_ALERTS}
-          >
-            <section
-              className={`relative flex-1 ${
-                showBatchCommandCenter
-                  ? 'p-3 sm:p-4'
-                  : activeDockId === 'workspace'
-                    ? 'px-3 py-3 sm:px-4 sm:py-4 lg:px-5'
-                    : 'p-4 sm:p-5 lg:p-6'
-              }`}
-            >
-              <PayoutPageActionsProvider>
-                <MockPreviewActions
-                  onRefresh={() => setRefreshSeed((value) => (value + 1) % 4)}
-                  onExport={() => {
-                    setShowBatchCommandCenter(false)
-                    setActivePanel('export')
-                  }}
-                />
-                {showBatchCommandCenter ? (
-                  <BatchCommandCenterPreviewSurface onBack={closeBatchCommandCenter} />
-                ) : (
-                  <>
-                    <PageHeader
-                      pageEyebrow={activeDock.label === activeDock.title ? undefined : activeDock.label}
-                      pageTitle={activeDock.title}
-                      pageSubtitle={activeDock.summary}
-                      onAskZordToggle={() => setActivePanel((panel) => (panel === 'ask' ? null : 'ask'))}
-                      hideAskZordButton={activeDockId === 'workspace'}
-                      onViewBatches={openBatchCommandCenter}
-                      onIntegrationsClick={openIntegrationsPreview}
-                    />
-                    <LandingHeroDemoPanel
-                      panel={activePanel}
-                      profile={pageProfile}
-                      onClose={() => setActivePanel(null)}
-                    />
-                    <LandingHeroMockSurface
-                      activeDockId={activeDockId}
-                      metric={metric}
-                      setMetric={setMetric}
-                      profile={pageProfile}
-                      selectedMetric={selectedMetric}
-                      period={period}
-                      setPeriod={setPeriod}
-                      year={year}
-                      setYear={setYear}
-                      chartSeries={chartSeries}
-                    />
-                  </>
-                )}
-              </PayoutPageActionsProvider>
-            </section>
+          />
 
-            <div className="border-t border-[#ecece9] bg-[#f4f4f1] px-3 py-2 text-center">
-              <p className="text-[9px] font-medium uppercase tracking-[0.14em] text-[#9CA3AF]">
-                {landingHomeCopy.productPreviewLabel}
-              </p>
-            </div>
-          </PayoutConsoleNavStack>
+          <section
+            className={`relative ${
+              showBatchCommandCenter
+                ? 'p-3 sm:p-4'
+                : activeDockId === 'workspace'
+                  ? 'px-3 py-3 sm:px-4 sm:py-4 lg:px-5'
+                  : 'p-4 sm:p-5 lg:p-6'
+            }`}
+          >
+            <PayoutPageActionsProvider>
+              <MockPreviewActions
+                onRefresh={() => setRefreshSeed((value) => (value + 1) % 4)}
+                onExport={() => {
+                  setShowBatchCommandCenter(false)
+                  setActivePanel('export')
+                }}
+              />
+              {showBatchCommandCenter ? (
+                <BatchCommandCenterPreviewSurface onBack={closeBatchCommandCenter} />
+              ) : (
+                <>
+                  <PageHeader
+                    pageEyebrow={activeDock.label === activeDock.title ? undefined : activeDock.label}
+                    pageTitle={activeDock.title}
+                    pageSubtitle={activeDock.summary}
+                    onAskZordToggle={() => setActivePanel((panel) => (panel === 'ask' ? null : 'ask'))}
+                    hideAskZordButton={activeDockId === 'workspace'}
+                    onViewBatches={openBatchCommandCenter}
+                    onIntegrationsClick={openIntegrationsPreview}
+                  />
+                  <LandingHeroDemoPanel
+                    panel={activePanel}
+                    profile={pageProfile}
+                    onClose={() => setActivePanel(null)}
+                  />
+                  <LandingHeroMockSurface
+                    activeDockId={activeDockId}
+                    metric={metric}
+                    setMetric={setMetric}
+                    profile={pageProfile}
+                    selectedMetric={selectedMetric}
+                    period={period}
+                    setPeriod={setPeriod}
+                    year={year}
+                    setYear={setYear}
+                    chartSeries={chartSeries}
+                  />
+                </>
+              )}
+            </PayoutPageActionsProvider>
+          </section>
+
+          <div className="rounded-b-[2rem] border-t border-[#ecece9] bg-[#f4f4f1] px-3 py-2 text-center">
+            <p className="text-[9px] font-medium uppercase tracking-[0.14em] text-[#9CA3AF]">
+              {landingHomeCopy.productPreviewLabel}
+            </p>
+          </div>
         </div>
       </section>
     </EnvironmentProvider>

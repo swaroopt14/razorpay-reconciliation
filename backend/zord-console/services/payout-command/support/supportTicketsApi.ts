@@ -5,7 +5,7 @@ import type {
 } from './supportTickets'
 import { loadSupportTickets as loadLocalSupportTickets } from './supportTickets'
 
-const STORAGE_PREFIX = 'zord:support-tickets:v2'
+const STORAGE_PREFIX = 'zord:support-tickets'
 
 function localStorageKey(tenantId: string) {
   return `${STORAGE_PREFIX}:${tenantId.trim() || 'default'}`
@@ -16,32 +16,11 @@ function isSeedOnly(tickets: SupportTicket[]): boolean {
 }
 
 async function parseJson<T>(res: Response): Promise<T> {
-  const text = await res.text()
-  let data: (T & { message?: string }) | null = null
-  if (text.trim()) {
-    try {
-      data = JSON.parse(text) as T & { message?: string }
-    } catch {
-      throw new Error(
-        res.ok
-          ? 'Support API returned invalid JSON.'
-          : `Request failed (${res.status}): invalid JSON response.`,
-      )
-    }
-  }
-
+  const data = (await res.json()) as T & { message?: string }
   if (!res.ok) {
-    const msg =
-      typeof data?.message === 'string' && data.message.trim()
-        ? data.message
-        : text.trim() || `Request failed (${res.status})`
+    const msg = typeof data.message === 'string' ? data.message : `Request failed (${res.status})`
     throw new Error(msg)
   }
-
-  if (!data) {
-    throw new Error('Support API returned an empty response.')
-  }
-
   return data
 }
 
@@ -69,8 +48,6 @@ export async function fetchSupportTickets(tenantId: string): Promise<SupportTick
         /* keep empty server list */
       }
     }
-    // Demo / empty tenant: show seeded Support Queries so the surface matches product screenshots.
-    if (local.length > 0) return local
   }
 
   return tickets

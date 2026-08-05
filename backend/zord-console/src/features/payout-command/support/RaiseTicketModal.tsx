@@ -2,123 +2,199 @@
 
 import { useState } from 'react'
 import { SUPPORT_TICKET_CATEGORIES } from './supportDocLinks'
+import { ZORD_SUPPORT_EMAIL } from './supportConstants'
 import type { NewSupportTicketInput } from '@/services/payout-command/support/supportTickets'
+import {
+  HOME_BODY_IMPERIAL,
+  HOME_BODY_IMPERIAL_SM,
+  HOME_TITLE_BLACK,
+} from '../command-center/homeCommandCenterTokens'
 
 type RaiseTicketModalProps = {
   onClose: () => void
   onSubmit: (input: NewSupportTicketInput) => void
 }
 
-const DRAWER_CATEGORIES = ['Integrations Support', 'Plugins'] as const
-
 export function RaiseTicketModal({ onClose, onSubmit }: RaiseTicketModalProps) {
-  const [category, setCategory] = useState<string>(DRAWER_CATEGORIES[0])
-  const [description, setDescription] = useState(
-    'I want to integrate payment gateway with my Shopify website. How do I go about it?',
-  )
+  const [category, setCategory] = useState<string>(SUPPORT_TICKET_CATEGORIES[0])
+  const [topic, setTopic] = useState('')
+  const [description, setDescription] = useState('')
+  const [contactEmail, setContactEmail] = useState('')
+  const [notifyByEmail, setNotifyByEmail] = useState(true)
+  const [priority, setPriority] = useState<'normal' | 'urgent'>('normal')
   const [error, setError] = useState<string | null>(null)
 
   const handleSubmit = () => {
+    if (!topic.trim()) {
+      setError('Add a short subject for this request.')
+      return
+    }
     if (description.trim().length < 20) {
       setError('Describe the issue in at least 20 characters so support can triage faster.')
       return
     }
-    const matched = SUPPORT_TICKET_CATEGORIES.includes(category as (typeof SUPPORT_TICKET_CATEGORIES)[number])
-      ? category
-      : 'Integrations'
+    const email = contactEmail.trim()
+    if (notifyByEmail && email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setError('Enter a valid email address for updates, or turn off email notifications.')
+      return
+    }
     setError(null)
     onSubmit({
-      category: matched,
-      topic: matched === 'Plugins' ? 'Plugins' : 'Others',
-      description: description.trim(),
-      priority: 'normal',
-      contactEmail: 'ops.reviewer@zordnet.com',
-      notifyByEmail: true,
+      category,
+      topic,
+      description,
+      priority,
+      contactEmail: email || undefined,
+      notifyByEmail: notifyByEmail && Boolean(email),
     })
     onClose()
   }
 
   return (
-    <div className="fixed inset-0 z-[80] flex justify-end">
-      <button type="button" className="absolute inset-0 bg-slate-900/35" aria-label="Close dialog" onClick={onClose} />
+    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+      <button
+        type="button"
+        className="absolute inset-0 bg-slate-900/45 backdrop-blur-[2px]"
+        aria-label="Close dialog"
+        onClick={onClose}
+      />
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="raise-ticket-title"
-        className="relative z-[81] flex h-full w-full max-w-[420px] flex-col bg-white shadow-[-12px_0_40px_rgba(15,23,42,0.18)]"
+        className="relative z-[81] w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
       >
-        <header className="flex items-center gap-3 bg-[#0B1B4D] px-4 py-4 text-white">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 id="raise-ticket-title" className={`text-[1.25rem] font-bold tracking-tight ${HOME_TITLE_BLACK}`}>
+              Raise new request
+            </h2>
+            <p className={`mt-1 ${HOME_BODY_IMPERIAL_SM}`}>
+              Creates a support ticket and notifies the Zord team in Slack. You can also write to {ZORD_SUPPORT_EMAIL}.
+            </p>
+          </div>
           <button
             type="button"
             onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-md text-white/90 transition hover:bg-white/10"
-            aria-label="Back"
+            className="rounded-lg px-2 py-1 text-[20px] leading-none text-slate-500 hover:bg-slate-100"
+            aria-label="Close"
           >
-            <svg className="h-5 w-5" viewBox="0 0 20 20" fill="none" aria-hidden>
-              <path d="M12.5 4.5 7 10l5.5 5.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+            ×
           </button>
-          <h2 id="raise-ticket-title" className="text-[16px] font-semibold tracking-tight">
-            Create support ticket
-          </h2>
-        </header>
-
-        <div className="flex-1 overflow-y-auto px-5 py-5">
-          <div className="flex flex-wrap gap-2">
-            {DRAWER_CATEGORIES.map((c) => {
-              const active = category === c
-              return (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => setCategory(c)}
-                  className={`rounded-full px-4 py-2 text-[13px] font-semibold transition ${
-                    active
-                      ? 'bg-[#E8EEF9] text-[#1E3A8A]'
-                      : 'border border-[#D1D5DB] bg-white text-[#6B7280] hover:bg-[#F9FAFB]'
-                  }`}
-                >
-                  {c}
-                </button>
-              )
-            })}
-          </div>
-
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            rows={8}
-            className="mt-5 w-full resize-none rounded-lg border border-[#D1D5DB] px-3.5 py-3 text-[14px] leading-relaxed text-[#111827] outline-none focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/20"
-          />
-
-          <button
-            type="button"
-            className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-[#CBD5E1] bg-[#F8FAFC] px-4 py-5 text-[14px] font-medium text-[#475569] transition hover:bg-[#F1F5F9]"
-          >
-            <svg className="h-5 w-5 text-[#64748B]" viewBox="0 0 20 20" fill="none" aria-hidden>
-              <path
-                d="M10 13.5V4.5m0 0 3 3m-3-3-3 3M4 15.5h12"
-                stroke="currentColor"
-                strokeWidth="1.6"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-            Click here to Upload file
-          </button>
-
-          {error ? <p className="mt-3 text-[13px] font-medium text-[#DC2626]">{error}</p> : null}
         </div>
 
-        <div className="border-t border-[#E5E7EB] p-4">
+        <div className="mt-5 space-y-4">
+          <label className="block">
+            <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.08em] text-[#000000]">
+              Category
+            </span>
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-[14px] font-medium text-[#0f172a] focus:border-[#00239C] focus:outline-none focus:ring-2 focus:ring-[#00239C]/15"
+            >
+              {SUPPORT_TICKET_CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.08em] text-[#000000]">
+              Subject
+            </span>
+            <input
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+              placeholder="e.g. Delayed settlements for batch SET-2026-03-12"
+              className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-[14px] font-medium text-[#0f172a] placeholder:text-slate-400 focus:border-[#00239C] focus:outline-none focus:ring-2 focus:ring-[#00239C]/15"
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.08em] text-[#000000]">
+              Description
+            </span>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={5}
+              placeholder="Include batch_id, tenant context, timestamps, and what you expected vs what happened."
+              className="w-full resize-y rounded-xl border border-slate-200 px-3 py-2.5 text-[14px] font-medium leading-relaxed text-[#0f172a] placeholder:text-slate-400 focus:border-[#00239C] focus:outline-none focus:ring-2 focus:ring-[#00239C]/15"
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.08em] text-[#000000]">
+              Your email
+            </span>
+            <input
+              type="email"
+              value={contactEmail}
+              onChange={(e) => setContactEmail(e.target.value)}
+              placeholder="you@company.com"
+              autoComplete="email"
+              className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-[14px] font-medium text-[#0f172a] placeholder:text-slate-400 focus:border-[#00239C] focus:outline-none focus:ring-2 focus:ring-[#00239C]/15"
+            />
+            <label className="mt-2 flex cursor-pointer items-center gap-2">
+              <input
+                type="checkbox"
+                checked={notifyByEmail}
+                onChange={(e) => setNotifyByEmail(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 accent-[#00239C]"
+              />
+              <span className={`text-[13px] font-medium ${HOME_BODY_IMPERIAL_SM}`}>
+                Email me when Zord replies (and CC {ZORD_SUPPORT_EMAIL} on urgent items)
+              </span>
+            </label>
+          </label>
+
+          <fieldset className="flex flex-wrap gap-4">
+            <legend className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#000000]">
+              Priority
+            </legend>
+            {(['normal', 'urgent'] as const).map((p) => (
+              <label key={p} className="flex cursor-pointer items-center gap-2 text-[14px] font-medium text-[#00239C]">
+                <input
+                  type="radio"
+                  name="priority"
+                  checked={priority === p}
+                  onChange={() => setPriority(p)}
+                  className="accent-[#00239C]"
+                />
+                {p === 'normal' ? 'Standard' : 'Urgent (production blocker)'}
+              </label>
+            ))}
+          </fieldset>
+        </div>
+
+        {error ? <p className="mt-3 text-[13px] font-medium text-red-600">{error}</p> : null}
+
+        <div className="mt-6 flex flex-wrap justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl border border-slate-200 px-5 py-2.5 text-[13px] font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Cancel
+          </button>
           <button
             type="button"
             onClick={handleSubmit}
-            className="flex h-11 w-full items-center justify-center rounded-lg bg-[#2563EB] text-[15px] font-semibold text-white transition hover:bg-[#1D4ED8]"
+            className="rounded-xl bg-[#0f172a] px-5 py-2.5 text-[13px] font-bold text-white shadow-sm hover:bg-neutral-800"
           >
-            Create support ticket
+            Submit request
           </button>
         </div>
+
+        <p className={`mt-4 border-t border-slate-100 pt-3 ${HOME_BODY_IMPERIAL}`}>
+          Prefer email only? Write to{' '}
+          <a href={`mailto:${ZORD_SUPPORT_EMAIL}`} className="font-semibold text-[#00239C] underline">
+            {ZORD_SUPPORT_EMAIL}
+          </a>
+        </p>
       </div>
     </div>
   )
