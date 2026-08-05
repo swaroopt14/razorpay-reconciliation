@@ -24,7 +24,8 @@ type PackEvent struct {
 	EventType      string    `json:"event_type"`
 	EvidencePackID string    `json:"evidence_pack_id"`
 	TenantID       string    `json:"tenant_id"`
-	IntentID       string    `json:"intent_id"`
+	BatchID        string    `json:"batch_id,omitempty"`
+	IntentID       string    `json:"intent_id,omitempty"`
 	ContractID     string    `json:"contract_id,omitempty"`
 	Mode           string    `json:"mode"`
 	MerkleRoot     string    `json:"merkle_root"`

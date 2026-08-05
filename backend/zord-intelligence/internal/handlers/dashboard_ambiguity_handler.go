@@ -134,9 +134,17 @@ func (h *DashboardAmbiguityHandler) GetAmbiguityKPIs(w http.ResponseWriter, r *h
 
 	from, to := parseDateRangeParams(r)
 
+	batchID := r.URL.Query().Get("batch_id")
+	scopeType := "TENANT"
+	var scopeRef *string
+	if batchID != "" {
+		scopeType = "BATCH"
+		scopeRef = &batchID
+	}
+
 	snap, err := h.snapshotRepo.GetLatestByTypeFiltered(
 		r.Context(),
-		tenantID, "AMBIGUITY", "TENANT", nil,
+		tenantID, "AMBIGUITY", scopeType, scopeRef,
 		from, to,
 	)
 	if err != nil {
@@ -180,7 +188,7 @@ func (h *DashboardAmbiguityHandler) GetAmbiguityKPIs(w http.ResponseWriter, r *h
 	// Percentage of total intended volume that is attached ambiguously.
 	leakSnap, leakErr := h.snapshotRepo.GetLatestByTypeFiltered(
 		r.Context(),
-		tenantID, "LEAKAGE", "TENANT", nil,
+		tenantID, "LEAKAGE", scopeType, scopeRef,
 		from, to,
 	)
 	if leakErr == nil && leakSnap != nil {

@@ -16,7 +16,6 @@ type DLQRepository interface {
 	ListAll(ctx context.Context) ([]models.DLQEntry, error)
 	ListByTenant(ctx context.Context, tenantID string) ([]models.DLQEntry, error)
 	GetByTenantAndID(ctx context.Context, tenantID, dlqID string) (*models.DLQEntry, error)
-	GetByID(ctx context.Context, dlqID string) (*models.DLQEntry, error)
 	ListManualReview(ctx context.Context, tenantID string) ([]models.DLQEntry, error)
 	CountTerminal(ctx context.Context, tenantID string) (int, error)
 }
@@ -322,54 +321,3 @@ func (r *DLQPostgresRepo) GetByTenantAndID(
 	return &e, nil
 }
 
-// NEW: GetByID fetches a single DLQ entry by primary key (no tenant required)
-// Used by the /v1/dlq/:dlq_id endpoint for the console frontend
-func (r *DLQPostgresRepo) GetByID(
-	ctx context.Context,
-	dlqID string,
-) (*models.DLQEntry, error) {
-
-	var e models.DLQEntry
-
-	err := r.db.QueryRowContext(ctx, `
-		SELECT
-			dlq_id,
-			tenant_id,
-			envelope_id,
-			stage,
-			reason_code,
-			error_detail,
-			replayable,
-			client_batch_ref,
-			created_at,
-			source_row_num,
-			dlq_status,
-			intent_context,
-			trace_id
-		FROM dlq_items
-		WHERE dlq_id = $1
-	`, dlqID).Scan(
-		&e.DLQID,
-		&e.TenantID,
-		&e.EnvelopeID,
-		&e.Stage,
-		&e.ReasonCode,
-		&e.ErrorDetail,
-		&e.Replayable,
-		&e.ClientBatchRef,
-		&e.CreatedAt,
-		&e.SourceRowNum,
-		&e.DLQStatus,
-		&e.IntentContext,
-		&e.TraceID,
-	)
-
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	return &e, nil
-}

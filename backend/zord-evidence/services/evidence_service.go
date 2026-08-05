@@ -3,12 +3,16 @@ package services
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 	"zord-evidence/kafka"
 	"zord-evidence/models"
@@ -20,12 +24,47 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// validModes are the three lifecycle operating modes defined in spec §3.2
-var validModes = []string{"INTELLIGENCE_ATTACH", "SECONDARY_DISPATCH", "FULL_CONTROL"}
+// validModes are the lifecycle operating modes defined in spec §3.2.
+// BATCH_ATTACH is valid for batch-level packs; it is handled by GenerateBatchPackInTx
+// which does not call GeneratePack (and therefore does not hit the validModes check).
+// It is listed here for documentation and for any future consolidated validation path.
+var validModes = []string{"INTELLIGENCE_ATTACH", "SECONDARY_DISPATCH", "FULL_CONTROL", "BATCH_ATTACH"}
+
+type IntentJob struct {
+	TenantID   string
+	EnvelopeID string
+	IntentID   string
+	ContractID string
+	TraceID    string
+}
+
+// IntentCheckJob is enqueued after leaves are persisted. Workers run readiness
+// checks and pack generation — keeping the Kafka consumer on the fast path.
+type IntentCheckJob struct {
+	TenantID   string
+	EnvelopeID string
+	IntentID   string
+	ContractID string
+	TraceID    string
+}
+
+type BatchJob struct {
+	TenantID string
+	BatchID  string
+	IsFinal  bool
+}
+
+// BatchCheckJob is enqueued after batch leaves are persisted.
+type BatchCheckJob struct {
+	TenantID string
+	BatchID  string
+	IsFinal  bool
+}
 
 type EvidenceService struct {
 	repo                *repositories.EvidenceRepository
 	pendingLeafRepo     repositories.PendingLeafRepository
+	leafReceiptRepo     *repositories.PostgresLeafReceiptRepo
 	enrichRepo          *repositories.EnrichmentRepository
 	s3                  storage.S3Store
 	signer              *Signer
@@ -33,6 +72,18 @@ type EvidenceService struct {
 	archivePrefix       string
 	replayCompareStrict bool
 	publisher           kafka.EventPublisher
+
+	intentCheckQueue chan IntentCheckJob
+	batchCheckQueue  chan BatchCheckJob
+	workerWG         sync.WaitGroup
+	shutdownQueues   sync.Once // closes s.done — used by PrepareShutdown
+	shutdownChans    sync.Once // closes queue channels — used by ShutdownWorkers
+	shuttingDown     atomic.Bool
+	// done is closed by PrepareShutdown to signal all enqueue helpers to stop
+	// sending. This eliminates the TOCTOU race between shuttingDown.Load() and
+	// a channel send that could panic if ShutdownWorkers closes the channel
+	// between the check and the send.
+	done chan struct{}
 }
 
 func NewEvidenceService(
@@ -45,10 +96,12 @@ func NewEvidenceService(
 	archivePrefix string,
 	strict bool,
 	publisher kafka.EventPublisher,
+	leafReceiptRepo *repositories.PostgresLeafReceiptRepo,
 ) *EvidenceService {
 	return &EvidenceService{
 		repo:                repo,
 		pendingLeafRepo:     pendingLeafRepo,
+		leafReceiptRepo:     leafReceiptRepo,
 		enrichRepo:          enrichRepo,
 		s3:                  s3,
 		signer:              signer,
@@ -56,10 +109,20 @@ func NewEvidenceService(
 		archivePrefix:       archivePrefix,
 		replayCompareStrict: strict,
 		publisher:           publisher,
+		intentCheckQueue:    make(chan IntentCheckJob, 10000),
+		batchCheckQueue:     make(chan BatchCheckJob, 10000),
+		done:                make(chan struct{}),
 	}
 }
 
-// HandleLeafUpdate orchestrates the buffered leaf ingestion and pack generation.
+// HandleLeafUpdate persists incoming leaves on the Kafka fast path and delegates
+// readiness checks plus pack generation to the worker pool.
+//
+// P1-04: Before each UpsertLeaf call, WriteReceipt classifies the event as
+// ACCEPTED / DUPLICATE / CONFLICT and writes an immutable receipt row.
+//   ACCEPTED  → upsert proceeds normally.
+//   DUPLICATE → skip upsert (idempotent Kafka re-delivery, leaf unchanged).
+//   CONFLICT  → upsert proceeds (latest wins) + WARNING log so ops can investigate.
 func (s *EvidenceService) HandleLeafUpdate(ctx context.Context, tenantID, envelopeID, intentID, contractID, traceID string, newLeaves []models.PendingLeafCandidate) error {
 	// 0. If intentID is missing but envelopeID is present, try to resolve it from existing leaves
 	if intentID == "" && envelopeID != "" {
@@ -68,7 +131,6 @@ func (s *EvidenceService) HandleLeafUpdate(ctx context.Context, tenantID, envelo
 			log.Printf("evidence.service.resolve_intent_failed env=%s err=%v", envelopeID, err)
 		} else if resolved != "" {
 			intentID = resolved
-			// Update the new leaves to have the resolved intentID
 			for i := range newLeaves {
 				newLeaves[i].IntentID = &intentID
 			}
@@ -82,9 +144,32 @@ func (s *EvidenceService) HandleLeafUpdate(ctx context.Context, tenantID, envelo
 		}
 	}
 
-	// 2. Upsert new leaves
+	// 2. Write receipt then upsert each leaf.
 	var lastBatchID string
 	for i := range newLeaves {
+		outcome, receiptErr := s.leafReceiptRepo.WriteReceipt(ctx, &newLeaves[i])
+		if receiptErr != nil {
+			// Receipt write failure is logged but does not block the upsert —
+			// losing a receipt is less harmful than losing the leaf itself.
+			log.Printf("[ERROR] evidence.service.leaf_receipt_failed tenant=%s intent=%s leaf_type=%s err=%v",
+				tenantID, intentID, newLeaves[i].LeafType, receiptErr)
+		}
+
+		switch outcome {
+		case models.LeafReceiptDuplicate:
+			// Kafka at-least-once re-delivery. Leaf already stored; skip upsert.
+			log.Printf("evidence.service.leaf_duplicate tenant=%s intent=%s leaf_type=%s source_event_id=%s — skipping upsert",
+				tenantID, intentID, newLeaves[i].LeafType, newLeaves[i].SourceEventID)
+			continue
+
+		case models.LeafReceiptConflict:
+			// Two different upstream events claim the same leaf slot.
+			// Latest wins (upsert proceeds) but this is a data quality issue.
+			log.Printf("[WARN] evidence.service.leaf_conflict tenant=%s intent=%s leaf_type=%s source_event_id=%s — conflicting leaf overwrite detected, proceeding with upsert",
+				tenantID, intentID, newLeaves[i].LeafType, newLeaves[i].SourceEventID)
+		}
+
+		// ACCEPTED or CONFLICT — proceed with upsert.
 		if err := s.pendingLeafRepo.UpsertLeaf(ctx, &newLeaves[i]); err != nil {
 			return err
 		}
@@ -93,88 +178,312 @@ func (s *EvidenceService) HandleLeafUpdate(ctx context.Context, tenantID, envelo
 		}
 	}
 
-	// 2b. If we received leaves carrying a batchID, also trigger batch-level readiness check
+	// 2b. Schedule batch readiness check when leaves carry a batch ID.
 	if lastBatchID != "" {
-		_ = s.HandleBatchLeafUpdate(ctx, tenantID, lastBatchID, nil, false)
+		s.enqueueBatchCheck(BatchCheckJob{TenantID: tenantID, BatchID: lastBatchID})
 	}
 
-	// 3. Check readiness if we have an intentID
-	if intentID == "" {
+	// 3. Schedule intent readiness check (worker pool handles readiness + generation).
+	if intentID != "" {
+		s.enqueueIntentCheck(IntentCheckJob{
+			TenantID:   tenantID,
+			EnvelopeID: envelopeID,
+			IntentID:   intentID,
+			ContractID: contractID,
+			TraceID:    traceID,
+		})
+	}
+
+	return nil
+}
+
+// enqueueIntentCheck sends a job to the intent worker queue.
+// FIX-06a: The previous implementation had a TOCTOU race: shuttingDown.Load()
+// could return false, then ShutdownWorkers could close the channel before the
+// send, causing a panic ("send on closed channel").
+// Fixed by using a select with a default case on the done channel. The done
+// channel is closed by ShutdownWorkers before the queue channels are closed,
+// so any send that races with shutdown is safely dropped instead of panicking.
+func (s *EvidenceService) enqueueIntentCheck(job IntentCheckJob) {
+	select {
+	case <-s.done:
+		log.Printf("evidence.service.enqueue_intent_check intent=%s skipped during shutdown", job.IntentID)
+	default:
+		select {
+		case s.intentCheckQueue <- job:
+		case <-s.done:
+			log.Printf("evidence.service.enqueue_intent_check intent=%s dropped during shutdown", job.IntentID)
+		}
+	}
+}
+
+// enqueueBatchCheck sends a job to the batch worker queue.
+// Same TOCTOU fix as enqueueIntentCheck.
+func (s *EvidenceService) enqueueBatchCheck(job BatchCheckJob) {
+	select {
+	case <-s.done:
+		log.Printf("evidence.service.enqueue_batch_check batch=%s skipped during shutdown", job.BatchID)
+	default:
+		select {
+		case s.batchCheckQueue <- job:
+		case <-s.done:
+			log.Printf("evidence.service.enqueue_batch_check batch=%s dropped during shutdown", job.BatchID)
+		}
+	}
+}
+
+// HandleBatchLeafUpdate persists batch leaves on the Kafka fast path and delegates
+// readiness checks plus pack generation to the worker pool.
+//
+// P1-04: Same receipt-before-upsert pattern as HandleLeafUpdate.
+func (s *EvidenceService) HandleBatchLeafUpdate(ctx context.Context, tenantID, batchID string, newLeaves []models.PendingLeafCandidate, isFinal bool) error {
+	for i := range newLeaves {
+		outcome, receiptErr := s.leafReceiptRepo.WriteReceipt(ctx, &newLeaves[i])
+		if receiptErr != nil {
+			log.Printf("[ERROR] evidence.service.batch_leaf_receipt_failed tenant=%s batch=%s leaf_type=%s err=%v",
+				tenantID, batchID, newLeaves[i].LeafType, receiptErr)
+		}
+
+		switch outcome {
+		case models.LeafReceiptDuplicate:
+			log.Printf("evidence.service.batch_leaf_duplicate tenant=%s batch=%s leaf_type=%s source_event_id=%s — skipping upsert",
+				tenantID, batchID, newLeaves[i].LeafType, newLeaves[i].SourceEventID)
+			continue
+		case models.LeafReceiptConflict:
+			log.Printf("[WARN] evidence.service.batch_leaf_conflict tenant=%s batch=%s leaf_type=%s source_event_id=%s — conflicting leaf overwrite",
+				tenantID, batchID, newLeaves[i].LeafType, newLeaves[i].SourceEventID)
+		}
+
+		if err := s.pendingLeafRepo.UpsertLeaf(ctx, &newLeaves[i]); err != nil {
+			return err
+		}
+	}
+
+	if !isFinal && len(newLeaves) > 0 {
+		log.Printf("evidence.service.handle_batch_update batch=%s buffering leaves", batchID)
+	}
+
+	s.enqueueBatchCheck(BatchCheckJob{
+		TenantID: tenantID,
+		BatchID:  batchID,
+		IsFinal:  isFinal,
+	})
+
+	return nil
+}
+
+// StartWorkers spins up the async generation workers.
+// Workers run until ShutdownWorkers closes the job queues and in-flight jobs finish.
+func (s *EvidenceService) StartWorkers(workers int) {
+	for i := 0; i < workers; i++ {
+		s.workerWG.Add(1)
+		go func(workerID int) {
+			defer s.workerWG.Done()
+			s.runWorker(workerID)
+		}(i)
+	}
+}
+
+func (s *EvidenceService) runWorker(workerID int) {
+	intentQ := s.intentCheckQueue
+	batchQ := s.batchCheckQueue
+
+	for intentQ != nil || batchQ != nil {
+		select {
+		case job, ok := <-intentQ:
+			if !ok {
+				intentQ = nil
+				continue
+			}
+			jobCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			err := s.processIntentCheckJob(jobCtx, job)
+			cancel()
+			if err != nil {
+				log.Printf("evidence.service.worker id=%d intent_check=%s err=%v", workerID, job.IntentID, err)
+			}
+		case job, ok := <-batchQ:
+			if !ok {
+				batchQ = nil
+				continue
+			}
+			jobCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			err := s.processBatchCheckJob(jobCtx, job)
+			cancel()
+			if err != nil {
+				log.Printf("evidence.service.worker id=%d batch_check=%s err=%v", workerID, job.BatchID, err)
+			}
+		}
+	}
+}
+
+// PrepareShutdown signals that the process is stopping. Kafka handlers may still
+// persist leaves, but no new readiness checks are enqueued. Pending leaves
+// remain in the DB and will be picked up on the next process start.
+// FIX-06a: Closes the done channel first so enqueue helpers stop safely, then
+// sets the atomic bool for any legacy callers. Order matters: done must be
+// closed before the queue channels are closed by ShutdownWorkers.
+func (s *EvidenceService) PrepareShutdown() {
+	s.shutdownQueues.Do(func() {
+		close(s.done)
+	})
+	s.shuttingDown.Store(true)
+}
+
+// ShutdownWorkers closes the job queues and waits for all in-flight readiness
+// checks and pack generation to complete, or until ctx is cancelled.
+// FIX-06a: Queue channel close is now in a separate sync.Once (shutdownChans)
+// so it doesn't conflict with PrepareShutdown's Once that closes s.done.
+// The done channel must already be closed before this runs so workers see the
+// shutdown signal and don't attempt to send on a closed queue channel.
+func (s *EvidenceService) ShutdownWorkers(ctx context.Context) error {
+	s.shutdownChans.Do(func() {
+		log.Printf("evidence.service.shutdown closing worker queues")
+		close(s.intentCheckQueue)
+		close(s.batchCheckQueue)
+	})
+
+	done := make(chan struct{})
+	go func() {
+		s.workerWG.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		log.Printf("evidence.service.shutdown workers drained")
 		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("worker drain: %w", ctx.Err())
 	}
+}
 
-	leaves, err := s.pendingLeafRepo.GetLeavesForIntent(ctx, tenantID, intentID)
+// processIntentCheckJob loads buffered leaves, checks readiness, and generates
+// a pack when all required leaves are present.
+func (s *EvidenceService) processIntentCheckJob(ctx context.Context, job IntentCheckJob) error {
+	leaves, err := s.pendingLeafRepo.GetLeavesForIntent(ctx, job.TenantID, job.IntentID)
 	if err != nil {
 		return err
 	}
 
-	// 4. Map leaf types to items
-	leafMap := make(map[string]models.PendingLeafCandidate)
+	leafMap := make(map[string]models.PendingLeafCandidate, len(leaves))
 	for _, l := range leaves {
 		leafMap[l.LeafType] = l
 	}
 
-	// 5. Check if all 8 required external leaves are present
-	allPresent := true
-	var items []models.EvidenceItem
 	var missing []string
+	allPresent := true
 	for _, requiredType := range models.RequiredLeafTypes {
-		if l, ok := leafMap[requiredType]; ok {
-			items = append(items, models.EvidenceItem{
-				Type:          l.LeafType,
-				Ref:           l.ItemRef,
-				Hash:          l.Hash,
-				SchemaVersion: l.SchemaVersion,
-			})
-		} else if requiredType == models.LeafTypeVarianceDecision {
-			// Special case: VARIANCE_DECISION is required but can be synthesized if missing
-			items = append(items, models.EvidenceItem{
-				Type:          models.LeafTypeVarianceDecision,
-				Ref:           intentID, // Fallback to intentID if missing
-				Hash:          models.ZeroVarianceHash,
-				SchemaVersion: "v1",
-			})
-			log.Printf("evidence.service.readiness_check intent=%s VARIANCE_DECISION missing — using ZeroVarianceHash", intentID)
-		} else {
+		if _, ok := leafMap[requiredType]; !ok {
 			allPresent = false
 			missing = append(missing, requiredType)
 		}
 	}
 
 	if !allPresent {
-		log.Printf("evidence.service.readiness_check intent=%s missing_leaves=%v present_count=%d", intentID, missing, len(items))
-		return nil // Not ready yet
+		log.Printf("evidence.service.readiness_check intent=%s missing_leaves=%v present_count=%d",
+			job.IntentID, missing, len(leaves))
+		return nil
 	}
 
-	// 5b. Resolve contractID from buffered leaves if missing in argument
-	if contractID == "" {
-		for _, l := range leaves {
-			if l.ContractID != nil && *l.ContractID != "" {
-				contractID = *l.ContractID
-				break
+	resolvedContractID := resolveContractIDFromLeaves(leaves, job.ContractID)
+	// FIX-06b: Pass the already-fetched leaves directly to processIntentJob.
+	// Previously processIntentJob re-fetched leaves from the DB, creating a
+	// redundant round-trip and a TOCTOU window where leaves could change between
+	// the readiness check and the generation fetch.
+	return s.processIntentJob(ctx, IntentJob{
+		TenantID:   job.TenantID,
+		EnvelopeID: job.EnvelopeID,
+		IntentID:   job.IntentID,
+		ContractID: resolvedContractID,
+		TraceID:    job.TraceID,
+	}, leaves)
+}
+
+// processBatchCheckJob loads buffered batch leaves, checks readiness, and generates
+// a pack when all required batch leaves are present.
+func (s *EvidenceService) processBatchCheckJob(ctx context.Context, job BatchCheckJob) error {
+	leaves, err := s.pendingLeafRepo.GetLeavesForBatch(ctx, job.TenantID, job.BatchID)
+	if err != nil {
+		return err
+	}
+
+	leafMap := make(map[string]models.PendingLeafCandidate, len(leaves))
+	for _, l := range leaves {
+		leafMap[l.LeafType] = l
+	}
+
+	var missing []string
+	allPresent := true
+	for _, requiredType := range models.RequiredBatchLeafTypes {
+		if _, ok := leafMap[requiredType]; !ok {
+			allPresent = false
+			missing = append(missing, requiredType)
+		}
+	}
+
+	if !allPresent {
+		log.Printf("evidence.service.batch_readiness_check batch=%s missing_leaves=%v present_count=%d",
+			job.BatchID, missing, len(leaves))
+		return nil
+	}
+
+	return s.processBatchJob(ctx, BatchJob{
+		TenantID: job.TenantID,
+		BatchID:  job.BatchID,
+		IsFinal:  job.IsFinal,
+	})
+}
+
+// processIntentJob executes the pack generation for a ready intent.
+// processIntentJob executes pack generation for a ready intent.
+// FIX-06b: The leaves parameter is the already-fetched, readiness-confirmed slice
+// passed from processIntentCheckJob. This eliminates the previous redundant
+// GetLeavesForIntent call and the TOCTOU window between readiness check and generation.
+func (s *EvidenceService) processIntentJob(ctx context.Context, job IntentJob, leaves []models.PendingLeafCandidate) error {
+	// Build items from the provided leaves
+	var items []models.EvidenceItem
+	for _, l := range leaves {
+		if slices.Contains(models.RequiredLeafTypes, l.LeafType) {
+			items = append(items, models.EvidenceItem{
+				Type:          l.LeafType,
+				Ref:           l.ItemRef,
+				Hash:          l.Hash,
+				SchemaVersion: l.SchemaVersion,
+			})
+		}
+	}
+
+	// ── CONCURRENCY GUARD ────────────────────────────────────────────────────
+	lockTx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return fmt.Errorf("begin advisory lock tx: %w", err)
+	}
+	defer lockTx.Rollback() //nolint:errcheck
+
+	acquired, err := s.repo.AcquireIntentAdvisoryLock(ctx, lockTx, job.TenantID, job.IntentID)
+	if err != nil {
+		return fmt.Errorf("advisory lock: %w", err)
+	}
+	if !acquired {
+		log.Printf("evidence.service.process_intent intent=%s advisory_lock_not_acquired — another goroutine is generating, skipping", job.IntentID)
+		return nil
+	}
+
+	existingPacks, checkErr := s.repo.ListByIntentID(ctx, job.TenantID, job.IntentID)
+	if checkErr == nil {
+		for _, ep := range existingPacks {
+			if ep.PackStatus == models.PackStatusActive {
+				log.Printf("evidence.service.process_intent intent=%s pack already exists ep=%s — skipping generation", job.IntentID, ep.EvidencePackID)
+				if delErr := s.pendingLeafRepo.DeleteForIntent(ctx, job.TenantID, job.IntentID); delErr != nil {
+					log.Printf("evidence.service.process_intent intent=%s delete_pending_leaves_failed err=%v — leaves will accumulate until next cycle", job.IntentID, delErr)
+				}
+				return nil
 			}
 		}
 	}
+	// ─────────────────────────────────────────────────────────────────────────
 
-	// 5b.1 Resolve batchID from buffered leaves — intent leaves now carry the
-	// originating batch_id so the persisted pack can be queried by batch.
-	var batchID string
-	for _, l := range leaves {
-		if l.ClientBatchID != nil && *l.ClientBatchID != "" {
-			batchID = *l.ClientBatchID
-			break
-		}
-	}
-
-	// 5c. Defensive: ensure we have a traceID (even if hardcoded here) to satisfy NOT NULL constraints.
-	if traceID == "" {
-		traceID = "00000000-0000-0000-0000-000000000000"
-		log.Printf("evidence.service.readiness_check intent=%s trace_id missing — using zero UUID fallback", intentID)
-	}
-
-	log.Printf("evidence.service.readiness_check intent=%s ALL_LEAVES_PRESENT — triggering generation", intentID)
-
-	// 5d. Extract traceability metadata from leaves
+	// Extract traceability metadata
 	var pir, cic *time.Time
 	var mpu, gd *string
 	var rfs, ts *bool
@@ -186,8 +495,20 @@ func (s *EvidenceService) HandleLeafUpdate(ctx context.Context, tenantID, envelo
 	var clientPayoutRef *string
 	var amount decimal.Decimal
 	var currency string
+	var batchID string
+	var artifactID, artifactVersionID string
+	contractID := resolveContractIDFromLeaves(leaves, job.ContractID)
 
 	for _, l := range leaves {
+		if l.ClientBatchID != nil && *l.ClientBatchID != "" {
+			batchID = *l.ClientBatchID
+		}
+		if l.ArtifactID != nil && *l.ArtifactID != "" {
+			artifactID = *l.ArtifactID
+		}
+		if l.ArtifactVersionID != nil && *l.ArtifactVersionID != "" {
+			artifactVersionID = *l.ArtifactVersionID
+		}
 		if l.ClientPayoutRef != nil {
 			clientPayoutRef = l.ClientPayoutRef
 			amount = l.Amount
@@ -213,14 +534,15 @@ func (s *EvidenceService) HandleLeafUpdate(ctx context.Context, tenantID, envelo
 		}
 	}
 
-	// 6. Generate the pack!
 	req := models.GenerateEvidenceRequest{
-		TenantID:                   tenantID,
-		IntentID:                   intentID,
+		TenantID:                   job.TenantID,
+		IntentID:                   job.IntentID,
 		ClientBatchID:              batchID,
-		EnvelopeID:                 envelopeID,
-		TraceID:                    traceID,
+		EnvelopeID:                 job.EnvelopeID,
+		TraceID:                    job.TraceID,
 		ContractID:                 contractID,
+		ArtifactID:                 artifactID,
+		ArtifactVersionID:          artifactVersionID,
 		Mode:                       "INTELLIGENCE_ATTACH",
 		RulesetVersion:             "v1",
 		SchemaVersions:             map[string]string{"intent_schema": "v1", "outcome_schema": "v1", "contract_schema": "v1", "attachment_schema": "v1"},
@@ -241,86 +563,95 @@ func (s *EvidenceService) HandleLeafUpdate(ctx context.Context, tenantID, envelo
 		ValueDateCheck:             vdc,
 		AmountMatch:                am,
 
-		ClientPayoutRef:            clientPayoutRef,
-		Amount:                     amount,
-		Currency:                   currency,
+		ClientPayoutRef: clientPayoutRef,
+		Amount:          amount,
+		Currency:        currency,
 	}
 
-	_, err = s.GeneratePack(ctx, req)
+	pack, err := s.GeneratePackInTx(ctx, lockTx, req)
 	if err != nil {
+		if errors.Is(err, repositories.ErrPackAlreadyExists) {
+			log.Printf("evidence.service.process_intent intent=%s duplicate_pack_detected_at_insert — treating as success", job.IntentID)
+			if delErr := s.pendingLeafRepo.DeleteForIntent(ctx, job.TenantID, job.IntentID); delErr != nil {
+				log.Printf("evidence.service.process_intent intent=%s delete_pending_leaves_failed err=%v — leaves will accumulate until next cycle", job.IntentID, delErr)
+			}
+			return nil
+		}
 		return fmt.Errorf("generate pack from buffered leaves: %w", err)
 	}
 
-	// 7. Cleanup
-	return s.pendingLeafRepo.DeleteForIntent(ctx, tenantID, intentID)
+	if err := lockTx.Commit(); err != nil {
+		return fmt.Errorf("commit advisory lock tx: %w", err)
+	}
+
+	// Enrichment UPDATE uses a separate pool connection; it must run after commit
+	// so the pack row is visible (same issue as advisory-lock tx holding the INSERT).
+	s.writeProofEnrichment(ctx, pack)
+
+	return s.pendingLeafRepo.DeleteForIntent(ctx, job.TenantID, job.IntentID)
 }
 
-// HandleBatchLeafUpdate orchestrates buffered leaf ingestion and pack generation for batches.
-func (s *EvidenceService) HandleBatchLeafUpdate(ctx context.Context, tenantID, batchID string, newLeaves []models.PendingLeafCandidate, isFinal bool) error {
-	// 1. Upsert new leaves
-	for i := range newLeaves {
-		if err := s.pendingLeafRepo.UpsertLeaf(ctx, &newLeaves[i]); err != nil {
-			return err
+// resolveContractIDFromLeaves returns contractID from the Kafka handler when present,
+// otherwise the first non-empty contract_id stored on buffered pending leaves.
+// Readiness is often triggered by the outcome consumer, whose relay envelope may omit
+// contract_id even though intent/edge leaves already captured it in Postgres.
+func resolveContractIDFromLeaves(leaves []models.PendingLeafCandidate, fromHandler string) string {
+	if strings.TrimSpace(fromHandler) != "" {
+		return strings.TrimSpace(fromHandler)
+	}
+	for _, l := range leaves {
+		if l.ContractID != nil && strings.TrimSpace(*l.ContractID) != "" {
+			return strings.TrimSpace(*l.ContractID)
 		}
 	}
+	return ""
+}
 
-	if !isFinal {
-		log.Printf("evidence.service.handle_batch_update batch=%s buffering leaves", batchID)
-	}
-
-	// 2. Check readiness
-	leaves, err := s.pendingLeafRepo.GetLeavesForBatch(ctx, tenantID, batchID)
+// processBatchJob executes the pack generation for a ready batch.
+func (s *EvidenceService) processBatchJob(ctx context.Context, job BatchJob) error {
+	leaves, err := s.pendingLeafRepo.GetLeavesForBatch(ctx, job.TenantID, job.BatchID)
 	if err != nil {
 		return err
 	}
 
-	leafMap := make(map[string]models.PendingLeafCandidate)
-	for _, l := range leaves {
-		leafMap[l.LeafType] = l
-	}
-
-	allPresent := true
 	var items []models.EvidenceItem
-	var missing []string
-	for _, requiredType := range models.RequiredBatchLeafTypes {
-		if l, ok := leafMap[requiredType]; ok {
+	for _, l := range leaves {
+		if slices.Contains(models.RequiredBatchLeafTypes, l.LeafType) {
 			items = append(items, models.EvidenceItem{
 				Type:          l.LeafType,
 				Ref:           l.ItemRef,
 				Hash:          l.Hash,
 				SchemaVersion: l.SchemaVersion,
 			})
-		} else {
-			allPresent = false
-			missing = append(missing, requiredType)
 		}
 	}
 
-	if !allPresent {
-		log.Printf("evidence.service.batch_readiness_check batch=%s missing_leaves=%v present_count=%d", batchID, missing, len(items))
-		return nil // Not ready yet
+	// ── CONCURRENCY GUARD ────────────────────────────────────────────────────
+	lockTx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return fmt.Errorf("begin batch advisory lock tx: %w", err)
+	}
+	defer lockTx.Rollback() //nolint:errcheck
+
+	acquired, err := s.repo.AcquireBatchAdvisoryLock(ctx, lockTx, job.TenantID, job.BatchID)
+	if err != nil {
+		return fmt.Errorf("batch advisory lock: %w", err)
+	}
+	if !acquired {
+		log.Printf("evidence.service.process_batch batch=%s advisory_lock_not_acquired — another goroutine is generating, skipping", job.BatchID)
+		return nil
 	}
 
-	// 3. Check if we already have a pack for this batch to prevent duplicate generation
-	existing, err := s.repo.GetPackByBatchID(ctx, tenantID, batchID)
-	if err == nil && existing != nil {
-		log.Printf("evidence.service.batch_readiness_check batch=%s pack already exists — skipping generation", batchID)
-		// Cleanup anyway as leaves are no longer needed
-		return s.pendingLeafRepo.DeleteForBatch(ctx, tenantID, batchID)
-	}
-
-	// We only generate if all leaves are present AND we have received the final completion signal.
-	if !isFinal {
-		// Check if we already have the summary (which indicates completion)
-		if _, ok := leafMap[models.LeafTypeBatchAttachmentSummary]; !ok {
-			log.Printf("evidence.service.batch_readiness_check batch=%s leaves ready but waiting for final signal", batchID)
-			return nil
+	existing, existErr := s.repo.GetPackByBatchID(ctx, job.TenantID, job.BatchID)
+	if existErr == nil && existing != nil {
+		log.Printf("evidence.service.process_batch batch=%s pack already exists — skipping generation", job.BatchID)
+		if delErr := s.pendingLeafRepo.DeleteForBatch(ctx, job.TenantID, job.BatchID); delErr != nil {
+			log.Printf("evidence.service.process_batch batch=%s delete_pending_leaves_failed err=%v — leaves will accumulate until next cycle", job.BatchID, delErr)
 		}
+		return nil
 	}
+	// ─────────────────────────────────────────────────────────────────────────
 
-	log.Printf("evidence.service.batch_readiness_check batch=%s ALL_LEAVES_PRESENT — triggering generation", batchID)
-
-	// Extract traceability metadata from leaves
 	var pir, cic *time.Time
 	var mpu, gd *string
 	var rfs, ts *bool
@@ -359,11 +690,10 @@ func (s *EvidenceService) HandleBatchLeafUpdate(ctx context.Context, tenantID, b
 		}
 	}
 
-	// Generate the pack!
 	req := models.GenerateEvidenceRequest{
-		TenantID:                   tenantID,
-		ClientBatchID:              batchID,
-		TraceID:                    "00000000-0000-0000-0000-000000000000", // or fetch from context/leaf if available
+		TenantID:                   job.TenantID,
+		ClientBatchID:              job.BatchID,
+		TraceID:                    "00000000-0000-0000-0000-000000000000",
 		Mode:                       "BATCH_ATTACH",
 		RulesetVersion:             "v1",
 		SchemaVersions:             map[string]string{"intent_schema": "v1", "outcome_schema": "v1", "contract_schema": "v1", "attachment_schema": "v1"},
@@ -384,23 +714,43 @@ func (s *EvidenceService) HandleBatchLeafUpdate(ctx context.Context, tenantID, b
 		ValueDateCheck:             vdc,
 		AmountMatch:                am,
 
-		ClientPayoutRef:            clientPayoutRef,
-		Amount:                     amount,
-		Currency:                   currency,
+		ClientPayoutRef: clientPayoutRef,
+		Amount:          amount,
+		Currency:        currency,
 	}
 
-	_, err = s.GenerateBatchPack(ctx, req)
+	pack, err := s.GenerateBatchPackInTx(ctx, lockTx, req)
 	if err != nil {
+		if errors.Is(err, repositories.ErrPackAlreadyExists) {
+			log.Printf("evidence.service.process_batch batch=%s duplicate_pack_detected_at_insert — treating as success", job.BatchID)
+			if delErr := s.pendingLeafRepo.DeleteForBatch(ctx, job.TenantID, job.BatchID); delErr != nil {
+				log.Printf("evidence.service.process_batch batch=%s delete_pending_leaves_failed err=%v — leaves will accumulate until next cycle", job.BatchID, delErr)
+			}
+			return nil
+		}
 		return fmt.Errorf("generate pack from buffered batch leaves: %w", err)
 	}
 
-	// Cleanup
-	return s.pendingLeafRepo.DeleteForBatch(ctx, tenantID, batchID)
+	if err := lockTx.Commit(); err != nil {
+		return fmt.Errorf("commit batch advisory lock tx: %w", err)
+	}
+
+	s.writeProofEnrichment(ctx, pack)
+
+	return s.pendingLeafRepo.DeleteForBatch(ctx, job.TenantID, job.BatchID)
 }
 
 // GeneratePack is the core of Service 6 (spec §13 steps 1–11).
-// evidence_pack_id is generated only here. All other IDs come from upstream.
+// It delegates to GeneratePackInTx with a nil transaction.
 func (s *EvidenceService) GeneratePack(ctx context.Context, req models.GenerateEvidenceRequest) (*models.EvidencePack, error) {
+	return s.GeneratePackInTx(ctx, nil, req)
+}
+
+// GeneratePackInTx is the transaction-aware core of GeneratePack.
+// When packTx is non-nil (advisory lock path), SavePackInTx reuses the transaction
+// keeping the lock held atomically through the INSERT. Caller must call tx.Commit().
+// When packTx is nil, SavePackInTx opens and commits its own transaction.
+func (s *EvidenceService) GeneratePackInTx(ctx context.Context, packTx *sql.Tx, req models.GenerateEvidenceRequest) (*models.EvidencePack, error) {
 	// --- Step 2: validate scope ---
 	if strings.TrimSpace(req.TenantID) == "" || strings.TrimSpace(req.IntentID) == "" {
 		return nil, fmt.Errorf("tenant_id and intent_id are required")
@@ -458,28 +808,25 @@ func (s *EvidenceService) GeneratePack(ctx context.Context, req models.GenerateE
 	signPayload := strings.Join([]string{
 		packID, merkleRoot, req.IntentID, req.ContractID, now.Format(time.RFC3339Nano), req.RulesetVersion,
 	}, "|")
-	sig := s.signer.Sign(signPayload)
+	packSig := buildPackSignature(s.signer, models.CanonicalIntentPackCommitmentV1, signPayload, now)
 
 	pack := &models.EvidencePack{
-		EvidencePackID:   packID,
-		TenantID:         req.TenantID,
-		IntentID:         req.IntentID,
-		ContractID:       req.ContractID,
-		ClientBatchID:    req.ClientBatchID,
-		Mode:             req.Mode,
-		PackStatus:       "ACTIVE",
-		Items:            items,
-		MerkleRoot:       merkleRoot,
-		RulesetVersion:   req.RulesetVersion,
-		SchemaVersions:   req.SchemaVersions,
-		SupersedesPackID: req.SupersedesPackID,
-		Signatures: []models.Signature{{
-			Signer:   "zord_evidence",
-			Alg:      "ed25519",
-			Sig:      sig,
-			SignedAt: now,
-		}},
-		ZordSignature:              sig,
+		EvidencePackID:             packID,
+		TenantID:                   req.TenantID,
+		IntentID:                   req.IntentID,
+		ContractID:                 req.ContractID,
+		ClientBatchID:              req.ClientBatchID,
+		ArtifactID:                 req.ArtifactID,
+		ArtifactVersionID:          req.ArtifactVersionID,
+		Mode:                       req.Mode,
+		PackStatus:                 models.PackStatusDraft,
+		Items:                      items,
+		MerkleRoot:                 merkleRoot,
+		RulesetVersion:             req.RulesetVersion,
+		SchemaVersions:             req.SchemaVersions,
+		SupersedesPackID:           req.SupersedesPackID,
+		Signatures:                 []models.Signature{packSig},
+		ZordSignature:              packSig.Sig,
 		PaymentInstructionReceived: req.PaymentInstructionReceived,
 		CanonicalIntentCreated:     req.CanonicalIntentCreated,
 		MappingProfileUsed:         req.MappingProfileUsed,
@@ -496,75 +843,30 @@ func (s *EvidenceService) GeneratePack(ctx context.Context, req models.GenerateE
 		ValueDateCheck:             req.ValueDateCheck,
 		AmountMatch:                req.AmountMatch,
 
-		ClientPayoutRef:            req.ClientPayoutRef,
-		Amount:                     req.Amount,
-		Currency:                   req.Currency,
+		ClientPayoutRef: req.ClientPayoutRef,
+		Amount:          req.Amount,
+		Currency:        req.Currency,
 
 		CreatedAt: now,
 	}
 
 	pack.ComputeCompletenessMetadata()
 
-	// --- Step 10a: encrypt and store archive body (§14.3 / §15.2) ---
-	archive, err := json.Marshal(pack)
+	// --- Step 10: encrypt archive (in memory); persist DB-first, then S3, then activate ---
+	plaintextArchive, err := utils.MarshalCanonicalJSON(pack)
 	if err != nil {
 		return nil, fmt.Errorf("marshal evidence pack: %w", err)
 	}
-	encryptedArchive, err := s.archiveCrypto.Encrypt(archive)
+	encryptedArchive, err := s.archiveCrypto.Encrypt(plaintextArchive)
 	if err != nil {
 		return nil, fmt.Errorf("encrypt evidence archive: %w", err)
 	}
 
-	// Object key uses intent_id as primary path anchor (contract_id may be absent in pivot mode)
 	anchorID := req.IntentID
 	if req.ContractID != "" {
 		anchorID = req.ContractID
 	}
 	objectKey := fmt.Sprintf("%s/%s/%s/%s.json.enc", s.archivePrefix, req.TenantID, anchorID, packID)
-	objectRef, err := s.s3.PutObject(ctx, objectKey, encryptedArchive)
-	if err != nil {
-		return nil, fmt.Errorf("store archive: %w", err)
-	}
-
-	// --- Step 10b: persist metadata and outbox event to Postgres ---
-	log.Printf("evidence.service.generate_pack saving metadata and outbox event pack=%s intent=%s", packID, req.IntentID)
-
-	// --- Persist §14.3 archive metadata row ---
-	archiveHash := sha256Hex(encryptedArchive)
-	archiveRecord := &models.EvidenceArchive{
-		ArchiveID:      "arc_" + uuid.NewString(),
-		EvidencePackID: packID,
-		TenantID:       req.TenantID,
-		ObjectRef:      objectRef,
-		ArchiveHash:    archiveHash,
-		ArchiveVersion: "v1",
-		CreatedAt:      now,
-	}
-	if err := s.repo.SaveArchive(ctx, archiveRecord); err != nil {
-		fmt.Printf("warn: save archive record failed: %v\n", err)
-	}
-
-	// --- Persist §14.4 inclusion proofs ---
-	proofPaths := utils.BuildInclusionProofs(leaves)
-	inclusionProofs := make([]models.InclusionProof, 0, len(leaves))
-	for _, leaf := range leaves {
-		inclusionProofs = append(inclusionProofs, models.InclusionProof{
-			EvidencePackID: packID,
-			LeafHash:       leaf.LeafHash,
-			ProofPath:      proofPaths[leaf.LeafHash],
-			CreatedAt:      now,
-		})
-	}
-	if err := s.repo.SaveInclusionProofs(ctx, packID, inclusionProofs); err != nil {
-		fmt.Printf("warn: save inclusion proofs failed: %v\n", err)
-	}
-
-	// --- Mark old pack superseded if this is a lifecycle version update (§23 Phase 5) ---
-	if req.SupersedesPackID != "" {
-		if err := s.repo.MarkPackSuperseded(ctx, req.SupersedesPackID, packID); err != nil {
-			fmt.Printf("warn: mark superseded pack failed: %v\n", err)
-		}
-	}
 
 	// --- Compute Completeness Metadata for Event ---
 	hasRawSettlementFile := false
@@ -598,12 +900,16 @@ func (s *EvidenceService) GeneratePack(ctx context.Context, req models.GenerateE
 	var requiredLeafCount int
 	var settlementLeafFlag, attachmentDecisionLeafFlag bool
 
+	// FIX-06c: Use package-level constants so this function and
+	// ComputeCompletenessMetadata always agree on the denominator.
+	// Previously this function used 6 for batch (wrong) while the model used 5
+	// (correct), producing different completeness scores for the same pack.
 	if req.IntentID != "" {
-		requiredLeafCount = 9
+		requiredLeafCount = models.RequiredIntentLeafCount // 9
 		settlementLeafFlag = hasRawSettlementFile && hasRawSettlementLine && hasCanonicalSettlementObs
 		attachmentDecisionLeafFlag = hasAttachmentDecision && hasVarianceDecision
 	} else if req.ClientBatchID != "" {
-		requiredLeafCount = 6
+		requiredLeafCount = models.RequiredBatchLeafCount // 5
 		settlementLeafFlag = hasRawSettlementFile
 		attachmentDecisionLeafFlag = hasBatchAttachmentSummary && hasBatchVarianceSummary
 	}
@@ -616,7 +922,6 @@ func (s *EvidenceService) GeneratePack(ctx context.Context, req models.GenerateE
 		}
 	}
 
-	// --- Step 11: prepare outbox event for relay polling ---
 	eventType := kafka.EventPackCreated
 	if req.SupersedesPackID != "" {
 		eventType = kafka.EventPackReversalSupersed
@@ -626,6 +931,7 @@ func (s *EvidenceService) GeneratePack(ctx context.Context, req models.GenerateE
 		EventType:                         eventType,
 		EvidencePackID:                    packID,
 		TenantID:                          req.TenantID,
+		BatchID:                           req.ClientBatchID,
 		IntentID:                          req.IntentID,
 		ContractID:                        req.ContractID,
 		Mode:                              req.Mode,
@@ -638,36 +944,134 @@ func (s *EvidenceService) GeneratePack(ctx context.Context, req models.GenerateE
 		SettlementLeafPresentFlag:         settlementLeafFlag,
 		AttachmentDecisionLeafPresentFlag: attachmentDecisionLeafFlag,
 	}
-	payloadBytes, _ := json.Marshal(packEvent)
-
-	outboxEvt := &models.OutboxEvent{
-		TraceID:       req.TraceID,
-		EnvelopeID:    req.EnvelopeID,
-		TenantID:      req.TenantID,
-		ContractID:    req.ContractID,
-		AggregateType: "evidence_pack",
-		AggregateID:   req.IntentID,
-		EventType:     eventType,
-		Payload:       payloadBytes,
-		Status:        "PENDING",
-		CreatedAt:     now,
+	// FIX-15a: json.Marshal on a well-typed struct will not fail in practice,
+	// but silently discarding the error hides future schema issues. Log and
+	// fall back to an empty payload rather than silently proceeding.
+	payloadBytes, marshalErr := json.Marshal(packEvent)
+	if marshalErr != nil {
+		log.Printf("evidence.service.generate_pack marshal_event_failed pack=%s err=%v — outbox event will have empty payload", packID, marshalErr)
+		payloadBytes = []byte("{}")
 	}
 
-	if err := s.repo.SavePack(ctx, pack, objectRef, outboxEvt); err != nil {
+	// FIX-17: EvidencePackID and PayloadHash are now written to the outbox row.
+	// PayloadHash is SHA-256(payload bytes) so relay consumers can verify integrity
+	// without re-fetching the pack from the DB.
+	outboxEvt := &models.OutboxEvent{
+		TraceID:        req.TraceID,
+		EnvelopeID:     req.EnvelopeID,
+		TenantID:       req.TenantID,
+		ContractID:     req.ContractID,
+		AggregateType:  "evidence_pack",
+		AggregateID:    req.IntentID,
+		EventType:      eventType,
+		Payload:        payloadBytes,
+		Status:         "PENDING",
+		CreatedAt:      now,
+		EvidencePackID: packID,
+		PayloadHash:    utils.SHA256Hex(string(payloadBytes)),
+	}
+
+	log.Printf("evidence.service.generate_pack persisting draft pack=%s intent=%s", packID, req.IntentID)
+	if err := s.persistPackDBFirst(ctx, packTx, pack, leaves, objectKey, plaintextArchive, encryptedArchive, now, outboxEvt, req.SupersedesPackID); err != nil {
 		log.Printf("evidence.service.generate_pack save_failed pack=%s err=%v", packID, err)
-		return nil, fmt.Errorf("save pack metadata: %w", err)
+		return nil, err
 	}
 	log.Printf("evidence.service.generate_pack save_ok pack=%s", packID)
 
-	// Persist proof enrichment columns (status, score, components, signatures) immediately.
-	// This ensures proof_status, proof_score, and proof_components_json are never stale.
-	s.writeProofEnrichment(ctx, pack)
+	// When packTx is non-nil the caller holds an uncommitted advisory-lock tx;
+	// proof enrichment runs after Commit in processIntentJob.
+	if packTx == nil {
+		s.writeProofEnrichment(ctx, pack)
+	}
 
 	return pack, nil
 }
 
+func (s *EvidenceService) persistPackDBFirst(
+	ctx context.Context,
+	packTx *sql.Tx,
+	pack *models.EvidencePack,
+	leaves []utils.MerkleLeaf,
+	objectKey string,
+	plaintextArchive []byte,
+	encryptedArchive []byte,
+	now time.Time,
+	outboxEvt *models.OutboxEvent,
+	supersedesPackID string,
+) error {
+	plannedRef := s.s3.ObjectRef(objectKey)
+	pack.PackStatus = models.PackStatusDraft
+	ciphertextHash := sha256Hex(encryptedArchive)
+	plaintextHash := sha256Hex(plaintextArchive)
+
+	archiveRecord := &models.EvidenceArchive{
+		ArchiveID:             "arc_" + uuid.NewString(),
+		EvidencePackID:        pack.EvidencePackID,
+		TenantID:              pack.TenantID,
+		ObjectRef:             plannedRef,
+		EncryptionKeyID:       s.archiveCrypto.KeyID(),
+		ArchiveCiphertextHash: ciphertextHash,
+		PlaintextManifestHash: plaintextHash,
+		ArchiveSizeBytes:      int64(len(encryptedArchive)),
+		ArchiveVersion:        "v1",
+		CreatedAt:             now,
+	}
+
+	proofPaths := utils.BuildInclusionProofs(leaves)
+	inclusionProofs := make([]models.InclusionProof, 0, len(leaves))
+	for _, leaf := range leaves {
+		inclusionProofs = append(inclusionProofs, models.InclusionProof{
+			EvidencePackID: pack.EvidencePackID,
+			LeafIndex:      leaf.Index,
+			LeafHash:       leaf.LeafHash,
+			ProofPath:      proofPaths[leaf.Index],
+			CreatedAt:      now,
+		})
+	}
+
+	if err := s.repo.SavePackDraftInTx(ctx, packTx, pack, plannedRef, archiveRecord, inclusionProofs); err != nil {
+		if errors.Is(err, repositories.ErrPackAlreadyExists) {
+			return err
+		}
+		return fmt.Errorf("save pack draft: %w", err)
+	}
+
+	objectRef, err := s.s3.PutObject(ctx, objectKey, encryptedArchive)
+	if err != nil {
+		return fmt.Errorf("store archive: %w", err)
+	}
+
+	if err := s.repo.ActivatePackInTx(ctx, packTx, pack.EvidencePackID, objectRef, ciphertextHash, outboxEvt); err != nil {
+		if errors.Is(err, repositories.ErrPackAlreadyExists) {
+			return err
+		}
+		return fmt.Errorf("activate pack: %w", err)
+	}
+
+	pack.PackStatus = models.PackStatusActive
+
+	if supersedesPackID != "" {
+		var err error
+		if packTx != nil {
+			err = s.repo.MarkPackSupersededInTx(ctx, packTx, supersedesPackID, pack.EvidencePackID)
+		} else {
+			err = s.repo.MarkPackSuperseded(ctx, supersedesPackID, pack.EvidencePackID)
+		}
+		if err != nil {
+			log.Printf("warn: mark superseded pack failed: %v", err)
+		}
+	}
+
+	return nil
+}
+
 // GenerateBatchPack generates an evidence pack bound to a batch.
 func (s *EvidenceService) GenerateBatchPack(ctx context.Context, req models.GenerateEvidenceRequest) (*models.EvidencePack, error) {
+	return s.GenerateBatchPackInTx(ctx, nil, req)
+}
+
+// GenerateBatchPackInTx is the transaction-aware variant of GenerateBatchPack.
+func (s *EvidenceService) GenerateBatchPackInTx(ctx context.Context, packTx *sql.Tx, req models.GenerateEvidenceRequest) (*models.EvidencePack, error) {
 	if strings.TrimSpace(req.TenantID) == "" || strings.TrimSpace(req.ClientBatchID) == "" {
 		return nil, fmt.Errorf("tenant_id and batch_id are required")
 	}
@@ -710,25 +1114,20 @@ func (s *EvidenceService) GenerateBatchPack(ctx context.Context, req models.Gene
 	signPayload := strings.Join([]string{
 		packID, merkleRoot, req.ClientBatchID, now.Format(time.RFC3339Nano), req.RulesetVersion,
 	}, "|")
-	sig := s.signer.Sign(signPayload)
+	packSig := buildPackSignature(s.signer, models.CanonicalBatchPackCommitmentV1, signPayload, now)
 
 	pack := &models.EvidencePack{
-		EvidencePackID: packID,
-		TenantID:       req.TenantID,
-		ClientBatchID:  req.ClientBatchID,
-		Mode:           req.Mode,
-		PackStatus:     "ACTIVE",
-		Items:          items,
-		MerkleRoot:     merkleRoot,
-		RulesetVersion: req.RulesetVersion,
-		SchemaVersions: req.SchemaVersions,
-		Signatures: []models.Signature{{
-			Signer:   "zord_evidence",
-			Alg:      "ed25519",
-			Sig:      sig,
-			SignedAt: now,
-		}},
-		ZordSignature:   sig,
+		EvidencePackID:  packID,
+		TenantID:        req.TenantID,
+		ClientBatchID:   req.ClientBatchID,
+		Mode:            req.Mode,
+		PackStatus:      models.PackStatusDraft,
+		Items:           items,
+		MerkleRoot:      merkleRoot,
+		RulesetVersion:  req.RulesetVersion,
+		SchemaVersions:  req.SchemaVersions,
+		Signatures:      []models.Signature{packSig},
+		ZordSignature:   packSig.Sig,
 		ClientPayoutRef: req.ClientPayoutRef,
 		Amount:          req.Amount,
 		Currency:        req.Currency,
@@ -737,84 +1136,58 @@ func (s *EvidenceService) GenerateBatchPack(ctx context.Context, req models.Gene
 
 	pack.ComputeCompletenessMetadata()
 
-	archive, err := json.Marshal(pack)
+	plaintextArchive, err := utils.MarshalCanonicalJSON(pack)
 	if err != nil {
 		return nil, fmt.Errorf("marshal evidence pack: %w", err)
 	}
-	encryptedArchive, err := s.archiveCrypto.Encrypt(archive)
+	encryptedArchive, err := s.archiveCrypto.Encrypt(plaintextArchive)
 	if err != nil {
 		return nil, fmt.Errorf("encrypt evidence archive: %w", err)
 	}
 
 	objectKey := fmt.Sprintf("%s/%s/batch/%s/%s.json.enc", s.archivePrefix, req.TenantID, req.ClientBatchID, packID)
-	objectRef, err := s.s3.PutObject(ctx, objectKey, encryptedArchive)
-	if err != nil {
-		return nil, fmt.Errorf("store archive: %w", err)
-	}
-
-	log.Printf("evidence.service.generate_batch_pack saving metadata and outbox event pack=%s batch=%s", packID, req.ClientBatchID)
-
-	archiveHash := sha256Hex(encryptedArchive)
-	archiveRecord := &models.EvidenceArchive{
-		ArchiveID:      "arc_" + uuid.NewString(),
-		EvidencePackID: packID,
-		TenantID:       req.TenantID,
-		ObjectRef:      objectRef,
-		ArchiveHash:    archiveHash,
-		ArchiveVersion: "v1",
-		CreatedAt:      now,
-	}
-	if err := s.repo.SaveArchive(ctx, archiveRecord); err != nil {
-		fmt.Printf("warn: save archive record failed: %v\n", err)
-	}
-
-	proofPaths := utils.BuildInclusionProofs(leaves)
-	inclusionProofs := make([]models.InclusionProof, 0, len(leaves))
-	for _, leaf := range leaves {
-		inclusionProofs = append(inclusionProofs, models.InclusionProof{
-			EvidencePackID: packID,
-			LeafHash:       leaf.LeafHash,
-			ProofPath:      proofPaths[leaf.LeafHash],
-			CreatedAt:      now,
-		})
-	}
-	if err := s.repo.SaveInclusionProofs(ctx, packID, inclusionProofs); err != nil {
-		fmt.Printf("warn: save inclusion proofs failed: %v\n", err)
-	}
 
 	packEvent := kafka.PackEvent{
 		EventType:      kafka.EventPackCreated,
 		EvidencePackID: packID,
 		TenantID:       req.TenantID,
+		BatchID:        req.ClientBatchID,
 		Mode:           req.Mode,
 		MerkleRoot:     merkleRoot,
 		RulesetVersion: req.RulesetVersion,
 		OccurredAt:     now,
-		Extra: map[string]any{
-			"batch_id": req.ClientBatchID,
-		},
 	}
-	payloadBytes, _ := json.Marshal(packEvent)
+	// FIX-15a: Handle marshal error explicitly.
+	payloadBytes, marshalErr := json.Marshal(packEvent)
+	if marshalErr != nil {
+		log.Printf("evidence.service.generate_batch_pack marshal_event_failed pack=%s err=%v — outbox event will have empty payload", packID, marshalErr)
+		payloadBytes = []byte("{}")
+	}
 
+	// FIX-17: EvidencePackID and PayloadHash written to outbox for relay correlation and integrity.
 	outboxEvt := &models.OutboxEvent{
-		TraceID:       req.TraceID,
-		TenantID:      req.TenantID,
-		AggregateType: "evidence_pack",
-		AggregateID:   req.ClientBatchID, // using batchID as the aggregate_id since it's a batch pack
-		EventType:     "evidence.batch.pack.created",
-		Payload:       payloadBytes,
-		Status:        "PENDING",
-		CreatedAt:     now,
+		TraceID:        req.TraceID,
+		TenantID:       req.TenantID,
+		AggregateType:  "evidence_pack",
+		AggregateID:    req.ClientBatchID,
+		EventType:      "evidence.batch.pack.created",
+		Payload:        payloadBytes,
+		Status:         "PENDING",
+		CreatedAt:      now,
+		EvidencePackID: packID,
+		PayloadHash:    utils.SHA256Hex(string(payloadBytes)),
 	}
 
-	if err := s.repo.SavePack(ctx, pack, objectRef, outboxEvt); err != nil {
+	log.Printf("evidence.service.generate_batch_pack persisting draft pack=%s batch=%s", packID, req.ClientBatchID)
+	if err := s.persistPackDBFirst(ctx, packTx, pack, leaves, objectKey, plaintextArchive, encryptedArchive, now, outboxEvt, ""); err != nil {
 		log.Printf("evidence.service.generate_batch_pack save_failed pack=%s err=%v", packID, err)
-		return nil, fmt.Errorf("save batch pack metadata: %w", err)
+		return nil, err
 	}
 	log.Printf("evidence.service.generate_batch_pack save_ok pack=%s", packID)
 
-	// Persist proof enrichment columns immediately after batch pack generation.
-	s.writeProofEnrichment(ctx, pack)
+	if packTx == nil {
+		s.writeProofEnrichment(ctx, pack)
+	}
 
 	return pack, nil
 }
@@ -826,6 +1199,25 @@ func (s *EvidenceService) GetPack(ctx context.Context, packID string) (*models.E
 		return nil, err
 	}
 	return pack, nil
+}
+
+// ListPackExports returns the audit trail of dispute exports for a pack (P2-02).
+func (s *EvidenceService) ListPackExports(ctx context.Context, packID string) (*models.ListPackExportsResponse, error) {
+	if _, err := s.GetPack(ctx, packID); err != nil {
+		return nil, err
+	}
+	exports, err := s.repo.ListExportLogsByPackID(ctx, packID)
+	if err != nil {
+		return nil, err
+	}
+	if exports == nil {
+		exports = []models.EvidenceExportLogEntry{}
+	}
+	return &models.ListPackExportsResponse{
+		EvidencePackID: packID,
+		Exports:        exports,
+		Count:          len(exports),
+	}, nil
 }
 
 // ListPacksByIntentID returns all packs for a given intent (spec §17).
@@ -897,19 +1289,33 @@ func (s *EvidenceService) ReplayPack(ctx context.Context, req models.ReplayReque
 	}
 
 	newPack, err := s.GeneratePack(ctx, models.GenerateEvidenceRequest{
-		TenantID:       req.TenantID,
-		IntentID:       req.IntentID,
-		ContractID:     req.ContractID,
+		TenantID:   req.TenantID,
+		IntentID:   req.IntentID,
+		ContractID: req.ContractID,
 		// Preserve the original pack's batch lineage on the replay so the new
 		// pack remains queryable via GET /v1/evidence/packs?batch_id=.
-		ClientBatchID:  oldPack.ClientBatchID,
-		Mode:           req.Mode,
-		RulesetVersion: req.RulesetVersion,
-		SchemaVersions: req.SchemaVersions,
-		Items:          req.Items,
+		ClientBatchID: oldPack.ClientBatchID,
+		// Preserve artifact identity too — a replay rebuilds the pack from the
+		// same inputs, not a new source artifact.
+		ArtifactID:        oldPack.ArtifactID,
+		ArtifactVersionID: oldPack.ArtifactVersionID,
+		Mode:              req.Mode,
+		RulesetVersion:    req.RulesetVersion,
+		SchemaVersions:    req.SchemaVersions,
+		// FIX-16: Set SupersedesPackID so GeneratePack marks the original pack
+		// as REVOKED_SUPERSEDED inside the same DB transaction. Without this, every
+		// ReplayPack call created a new ACTIVE pack for the same intent, making it
+		// impossible to determine the canonical pack from a list query.
+		SupersedesPackID: req.OriginalPackID,
+		Items:            req.Items,
 	})
 	if err != nil {
-		return nil, err
+		// FIX-16: If generation fails, update the job to FAILED status so callers
+		// can distinguish a failed replay from a pending or completed one.
+		if failErr := s.repo.FailReplayJob(ctx, jobID, err.Error()); failErr != nil {
+			log.Printf("evidence.service.replay fail_replay_job_failed job=%s err=%v", jobID, failErr)
+		}
+		return nil, fmt.Errorf("replay pack generation failed: %w", err)
 	}
 
 	equivalent := oldPack.MerkleRoot == newPack.MerkleRoot
@@ -934,10 +1340,13 @@ func (s *EvidenceService) ReplayPack(ctx context.Context, req models.ReplayReque
 	}
 
 	// --- Complete the replay job ---
-	_ = s.repo.CompleteReplayJob(ctx, jobID, newPack.EvidencePackID, equivalenceResult, diffSummary)
+	// FIX-15c: Log errors instead of silently discarding them.
+	if completeErr := s.repo.CompleteReplayJob(ctx, jobID, newPack.EvidencePackID, equivalenceResult, diffSummary); completeErr != nil {
+		log.Printf("evidence.service.replay complete_replay_job_failed job=%s err=%v", jobID, completeErr)
+	}
 
 	// --- Publish evidence.pack.replayed event ---
-	_ = s.publisher.Publish(ctx, kafka.PackEvent{
+	if pubErr := s.publisher.Publish(ctx, kafka.PackEvent{
 		EventType:      kafka.EventPackReplayed,
 		EvidencePackID: newPack.EvidencePackID,
 		TenantID:       req.TenantID,
@@ -952,7 +1361,9 @@ func (s *EvidenceService) ReplayPack(ctx context.Context, req models.ReplayReque
 			"equivalence_result": equivalenceResult,
 			"original_pack_id":   req.OriginalPackID,
 		},
-	})
+	}); pubErr != nil {
+		log.Printf("evidence.service.replay publish_event_failed job=%s pack=%s err=%v", jobID, newPack.EvidencePackID, pubErr)
+	}
 
 	return &models.ReplayResponse{
 		ReplayJobID:      jobID,
@@ -1040,7 +1451,7 @@ func (s *EvidenceService) writeProofEnrichment(ctx context.Context, pack *models
 		return
 	}
 	comp := deriveComponentsFromPack(pack)
-	sealExists := pack.PackStatus != ""
+	sealExists := pack.PackStatus == models.PackStatusActive
 	score := ComputeProofScore(comp, sealExists)
 	status := DeriveProofStatus(comp, sealExists, pack.PackStatus == "SUPERSEDED", false)
 	sigs := enrichPackSigsFromPack(pack)

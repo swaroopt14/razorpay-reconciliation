@@ -460,7 +460,7 @@ Example with real values:
     {
       "Effect": "Allow",
       "Principal": {
-        "Federated": "arn:aws:iam::673698305621:oidc-provider/oidc.eks.ap-south-1.amazonaws.com/id/9A5CD11C3046E11A959D16943D40D6C9"
+        "Federated": "arn:aws:iam::673698305621:oidc-provider/oidc.eks.ap-south-1.amazonaws.com/id/09562C64F0660D8AD0F20E6745688055"
       },
       "Action": "sts:AssumeRoleWithWebIdentity",
       "Condition": {
@@ -574,7 +574,7 @@ Click `Create policy`.
 File: `kubernetes/api-gateway/ingress/alb-ingress.yaml`
 
 ```yaml
-alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:673698305621:certificate/8efc7d06-6f4c-4ebe-ada4-b9dc43e35ced
+alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:673698305621:certificate/6dc91f57-59fd-4e76-b6ae-8cc53ffc6564
 ```
 
 Replace with your actual ACM certificate ARN. Must be a wildcard cert (`*.zordnet.com`) to cover all subdomains.

@@ -90,9 +90,3 @@ export function reviewRateColor(rate: number): { bar: string; text: string } {
   if (rate <= 0.08) return { bar: 'bg-amber-500', text: 'text-amber-950' }
   return { bar: 'bg-red-600', text: 'text-red-950' }
 }
-
-export function confidenceZoneLabel(conf: number): string {
-  if (conf < 0.5) return ambiguityCopy.confidence.low
-  if (conf < 0.8) return ambiguityCopy.confidence.moderate
-  return ambiguityCopy.confidence.high
-}

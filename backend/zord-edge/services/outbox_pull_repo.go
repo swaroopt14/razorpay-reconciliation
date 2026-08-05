@@ -68,12 +68,15 @@ leased AS (
 		o.trace_id,
 		o.envelope_id,
 		o.tenant_id,
+		o.artifact_id,
+		o.artifact_version_id,
 		o.object_ref,
 		o.received_at,
 		o.source,
 		o.idempotency_key,
 		o.encrypted_payload,
 		o.payload_hash,
+		o.raw_row_hash,
 		o.envelope_hash,
 		o.envelope_signature,
 		o.topic,
@@ -90,6 +93,7 @@ leased AS (
 		o.failure_reason_code,
 		o.batchid,
 		o.file_content_hash,
+		o.source_row_ref,
 		o.source_system
 )
 SELECT
@@ -97,12 +101,15 @@ SELECT
 	trace_id,
 	envelope_id,
 	tenant_id,
+	artifact_id,
+	artifact_version_id,
 	object_ref,
 	received_at,
 	source,
 	idempotency_key,
 	encrypted_payload,
 	payload_hash,
+	raw_row_hash,
 	envelope_hash,
 	envelope_signature,
 	topic,
@@ -119,6 +126,7 @@ SELECT
 	failure_reason_code,
 	batchid,
 	file_content_hash,
+	source_row_ref,
 	source_system
 FROM leased
 ORDER BY created_at ASC;
@@ -140,12 +148,15 @@ ORDER BY created_at ASC;
 			&evt.TraceID,
 			&evt.EnvelopeID,
 			&evt.TenantID,
+			&evt.ArtifactID,
+			&evt.ArtifactVersionID,
 			&evt.ObjectRef,
 			&evt.ReceivedAt,
 			&evt.Source,
 			&evt.IdempotencyKey,
 			&evt.EncryptedPayload,
 			&evt.PayloadHash,
+			&evt.RawRowHash,
 			&evt.EnvelopeHash,
 			&evt.EnvelopeSignature,
 			&evt.Topic,
@@ -162,6 +173,7 @@ ORDER BY created_at ASC;
 			&evt.FailureReasonCode,
 			&evt.BatchID,
 			&evt.FileContentHash,
+			&evt.SourceRowRef,
 			&evt.SourceSystem,
 		); err != nil {
 			return "", nil, nil, err

@@ -14,7 +14,7 @@ func StartEdgeConsumer(
 	groupID string,
 	topic string,
 	pg PackGenerator,
-) error {
+) (*ConsumerHandle, error) {
 	log.Printf("edge.consumer.start group=%s topic=%s brokers=%v", groupID, topic, brokers)
 	return StartConsumer(ctx, brokers, groupID, topic, buildEdgeHandler(pg))
 }
@@ -41,6 +41,7 @@ func buildEdgeHandler(pg PackGenerator) MessageHandler {
 				Hash:          relayEvt.EnvelopeHash,
 				SchemaVersion: "v1",
 				SourceTopic:   "payments.ledger.events.v1",
+				SourceEventID: relayEvt.EventID,
 			},
 		}
 
@@ -50,10 +51,11 @@ func buildEdgeHandler(pg PackGenerator) MessageHandler {
 				EnvelopeID:    &relayEvt.EnvelopeID,
 				ClientBatchID: &relayEvt.ClientBatchID,
 				LeafType:      models.LeafTypeFileContentHash,
-				ItemRef:       relayEvt.ClientBatchID, // Use envelopeID as ref for the file hash link
+				ItemRef:       relayEvt.ClientBatchID,
 				Hash:          relayEvt.FileContentHash,
 				SchemaVersion: "v1",
 				SourceTopic:   "payments.ledger.events.v1",
+				SourceEventID: relayEvt.EventID,
 			})
 		}
 

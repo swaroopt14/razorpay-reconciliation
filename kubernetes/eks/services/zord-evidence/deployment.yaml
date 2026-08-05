@@ -46,12 +46,14 @@ spec:
               app.kubernetes.io/name: zord-evidence
       containers:
         - name: zord-evidence
-          image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-evidence:v2
+          image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-evidence:v12
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8088
               name: http
           env:
+            - name: APP_ENV
+              value: "production"
             - name: PORT
               value: "8088"
             - name: USER

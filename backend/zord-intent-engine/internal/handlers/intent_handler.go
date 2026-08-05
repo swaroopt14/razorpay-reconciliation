@@ -84,10 +84,19 @@ func (h *IntentHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Extract filter parameters
-	tenantID := r.URL.Query().Get("tenant_id")
+	tenantID := strings.TrimSpace(r.URL.Query().Get("tenant_id"))
 	status := r.URL.Query().Get("status")
 	intentType := r.URL.Query().Get("intent_type")
 	batchID := strings.TrimSpace(r.URL.Query().Get("batch_id"))
+
+	// SECURITY: tenant_id is required on this public route — without it the
+	// query returns every tenant's intents. Callers that legitimately need a
+	// cross-tenant aggregate must use the /internal/intents/* routes instead,
+	// which are not exposed through the API gateway.
+	if tenantID == "" {
+		respondError(w, "INVALID_REQUEST", "tenant_id is required", http.StatusBadRequest, nil)
+		return
+	}
 
 	// Call repository
 	intents, total, err := h.queryRepo.ListIntents(ctx, persistence.IntentFilter{
@@ -228,7 +237,7 @@ func (h *IntentHandler) ListPaymentIntentLiteByBatch(w http.ResponseWriter, r *h
 		return
 	}
 
-	// Lite query includes intent_quality_score; returns every row for batchid (no pagination cap).
+	// Lite query includes intent_quality_score; returns safety-capped list.
 	items, err := h.queryRepo.ListPaymentIntentLiteByBatch(ctx, tenantID, batchID)
 	if err != nil {
 		respondError(w, "DATABASE_ERROR", "Failed to fetch payment intent data", http.StatusInternalServerError, err)
@@ -248,7 +257,7 @@ func (h *IntentHandler) ListPaymentIntentLiteByBatch(w http.ResponseWriter, r *h
 		Items: items,
 		Pagination: TablePagination{
 			Page:     1,
-			PageSize: total,
+			PageSize: 5000, // Serve up to safety cap
 			Total:    total,
 		},
 	})

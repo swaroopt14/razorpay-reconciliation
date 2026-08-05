@@ -64,23 +64,33 @@ func (r *ProjectionRepo) AtomicUpsertSourceQuality(
 	}
 	key := fmt.Sprintf("pattern.source.%s", sanitizeProjectionKey(sourceSystem))
 
-	tx, err := r.pool.Begin(ctx)
+	tx, owned, err := r.beginOrJoin(ctx)
 	if err != nil {
 		return fmt.Errorf("projection_repo_pattern.AtomicUpsertSourceQuality begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	if owned {
+		defer tx.Rollback(ctx)
+	}
 
 	// Lock the row for this source system (or create it if first event).
+	// Phase 3 metadata is set only on the very first INSERT for this key —
+	// a shared accumulator across HandleIntentCreated/HandleDLQItem, so the
+	// first writer's projection_source sticks (see projection_meta.go).
 	var rawJSON []byte
 	err = tx.QueryRow(ctx, `
 		INSERT INTO projection_state
-			(tenant_id, projection_key, window_start, window_end, value_json, computed_at, projection_version)
-		VALUES ($1, $2, $3, $4, $5::jsonb, now(), 1)
+			(tenant_id, projection_key, window_start, window_end, value_json, computed_at, projection_version,
+			 projection_family, scope_type, scope_ref, metric_key, window_type,
+			 projection_source, projection_source_version, retention_class, expires_at)
+		VALUES ($1, $2, $3, $4, $5::jsonb, now(), 1,
+			'PATTERN', 'SOURCE', $6, 'source_quality', 'ROLLING_24H',
+			'intent_created', $7, 'DERIVED_CACHE', $4::timestamptz + interval '90 days')
 		ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 		DO UPDATE SET computed_at = now()
 		RETURNING value_json
 	`, tenantID, key, windowStart, windowEnd,
 		`{"source_system":"`+sanitizeProjectionKey(sourceSystem)+`","total_intent_count":0,"total_intent_amount_minor":"0","missing_client_ref_count":0,"low_matchability_count":0,"low_proof_readiness_count":0,"low_quality_score_count":0,"duplicate_risk_count":0,"duplicate_risk_amount_minor":"0","manual_review_count":0,"manual_review_amount_minor":"0","reason_breakdown":{},"missing_client_ref_rate":0,"low_matchability_rate":0,"low_proof_readiness_rate":0,"duplicate_risk_rate":0,"manual_review_rate":0}`,
+		sanitizeProjectionKey(sourceSystem), envelopeSourceVersion(ctx),
 	).Scan(&rawJSON)
 	if err != nil {
 		return fmt.Errorf("projection_repo_pattern.AtomicUpsertSourceQuality upsert key=%s: %w", key, err)
@@ -141,7 +151,10 @@ func (r *ProjectionRepo) AtomicUpsertSourceQuality(
 		return fmt.Errorf("projection_repo_pattern.AtomicUpsertSourceQuality update key=%s: %w", key, err)
 	}
 
-	return tx.Commit(ctx)
+	if owned {
+		return tx.Commit(ctx)
+	}
+	return nil
 }
 
 // SourceQualityDelta carries the per-event increment values for AtomicUpsertSourceQuality.
@@ -175,22 +188,32 @@ func (r *ProjectionRepo) AtomicUpsertProviderQuality(
 	}
 	key := fmt.Sprintf("pattern.provider.%s", sanitizeProjectionKey(providerID))
 
-	tx, err := r.pool.Begin(ctx)
+	tx, owned, err := r.beginOrJoin(ctx)
 	if err != nil {
 		return fmt.Errorf("projection_repo_pattern.AtomicUpsertProviderQuality begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	if owned {
+		defer tx.Rollback(ctx)
+	}
 
+	// Phase 3 metadata is set only on the very first INSERT for this key — a
+	// shared accumulator across HandleSettlementCreated/HandleAttachmentDecision,
+	// so the first writer's projection_source sticks (see projection_meta.go).
 	var rawJSON []byte
 	err = tx.QueryRow(ctx, `
 		INSERT INTO projection_state
-			(tenant_id, projection_key, window_start, window_end, value_json, computed_at, projection_version)
-		VALUES ($1, $2, $3, $4, $5::jsonb, now(), 1)
+			(tenant_id, projection_key, window_start, window_end, value_json, computed_at, projection_version,
+			 projection_family, scope_type, scope_ref, metric_key, window_type,
+			 projection_source, projection_source_version, retention_class, expires_at)
+		VALUES ($1, $2, $3, $4, $5::jsonb, now(), 1,
+			'PATTERN', 'PSP', $6, 'provider_quality', 'ROLLING_24H',
+			'settlement_observation', $7, 'DERIVED_CACHE', $4::timestamptz + interval '90 days')
 		ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 		DO UPDATE SET computed_at = now()
 		RETURNING value_json
 	`, tenantID, key, windowStart, windowEnd,
 		`{"provider_id":"`+sanitizeProjectionKey(providerID)+`","total_settlement_count":0,"total_settlement_amount_minor":"0","parse_confidence_sum":0,"parse_confidence_count":0,"weak_parse_count":0,"mapping_confidence_sum":0,"mapping_confidence_count":0,"weak_mapping_count":0,"carrier_richness_sum":0,"carrier_richness_count":0,"attachment_readiness_sum":0,"attachment_readiness_count":0,"orphan_count":0,"missing_provider_ref_count":0,"missing_client_ref_count":0,"total_decisions":0,"ambiguous_decisions":0,"unresolved_decisions":0,"successful_decision_count":0,"decision_success_rate":0,"settlement_delay_samples":[]}`,
+		sanitizeProjectionKey(providerID), envelopeSourceVersion(ctx),
 	).Scan(&rawJSON)
 	if err != nil {
 		return fmt.Errorf("projection_repo_pattern.AtomicUpsertProviderQuality upsert key=%s: %w", key, err)
@@ -276,7 +299,10 @@ func (r *ProjectionRepo) AtomicUpsertProviderQuality(
 	`, string(updated), tenantID, key, windowStart); err != nil {
 		return fmt.Errorf("projection_repo_pattern.AtomicUpsertProviderQuality update key=%s: %w", key, err)
 	}
-	return tx.Commit(ctx)
+	if owned {
+		return tx.Commit(ctx)
+	}
+	return nil
 }
 
 // ProviderQualityDelta carries per-event increments for AtomicUpsertProviderQuality.
@@ -312,22 +338,29 @@ func (r *ProjectionRepo) AtomicUpsertBankQuality(
 	}
 	key := fmt.Sprintf("pattern.bank.%s", sanitizeProjectionKey(bankID))
 
-	tx, err := r.pool.Begin(ctx)
+	tx, owned, err := r.beginOrJoin(ctx)
 	if err != nil {
 		return fmt.Errorf("projection_repo_pattern.AtomicUpsertBankQuality begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	if owned {
+		defer tx.Rollback(ctx)
+	}
 
 	var rawJSON []byte
 	err = tx.QueryRow(ctx, `
 		INSERT INTO projection_state
-			(tenant_id, projection_key, window_start, window_end, value_json, computed_at, projection_version)
-		VALUES ($1, $2, $3, $4, $5::jsonb, now(), 1)
+			(tenant_id, projection_key, window_start, window_end, value_json, computed_at, projection_version,
+			 projection_family, scope_type, scope_ref, metric_key, window_type,
+			 projection_source, projection_source_version, retention_class, expires_at)
+		VALUES ($1, $2, $3, $4, $5::jsonb, now(), 1,
+			'PATTERN', 'BANK', $6, 'bank_quality', 'ROLLING_24H',
+			'settlement_observation', $7, 'DERIVED_CACHE', $4::timestamptz + interval '90 days')
 		ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 		DO UPDATE SET computed_at = now()
 		RETURNING value_json
 	`, tenantID, key, windowStart, windowEnd,
 		`{"bank_id":"`+sanitizeProjectionKey(bankID)+`","total_settlement_count":0,"missing_bank_ref_count":0,"missing_utr_count":0,"settlement_delay_samples":[]}`,
+		sanitizeProjectionKey(bankID), envelopeSourceVersion(ctx),
 	).Scan(&rawJSON)
 	if err != nil {
 		return fmt.Errorf("projection_repo_pattern.AtomicUpsertBankQuality upsert key=%s: %w", key, err)
@@ -366,7 +399,10 @@ func (r *ProjectionRepo) AtomicUpsertBankQuality(
 	`, string(updated), tenantID, key, windowStart); err != nil {
 		return fmt.Errorf("projection_repo_pattern.AtomicUpsertBankQuality update key=%s: %w", key, err)
 	}
-	return tx.Commit(ctx)
+	if owned {
+		return tx.Commit(ctx)
+	}
+	return nil
 }
 
 // BankQualityDelta carries per-event increments for AtomicUpsertBankQuality.
@@ -381,6 +417,8 @@ type BankQualityDelta struct {
 
 // AtomicUpsertAmbiguityBySource atomically updates AmbiguityBySourceValue.
 // Called from HandleAttachmentDecision when SourceSystem is populated.
+// Deprecated: no production caller. Does NOT stamp the Phase 3 projection
+// metadata (scope/source/retention); extend it first if ever re-wired.
 func (r *ProjectionRepo) AtomicUpsertAmbiguityBySource(
 	ctx context.Context,
 	tenantID, sourceSystem string,
@@ -392,11 +430,13 @@ func (r *ProjectionRepo) AtomicUpsertAmbiguityBySource(
 	}
 	key := fmt.Sprintf("pattern.ambiguity.source.%s", sanitizeProjectionKey(sourceSystem))
 
-	tx, err := r.pool.Begin(ctx)
+	tx, owned, err := r.beginOrJoin(ctx)
 	if err != nil {
 		return fmt.Errorf("projection_repo_pattern.AtomicUpsertAmbiguityBySource begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	if owned {
+		defer tx.Rollback(ctx)
+	}
 
 	var rawJSON []byte
 	err = tx.QueryRow(ctx, `
@@ -446,7 +486,10 @@ func (r *ProjectionRepo) AtomicUpsertAmbiguityBySource(
 	`, string(updated), tenantID, key, windowStart); err != nil {
 		return fmt.Errorf("projection_repo_pattern.AtomicUpsertAmbiguityBySource update key=%s: %w", key, err)
 	}
-	return tx.Commit(ctx)
+	if owned {
+		return tx.Commit(ctx)
+	}
+	return nil
 }
 
 // AmbiguityBySourceDelta carries per-event increments for AtomicUpsertAmbiguityBySource.
@@ -464,6 +507,8 @@ type AmbiguityBySourceDelta struct {
 
 // AtomicUpsertVarianceBySource atomically updates VarianceBySourceValue.
 // Called from HandleVarianceRecord when SourceSystem is populated.
+// Deprecated: no production caller. Does NOT stamp the Phase 3 projection
+// metadata (scope/source/retention); extend it first if ever re-wired.
 func (r *ProjectionRepo) AtomicUpsertVarianceBySource(
 	ctx context.Context,
 	tenantID, sourceSystem string,
@@ -475,11 +520,13 @@ func (r *ProjectionRepo) AtomicUpsertVarianceBySource(
 	}
 	key := fmt.Sprintf("pattern.variance.source.%s", sanitizeProjectionKey(sourceSystem))
 
-	tx, err := r.pool.Begin(ctx)
+	tx, owned, err := r.beginOrJoin(ctx)
 	if err != nil {
 		return fmt.Errorf("projection_repo_pattern.AtomicUpsertVarianceBySource begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	if owned {
+		defer tx.Rollback(ctx)
+	}
 
 	var rawJSON []byte
 	err = tx.QueryRow(ctx, `
@@ -549,7 +596,10 @@ func (r *ProjectionRepo) AtomicUpsertVarianceBySource(
 	`, string(updated), tenantID, key, windowStart); err != nil {
 		return fmt.Errorf("projection_repo_pattern.AtomicUpsertVarianceBySource update key=%s: %w", key, err)
 	}
-	return tx.Commit(ctx)
+	if owned {
+		return tx.Commit(ctx)
+	}
+	return nil
 }
 
 // VarianceBySourceDelta carries per-event increments for AtomicUpsertVarianceBySource.
@@ -582,12 +632,21 @@ func (r *ProjectionRepo) AtomicRecordWhitelistedDeduction(
 	key := "leakage.total"
 	amountStr := amountMinor.String()
 
+	// Shares the leakage.total accumulator with the LEAKAGE BothScopes
+	// writers — in practice AtomicIncrementLeakageIntendedTotalBothScopes
+	// (fired on every intent) always creates the row first, so this INSERT's
+	// metadata literal is rarely the one that sticks; included for structural
+	// completeness (ON CONFLICT needs a matching column/value count).
 	sql := `
 		INSERT INTO projection_state
-			(tenant_id, projection_key, window_start, window_end, value_json, computed_at, projection_version)
+			(tenant_id, projection_key, window_start, window_end, value_json, computed_at, projection_version,
+			 projection_family, scope_type, scope_ref, metric_key, window_type,
+			 projection_source, projection_source_version, retention_class, expires_at)
 		VALUES ($1, $2, $3, $4,
 			jsonb_build_object('whitelisted_deduction_amount_minor', $5::numeric),
-			now(), 1)
+			now(), 1,
+			'LEAKAGE', 'TENANT', $1, 'total', 'ROLLING_24H',
+			'variance_record', $6, 'DERIVED_CACHE', $4::timestamptz + interval '90 days')
 		ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 		DO UPDATE SET
 			value_json = jsonb_set(
@@ -600,7 +659,7 @@ func (r *ProjectionRepo) AtomicRecordWhitelistedDeduction(
 			),
 			computed_at = now()
 	`
-	if _, err := r.pool.Exec(ctx, sql, tenantID, key, windowStart, windowEnd, amountStr); err != nil {
+	if _, err := r.q(ctx).Exec(ctx, sql, tenantID, key, windowStart, windowEnd, amountStr, envelopeSourceVersion(ctx)); err != nil {
 		return fmt.Errorf("projection_repo_pattern.AtomicRecordWhitelistedDeduction: %w", err)
 	}
 	return nil
@@ -608,6 +667,9 @@ func (r *ProjectionRepo) AtomicRecordWhitelistedDeduction(
 
 // AtomicRecordOverSettlement records an over-settlement event and its amount.
 // Previously OVER_SETTLEMENT was skipped; it is now tracked for pattern detection.
+// Deprecated: no production caller — superseded by AtomicRecordOverSettlementBothScopes
+// (Phase 2 refactor). Does NOT stamp the Phase 3 projection metadata
+// (scope/source/retention); extend it first if ever re-wired.
 func (r *ProjectionRepo) AtomicRecordOverSettlement(
 	ctx context.Context,
 	tenantID string,
@@ -639,7 +701,7 @@ func (r *ProjectionRepo) AtomicRecordOverSettlement(
 			),
 			computed_at = now()
 	`
-	if _, err := r.pool.Exec(ctx, sql, tenantID, key, windowStart, windowEnd, amountStr); err != nil {
+	if _, err := r.q(ctx).Exec(ctx, sql, tenantID, key, windowStart, windowEnd, amountStr); err != nil {
 		return fmt.Errorf("projection_repo_pattern.AtomicRecordOverSettlement: %w", err)
 	}
 	return nil
@@ -679,7 +741,9 @@ func (r *ProjectionRepo) AtomicIncrementPatternP2WithAmount(
 
 	sql := `
 		INSERT INTO projection_state
-			(tenant_id, projection_key, window_start, window_end, value_json, computed_at, projection_version)
+			(tenant_id, projection_key, window_start, window_end, value_json, computed_at, projection_version,
+			 projection_family, scope_type, scope_ref, metric_key, window_type,
+			 projection_source, projection_source_version, retention_class, expires_at)
 		VALUES ($1, $2, $3, $4,
 			jsonb_build_object(
 				'total_intent_count', 1,
@@ -692,7 +756,9 @@ func (r *ProjectionRepo) AtomicIncrementPatternP2WithAmount(
 				'settlement_delay_p50_days', 0.0,
 				'cross_period_count', 0
 			),
-			now(), 1)
+			now(), 1,
+			'PATTERN', 'TENANT', $1, 'p2_p6', 'ROLLING_24H',
+			'intent_created', $8, 'DERIVED_CACHE', $4::timestamptz + interval '90 days')
 		ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 		DO UPDATE SET
 			value_json = jsonb_set(
@@ -727,8 +793,8 @@ func (r *ProjectionRepo) AtomicIncrementPatternP2WithAmount(
 			),
 			computed_at = now()
 	`
-	if _, err := r.pool.Exec(ctx, sql, tenantID, key, windowStart, windowEnd,
-		dupRiskIncr, dupAmountStr, missingRefIncr); err != nil {
+	if _, err := r.q(ctx).Exec(ctx, sql, tenantID, key, windowStart, windowEnd,
+		dupRiskIncr, dupAmountStr, missingRefIncr, envelopeSourceVersion(ctx)); err != nil {
 		return fmt.Errorf("projection_repo_pattern.AtomicIncrementPatternP2WithAmount: %w", err)
 	}
 	return nil
@@ -748,23 +814,32 @@ func (r *ProjectionRepo) AtomicAppendPatternP6WithP50(
 	key := "pattern.p2_p6"
 
 	// Read current samples, append new value, recompute both percentiles.
-	tx, err := r.pool.Begin(ctx)
+	tx, owned, err := r.beginOrJoin(ctx)
 	if err != nil {
 		return fmt.Errorf("projection_repo_pattern.AtomicAppendPatternP6WithP50 begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	if owned {
+		defer tx.Rollback(ctx)
+	}
 
+	// Shares the pattern.p2_p6 accumulator with AtomicIncrementPatternP2WithAmount
+	// (fired on every intent, typically the first writer) — see that method's
+	// metadata comment for the shared-accumulator "first writer sticks" rule.
 	var rawJSON []byte
 	err = tx.QueryRow(ctx, `
 		INSERT INTO projection_state
-			(tenant_id, projection_key, window_start, window_end, value_json, computed_at, projection_version)
+			(tenant_id, projection_key, window_start, window_end, value_json, computed_at, projection_version,
+			 projection_family, scope_type, scope_ref, metric_key, window_type,
+			 projection_source, projection_source_version, retention_class, expires_at)
 		VALUES ($1, $2, $3, $4,
 			jsonb_build_object('settlement_delay_samples', jsonb_build_array($5::int), 'settlement_delay_p95_days', $5::float8, 'settlement_delay_p50_days', $5::float8),
-			now(), 1)
+			now(), 1,
+			'PATTERN', 'TENANT', $1, 'p2_p6', 'ROLLING_24H',
+			'variance_record', $6, 'DERIVED_CACHE', $4::timestamptz + interval '90 days')
 		ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 		DO UPDATE SET computed_at = now()
 		RETURNING value_json
-	`, tenantID, key, windowStart, windowEnd, delayDays).Scan(&rawJSON)
+	`, tenantID, key, windowStart, windowEnd, delayDays, envelopeSourceVersion(ctx)).Scan(&rawJSON)
 	if err != nil {
 		return fmt.Errorf("projection_repo_pattern.AtomicAppendPatternP6WithP50 upsert: %w", err)
 	}
@@ -791,7 +866,10 @@ func (r *ProjectionRepo) AtomicAppendPatternP6WithP50(
 	`, string(updated), tenantID, key, windowStart); err != nil {
 		return fmt.Errorf("projection_repo_pattern.AtomicAppendPatternP6WithP50 update: %w", err)
 	}
-	return tx.Commit(ctx)
+	if owned {
+		return tx.Commit(ctx)
+	}
+	return nil
 }
 
 // AtomicIncrementCrossPeriod increments the cross_period_count in the
@@ -804,8 +882,12 @@ func (r *ProjectionRepo) AtomicIncrementCrossPeriod(
 	key := "pattern.p2_p6"
 	sql := `
 		INSERT INTO projection_state
-			(tenant_id, projection_key, window_start, window_end, value_json, computed_at, projection_version)
-		VALUES ($1, $2, $3, $4, '{"cross_period_count":1}'::jsonb, now(), 1)
+			(tenant_id, projection_key, window_start, window_end, value_json, computed_at, projection_version,
+			 projection_family, scope_type, scope_ref, metric_key, window_type,
+			 projection_source, projection_source_version, retention_class, expires_at)
+		VALUES ($1, $2, $3, $4, '{"cross_period_count":1}'::jsonb, now(), 1,
+			'PATTERN', 'TENANT', $1, 'p2_p6', 'ROLLING_24H',
+			'variance_record', $5, 'DERIVED_CACHE', $4::timestamptz + interval '90 days')
 		ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 		DO UPDATE SET
 			value_json = jsonb_set(
@@ -815,7 +897,7 @@ func (r *ProjectionRepo) AtomicIncrementCrossPeriod(
 			),
 			computed_at = now()
 	`
-	if _, err := r.pool.Exec(ctx, sql, tenantID, key, windowStart, windowEnd); err != nil {
+	if _, err := r.q(ctx).Exec(ctx, sql, tenantID, key, windowStart, windowEnd, envelopeSourceVersion(ctx)); err != nil {
 		return fmt.Errorf("projection_repo_pattern.AtomicIncrementCrossPeriod: %w", err)
 	}
 	return nil
@@ -840,9 +922,14 @@ func (r *ProjectionRepo) AtomicRecordEvidenceLeafCoverage(
 	}
 	key := "defensibility.summary"
 
+	// Shares the defensibility.summary accumulator with the DEFENSIBILITY
+	// BothScopes writers — see AtomicRecordWhitelistedDeduction's comment for
+	// the shared-accumulator "first writer sticks" rule.
 	sql := `
 		INSERT INTO projection_state
-			(tenant_id, projection_key, window_start, window_end, value_json, computed_at, projection_version)
+			(tenant_id, projection_key, window_start, window_end, value_json, computed_at, projection_version,
+			 projection_family, scope_type, scope_ref, metric_key, window_type,
+			 projection_source, projection_source_version, retention_class, expires_at)
 		VALUES ($1, $2, $3, $4,
 			jsonb_build_object(
 				'total_leaf_count',          $5::int,
@@ -850,7 +937,9 @@ func (r *ProjectionRepo) AtomicRecordEvidenceLeafCoverage(
 				'missing_leaf_count',        $7::int,
 				'missing_leaf_rate',         CASE WHEN $6::int > 0 THEN $7::float8 / $6::float8 ELSE 0.0 END
 			),
-			now(), 1)
+			now(), 1,
+			'DEFENSIBILITY', 'TENANT', $1, 'summary', 'ROLLING_24H',
+			'evidence_pack', $8, 'DERIVED_CACHE', $4::timestamptz + interval '90 days')
 		ON CONFLICT (tenant_id, projection_key, window_start, projection_version)
 		DO UPDATE SET
 			value_json = jsonb_set(
@@ -877,8 +966,8 @@ func (r *ProjectionRepo) AtomicRecordEvidenceLeafCoverage(
 			),
 			computed_at = now()
 	`
-	if _, err := r.pool.Exec(ctx, sql, tenantID, key, windowStart, windowEnd,
-		leafCount, requiredLeafCount, missing); err != nil {
+	if _, err := r.q(ctx).Exec(ctx, sql, tenantID, key, windowStart, windowEnd,
+		leafCount, requiredLeafCount, missing, envelopeSourceVersion(ctx)); err != nil {
 		return fmt.Errorf("projection_repo_pattern.AtomicRecordEvidenceLeafCoverage: %w", err)
 	}
 	return nil
@@ -889,6 +978,9 @@ func (r *ProjectionRepo) AtomicRecordEvidenceLeafCoverage(
 // AtomicRecordDefensibilityIntentQuality accumulates IntentQualityScore into
 // the defensibility.summary projection for use in the new dispute_ready_pct formula.
 // Called from HandleIntentCreated when IntentQualityScore > 0.
+// Deprecated: no production caller — superseded by
+// AtomicRecordDefensibilityIntentQualityBothScopes (Phase 2 refactor). Does
+// NOT stamp the Phase 3 projection metadata; extend it first if ever re-wired.
 func (r *ProjectionRepo) AtomicRecordDefensibilityIntentQuality(
 	ctx context.Context,
 	tenantID string,
@@ -921,7 +1013,7 @@ func (r *ProjectionRepo) AtomicRecordDefensibilityIntentQuality(
 			),
 			computed_at = now()
 	`
-	if _, err := r.pool.Exec(ctx, sql, tenantID, key, windowStart, windowEnd, intentQualityScore); err != nil {
+	if _, err := r.q(ctx).Exec(ctx, sql, tenantID, key, windowStart, windowEnd, intentQualityScore); err != nil {
 		return fmt.Errorf("projection_repo.AtomicRecordDefensibilityIntentQuality tenant=%s: %w", tenantID, err)
 	}
 	return r.recomputeDefensibilityEvidenceRates(ctx, tenantID, key, windowStart)
@@ -930,6 +1022,9 @@ func (r *ProjectionRepo) AtomicRecordDefensibilityIntentQuality(
 // AtomicRecordDefensibilityMappingConfidence accumulates MappingConfidence into
 // the defensibility.summary projection for use in the new dispute_ready_pct formula.
 // Called from HandleSettlementCreated when MappingConfidence > 0.
+// Deprecated: no production caller — superseded by
+// AtomicRecordDefensibilityMappingConfidenceBothScopes (Phase 2 refactor).
+// Does NOT stamp the Phase 3 projection metadata; extend it first if ever re-wired.
 func (r *ProjectionRepo) AtomicRecordDefensibilityMappingConfidence(
 	ctx context.Context,
 	tenantID string,
@@ -962,7 +1057,7 @@ func (r *ProjectionRepo) AtomicRecordDefensibilityMappingConfidence(
 			),
 			computed_at = now()
 	`
-	if _, err := r.pool.Exec(ctx, sql, tenantID, key, windowStart, windowEnd, mappingConfidence); err != nil {
+	if _, err := r.q(ctx).Exec(ctx, sql, tenantID, key, windowStart, windowEnd, mappingConfidence); err != nil {
 		return fmt.Errorf("projection_repo.AtomicRecordDefensibilityMappingConfidence tenant=%s: %w", tenantID, err)
 	}
 	return r.recomputeDefensibilityEvidenceRates(ctx, tenantID, key, windowStart)
@@ -986,7 +1081,7 @@ func (r *ProjectionRepo) AtomicUpdateDefensibilityDisputeReady(
 		  AND window_start     = $2
 		  AND projection_version = 1
 	`
-	if _, err := r.pool.Exec(ctx, sql, tenantID, windowStart, disputeReadyPct); err != nil {
+	if _, err := r.q(ctx).Exec(ctx, sql, tenantID, windowStart, disputeReadyPct); err != nil {
 		return fmt.Errorf("projection_repo.AtomicUpdateDefensibilityDisputeReady tenant=%s: %w", tenantID, err)
 	}
 	return nil
@@ -1021,7 +1116,7 @@ func (r *ProjectionRepo) GetProjectionsByKeyPrefix(
 	tenantID, keyPrefix string,
 	windowStart time.Time,
 ) ([]*models.ProjectionState, error) {
-	rows, err := r.pool.Query(ctx, `
+	rows, err := r.q(ctx).Query(ctx, `
 		SELECT id, tenant_id, projection_key, window_start, window_end,
 		       value_json, computed_at, projection_version
 		FROM projection_state

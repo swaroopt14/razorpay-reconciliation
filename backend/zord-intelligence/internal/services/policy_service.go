@@ -216,6 +216,11 @@ func (s *PolicyService) evaluateOne(
 		RequiresManualApproval: policy.RequiresManualApproval || decision.RequiresApproval(),
 		PolicyFamily:           policy.PolicyFamily,
 		Severity:               severity,
+		// PHASE 5 (refactor): policy lineage, read from the policy_definitions
+		// row policy_repo.go's correlated subquery already attached to policy.
+		PolicyRegistryID: policy.PolicyRegistryID,
+		PolicyDigest:     policy.PolicyDigest,
+		PolicySource:     policy.PolicySource,
 	})
 }
 

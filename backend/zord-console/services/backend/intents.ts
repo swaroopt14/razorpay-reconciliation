@@ -1,6 +1,18 @@
 // Intent Service - Fetches data from zord-intent-engine
 import { BACKEND_SERVICES, buildUrl, DEFAULT_FETCH_OPTIONS, API_TIMEOUT } from '@/config/api.endpoints'
 
+/**
+ * R-02: zord-intent-engine's /internal/intents/* routes require a signed
+ * internal-service token (X-Internal-Service-Token), not an end-user JWT —
+ * these are cross-tenant reads with no single tenant to scope to, so they
+ * can never be protected by the per-tenant session auth used elsewhere.
+ * Must match INTERNAL_SERVICE_TOKEN configured on zord-intent-engine.
+ */
+function internalServiceHeaders(): HeadersInit {
+  const token = process.env.INTERNAL_SERVICE_TOKEN
+  return token ? { 'X-Internal-Service-Token': token } : {}
+}
+
 export interface BackendIntent {
   intent_id: string
   envelope_id: string
@@ -47,6 +59,14 @@ export interface IntentListParams {
   tenant_id?: string
   status?: string
   batch_id?: string
+  /**
+   * R-01: /v1/intents is behind auth.Protect on zord-intent-engine — every
+   * caller must present the signed-in session's JWT, or the request 401s
+   * before tenant_id is even checked. Callers MUST resolve this via
+   * resolveProxyForwardAuthorization (see services/auth/resolvePayoutTenant.server)
+   * and pass it through; omitting it is not a degraded mode, it's a guaranteed 401.
+   */
+  authorization?: string
 }
 
 /**
@@ -54,7 +74,7 @@ export interface IntentListParams {
  * Endpoint: GET http://localhost:8083/v1/intents
  */
 export async function fetchIntents(params: IntentListParams = {}): Promise<IntentListResponse> {
-  const { page = 1, page_size = 50, tenant_id, status, batch_id } = params
+  const { page = 1, page_size = 50, tenant_id, status, batch_id, authorization } = params
 
   const queryParams = new URLSearchParams()
   queryParams.set('page', String(page))
@@ -78,6 +98,10 @@ export async function fetchIntents(params: IntentListParams = {}): Promise<Inten
     const response = await fetch(fullUrl, {
       ...DEFAULT_FETCH_OPTIONS,
       method: 'GET',
+      headers: {
+        ...DEFAULT_FETCH_OPTIONS.headers,
+        ...(authorization ? { Authorization: authorization } : {}),
+      },
       signal: controller.signal,
     })
 

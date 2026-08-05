@@ -10,9 +10,8 @@ package kafka
 //   outcome.leaf_bundle.created — carries all 4 Merkle leaf candidates for one
 //                                 attached intent/observation pair.
 //
-// On receipt the consumer validates the bundle and immediately calls
-// EvidenceService.GeneratePack() — no buffering required because the emitter
-// guarantees all 4 leaves arrive in a single event.
+// On receipt the consumer validates the bundle, persists leaves, and schedules
+// readiness checks on the worker pool.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import (
@@ -20,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"zord-evidence/models"
 	"zord-evidence/utils"
 )
@@ -74,7 +74,7 @@ func StartOutcomeConsumer(
 	groupID string,
 	topics []string,
 	pg PackGenerator,
-) error {
+) (*ConsumerHandle, error) {
 	log.Printf("outcome.consumer.start group=%s topics=%v brokers=%v", groupID, topics, brokers)
 	// buildOutcomeHandler returns a MessageHandler (func(ctx, key, []byte) error)
 	// which is exactly what StartConsumerForTopics expects.
@@ -165,8 +165,9 @@ func handleLeafBundle(ctx context.Context, raw []byte, pg PackGenerator) error {
 			Hash:          l.Hash,
 			SchemaVersion: sv,
 			SourceTopic:   "payments.outcome.events.v1",
+			SourceEventID: relayEvt.EventID,
 
-			// 🆕 Settlement Metadata
+			// Settlement Metadata
 			SettlementRecordReceived:   relayEvt.SettlementRecordReceived,
 			CanonicalSettlementCreated: relayEvt.CanonicalSettlementCreated,
 			BankReference:              relayEvt.BankReference,
@@ -225,17 +226,34 @@ func handleBatchUpdated(ctx context.Context, raw []byte, pg PackGenerator) error
 
 	log.Printf("evidence.kafka.handle_batch_updated processing batch=%s tenant=%s", batchID, relayEvt.TenantID)
 
-	// Compute distinct hashes for different leaf types to ensure granularity
+	// Compute distinct hashes for different leaf types to ensure granularity.
+	//
+	// FIX-06d: The original code used fmt.Sprintf("%v", payload["key"]) where
+	// payload is map[string]interface{} and numeric values are float64 from JSON
+	// unmarshal. %v on float64(1000) produces "1000", but on float64(1000.5)
+	// produces "1000.5". Large integers that lose precision as float64 will produce
+	// inconsistent hash inputs across platforms. We now extract values as strings
+	// using explicit type switches with a json.Number fallback to guarantee stable,
+	// platform-independent string representations.
+
 	// 1. Attachment Summary Hash
-	attachmentData := fmt.Sprintf("attachment:%v:%v:%v", payload["total_count"], payload["success_count"], payload["ambiguity_score"])
+	attachmentData := fmt.Sprintf("attachment:%s:%s:%s",
+		extractNumericStr(payload["total_count"]),
+		extractNumericStr(payload["success_count"]),
+		extractNumericStr(payload["ambiguity_score"]),
+	)
 	attachmentHash := utils.SHA256Hex(attachmentData)
 
 	// 2. Variance Summary Hash
-	varianceData := fmt.Sprintf("variance:%v", payload["total_variance_minor"])
+	varianceData := fmt.Sprintf("variance:%s", extractNumericStr(payload["total_variance_minor"]))
 	varianceHash := utils.SHA256Hex(varianceData)
 
 	// 3. Canonical Batch Metadata Hash
-	batchMetadata := fmt.Sprintf("batch:%s:%v:%v", batchID, payload["source_reference"], payload["corridor_id"])
+	batchMetadata := fmt.Sprintf("batch:%s:%s:%s",
+		batchID,
+		extractStr(payload["source_reference"]),
+		extractStr(payload["corridor_id"]),
+	)
 	batchHash := utils.SHA256Hex(batchMetadata)
 
 	// 4. Raw Settlement File Hash (Specifically mapped to the file_sha256 from outcome-engine as requested)
@@ -246,15 +264,9 @@ func handleBatchUpdated(ctx context.Context, raw []byte, pg PackGenerator) error
 	}
 
 	log.Printf("evidence.kafka.handle_batch_updated RAW_SETTLEMENT_FILE source_val=%q final_hash=%q", payload["file_sha256"], rawSettlementHash)
-	if rawSettlementHash == "" {
-		rawSettlementHash = models.ZeroVarianceHash
-	}
 
 	// 5. File Content Hash (Matches the raw file content hash from edge)
 	fileHash := relayEvt.FileContentHash
-	if fileHash == "" {
-		fileHash = models.ZeroVarianceHash
-	}
 
 	// 6. Check finality before processing
 	jobStatus, _ := payload["job_status"].(string)
@@ -265,30 +277,33 @@ func handleBatchUpdated(ctx context.Context, raw []byte, pg PackGenerator) error
 	leaves := []models.PendingLeafCandidate{
 		{
 			TenantID:      relayEvt.TenantID,
-			ClientBatchID:       &batchID,
+			ClientBatchID: &batchID,
 			LeafType:      models.LeafTypeBatchAttachmentSummary,
 			ItemRef:       batchID,
 			Hash:          attachmentHash,
 			SchemaVersion: "v1",
 			SourceTopic:   "batch.summary.updated",
+			SourceEventID: relayEvt.EventID,
 		},
 		{
 			TenantID:      relayEvt.TenantID,
-			ClientBatchID:       &batchID,
+			ClientBatchID: &batchID,
 			LeafType:      models.LeafTypeBatchVarianceSummary,
 			ItemRef:       batchID,
 			Hash:          varianceHash,
 			SchemaVersion: "v1",
 			SourceTopic:   "batch.summary.updated",
+			SourceEventID: relayEvt.EventID,
 		},
 		{
 			TenantID:      relayEvt.TenantID,
-			ClientBatchID:       &batchID,
+			ClientBatchID: &batchID,
 			LeafType:      models.LeafTypeCanonicalBatch,
 			ItemRef:       batchID,
 			Hash:          batchHash,
 			SchemaVersion: "v1",
 			SourceTopic:   "batch.summary.updated",
+			SourceEventID: relayEvt.EventID,
 		},
 		{
 			TenantID:      relayEvt.TenantID,
@@ -298,6 +313,7 @@ func handleBatchUpdated(ctx context.Context, raw []byte, pg PackGenerator) error
 			Hash:          rawSettlementHash,
 			SchemaVersion: "v1",
 			SourceTopic:   "batch.summary.updated",
+			SourceEventID: relayEvt.EventID,
 		},
 		{
 			TenantID:      relayEvt.TenantID,
@@ -307,6 +323,7 @@ func handleBatchUpdated(ctx context.Context, raw []byte, pg PackGenerator) error
 			Hash:          fileHash,
 			SchemaVersion: "v1",
 			SourceTopic:   "batch.summary.updated",
+			SourceEventID: relayEvt.EventID,
 		},
 	}
 
@@ -333,7 +350,7 @@ func handleFileUploaded(ctx context.Context, raw []byte, pg PackGenerator) error
 		return nil
 	}
 
-	hash := models.ZeroVarianceHash
+	var hash string
 	if h, ok := payload["file_hash"].(string); ok {
 		hash = h
 	}
@@ -369,7 +386,7 @@ func handleBatchCanonical(ctx context.Context, raw []byte, pg PackGenerator) err
 		return nil
 	}
 
-	hash := models.ZeroVarianceHash
+	var hash string
 	if payloadBytes, err := json.Marshal(payload); err == nil {
 		hash = utils.SHA256Hex(string(payloadBytes))
 	}
@@ -384,4 +401,44 @@ func handleBatchCanonical(ctx context.Context, raw []byte, pg PackGenerator) err
 		SourceTopic:   "payments.outcome.events.v1",
 	}}
 	return pg.HandleBatchLeafUpdate(ctx, relayEvt.TenantID, batchID, leaves, false)
+}
+
+// extractNumericStr converts a JSON-unmarshalled numeric value (float64 or
+// json.Number) to a string without floating-point representation artifacts.
+// This ensures leaf hash inputs are stable and platform-independent.
+//
+// FIX-06d: Replaces %v formatting on map[string]interface{} numeric values.
+func extractNumericStr(v interface{}) string {
+	if v == nil {
+		return "null"
+	}
+	switch val := v.(type) {
+	case json.Number:
+		return val.String()
+	case float64:
+		// Use strconv.FormatFloat with 'f' format and -1 precision so integers
+		// render without a decimal point (1000 not 1000.000000) and non-integer
+		// values render with minimal digits (1000.5 not 1000.500000).
+		formatted := strconv.FormatFloat(val, 'f', -1, 64)
+		return formatted
+	case string:
+		return val
+	case int:
+		return strconv.Itoa(val)
+	case int64:
+		return strconv.FormatInt(val, 10)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+// extractStr converts a JSON-unmarshalled value to a string safely.
+func extractStr(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprintf("%v", v)
 }

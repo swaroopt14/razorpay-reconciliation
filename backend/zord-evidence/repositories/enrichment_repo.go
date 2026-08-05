@@ -72,7 +72,13 @@ SET verification_status = $2,
 WHERE evidence_pack_id  = $1`,
 		packID, verified, verifiedAt,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	if verified {
+		return r.MarkPackSignaturesVerified(ctx, packID, true)
+	}
+	return nil
 }
 
 // GetEnrichedFields fetches all persisted enrichment columns for a pack.

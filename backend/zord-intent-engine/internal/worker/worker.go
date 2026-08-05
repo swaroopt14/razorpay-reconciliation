@@ -5,28 +5,35 @@ import (
 	"log"
 
 	"zord-intent-engine/internal/etl"
-	"zord-intent-engine/internal/persistence"
+	"zord-intent-engine/internal/models"
 )
 
+// EventSource is the narrow read-only dependency the ETL worker needs — just
+// enough to find outbox events that haven't been quality-scored yet. It does
+// NOT lease/ack/nack, so it never competes with zord-relay for the same
+// PENDING outbox rows. See FetchUnscoredEvents for why that matters.
+type EventSource interface {
+	FetchUnscoredEvents(ctx context.Context, limit int) ([]models.OutboxEvent, error)
+}
+
 // AirflowWorker is called once per Airflow task execution.
-// It leases outbox events, runs ETL scoring, acks/nacks, returns summary.
+// It fetches unscored outbox events and runs ETL quality scoring.
 type AirflowWorker struct {
-	outboxRepo persistence.OutboxPullRepository
-	processor  *ETLProcessor
+	events    EventSource
+	processor *ETLProcessor
 }
 
 func NewAirflowWorker(
-	outboxRepo persistence.OutboxPullRepository,
+	events EventSource,
 	runRepo *etl.RunRepository,
 ) *AirflowWorker {
 	return &AirflowWorker{
-		outboxRepo: outboxRepo,
-		processor:  NewETLProcessor(outboxRepo, runRepo),
+		events:    events,
+		processor: NewETLProcessor(runRepo),
 	}
 }
 
 type RunSummary struct {
-	LeaseID          string
 	Leased           int
 	Accepted         int
 	Failed           int
@@ -34,43 +41,28 @@ type RunSummary struct {
 	BelowThreshold   bool
 }
 
-func (w *AirflowWorker) RunOnce(ctx context.Context, limit, leaseTTLSeconds int, leasedBy string) (*RunSummary, error) {
-	leaseID, _, events, err := w.outboxRepo.LeaseOutboxBatch(ctx, limit, leaseTTLSeconds, leasedBy)
+func (w *AirflowWorker) RunOnce(ctx context.Context, limit int) (*RunSummary, error) {
+	events, err := w.events.FetchUnscoredEvents(ctx, limit)
 	if err != nil {
 		return nil, err
 	}
 
 	if len(events) == 0 {
-		log.Println("[AirflowWorker] outbox empty, nothing to process")
+		log.Println("[AirflowWorker] no unscored outbox events, nothing to process")
 		return &RunSummary{}, nil
 	}
 
-	log.Printf("[AirflowWorker] leased %d events lease_id=%s", len(events), leaseID)
+	log.Printf("[AirflowWorker] fetched %d unscored events", len(events))
 
 	results := w.processor.ProcessBatch(ctx, events)
 
-	var ackIDs, nackIDs []string
 	accepted, failed := 0, 0
-
 	for _, r := range results {
 		switch r.Status {
 		case "ok":
-			ackIDs = append(ackIDs, r.OutboxEventID)
 			accepted++
 		case "failed":
-			nackIDs = append(nackIDs, r.OutboxEventID)
 			failed++
-		}
-	}
-
-	if len(ackIDs) > 0 {
-		if _, err := w.outboxRepo.AckOutboxBatch(ctx, leaseID, ackIDs); err != nil {
-			log.Printf("[AirflowWorker] ack failed: %v", err)
-		}
-	}
-	if len(nackIDs) > 0 {
-		if _, err := w.outboxRepo.NackOutboxBatch(ctx, leaseID, nackIDs); err != nil {
-			log.Printf("[AirflowWorker] nack failed: %v", err)
 		}
 	}
 
@@ -80,7 +72,6 @@ func (w *AirflowWorker) RunOnce(ctx context.Context, limit, leaseTTLSeconds int,
 	}
 
 	return &RunSummary{
-		LeaseID:          leaseID,
 		Leased:           len(events),
 		Accepted:         accepted,
 		Failed:           failed,

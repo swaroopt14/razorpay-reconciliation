@@ -48,18 +48,25 @@ type ActionService struct {
 	actionRepo *persistence.ActionContractRepo
 	outboxRepo *persistence.OutboxRepo
 	pool       *pgxpool.Pool // needed to open transactions
+	signer     Signer        // PHASE 5 (refactor): real signature abstraction
 }
 
 // NewActionService creates an ActionService.
+//
+// PHASE 5 (refactor): signer is now required — pass services.NewDevSigner()
+// (or whatever services.NewSignerForEnvironment(cfg.Environment) returns)
+// from cmd/main.go.
 func NewActionService(
 	actionRepo *persistence.ActionContractRepo,
 	outboxRepo *persistence.OutboxRepo,
 	pool *pgxpool.Pool,
+	signer Signer,
 ) *ActionService {
 	return &ActionService{
 		actionRepo: actionRepo,
 		outboxRepo: outboxRepo,
 		pool:       pool,
+		signer:     signer,
 	}
 }
 
@@ -79,9 +86,18 @@ type CreateActionRequest struct {
 	TriggerEventID string
 
 	// PHASE 5 — sourced from policy_registry
-	RequiresManualApproval bool             // policy.RequiresManualApproval
+	RequiresManualApproval bool                // policy.RequiresManualApproval
 	PolicyFamily           models.PolicyFamily // policy.PolicyFamily
-	Severity               string           // parsed from DSL or policy.Severity column
+	Severity               string              // parsed from DSL or policy.Severity column
+
+	// PHASE 5 (refactor) — sourced from policy_registry via the
+	// policy_definitions correlated subquery (policy_repo.go). Empty string
+	// if the policy's dual-written definition hasn't landed (should not
+	// happen post-Phase-5, handled gracefully — see deriveScope/idempotency
+	// key builder below, which simply hash an empty string in that case).
+	PolicyRegistryID string // policy.PolicyRegistryID
+	PolicyDigest     string // policy.PolicyDigest
+	PolicySource     string // policy.PolicySource
 }
 
 // CreateAction creates an ActionContract and its outbox entry atomically.
@@ -107,14 +123,27 @@ func (s *ActionService) CreateAction(
 	req CreateActionRequest,
 ) error {
 
-	// ── Build idempotency key ─────────────────────────────────────────────
-	// SHA-256(policy_id + scope_refs + trigger_event_id)
-	// Same inputs → same key → DB UNIQUE constraint silently ignores duplicate
-	scopeJSON, err := json.Marshal(req.ScopeRefs)
+	// SHA-256(policy_id + scope_refs + trigger_event_id) input, still needed
+	// for the ScopeRefs field itself further down.
+	_, err := json.Marshal(req.ScopeRefs)
 	if err != nil {
 		return fmt.Errorf("action_service.CreateAction marshal scope_refs: %w", err)
 	}
-	idempotencyKey := buildIdempotencyKey(req.PolicyID, string(scopeJSON), req.TriggerEventID)
+
+	// ── PHASE 5 (refactor): scope classifier + envelope lineage + integrity
+	// hashes — computed before the idempotency key and signature so both can
+	// depend on them.
+	scopeType, scopeRef := deriveScope(req.ScopeRefs, req.TenantID)
+	envMeta := models.EnvelopeMetaFromContext(ctx)
+	inputFactsHash := fmt.Sprintf("%x", sha256.Sum256([]byte(req.InputRefsJSON)))
+	payloadHash := fmt.Sprintf("%x", sha256.Sum256([]byte(req.PayloadJSON)))
+
+	// ── Build idempotency key ─────────────────────────────────────────────
+	// Same inputs → same key → DB UNIQUE constraint silently ignores duplicate.
+	idempotencyKey := buildIdempotencyKey(
+		req.TenantID, req.PolicyID, req.PolicyVersion, req.PolicySource, req.PolicyDigest,
+		scopeType, scopeRef, req.TriggerEventID, envMeta.EventVersion, payloadHash,
+	)
 
 	// ── Determine contract status ─────────────────────────────────────────
 	// PHASE 5: the approval gate. Two conditions force PENDING_APPROVAL:
@@ -146,13 +175,44 @@ func (s *ActionService) CreateAction(
 		Confidence:     req.Confidence,
 		PayloadJSON:    req.PayloadJSON,
 		IdempotencyKey: idempotencyKey,
-		ContractStatus: contractStatus, // PHASE 5
-		ExpiresAt:      expiresAt,      // PHASE 5
+		ContractStatus: contractStatus,   // PHASE 5
+		ExpiresAt:      expiresAt,        // PHASE 5
 		PolicyFamily:   req.PolicyFamily, // PHASE 5
-		Severity:       req.Severity,   // PHASE 5
+		Severity:       req.Severity,     // PHASE 5
 		CreatedAt:      now,
+
+		// ── PHASE 5 (refactor) ────────────────────────────────────────────
+		PolicyRegistryID:     req.PolicyRegistryID,
+		PolicySource:         req.PolicySource,
+		PolicyDigest:         req.PolicyDigest,
+		ScopeType:            scopeType,
+		ScopeRef:             scopeRef,
+		TriggerEventID:       req.TriggerEventID,
+		TriggerEventSource:   envMeta.EventSource,
+		TriggerEventType:     envMeta.EventType,
+		TriggerEventVersion:  envMeta.EventVersion,
+		InputFactsHash:       inputFactsHash,
+		PayloadHash:          payloadHash,
+		PayloadSchemaVersion: "legacy",
 	}
-	contract.Signature = signContract(contract, string(scopeJSON))
+
+	// PHASE 5 (refactor): sign the canonical hash of the immutable fields via
+	// the Signer abstraction (clarification §5) — never sign raw mutable JSON.
+	sigPayloadHash := buildSignaturePayloadHash(contract)
+	sigResult, err := s.signer.Sign(ctx, sigPayloadHash)
+	if err != nil {
+		return fmt.Errorf("action_service.CreateAction sign: %w", err)
+	}
+	contract.Signature = sigResult.Signature
+	contract.SignatureAlgorithm = sigResult.Algorithm
+	contract.SignatureKeyID = sigResult.KeyID
+	contract.SignaturePayloadHash = sigPayloadHash
+	contract.CanonicalizationVersion = sigResult.CanonicalizationVersion
+	signedAt := sigResult.SignedAt
+	contract.SignedAt = &signedAt
+	// No external verification endpoint exists yet (clarification §5 "Phase
+	// 2" — key registry, auditor bundle, rotation — is out of scope here).
+	contract.SignatureVerificationStatus = "UNVERIFIED"
 
 	// ── Decide if an outbox entry is needed ───────────────────────────────
 	// No outbox for PENDING_APPROVAL — we wait for human sign-off.
@@ -188,15 +248,23 @@ func (s *ActionService) CreateAction(
 
 	// ── Write 2: Insert outbox entry (only when actuation is needed) ──────
 	if needsOutbox {
+		outboxPayload := buildOutboxPayload(req, actionID)
 		outboxEntry := models.ActuationOutbox{
 			EventID:     "evt_" + uuid.New().String(),
 			ActionID:    actionID,
 			EventType:   string(req.Decision),
-			Payload:     buildOutboxPayload(req, actionID),
+			Payload:     outboxPayload,
 			Status:      models.OutboxStatusPending,
 			Attempts:    0,
 			NextRetryAt: now,
 			CreatedAt:   now,
+			// PHASE 5 (refactor): denormalized from the parent contract so
+			// tenant/scope-filtered outbox queries don't need a join.
+			TenantID:             contract.TenantID,
+			ScopeType:            contract.ScopeType,
+			ScopeRef:             contract.ScopeRef,
+			PayloadHash:          fmt.Sprintf("%x", sha256.Sum256([]byte(outboxPayload))),
+			PayloadSchemaVersion: "legacy",
 		}
 		if err := s.outboxRepo.InsertTx(ctx, tx, outboxEntry); err != nil {
 			return fmt.Errorf("action_service.CreateAction insert outbox: %w", err)
@@ -272,23 +340,31 @@ func (s *ActionService) ApproveAction(
 	// Insert outbox entry now that approval is confirmed.
 	// Build a synthetic CreateActionRequest just for buildOutboxPayload.
 	req := CreateActionRequest{
-		TenantID:     contract.TenantID,
-		PolicyID:     contract.PolicyID,
+		TenantID:      contract.TenantID,
+		PolicyID:      contract.PolicyID,
 		PolicyVersion: contract.PolicyVersion,
-		ScopeRefs:    contract.ScopeRefs,
-		Decision:     contract.Decision,
-		PayloadJSON:  contract.PayloadJSON,
+		ScopeRefs:     contract.ScopeRefs,
+		Decision:      contract.Decision,
+		PayloadJSON:   contract.PayloadJSON,
 	}
 	now := time.Now().UTC()
+	outboxPayload := buildOutboxPayload(req, actionID)
 	outboxEntry := models.ActuationOutbox{
 		EventID:     "evt_" + uuid.New().String(),
 		ActionID:    actionID,
 		EventType:   string(contract.Decision),
-		Payload:     buildOutboxPayload(req, actionID),
+		Payload:     outboxPayload,
 		Status:      models.OutboxStatusPending,
 		Attempts:    0,
 		NextRetryAt: now,
 		CreatedAt:   now,
+		// PHASE 5 (refactor): denormalized from the parent contract, same as
+		// the CreateAction outbox insert above.
+		TenantID:             contract.TenantID,
+		ScopeType:            contract.ScopeType,
+		ScopeRef:             contract.ScopeRef,
+		PayloadHash:          fmt.Sprintf("%x", sha256.Sum256([]byte(outboxPayload))),
+		PayloadSchemaVersion: "legacy",
 	}
 	if err := s.outboxRepo.InsertTx(ctx, tx, outboxEntry); err != nil {
 		return false, fmt.Errorf("action_service.ApproveAction insert outbox: %w", err)
@@ -343,23 +419,78 @@ func (s *ActionService) DismissAction(
 
 // ── Private helpers ────────────────────────────────────────────────────────────
 
-// buildIdempotencyKey creates a stable SHA-256 key from policy+scope+trigger.
-// Same inputs always produce the same key — duplicate events are silently skipped.
-func buildIdempotencyKey(policyID, scopeRefsJSON, triggerEventID string) string {
-	raw := fmt.Sprintf("%s|%s|%s", policyID, scopeRefsJSON, triggerEventID)
+// buildIdempotencyKey creates a stable SHA-256 key identifying "the same
+// decision, for the same reason, on the same data" — adapted from blueprint
+// §6's 12-input formula (tenant_id, policy_key, policy_version,
+// policy_source, policy_digest, scope_type, scope_ref, trigger_event_id,
+// trigger_event_version, projection_source, projection_version,
+// payload_hash). projection_source/projection_version are DROPPED here:
+// this codebase's DSL can read several projection metrics in one WHEN
+// clause (buildEvalContext in policy_service.go), so there is no single
+// projection row whose source/version could stand in for "the" projection
+// that fed the decision — hashing an arbitrary pick would misrepresent the
+// data more than honestly omitting it. Every other field is genuinely
+// available and hashed. Same inputs always produce the same key — duplicate
+// events are silently skipped via the idempotency_key UNIQUE constraint.
+func buildIdempotencyKey(
+	tenantID, policyID string, policyVersion int, policySource, policyDigest,
+	scopeType, scopeRef, triggerEventID, triggerEventVersion, payloadHash string,
+) string {
+	raw := fmt.Sprintf("%s|%s|%d|%s|%s|%s|%s|%s|%s|%s",
+		tenantID, policyID, policyVersion, policySource, policyDigest,
+		scopeType, scopeRef, triggerEventID, triggerEventVersion, payloadHash,
+	)
 	hash := sha256.Sum256([]byte(raw))
 	return fmt.Sprintf("%x", hash)
 }
 
-// signContract creates a SHA-256 signature over the immutable fields of the contract.
-// In production, replace with ed25519 signing via KMS for tamper-evident audit trail.
-func signContract(ac models.ActionContract, scopeJSON string) string {
-	canonical := fmt.Sprintf("%s|%s|%s|%s|%.3f|%s",
-		ac.ActionID, ac.TenantID, ac.PolicyID,
-		string(ac.Decision), ac.Confidence, scopeJSON,
+// deriveScope classifies an ActionContract's primary scope from its
+// ScopeRefs, precedence BATCH > INTENT > CONTRACT > CORRIDOR > TENANT — same
+// "honest fallback" idiom as Phase 3's keyToProjectionMeta. Mirrored exactly
+// by migration 012's SQL backfill for pre-Phase-5 rows.
+//
+// Ordering rationale: BATCH ranks highest per this refactor's own precedent
+// of first-class batch treatment (Phase 2/3). INTENT and CONTRACT rank above
+// CORRIDOR because policy_registry.scope_type's own vocabulary already
+// treats 'contract' as the narrowest granularity ("contract → evaluates
+// once per individual contract") with 'corridor' broader — a single intent
+// or contract is a more specific reference than "some corridor", so when
+// e.g. sla_worker.go's breach action sets both IntentID and CorridorID, the
+// action classifies as INTENT-scoped (corridor stays available via
+// ScopeRefs for correlation, it just isn't the *primary* classifier).
+// CONTRACT is a ZPI addition (this codebase's own scope_refs.contract_id
+// concept), same as Phase 3 added ScopeBank for pattern.bank.* rows that fit
+// none of the blueprint's six.
+func deriveScope(refs models.ScopeRefs, tenantID string) (scopeType, scopeRef string) {
+	switch {
+	case refs.BatchID != "":
+		return "BATCH", refs.BatchID
+	case refs.IntentID != "":
+		return "INTENT", refs.IntentID
+	case refs.ContractID != "":
+		return "CONTRACT", refs.ContractID
+	case refs.CorridorID != "":
+		return "CORRIDOR", refs.CorridorID
+	default:
+		return "TENANT", tenantID
+	}
+}
+
+// buildSignaturePayloadHash returns the canonical hash to sign — clarification
+// §5's exact field list: tenant_id, action_id, policy_key, policy_version,
+// policy_source, policy_digest, scope_type, scope_ref, input_facts_hash,
+// payload_hash, decision, confidence, created_at. Never sign raw mutable
+// JSON — this replaces the old signContract() placeholder, which signed an
+// ad hoc field subset with plain sha256 and no algorithm/key metadata.
+func buildSignaturePayloadHash(ac models.ActionContract) string {
+	raw := fmt.Sprintf("%s|%s|%s|%d|%s|%s|%s|%s|%s|%s|%s|%.3f|%s",
+		ac.TenantID, ac.ActionID, ac.PolicyID, ac.PolicyVersion,
+		ac.PolicySource, ac.PolicyDigest, ac.ScopeType, ac.ScopeRef,
+		ac.InputFactsHash, ac.PayloadHash, string(ac.Decision), ac.Confidence,
+		ac.CreatedAt.Format(time.RFC3339Nano),
 	)
-	hash := sha256.Sum256([]byte(canonical))
-	return fmt.Sprintf("sha256:%x", hash)
+	sum := sha256.Sum256([]byte(raw))
+	return fmt.Sprintf("%x", sum)
 }
 
 // needsActuation returns true when the decision should produce a Kafka message.
@@ -426,14 +557,14 @@ func needsActuation(d models.Decision) bool {
 // MUST NOT contain PII — only IDs, references, and operational data.
 func buildOutboxPayload(req CreateActionRequest, actionID string) string {
 	payload := map[string]any{
-		"action_id":     actionID,
-		"tenant_id":     req.TenantID,
-		"policy_id":     req.PolicyID,
+		"action_id":      actionID,
+		"tenant_id":      req.TenantID,
+		"policy_id":      req.PolicyID,
 		"policy_version": req.PolicyVersion,
-		"decision":      string(req.Decision),
-		"scope_refs":    req.ScopeRefs,
-		"payload":       req.PayloadJSON,
-		"created_at":    time.Now().UTC(),
+		"decision":       string(req.Decision),
+		"scope_refs":     req.ScopeRefs,
+		"payload":        req.PayloadJSON,
+		"created_at":     time.Now().UTC(),
 	}
 	b, _ := json.Marshal(payload)
 	return string(b)

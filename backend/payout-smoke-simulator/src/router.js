@@ -9,6 +9,7 @@ import {
   buildBatchIdsList,
   buildDlqItems,
   buildIntelligenceBatches,
+  buildManualReviewDlq,
   buildPaymentIntents,
   buildSettlementErrors,
   defensibilityKpi,
@@ -24,6 +25,7 @@ import {
   exceptionsSummary,
   patternDetail,
   patternHistory,
+  promptLayerQuery,
   recommendationDetail,
   recommendationsDashboard,
   patternsDashboard,
@@ -118,10 +120,10 @@ export async function handleRequest(request) {
     return jsonResponse(intentsListPage(page, pageSize))
   }
   if (method === 'GET' && pathname === '/v1/dlq') {
-    return jsonResponse(buildDlqItems(PRIMARY_BATCH))
+    return jsonResponse(buildManualReviewDlq())
   }
   if (method === 'GET' && pathname === '/v1/dlq/manual-review') {
-    return jsonResponse(buildDlqItems(PRIMARY_BATCH))
+    return jsonResponse(buildManualReviewDlq())
   }
 
   // ── zord-outcome-engine (settlement) ─────────────────────────────────────
@@ -136,15 +138,18 @@ export async function handleRequest(request) {
 
   // ── zord-intelligence ──────────────────────────────────────────────────────
   if (method === 'GET' && pathname === '/v1/operations/summary') {
-    return jsonResponse(operationsSummary())
+    const batchId = url.searchParams.get('batch_id')?.trim() || undefined
+    return jsonResponse(operationsSummary(batchId))
   }
   if (method === 'GET' && pathname === '/v1/exceptions/summary') {
-    return jsonResponse(exceptionsSummary())
+    const batchId = url.searchParams.get('batch_id')?.trim() || undefined
+    return jsonResponse(exceptionsSummary(batchId))
   }
   if (method === 'GET' && pathname === '/v1/intelligence/dashboard/leakage') {
     const fromDate = url.searchParams.get('from_date')?.trim() || undefined
     const toDate = url.searchParams.get('to_date')?.trim() || undefined
-    return jsonResponse(leakageKpi(fromDate, toDate))
+    const batchId = url.searchParams.get('batch_id')?.trim() || undefined
+    return jsonResponse(leakageKpi(fromDate, toDate, batchId))
   }
   if (method === 'GET' && pathname === '/v1/intelligence/timeseries/leakage-exposure') {
     const granularity = url.searchParams.get('granularity')?.trim() || 'day'
@@ -183,7 +188,9 @@ export async function handleRequest(request) {
     return jsonResponse({ count: 0, snapshots: [] })
   }
   if (method === 'GET' && pathname === '/v1/intelligence/batches') {
-    return jsonResponse(buildIntelligenceBatches())
+    const limit = url.searchParams.get('limit')?.trim() || undefined
+    const status = url.searchParams.get('status')?.trim() || undefined
+    return jsonResponse(buildIntelligenceBatches({ limit, status }))
   }
   if (method === 'GET' && pathname.startsWith('/v1/intelligence/batches/')) {
     const batchId = batchIdFromPath(pathname, 2)
@@ -230,6 +237,17 @@ export async function handleRequest(request) {
   // ── connectors / edge misc ─────────────────────────────────────────────────
   if (method === 'GET' && pathname === '/v1/connectors/sync-status') {
     return jsonResponse(syncStatus())
+  }
+
+  // ── zord-prompt-layer (Ask Zord / Payment Operations View) ─────────────────
+  if (method === 'POST' && (pathname === '/query' || pathname === '/v1/query')) {
+    let body = {}
+    try {
+      body = await request.json()
+    } catch {
+      body = {}
+    }
+    return jsonResponse(promptLayerQuery(body))
   }
 
   return jsonResponse(notFound(pathname), 404)

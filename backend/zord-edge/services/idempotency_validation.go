@@ -18,28 +18,41 @@ import (
 // different payload fingerprint — a hard conflict that must be rejected.
 var ErrFingerprintMismatch = errors.New("IDEMPOTENCY_KEY_REUSE_WITH_DIFFERENT_PAYLOAD")
 
+// ErrIdempotencyInFlight is returned when another request with the same key and
+// fingerprint is currently processing (status IN_PROGRESS).
+var ErrIdempotencyInFlight = errors.New("IDEMPOTENCY_KEY_IN_FLIGHT")
+
+// staleInProgressReclaim is how long an IN_PROGRESS row may sit without
+// completion before a new caller may reclaim it (crashed worker recovery).
+const staleInProgressReclaim = "90 seconds"
+
 // PersistIdempotency inserts a new idempotency record or detects duplicates.
 //
 // Returns:
-//   - (uuid.Nil, nil)              → new key, proceed normally
+//   - (uuid.Nil, nil)              → caller may proceed (new key or reclaimed retry)
 //   - (firstEnvelopeID, nil)       → exact duplicate (same fingerprint), return 409
 //   - (uuid.Nil, ErrFingerprintMismatch) → same key, different payload, hard reject
+//   - (uuid.Nil, ErrIdempotencyInFlight) → concurrent duplicate in progress, retry later
 func PersistIdempotency(ctx context.Context, msg model.RawIntentMessage, db *sql.DB) (uuid.UUID, error) {
-
 	if msg.IdempotencyKey == "" {
 		log.Print("Idempotency key is missing, skipping idempotency validation")
 		return uuid.Nil, nil
 	}
 
-	// --- Attempt insert ---
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	defer tx.Rollback()
+
 	insertQuery := `
 		INSERT INTO idempotency_keys
 			(tenant_id, idempotency_key, status, request_fingerprint,
 			 first_seen_at, last_seen_at, resolution_type, expires_at)
-		VALUES ($1, $2, 'RESERVED', $3, now(), now(), 'CREATED', now() + interval '1 hour')
+		VALUES ($1, $2, 'IN_PROGRESS', $3, now(), now(), 'CREATED', now() + interval '1 hour')
 		ON CONFLICT (tenant_id, idempotency_key) DO NOTHING
 	`
-	res, err := db.ExecContext(ctx, insertQuery,
+	res, err := tx.ExecContext(ctx, insertQuery,
 		msg.TenantID,
 		msg.IdempotencyKey,
 		msg.RequestFingerprint,
@@ -55,33 +68,37 @@ func PersistIdempotency(ctx context.Context, msg model.RawIntentMessage, db *sql
 		return uuid.Nil, err
 	}
 
-	// New record inserted — proceed.
 	if rows == 1 {
+		if err := tx.Commit(); err != nil {
+			return uuid.Nil, err
+		}
 		return uuid.Nil, nil
 	}
 
-	// --- Conflict: fetch stored record ---
-	var storedFingerprint string
-	var firstEnvelopeID uuid.NullUUID
-	var conflictCount int
-	var principalID uuid.NullUUID
-	var sourceClass sql.NullString
+	var (
+		storedFingerprint string
+		status            string
+		firstEnvelopeID   uuid.NullUUID
+		conflictCount     int
+		principalID       uuid.NullUUID
+		sourceClass       sql.NullString
+	)
 
-	selectQuery := `
-		SELECT request_fingerprint, first_envelope_id, conflict_count, principal_id_first_seen, source_class_first_seen
+	err = tx.QueryRowContext(ctx, `
+		SELECT status, request_fingerprint, first_envelope_id, conflict_count,
+		       principal_id_first_seen, source_class_first_seen
 		FROM idempotency_keys
 		WHERE tenant_id = $1 AND idempotency_key = $2
-	`
-	err = db.QueryRowContext(ctx, selectQuery, msg.TenantID, msg.IdempotencyKey).
-		Scan(&storedFingerprint, &firstEnvelopeID, &conflictCount, &principalID, &sourceClass)
+		FOR UPDATE
+	`, msg.TenantID, msg.IdempotencyKey).Scan(
+		&status, &storedFingerprint, &firstEnvelopeID, &conflictCount, &principalID, &sourceClass,
+	)
 	if err != nil {
 		log.Printf("Error fetching stored idempotency record: %v", err)
 		return uuid.Nil, err
 	}
 
-	// --- Track the conflict ---
 	newConflictCount := conflictCount + 1
-	// Hash the fingerprint as requested before storing as JSON.
 	fingerprintHash := sha256.Sum256([]byte(msg.RequestFingerprint))
 	snapshot := map[string]interface{}{
 		"fingerprint": hex.EncodeToString(fingerprintHash[:]),
@@ -95,13 +112,11 @@ func PersistIdempotency(ctx context.Context, msg model.RawIntentMessage, db *sql
 	`
 	updateArgs := []interface{}{newConflictCount, string(snapshotJSON), msg.TenantID, msg.IdempotencyKey}
 
-	// --- Metadata Retrieval (First Seen) ---
-	// If first_envelope_id is present but metadata is not, fetch it from ingress_envelopes.
 	if firstEnvelopeID.Valid && !principalID.Valid {
 		var pID uuid.UUID
 		var sc string
 		metaQuery := `SELECT principal_id, source_class FROM ingress_envelopes WHERE envelope_id = $1`
-		err = db.QueryRowContext(ctx, metaQuery, firstEnvelopeID.UUID).Scan(&pID, &sc)
+		err = tx.QueryRowContext(ctx, metaQuery, firstEnvelopeID.UUID).Scan(&pID, &sc)
 		if err == nil {
 			updateFields += ", principal_id_first_seen = $5, source_class_first_seen = $6"
 			updateArgs = append(updateArgs, pID, sc)
@@ -110,34 +125,89 @@ func PersistIdempotency(ctx context.Context, msg model.RawIntentMessage, db *sql
 		}
 	}
 
-	// --- Fingerprint comparison and final update ---
-	if storedFingerprint == msg.RequestFingerprint {
-		// Exact duplicate — update last_seen_at and resolution_type.
+	if storedFingerprint != msg.RequestFingerprint {
+		finalUpdateQuery := `
+			UPDATE idempotency_keys
+			SET ` + updateFields + `
+			WHERE tenant_id = $3 AND idempotency_key = $4
+		`
+		if _, err = tx.ExecContext(ctx, finalUpdateQuery, updateArgs...); err != nil {
+			return uuid.Nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return uuid.Nil, err
+		}
+		log.Printf("Idempotency key reused with different payload: tenant_id=%s key=%s",
+			msg.TenantID, msg.IdempotencyKey)
+		return uuid.Nil, ErrFingerprintMismatch
+	}
+
+	// Same fingerprint — completed duplicate.
+	if firstEnvelopeID.Valid && status == "COMPLETED" {
 		finalUpdateQuery := `
 			UPDATE idempotency_keys
 			SET last_seen_at = now(), resolution_type = 'REUSED', ` + updateFields + `
 			WHERE tenant_id = $3 AND idempotency_key = $4
 		`
-		_, _ = db.ExecContext(ctx, finalUpdateQuery, updateArgs...)
-
+		if _, err = tx.ExecContext(ctx, finalUpdateQuery, updateArgs...); err != nil {
+			return uuid.Nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return uuid.Nil, err
+		}
 		log.Printf("Duplicate idempotency key with same fingerprint: tenant_id=%s key=%s envelope_id=%v",
 			msg.TenantID, msg.IdempotencyKey, firstEnvelopeID.UUID.String())
+		return firstEnvelopeID.UUID, nil
+	}
 
-		if firstEnvelopeID.Valid {
-			return firstEnvelopeID.UUID, nil
+	// Same fingerprint, no envelope yet — try to claim (retry after failure or stale worker).
+	claimRes, err := tx.ExecContext(ctx, `
+		UPDATE idempotency_keys
+		SET status = 'IN_PROGRESS', last_seen_at = now()
+		WHERE tenant_id = $1 AND idempotency_key = $2
+		  AND request_fingerprint = $3
+		  AND first_envelope_id IS NULL
+		  AND (
+		    status = 'RESERVED'
+		    OR status = 'IN_PROGRESS' AND last_seen_at < now() - ($4::interval)
+		  )
+	`, msg.TenantID, msg.IdempotencyKey, msg.RequestFingerprint, staleInProgressReclaim)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	claimed, err := claimRes.RowsAffected()
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if claimed == 1 {
+		if err := tx.Commit(); err != nil {
+			return uuid.Nil, err
 		}
 		return uuid.Nil, nil
 	}
 
-	// Different payload with same key — hard reject.
-	finalUpdateQuery := `
-		UPDATE idempotency_keys
-		SET ` + updateFields + `
-		WHERE tenant_id = $3 AND idempotency_key = $4
-	`
-	_, _ = db.ExecContext(ctx, finalUpdateQuery, updateArgs...)
+	if err := tx.Commit(); err != nil {
+		return uuid.Nil, err
+	}
+	log.Printf("Idempotency key in flight: tenant_id=%s key=%s", msg.TenantID, msg.IdempotencyKey)
+	return uuid.Nil, ErrIdempotencyInFlight
+}
 
-	log.Printf("Idempotency key reused with different payload: tenant_id=%s key=%s",
-		msg.TenantID, msg.IdempotencyKey)
-	return uuid.Nil, ErrFingerprintMismatch
+// ReleaseIdempotencyClaim resets an in-flight claim after S3 or DB persistence
+// failed so the same client may retry with the same key. No-op once completed.
+func ReleaseIdempotencyClaim(ctx context.Context, db *sql.DB, tenantID, idempotencyKey, fingerprint string) {
+	if idempotencyKey == "" {
+		return
+	}
+	_, err := db.ExecContext(ctx, `
+		UPDATE idempotency_keys
+		SET status = 'RESERVED', last_seen_at = now()
+		WHERE tenant_id = $1 AND idempotency_key = $2
+		  AND request_fingerprint = $3
+		  AND status = 'IN_PROGRESS'
+		  AND first_envelope_id IS NULL
+	`, tenantID, idempotencyKey, fingerprint)
+	if err != nil {
+		log.Printf("ReleaseIdempotencyClaim failed tenant=%s key=%s: %v", tenantID, idempotencyKey, err)
+	}
 }

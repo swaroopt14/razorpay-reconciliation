@@ -43,19 +43,29 @@ func (r *BatchPullRepo) LeaseBatch(ctx context.Context, limit int, leaseTTLSecon
 	leaseUUID := uuid.New()
 	leaseID := leaseUUID.String()
 
-	// Only pick batches where update activity has stopped for 5 minutes, i.e. canonicalization is completed.
+	// Prefer the explicit lifecycle signal: intent_ingest_runs.status = 'COMPLETED'
+	// means ingestion for this batch is genuinely done. Fall back to the old
+	// quiet-5-minutes heuristic only when no ingest run is tracked for this
+	// batch at all (e.g. legacy data, or a batch that predates this migration) —
+	// see refactor blueprint Phase 6 ("replace quiet-5-minute logic with
+	// lifecycle gate where possible").
 	query := `
 WITH picked AS (
-	SELECT tenant_id, batch_id
-	FROM canonical_batches
-	WHERE dispatched_at IS NULL
-	  AND retry_count < $5
-	  AND (lease_until IS NULL OR lease_until < NOW())
-	  AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
-	  AND updated_at < NOW() - INTERVAL '5 minutes'
-	ORDER BY created_at ASC
+	SELECT cb.tenant_id, cb.batch_id
+	FROM canonical_batches cb
+	LEFT JOIN intent_ingest_runs ir
+		ON ir.tenant_id = cb.tenant_id AND ir.batch_id = cb.batch_id
+	WHERE cb.dispatched_at IS NULL
+	  AND cb.retry_count < $5
+	  AND (cb.lease_until IS NULL OR cb.lease_until < NOW())
+	  AND (cb.next_attempt_at IS NULL OR cb.next_attempt_at <= NOW())
+	  AND (
+	        ir.status = 'COMPLETED'
+	        OR (ir.run_id IS NULL AND cb.updated_at < NOW() - INTERVAL '5 minutes')
+	      )
+	ORDER BY cb.created_at ASC
 	LIMIT $1
-	FOR UPDATE SKIP LOCKED
+	FOR UPDATE OF cb SKIP LOCKED
 ),
 leased AS (
 	UPDATE canonical_batches cb
@@ -206,6 +216,7 @@ func (r *BatchPullRepo) AckBatch(ctx context.Context, leaseID string, batchIDs [
 	query := `
 UPDATE canonical_batches
 SET dispatched_at = NOW(),
+    updated_at = NOW(),
     lease_id = NULL,
     leased_by = NULL,
     lease_until = NULL
@@ -220,6 +231,11 @@ WHERE lease_id = $1::uuid
 }
 
 func (r *BatchPullRepo) NackBatch(ctx context.Context, leaseID string, batchIDs []string) (int64, error) {
+	// NOTE: bumping updated_at here also resets the LeaseBatch fallback
+	// quiet-wait heuristic (cb.updated_at < NOW() - 5 minutes) for any batch
+	// that still has no intent_ingest_runs row. That's the correct behavior —
+	// a just-nacked batch shouldn't be immediately re-picked — but it does mean
+	// such a batch waits another 5 minutes after every nack before retry.
 	query := `
 UPDATE canonical_batches
 SET retry_count = retry_count + 1,
@@ -229,6 +245,7 @@ SET retry_count = retry_count + 1,
 			LEAST(3600, GREATEST(1, POWER(2, retry_count))) * (0.8 + random() * 0.4)
 		) * INTERVAL '1 second'
     END,
+    updated_at = NOW(),
     lease_id = NULL,
     leased_by = NULL,
     lease_until = NULL

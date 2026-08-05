@@ -232,6 +232,96 @@ func (s *LeakageIntelligenceService) ComputeAndSave(
 	return nil
 }
 
+// ComputeAndSaveForBatch is the batch-scoped twin of ComputeAndSave.
+//
+// Reads the batch-scoped leakage projection (leakage.batch.{batchID}), builds
+// the same deterministic snapshot used for tenant scope, but forces ML fields
+// to neutral — there is no Z-score anomaly detection at batch scope (lifetime
+// window, no daily baseline to compare against).
+func (s *LeakageIntelligenceService) ComputeAndSaveForBatch(
+	ctx context.Context,
+	tenantID, batchID string,
+) error {
+	leakage, err := s.projRepo.GetLeakageSummaryForBatch(ctx, tenantID, batchID)
+	if err != nil {
+		return fmt.Errorf("leakage_svc.ComputeAndSaveForBatch GetLeakageSummaryForBatch tenant=%s batch=%s: %w", tenantID, batchID, err)
+	}
+	if leakage == nil {
+		return nil
+	}
+
+	snap := s.buildSnapshot(leakage)
+	snap.AnomalyScore = 0
+	snap.AnomalyLevel = "N/A"
+	snap.AnomalyZScore = 0
+
+	projRefs := []string{fmt.Sprintf("leakage.batch.%s", batchID)}
+	projRefsJSON, _ := json.Marshal(projRefs)
+	snapJSON, err := json.Marshal(snap)
+	if err != nil {
+		return fmt.Errorf("leakage_svc.ComputeAndSaveForBatch marshal tenant=%s batch=%s: %w", tenantID, batchID, err)
+	}
+
+	snapID := "snap_" + uuid.New().String()
+	modelVer := "deterministic_v1"
+	if err := s.snapshotRepo.Create(ctx, persistence.IntelligenceSnapshot{
+		SnapshotID:         snapID,
+		TenantID:           tenantID,
+		SnapshotType:       "LEAKAGE",
+		ScopeType:          "BATCH",
+		ScopeRef:           &batchID,
+		WindowStart:        persistence.BatchProjectionWindowStart,
+		WindowEnd:          persistence.BatchProjectionWindowEnd,
+		ProjectionRefsJSON: projRefsJSON,
+		SnapshotJSON:       snapJSON,
+		ModelVersion:       &modelVer,
+		CreatedAt:          time.Now().UTC(),
+	}); err != nil {
+		return fmt.Errorf("leakage_svc.ComputeAndSaveForBatch Create snapshot tenant=%s batch=%s: %w", tenantID, batchID, err)
+	}
+
+	if err := s.persistMLFeaturesForBatch(ctx, tenantID, batchID, snapID, leakage); err != nil {
+		log.Printf("leakage_svc.ComputeAndSaveForBatch: persistMLFeaturesForBatch failed tenant=%s batch=%s: %v",
+			tenantID, batchID, err)
+	}
+
+	return nil
+}
+
+// persistMLFeaturesForBatch is the batch-scoped twin of persistMLFeatures.
+func (s *LeakageIntelligenceService) persistMLFeaturesForBatch(
+	ctx context.Context,
+	tenantID, batchID, snapshotID string,
+	lv *models.LeakageValue,
+) error {
+	features := map[string]any{
+		"total_amount_minor":          lv.TotalAmountMinor,
+		"leakage_percentage":          lv.LeakagePercentage,
+		"unmatched_intent_count":      lv.UnmatchedIntentCount,
+		"under_settlement_count":      lv.UnderSettlementCount,
+		"orphan_settlement_count":     lv.OrphanSettlementCount,
+		"reversal_count":              lv.ReversalCount,
+		"total_intended_amount_minor": lv.TotalIntendedAmountMinor,
+		"snapshot_id":                 snapshotID,
+	}
+	featJSON, err := json.Marshal(features)
+	if err != nil {
+		return err
+	}
+	return s.mlRepo.Insert(ctx, persistence.MLFeatureRow{
+		FeatureRowID:  "feat_" + uuid.New().String(),
+		TenantID:      tenantID,
+		ScopeType:     "BATCH",
+		ScopeRef:      batchID,
+		FeatureFamily: "LEAKAGE",
+		WindowStart:   persistence.BatchProjectionWindowStart,
+		WindowEnd:     persistence.BatchProjectionWindowEnd,
+		FeaturesJSON:  featJSON,
+		LabelJSON:     nil,
+		CreatedAt:     time.Now().UTC(),
+	})
+}
+
 // buildSnapshot converts a LeakageValue projection into a full LeakageSnapshot.
 func (s *LeakageIntelligenceService) buildSnapshot(lv *models.LeakageValue) LeakageSnapshot {
 	snap := LeakageSnapshot{

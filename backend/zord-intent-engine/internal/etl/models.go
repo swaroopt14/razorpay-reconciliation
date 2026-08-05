@@ -12,6 +12,10 @@ type ETLIngestRun struct {
 	EnvelopeID          uuid.UUID  `db:"envelope_id"`
 	IntentID            *uuid.UUID `db:"intent_id"`
 	OutboxEventID       string     `db:"outbox_event_id"`
+	// BatchID links this ETL quality-scoring run back to the ingest batch it
+	// came from, when the source intent had one (webhook-originated intents
+	// won't). See refactor blueprint ledger item #21.
+	BatchID             *string    `db:"batch_id"`
 	ArtifactFamily      string     `db:"artifact_family"`
 	SourceSystem        string     `db:"source_system"`
 	MappingProfileID    string     `db:"mapping_profile_id"`
@@ -57,7 +61,6 @@ type TransformResult struct {
 
 // BatchTransformResponse is what POST /internal/airflow/transform returns
 type BatchTransformResponse struct {
-	LeaseID          string            `json:"lease_id"`
 	Leased           int               `json:"leased"`
 	Accepted         int               `json:"accepted"`
 	Failed           int               `json:"failed"`

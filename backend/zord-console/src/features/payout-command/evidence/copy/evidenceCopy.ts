@@ -211,6 +211,7 @@ export function mapProofTierLabel(tier: string | undefined): string {
 
 export function humanizePackMode(mode: string): string {
   const m = (mode || '').toUpperCase()
+  if (m.includes('BATCH')) return 'Batch proof'
   if (m.includes('INTELLIGENCE')) return 'Evidence Generated'
   if (m.includes('ATTACH')) return 'Evidence Generated'
   if (m.includes('DISPATCH')) return 'Dispatch Evidence'

@@ -2,7 +2,7 @@ package validator
 
 import (
 	"context"
-	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -107,7 +107,7 @@ func (v *Validator) persistDLQ(
 		Replayable:     replayable,
 		ClientBatchRef: clientBatchRef,
 		BatchID:        batchID,
-		SourceRowNum:   validationSourceRowNumFromRef(intent.SourceRowRef),
+		SourceRowNum:   parseSourceRowNum(intent.SourceRowRef),
 		IntentContext:  models.BuildIntentContext(status, intent),
 		TraceID:        traceID,
 
@@ -122,10 +122,16 @@ func (v *Validator) persistDLQ(
 	return &saved, nil
 }
 
-func validationSourceRowNumFromRef(ref string) *int {
+// parseSourceRowNum converts the source_row_ref string (plain integer relayed from
+// zord-edge, e.g. "3") into *int. Returns nil only when the string is empty or
+// not a valid integer — never independently computes a row number.
+func parseSourceRowNum(ref string) *int {
 	ref = strings.TrimSpace(ref)
-	var idx int
-	if _, err := fmt.Sscanf(ref, "row:%d", &idx); err != nil || idx <= 0 {
+	if ref == "" {
+		return nil
+	}
+	idx, err := strconv.Atoi(ref)
+	if err != nil {
 		return nil
 	}
 	return &idx

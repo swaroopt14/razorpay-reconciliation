@@ -49,18 +49,18 @@ func MaskUTR(utr string) string {
 }
 
 // MaskAccountNumber obfuscates a bank account number leaving only last 4 digits.
-func MaskAccountNumber(acc string) string {
-	digits := strings.Map(func(r rune) rune {
-		if r >= '0' && r <= '9' {
-			return r
-		}
-		return -1
-	}, acc)
-	if len(digits) <= 4 {
-		return "****"
-	}
-	return strings.Repeat("*", len(digits)-4) + digits[len(digits)-4:]
-}
+// func MaskAccountNumber(acc string) string {
+// 	digits := strings.Map(func(r rune) rune {
+// 		if r >= '0' && r <= '9' {
+// 			return r
+// 		}
+// 		return -1
+// 	}, acc)
+// 	if len(digits) <= 4 {
+// 		return "****"
+// 	}
+// 	return strings.Repeat("*", len(digits)-4) + digits[len(digits)-4:]
+// }
 
 // MaskEvidenceItems applies the appropriate masking level to a slice of
 // EvidenceItems for business-facing serialisation.

@@ -169,6 +169,7 @@ type ProviderQualityPattern struct {
 	OrphanRate             float64 `json:"orphan_rate"`
 	AvgCarrierRichness     float64 `json:"avg_carrier_richness"`
 	AvgParseConfidence     float64 `json:"avg_parse_confidence"`
+	AvgMappingConfidence   float64 `json:"avg_mapping_confidence"`
 	SettlementDelayP95Days float64 `json:"settlement_delay_p95_days"`
 	Severity               string  `json:"severity"`
 }
@@ -844,6 +845,7 @@ func (s *PatternIntelligenceService) computeProviderQualityPatterns(
 			OrphanRate:             prov.OrphanRate,
 			AvgCarrierRichness:     prov.AvgCarrierRichness,
 			AvgParseConfidence:     prov.AvgParseConfidence,
+			AvgMappingConfidence:   prov.AvgMappingConfidence,
 			SettlementDelayP95Days: prov.SettlementDelayP95Days,
 			Severity:               sourcePatternSeverity(combined),
 		})

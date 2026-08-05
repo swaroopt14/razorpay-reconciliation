@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
+	"github.com/pressly/goose/v3"
 	"github.com/shopspring/decimal"
 	"github.com/zord/zord-intelligence/config"
 	"github.com/zord/zord-intelligence/db"
@@ -86,9 +88,17 @@ func main() {
 	// ── Step 3: Connect to PostgreSQL ──────────────────────────────────────
 	pool := db.Connect(cfg)
 	defer pool.Close()
-	db.EnsureSchema(context.Background(), pool)
+
+	goose.SetBaseFS(nil)
+	if err := goose.SetDialect("postgres"); err != nil {
+		log.Fatal("goose dialect error:", err)
+	}
+	sqlDB := stdlib.OpenDBFromPool(pool)
+	if err := goose.Up(sqlDB, "db/migrations"); err != nil {
+		log.Fatal("migrations failed:", err)
+	}
+
 	db.ValidateSchema(context.Background(), pool)
-	db.EnsureProductionIndexes(context.Background(), pool)
 	syncIntelligenceMode(context.Background(), pool, string(cfg.IntelligenceMode))
 
 	// ── Step 4: Create repositories ───────────────────────────────────────
@@ -105,15 +115,25 @@ func main() {
 	predRepo := persistence.NewMLPredictionRepo(pool)
 	explRepo := persistence.NewIntelligenceExplanationRepo(pool)
 
+	// ── PHASE 1 REFACTOR: event_receipts idempotency gate ─────────────────
+	// Every event handler claims its receipt and commits all projection
+	// counter writes in one transaction via receiptRepo.RunOnce.
+	receiptRepo := persistence.NewEventReceiptRepo(pool)
+
 	// ── Performance: BatchWriter (5ms flush window for high-volume INSERTs) ──
-	// Groups concurrent intelligence_snapshot, batch_contract, and projection_state
-	// writes into single pgx.SendBatch calls — reduces DB round-trips ~50x at scale.
+	// Groups concurrent intelligence_snapshot writes into single pgx.SendBatch
+	// calls — reduces DB round-trips ~50x at scale.
+	//
+	// PHASE 1 REFACTOR: BatchWriter is no longer wired into projRepo/batchRepo.
+	// Their writes must be able to join the ambient event_receipts transaction
+	// (see internal/persistence/txctx.go), which BatchWriter's async coalescing
+	// is incompatible with. BatchWriter now serves intelligence_snapshots only —
+	// those writes are always post-commit (see projection_service.go handlers)
+	// and never need to be transactional with the counters that produced them.
 	batchWriter := persistence.NewBatchWriter(pool)
 	batchWriter.Start(context.Background())
 	defer batchWriter.Stop()
 	snapshotRepo.SetBatchWriter(batchWriter)
-	batchRepo.SetBatchWriter(batchWriter)
-	projRepo.SetBatchWriter(batchWriter)
 
 	// ── Step 5: Create ML client (request-reply over Kafka with Python ml-service)
 	mlClient := mlclient.New(cfg.KafkaBrokers, cfg.TopicMLRequest, cfg.TopicMLResult, cfg.KafkaGroupID)
@@ -121,7 +141,14 @@ func main() {
 	defer mlClient.Close()
 
 	// ── Step 6: Create services ────────────────────────────────────────────
-	actionService := services.NewActionService(actionRepo, outboxRepo, pool)
+	// PHASE 5 (refactor): Signer abstraction for action_contract signatures
+	// (clarification §5). Only DevSigner exists today regardless of
+	// environment — see services.NewSignerForEnvironment's doc comment for
+	// why the "production fail-fast" rule isn't enforced yet (no KMS-backed
+	// Signer exists to compare against; team decision A.8).
+	signer := services.NewSignerForEnvironment(cfg.Environment)
+	log.Printf("main: action-contract signer initialized (environment=%s, algorithm=dev-only)", cfg.Environment)
+	actionService := services.NewActionService(actionRepo, outboxRepo, pool, signer)
 	policyService := services.NewPolicyService(policyRepo, projRepo, actionService)
 
 	// ── PHASE 4 & 7: Six intelligence layer services + Explanation ────────
@@ -151,6 +178,7 @@ func main() {
 		patternSvc,
 		recommendationSvc,
 		cfg.IntelligenceMode, // PHASE 6: inject mode
+		receiptRepo,          // PHASE 1 refactor: event_receipts idempotency gate
 	)
 
 	corridorHealthIngestionHandler := handlers.NewCorridorHealthHandler(projRepo)
@@ -173,6 +201,9 @@ func main() {
 	outboxWorker := worker.NewOutboxWorker(outboxRepo, actionRepo, producer, cfg, projRepo)
 	slaWorker := worker.NewSLAWorker(slaRepo, actionService, projectionService)
 	cronWorker := worker.NewPolicyCronWorker(projRepo, policyService)
+	// Phase 2 gap-fix pass: clarification doc §11/§14 scheduled jobs.
+	consistencyWorker := worker.NewProjectionConsistencyWorker(projRepo)
+	shadowDiffWorker := worker.NewShadowDiffWorker(batchRepo, policyRepo)
 
 	// ── Step 8: Create HTTP handlers ──────────────────────────────────────
 	healthHandler := handlers.NewHealthHandler()
@@ -195,6 +226,7 @@ func main() {
 	patternHandler := handlers.NewPatternHandler(intelBase)
 	recommendationHandler := handlers.NewRecommendationHandler(intelBase)
 	batchHandler := handlers.NewBatchHandler(batchRepo, projRepo, projectionService)
+	batchIntelligenceHandler := handlers.NewBatchIntelligenceHandler(intelBase)
 	leakageTimeseriesHandler := handlers.NewLeakageTimeseriesHandler(batchRepo)
 	historyHandler := handlers.NewHistoryHandler(projectionService, snapshotRepo)
 	explanationHandler := handlers.NewExplanationHandler(explSvc)
@@ -224,6 +256,7 @@ func main() {
 		patternHandler,
 		recommendationHandler,
 		batchHandler,
+		batchIntelligenceHandler,
 		leakageTimeseriesHandler,
 		historyHandler,
 		explanationHandler,
@@ -254,6 +287,8 @@ func main() {
 	go outboxWorker.Start(ctx)
 	go slaWorker.Start(ctx)
 	go cronWorker.Start(ctx)
+	go consistencyWorker.Start(ctx)
+	go shadowDiffWorker.Start(ctx)
 	log.Println("main: background workers started (outbox + sla + policy-cron)")
 
 	// ── Step 13: Start Kafka consumers ────────────────────────────────────

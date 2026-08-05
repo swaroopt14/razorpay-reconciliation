@@ -45,7 +45,7 @@ func TestBuiltInTallyProfileMapsAmountHeader(t *testing.T) {
 		"source_row_ref": "row:1"
 	}`)
 
-	mapped, err := NewGenericSourceParser().ParseToCanonicalJSON(raw, profile)
+	mapped, _, err := NewGenericSourceParser().ParseToCanonicalJSON(raw, profile)
 	if err != nil {
 		t.Fatalf("ParseToCanonicalJSON() error = %v", err)
 	}

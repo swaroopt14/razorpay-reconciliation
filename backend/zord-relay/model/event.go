@@ -15,6 +15,8 @@ type OutboxEvent struct {
 	EnvelopeID string `json:"envelope_id"` // logical grouping ID
 	TraceID    string `json:"trace_id"`
 	TenantID   string `json:"tenant_id"`
+	ArtifactID string `json:"artifact_id,omitempty"`
+	ArtifactVersionID string `json:"artifact_version_id,omitempty"`
 	ObjectRef  string `json:"object_ref"`
 	Source     string `json:"source"`
 
@@ -32,12 +34,20 @@ type OutboxEvent struct {
 	SchemaVersion string `json:"schema_version,omitempty"`
 
 	// --- Payload ---
-	Payload      json.RawMessage `json:"payload"`
+	Payload         json.RawMessage `json:"payload"`
 	PayloadHash     string          `json:"payload_hash"`
+	RawRowHash      *string         `json:"raw_row_hash,omitempty"`
 	EnvelopeHash    string          `json:"envelope_hash,omitempty"`
 	CanonicalHash   string          `json:"canonical_hash,omitempty"`
 	GovernanceState string          `json:"governance_state,omitempty"`
 	GovernanceHash  string          `json:"governance_hash,omitempty"`
+
+	// --- Evidence leaf hashes (Service 2 / zord-intent-engine) ---
+	RawRowEvidenceLeafHash       string `json:"raw_row_evidence_leaf_hash,omitempty"`
+	CanonicalRowEvidenceLeafHash string `json:"canonical_row_evidence_leaf_hash,omitempty"`
+	MappingProfileHash           string `json:"mapping_profile_hash,omitempty"`
+	BusinessIdempotencyKey       string `json:"business_idempotency_key,omitempty"`
+	TokenizedDataHash            string `json:"tokenized_data_hash,omitempty"`
 
 	// --- Lease ---
 	LeaseID    string     `json:"lease_id"`
@@ -53,30 +63,31 @@ type OutboxEvent struct {
 	SentAt    *time.Time `json:"sent_at,omitempty"`
 
 	// --- Status ---
-	Status  string  `json:"status"`
+	Status        string  `json:"status"`
 	ClientBatchID *string `json:"batchid,omitempty"`
 
 	FileContentHash *string `json:"file_content_hash,omitempty"`
+	SourceRowRef    *string `json:"source_row_ref,omitempty"`
 
-	DuplicateRiskFlag bool `json:"duplicate_risk_flag,omitempty"`
-	IntentQualityScore float64 `json:"intent_quality_score,omitempty"`
-	MatchabilityScore float64 `json:"matchability_score,omitempty"`
-	ProofReadinessScore float64 `json:"proof_readiness_score,omitempty"`
-	BeneficiaryFingerprint string `json:"beneficiary_fingerprint,omitempty"`
-	IntendedExecutionAt *time.Time `json:"intended_execution_at,omitempty"`
+	DuplicateRiskFlag      bool       `json:"duplicate_risk_flag,omitempty"`
+	IntentQualityScore     float64    `json:"intent_quality_score,omitempty"`
+	MatchabilityScore      float64    `json:"matchability_score,omitempty"`
+	ProofReadinessScore    float64    `json:"proof_readiness_score,omitempty"`
+	BeneficiaryFingerprint string     `json:"beneficiary_fingerprint,omitempty"`
+	IntendedExecutionAt    *time.Time `json:"intended_execution_at,omitempty"`
 
-	RequiredFieldsStatus *bool `json:"required_fields_status,omitempty"`
-	TokenizationStatus *bool `json:"tokenization_status,omitempty"`
-	GovernanceDecision *string `json:"governance_decision,omitempty"`
-	MappingProfileID *string `json:"mapping_profile_used,omitempty"`
+	RequiredFieldsStatus *bool   `json:"required_fields_status,omitempty"`
+	TokenizationStatus   *bool   `json:"tokenization_status,omitempty"`
+	GovernanceDecision   *string `json:"governance_decision,omitempty"`
+	MappingProfileID     *string `json:"mapping_profile_used,omitempty"`
 
 	PaymentInstructionReceived *time.Time `json:"payment_instruction_received,omitempty"`
-	CanonicalIntentCreated    *time.Time `json:"canonical_intent_created,omitempty"`
+	CanonicalIntentCreated     *time.Time `json:"canonical_intent_created,omitempty"`
 
-	ClientPayoutRef *string `json:"client_payout_ref,omitempty"`
-	SourceRowNum *int `json:"source_row_num,omitempty"`
-	Amount	decimal.Decimal `json:"amount,omitempty"`
-	Currency string `json:"currency,omitempty"`
+	ClientPayoutRef *string         `json:"client_payout_ref,omitempty"`
+	SourceRowNum    *int            `json:"source_row_num,omitempty"`
+	Amount          decimal.Decimal `json:"amount,omitempty"`
+	Currency        string          `json:"currency,omitempty"`
 
 	// 🆕 Settlement Metadata
 	SettlementRecordReceived   *time.Time `json:"settlement_record_received,omitempty"`
@@ -86,10 +97,10 @@ type OutboxEvent struct {
 	CorridorID                 *string    `json:"corridor_id,omitempty"`
 	BankReference              *string    `json:"bank_reference,omitempty"`
 	ClientReference            *string    `json:"client_reference,omitempty"`
-	AttachmentDecision        *string    `json:"attachment_decision,omitempty"`
-	MatchConfidence           *float64   `json:"match_confidence,omitempty"`
-	ValueDateCheck            *bool      `json:"value_date_check,omitempty"`
-	AmountMatch               *bool      `json:"amount_match,omitempty"`
+	AttachmentDecision         *string    `json:"attachment_decision,omitempty"`
+	MatchConfidence            *float64   `json:"match_confidence,omitempty"`
+	ValueDateCheck             *bool      `json:"value_date_check,omitempty"`
+	AmountMatch                *bool      `json:"amount_match,omitempty"`
 }
 
 // LeaseResponse is what the upstream /lease endpoint returns.
@@ -189,34 +200,34 @@ type DLQLeaseResponse struct {
 }
 
 type BatchCanonicalizationCompletedEvent struct {
-	TenantID                      string          `json:"tenant_id"`
-	BatchID                       string          `json:"batch_id"`
-	SourceSystem                  string          `json:"source_system,omitempty"`
-	ReceivedCount                 int             `json:"received_count"`
-	CanonicalizedCount            int             `json:"canonicalized_count"`
-	DLQCount                      int             `json:"dlq_count"`
-	ReviewCount                   int             `json:"review_count"`
-	LowMatchabilityCount          int             `json:"low_matchability_count"`
-	LowProofReadinessCount        int             `json:"low_proof_readiness_count"`
-	DuplicateRiskCount            int             `json:"duplicate_risk_count"`
-	CanonicalizationSuccessRate   float64         `json:"canonicalization_success_rate"`
-	AvgSchemaCompletenessScore   float64         `json:"avg_schema_completeness_score"`
-	AvgMappingConfidenceScore    float64         `json:"avg_mapping_confidence_score"`
-	AvgMatchabilityScore          float64         `json:"avg_matchability_score"`
-	AvgProofReadinessScore       float64         `json:"avg_proof_readiness_score"`
-	AvgIntentQualityScore        float64         `json:"avg_intent_quality_score"`
-	DuplicateRiskAmountMinor     int64           `json:"duplicate_risk_amount_minor"`
-	BatchQualityScore            float64         `json:"batch_quality_score"`
-	ScoreBreakdownJSON           json.RawMessage `json:"score_breakdown_json,omitempty"`
-	TotalAmount                  float64         `json:"total_amount"`
-	CreatedAt                     time.Time       `json:"created_at"`
-	UpdatedAt                     time.Time       `json:"updated_at"`
-	LeaseID                      string          `json:"lease_id,omitempty"`
-	LeasedBy                     string          `json:"leased_by,omitempty"`
-	LeaseUntil                   *time.Time      `json:"lease_until,omitempty"`
-	RetryCount                   int             `json:"retry_count"`
-	NextAttemptAt                *time.Time      `json:"next_attempt_at,omitempty"`
-	DispatchedAt                 *time.Time      `json:"dispatched_at,omitempty"`
+	TenantID                    string          `json:"tenant_id"`
+	BatchID                     string          `json:"batch_id"`
+	SourceSystem                string          `json:"source_system,omitempty"`
+	ReceivedCount               int             `json:"received_count"`
+	CanonicalizedCount          int             `json:"canonicalized_count"`
+	DLQCount                    int             `json:"dlq_count"`
+	ReviewCount                 int             `json:"review_count"`
+	LowMatchabilityCount        int             `json:"low_matchability_count"`
+	LowProofReadinessCount      int             `json:"low_proof_readiness_count"`
+	DuplicateRiskCount          int             `json:"duplicate_risk_count"`
+	CanonicalizationSuccessRate float64         `json:"canonicalization_success_rate"`
+	AvgSchemaCompletenessScore  float64         `json:"avg_schema_completeness_score"`
+	AvgMappingConfidenceScore   float64         `json:"avg_mapping_confidence_score"`
+	AvgMatchabilityScore        float64         `json:"avg_matchability_score"`
+	AvgProofReadinessScore      float64         `json:"avg_proof_readiness_score"`
+	AvgIntentQualityScore       float64         `json:"avg_intent_quality_score"`
+	DuplicateRiskAmountMinor    int64           `json:"duplicate_risk_amount_minor"`
+	BatchQualityScore           float64         `json:"batch_quality_score"`
+	ScoreBreakdownJSON          json.RawMessage `json:"score_breakdown_json,omitempty"`
+	TotalAmount                 float64         `json:"total_amount"`
+	CreatedAt                   time.Time       `json:"created_at"`
+	UpdatedAt                   time.Time       `json:"updated_at"`
+	LeaseID                     string          `json:"lease_id,omitempty"`
+	LeasedBy                    string          `json:"leased_by,omitempty"`
+	LeaseUntil                  *time.Time      `json:"lease_until,omitempty"`
+	RetryCount                  int             `json:"retry_count"`
+	NextAttemptAt               *time.Time      `json:"next_attempt_at,omitempty"`
+	DispatchedAt                *time.Time      `json:"dispatched_at,omitempty"`
 }
 
 type BatchLeaseResponse struct {

@@ -34,6 +34,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      ml-service:
+        condition: service_healthy
 
     networks:
       - zord-network
@@ -105,7 +107,7 @@ services:
 
     volumes:
       - zord_intelligence_data:/var/lib/postgresql/data
-      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    #  - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
 
     ports:
       - "5440:5432"

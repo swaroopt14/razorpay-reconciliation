@@ -1,8 +1,8 @@
 'use client'
 
-import Image from 'next/image'
 import Link from 'next/link'
 import type { ReactNode } from 'react'
+import { ZordLogo } from '@/components/ZordLogo'
 import { AUTH_UI } from './authUiTokens'
 
 type AuthMarketingVariant = 'signin' | 'signup' | 'demo'
@@ -55,15 +55,8 @@ function AuthMarketingAside({ variant }: { variant: AuthMarketingVariant }) {
       <MarketingBands />
 
       <div className="relative z-[1]">
-        <Link href="/" className="inline-flex items-center gap-2.5">
-          <Image
-            src="/images/logo-zord-tight.png"
-            alt="Arealis Zord"
-            width={220}
-            height={60}
-            className="h-12 w-auto sm:h-14"
-            priority
-          />
+        <Link href="/" className="inline-flex items-center">
+          <ZordLogo size="lg" variant="light" />
         </Link>
       </div>
 
@@ -94,14 +87,7 @@ function AuthMarketingAside({ variant }: { variant: AuthMarketingVariant }) {
 function AuthFormBrandMark() {
   return (
     <div className="mb-7 flex justify-center lg:justify-start">
-      <Image
-        src="/images/logo-zord-tight.png"
-        alt="Arealis Zord"
-        width={200}
-        height={55}
-        className="h-11 w-auto sm:h-12"
-        priority
-      />
+      <ZordLogo size="lg" variant="light" />
     </div>
   )
 }

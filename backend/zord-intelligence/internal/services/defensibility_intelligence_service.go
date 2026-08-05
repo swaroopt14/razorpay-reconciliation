@@ -193,10 +193,65 @@ func (s *DefensibilityIntelligenceService) ComputeAndSave(
 	// This lets GET /v1/intelligence/batches/{id} return the correct tier
 	// without needing to join intelligence_snapshots.
 	if batchID != "" {
-		if err := s.batchRepo.SetDefensibilityTier(ctx, batchID, snap.DefensibilityTier); err != nil {
+		if err := s.batchRepo.SetDefensibilityTier(ctx, batchID, tenantID, snap.DefensibilityTier); err != nil {
 			// Non-fatal — the snapshot was already written
 			return fmt.Errorf("defensibility_svc: SetDefensibilityTier batch=%s: %w", batchID, err)
 		}
+	}
+
+	return nil
+}
+
+// ComputeAndSaveForBatch is the batch-scoped twin of ComputeAndSave.
+//
+// Reads the batch-scoped defensibility projection (defensibility.batch.{batchID})
+// plus the batch-scoped ambiguity projection for the cross-layer Proof
+// Readiness components, builds the same deterministic snapshot used for
+// tenant scope, and writes it at BATCH scope. pattern.tenant_summary has no
+// batch-scoped equivalent (PATTERN stays tenant-scoped per this task's
+// constraints), so the dispute_ready_pct proof-readiness component defaults
+// to 0 at batch scope.
+func (s *DefensibilityIntelligenceService) ComputeAndSaveForBatch(
+	ctx context.Context,
+	tenantID, batchID string,
+) error {
+	def, err := s.projRepo.GetDefensibilitySummaryForBatch(ctx, tenantID, batchID)
+	if err != nil {
+		return fmt.Errorf("defensibility_svc.ComputeAndSaveForBatch GetDefensibilitySummaryForBatch tenant=%s batch=%s: %w",
+			tenantID, batchID, err)
+	}
+	if def == nil || def.TotalIntents == 0 {
+		return nil
+	}
+
+	// Non-fatal — cross-layer components default to 0 if not yet available.
+	amb, _ := s.projRepo.GetAmbiguitySummaryForBatch(ctx, tenantID, batchID)
+
+	snap := s.buildSnapshot(def, amb, nil)
+
+	projRefs := []string{fmt.Sprintf("defensibility.batch.%s", batchID)}
+	projRefsJSON, _ := json.Marshal(projRefs)
+	snapJSON, err := json.Marshal(snap)
+	if err != nil {
+		return fmt.Errorf("defensibility_svc.ComputeAndSaveForBatch marshal tenant=%s batch=%s: %w", tenantID, batchID, err)
+	}
+
+	snapID := "snap_" + uuid.New().String()
+	modelVer := "deterministic_v1"
+	if err := s.snapshotRepo.Create(ctx, persistence.IntelligenceSnapshot{
+		SnapshotID:         snapID,
+		TenantID:           tenantID,
+		SnapshotType:       "DEFENSIBILITY",
+		ScopeType:          "BATCH",
+		ScopeRef:           &batchID,
+		WindowStart:        persistence.BatchProjectionWindowStart,
+		WindowEnd:          persistence.BatchProjectionWindowEnd,
+		ProjectionRefsJSON: projRefsJSON,
+		SnapshotJSON:       snapJSON,
+		ModelVersion:       &modelVer,
+		CreatedAt:          time.Now().UTC(),
+	}); err != nil {
+		return fmt.Errorf("defensibility_svc.ComputeAndSaveForBatch Create snapshot tenant=%s batch=%s: %w", tenantID, batchID, err)
 	}
 
 	return nil

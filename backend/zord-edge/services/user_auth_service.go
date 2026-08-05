@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"strings"
-	"sync"
 	"time"
 
 	"zord-edge/security"
@@ -15,78 +14,6 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
-
-var authSchemaMu sync.Mutex
-var authSchemaEnsured bool
-
-// ensureAuthSchema creates auth-related tables if they are missing. DDL lives here
-// so signup/login work against a fresh zord-edge DB without separate migrations.
-func ensureAuthSchema(ctx context.Context, db *sql.DB) error {
-	authSchemaMu.Lock()
-	defer authSchemaMu.Unlock()
-	if authSchemaEnsured {
-		return nil
-	}
-	stmts := []string{
-		`CREATE TABLE IF NOT EXISTS auth_users (
-			user_id UUID PRIMARY KEY,
-			tenant_id UUID NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
-			email TEXT NOT NULL,
-			password_hash TEXT NOT NULL,
-			role TEXT NOT NULL,
-			status TEXT NOT NULL,
-			name TEXT NOT NULL,
-			failed_login_attempts INT NOT NULL DEFAULT 0,
-			locked_until TIMESTAMPTZ,
-			last_login_at TIMESTAMPTZ,
-			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-			updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-			CONSTRAINT auth_users_email_unique UNIQUE (email)
-		)`,
-		`CREATE TABLE IF NOT EXISTS auth_refresh_tokens (
-			token_id UUID PRIMARY KEY,
-			user_id UUID NOT NULL REFERENCES auth_users(user_id) ON DELETE CASCADE,
-			tenant_id UUID NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
-			session_id UUID NOT NULL,
-			token_hash TEXT NOT NULL,
-			expires_at TIMESTAMPTZ NOT NULL,
-			created_ip TEXT,
-			created_user_agent TEXT,
-			revoked_at TIMESTAMPTZ,
-			replaced_by_token_id UUID,
-			updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-			created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-		)`,
-		// Session-management columns — added safely after initial table creation.
-		// Each ALTER is idempotent on Postgres 9.6+ via IF NOT EXISTS.
-		`ALTER TABLE auth_refresh_tokens
-			ADD COLUMN IF NOT EXISTS idle_expires_at TIMESTAMPTZ NOT NULL DEFAULT (now() + INTERVAL '15 minutes'),
-			ADD COLUMN IF NOT EXISTS absolute_expires_at TIMESTAMPTZ NOT NULL DEFAULT (now() + INTERVAL '8 hours'),
-			ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ NOT NULL DEFAULT now()`,
-		`CREATE TABLE IF NOT EXISTS auth_audit_events (
-			event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-			tenant_id UUID NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
-			user_id UUID REFERENCES auth_users(user_id) ON DELETE SET NULL,
-			event_type TEXT NOT NULL,
-			ip TEXT,
-			user_agent TEXT,
-			created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-		)`,
-		// auth_session_activity: rate-limiter table for RecordSessionActivity.
-		// Must be created here at startup — NOT inside the per-request hot path.
-		`CREATE TABLE IF NOT EXISTS auth_session_activity (
-			session_id UUID PRIMARY KEY,
-			last_recorded_at TIMESTAMPTZ NOT NULL DEFAULT now()
-		)`,
-	}
-	for _, q := range stmts {
-		if _, err := db.ExecContext(ctx, q); err != nil {
-			return err
-		}
-	}
-	authSchemaEnsured = true
-	return nil
-}
 
 type AuthUser struct {
 	UserID    uuid.UUID `json:"user_id"`
@@ -147,9 +74,6 @@ func normalizeEmail(email string) string {
 
 // SignupNewTenant creates a tenant + first admin user atomically and issues tokens.
 func SignupNewTenant(ctx context.Context, db *sql.DB, tenantName, name, email, password, ip, userAgent string) (*AuthBundle, error) {
-	if err := ensureAuthSchema(ctx, db); err != nil {
-		return nil, err
-	}
 	tenantName = strings.TrimSpace(tenantName)
 	name = strings.TrimSpace(name)
 	email = normalizeEmail(email)
@@ -240,9 +164,6 @@ func SignupNewTenant(ctx context.Context, db *sql.DB, tenantName, name, email, p
 
 // LoginUser verifies credentials, tracks failed attempts, and issues tokens.
 func LoginUser(ctx context.Context, db *sql.DB, email, password, ip, userAgent string) (*AuthBundle, error) {
-	if err := ensureAuthSchema(ctx, db); err != nil {
-		return nil, err
-	}
 	email = normalizeEmail(email)
 	if email == "" || password == "" {
 		return nil, ErrInvalidCredentials
@@ -344,9 +265,6 @@ func LoginUser(ctx context.Context, db *sql.DB, email, password, ip, userAgent s
 // RefreshSession validates a refresh token, enforces idle and absolute session
 // timeouts, rotates the token, and issues fresh access + refresh tokens.
 func RefreshSession(ctx context.Context, db *sql.DB, refreshTokenStr, ip, userAgent string) (*AuthBundle, error) {
-	if err := ensureAuthSchema(ctx, db); err != nil {
-		return nil, err
-	}
 	claims, err := ParseRefreshToken(refreshTokenStr)
 	if err != nil {
 		return nil, ErrInvalidCredentials
@@ -453,20 +371,17 @@ func RefreshSession(ctx context.Context, db *sql.DB, refreshTokenStr, ip, userAg
 			TenantName: tenantName,
 			KeyPrefix:  keyPrefix,
 		},
-		AccessToken:      tokens.AccessToken,
-		AccessExpiresAt:  tokens.AccessExpiresAt,
-		RefreshToken:     tokens.RefreshToken,
-		RefreshExpiresAt: tokens.RefreshExpiresAt,
-		IdleExpiresAt:    tokens.AccessExpiresAt.Add(idleWindow - accessTokenTTL), // idle = now+15m
+		AccessToken:       tokens.AccessToken,
+		AccessExpiresAt:   tokens.AccessExpiresAt,
+		RefreshToken:      tokens.RefreshToken,
+		RefreshExpiresAt:  tokens.RefreshExpiresAt,
+		IdleExpiresAt:     tokens.AccessExpiresAt.Add(idleWindow - accessTokenTTL), // idle = now+15m
 		AbsoluteExpiresAt: sessionCreatedAt.Add(refreshTokenTTL),
 	}, nil
 }
 
 // RevokeRefreshToken marks a refresh token as revoked (logout).
 func RevokeRefreshToken(ctx context.Context, db *sql.DB, refreshTokenStr, ip, userAgent string) error {
-	if err := ensureAuthSchema(ctx, db); err != nil {
-		return err
-	}
 	claims, err := ParseRefreshToken(refreshTokenStr)
 	if err != nil {
 		return nil // logout is idempotent
@@ -481,9 +396,6 @@ func RevokeRefreshToken(ctx context.Context, db *sql.DB, refreshTokenStr, ip, us
 
 // RevokeAllUserSessions marks all refresh tokens for a user as revoked (logout everywhere).
 func RevokeAllUserSessions(ctx context.Context, db *sql.DB, tenantID, userID uuid.UUID, ip, userAgent string) error {
-	if err := ensureAuthSchema(ctx, db); err != nil {
-		return err
-	}
 	_, err := db.ExecContext(ctx,
 		`UPDATE auth_refresh_tokens SET revoked_at = now(), updated_at = now() WHERE user_id = $1 AND revoked_at IS NULL`,
 		userID,
@@ -492,12 +404,8 @@ func RevokeAllUserSessions(ctx context.Context, db *sql.DB, tenantID, userID uui
 	return err
 }
 
-
 // GetUserByID returns user + tenant details for /me.
 func GetUserByID(ctx context.Context, db *sql.DB, userID uuid.UUID) (*AuthUser, *AuthTenant, error) {
-	if err := ensureAuthSchema(ctx, db); err != nil {
-		return nil, nil, err
-	}
 	var (
 		tenantID   uuid.UUID
 		email      string

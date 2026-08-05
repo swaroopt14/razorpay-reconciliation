@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { CreatePaymentRequestForm } from '@/app/customer/intents/create/page'
+import { CreatePaymentRequestForm } from '@/features/payout-command/create-payment/CreatePaymentRequestForm'
 
 export const metadata: Metadata = {
   title: 'Create Payment Request | Zord',
