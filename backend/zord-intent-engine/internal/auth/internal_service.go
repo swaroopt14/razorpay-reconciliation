@@ -31,17 +31,17 @@ func (p InternalServicePrincipal) HasScope(scope string) bool {
 // internalServiceTokens returns the configured token -> principal mapping.
 // Today there is exactly one known internal caller of these routes
 // (zord-console's server-side BFF, see services/backend/intents.ts),
-// authenticated via INTERNAL_SERVICE_TOKEN. Kept as a map so a second
+// authenticated via INTENT_ENGINE_INTERNAL_SERVICE_TOKEN. Kept as a map so a second
 // internal caller with its own token/scope set can be added later without
 // reshaping RequireInternalScope.
 //
-// INTERNAL_SERVICE_TOKEN accepts a comma-separated list so a rotation can
+// INTENT_ENGINE_INTERNAL_SERVICE_TOKEN accepts a comma-separated list so a rotation can
 // run the old and new token side by side — deploy the new value here first,
 // roll the caller over to it, then drop the old one — instead of needing a
 // single atomic cutover. Every listed token maps to the same principal.
 func internalServiceTokens() map[string]InternalServicePrincipal {
 	tokens := map[string]InternalServicePrincipal{}
-	raw := strings.Split(os.Getenv("INTERNAL_SERVICE_TOKEN"), ",")
+	raw := strings.Split(os.Getenv("INTENT_ENGINE_INTERNAL_SERVICE_TOKEN"), ",")
 	for _, v := range raw {
 		if v = strings.TrimSpace(v); v != "" {
 			tokens[v] = InternalServicePrincipal{
@@ -60,7 +60,7 @@ func internalServiceTokens() map[string]InternalServicePrincipal {
 // network today is that omission. This is fail-closed by design: unlike the
 // pre-existing authorizeRelay() in internal/handlers/outbox_handler.go
 // (which allows every caller through when RELAY_AUTH_TOKEN is unset), a
-// missing INTERNAL_SERVICE_TOKEN configuration here denies every request
+// missing INTENT_ENGINE_INTERNAL_SERVICE_TOKEN configuration here denies every request
 // rather than silently disabling the check.
 //
 // A caller must present X-Internal-Service-Token matching a configured
