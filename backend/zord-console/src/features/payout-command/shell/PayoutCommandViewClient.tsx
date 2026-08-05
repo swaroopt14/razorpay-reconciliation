@@ -18,18 +18,17 @@ import { PayoutConsoleNavStack } from '../layout/PayoutConsoleNavStack'
 import { PageHeader } from '../layout/PageHeader'
 import { PayoutPageActionsProvider } from '../layout/PayoutPageActionsContext'
 import {
-  AmbiguitySurface,
   BillingSurface,
   BorrowerVerificationSurface,
-  EvidenceSurface,
   IntentJournalSurface,
-  LeakageSurface,
-  ProofSurface,
   PostDisbursalMonitoringSurface,
   SupportSurface,
   WorkspaceSurface,
 } from '../surfaces'
 import { SettlementJournalSurface as SettlementJournalV2Surface } from '../settlement-journal-v2/SettlementJournalSurface'
+import { PaymentGapsSurface } from '../payment-gaps/PaymentGapsSurface'
+import { ProofCenterSurface } from '../proof-center/ProofCenterSurface'
+import { OutcomeReviewSurface } from '../outcome-review/OutcomeReviewSurface'
 import { ActivateLiveWizard } from '../sandbox/ActivateLiveWizard'
 import { SandboxSetupGuidePanel } from '../sandbox/SandboxSetupGuidePanel'
 import { OperationsOverviewSurface } from '../overview/OperationsOverviewSurface'
@@ -203,19 +202,16 @@ export default function PayoutCommandViewClient({
       )
     }
 
-    if (activeDock === 'leakage') return <LeakageSurface initialBatchId={sharedBatchId} />
-    if (activeDock === 'ambiguity') return <AmbiguitySurface initialBatchId={sharedBatchId} />
+    if (activeDock === 'leakage') return <PaymentGapsSurface />
+    if (activeDock === 'ambiguity') return <OutcomeReviewSurface />
     if (activeDock === 'verification') return <BorrowerVerificationSurface />
     if (activeDock === 'monitoring') return <PostDisbursalMonitoringSurface />
     if (activeDock === 'grid') return <IntentJournalSurface initialBatchId={scope.batchId} />
     if (activeDock === 'settlement') {
-      // Spec 7.11 v2 batch-first journal (same as /settlement/journal) - not the legacy dock surface.
+      // Spec 7.11 v2 batch-first journal (same as /settlement/journal).
       return <SettlementJournalV2Surface />
     }
-    if (activeDock === 'proof')
-      return (
-        <EvidenceSurface initialBatchId={sharedBatchId} />
-      )
+    if (activeDock === 'proof') return <ProofCenterSurface />
     if (activeDock === 'billing') {
       return <BillingSurface onActivateClick={() => setActivateWizardOpen(true)} />
     }
@@ -226,7 +222,7 @@ export default function PayoutCommandViewClient({
         </div>
       )
     }
-    return <ProofSurface />
+    return <ProofCenterSurface />
   }, [
     activeDock,
     activeTab,
