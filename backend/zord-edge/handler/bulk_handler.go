@@ -172,8 +172,8 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		})
 		return
 	}
-	artifactID := uuid.Must(uuid.NewV7()).String()
-	artifactVersionId := "ART_V1"
+	//artifactID := uuid.Must(uuid.NewV7())
+	//artifactVersionId := uuid.Must(uuid.NewV7())
 	finalBatchID := &batchIDHeader
 
 	if originalBatchID != "" {
@@ -212,9 +212,9 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 	// identical to the original. This is the source-of-truth payload stored
 	// in the file-level RawEnvelope on S3 before any row is processed.
 	filePayload := map[string]interface{}{
-		"file_name":           file.Filename,
-		"artifact_id":         artifactID,
-		"artifact_version_id": artifactVersionId,
+		"file_name": file.Filename,
+		// "artifact_id":         artifactID,
+		// "artifact_version_id": artifactVersionId,
 		"file_size":           PayloadSize,
 		"file_content_hash":   fileHash,
 		"row_count_estimate":  rowCountEstimate,
@@ -247,15 +247,10 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		IngressAPIVersion:    "v1",
 		RetentionPolicyClass: "STANDARD",
 		EventType:            "Envelope.Created",
-		//FileName:             &file.Filename,
-		//FileSizeBytes:        &fileSizeBytes,
-		//FileContentHash:      &fileHash,
-		//RowCountEstimate:     &rowCountEstimate,
-		//FileUploadChannel:    func(s string) *string { return &s }("CSV"),
-		BatchID: finalBatchID,
+		BatchID:              finalBatchID,
 	}
 
-	data, err := services.ProcessRawIntent(context.Background(), fileMsg, h.S3store, artifactID, time.Now().UTC())
+	data, err := services.ProcessRawIntent(context.Background(), fileMsg, h.S3store, uuid.NewString(), time.Now().UTC())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    "S3_STORE_ERROR",
@@ -263,8 +258,37 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		})
 		return
 	}
-	data.ArtifactVersionId = artifactVersionId
-	data.ArtifactId = artifactID
+	fileartifact := model.Artifact{
+		TenantId:         tenantID,
+		BatchId:          finalBatchID,
+		FileName:         &file.Filename,
+		FileSizeByte:     &fileSizeBytes,
+		FileHash:         fileHash,
+		RowCountEstimate: rowCountEstimate,
+		ObjectRef:        data.ObjectRef,
+	}
+
+	isExist, artifactID, artifactVersionId, err := services.UpsertArtifact(context.Background(), forceReprocess, fileartifact)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    "Artifact Persist Error",
+			"message": "failed to store file artifact",
+		})
+		return
+	}
+	if isExist {
+		c.JSON(http.StatusConflict, gin.H{
+			"code":              "Artifact already Exist",
+			"ArtifactId":        artifactID,
+			"ArtifactVersionId": artifactVersionId,
+			"message":           "This Artifact has already been processed. All rows exist in the system.",
+			"hint":              "If you intended to reprocess this batch, resend the request with the headers: X-Zord-Force-Reprocess: true and a unique Batch-ID.",
+		})
+		return
+	}
+
+	data.ArtifactVersionId = artifactVersionId.String()
+	data.ArtifactId = artifactID.String()
 
 	// File envelope is now durably stored on S3. Release the buffer — row
 	// processing from this point forward uses only the reset src reader.
@@ -420,8 +444,8 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 						func(s string) *string { return &s }("CSV"),
 						&job.SourceRowRef,
 						&profileIDForAudit, // Use profileIDForAudit as the audit hint
-						artifactID,
-						artifactVersionId,
+						artifactID.String(),
+						artifactVersionId.String(),
 					)
 
 					resultsMu.Lock()
@@ -742,8 +766,8 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 						func(s string) *string { return &s }("XLSX"),
 						&job.SourceRowRef,
 						&profileIDForAudit, // Use profileIDForAudit as the audit hint
-						artifactID,
-						artifactVersionId,
+						artifactID.String(),
+						artifactVersionId.String(),
 					)
 
 					resultsMu.Lock()
