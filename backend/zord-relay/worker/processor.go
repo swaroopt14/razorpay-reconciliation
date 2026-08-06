@@ -147,11 +147,10 @@ func (p *processor) process(ctx context.Context, event *model.OutboxEvent) proce
 	// Step 1 — validate the event before touching Kafka.
 	if err := validateEvent(event); err != nil {
 		log.Warn("poison event detected during validation", zap.Error(err))
-		persisted := p.routeToPoisonDLQ(ctx, event, err, model.ReasonCodeMissingRequiredField, 1, topic)
-		if !persisted {
+		if dlqErr := p.routeToPoisonDLQ(ctx, event, err, model.ReasonCodeMissingRequiredField, 1, topic); dlqErr != nil {
 			// Durable record failed too — do NOT ack. Leave it for the next
 			// lease cycle rather than silently dropping it from the outbox.
-			return processorResult{eventID: event.EventID, success: false, err: err}
+			return processorResult{eventID: event.EventID, success: false, isPoison: false,  err: dlqErr}
 		}
 		return processorResult{eventID: event.EventID, isPoison: true, err: err}
 	}
@@ -205,9 +204,8 @@ func (p *processor) process(ctx context.Context, event *model.OutboxEvent) proce
 		if errors.Is(stopErr.cause, errMessageTooLarge) {
 			reasonCode = model.ReasonCodeMessageTooLarge
 		}
-		persisted := p.routeToPoisonDLQ(ctx, event, stopErr.cause, reasonCode, attemptCount, topic)
-		if !persisted {
-			return processorResult{eventID: event.EventID, success: false, err: stopErr.cause}
+		if err := p.routeToPoisonDLQ(ctx, event, stopErr.cause, reasonCode, attemptCount, topic); err != nil {
+			return processorResult{eventID: event.EventID, success: false, isPoison: false, err: err}
 		}
 		return processorResult{eventID: event.EventID, isPoison: true, err: stopErr.cause}
 	}
@@ -251,9 +249,8 @@ func (p *processor) processEdge(ctx context.Context, event *model.EdgeOutboxEven
 
 	if err := validateEdgeEvent(event); err != nil {
 		log.Warn("poison edge event detected during validation", zap.Error(err))
-		persisted := p.routeEdgeToPoisonDLQ(ctx, event, err, model.ReasonCodeMissingRequiredField, 1, topic)
-		if !persisted {
-			return processorResult{eventID: event.EventID, success: false, err: err}
+		if dlqErr := p.routeEdgeToPoisonDLQ(ctx, event, err, model.ReasonCodeMissingRequiredField, 1, topic); dlqErr != nil {
+			return processorResult{eventID: event.EventID, success: false, isPoison: false, err: dlqErr}
 		}
 		return processorResult{eventID: event.EventID, isPoison: true, err: err}
 	}
@@ -310,9 +307,8 @@ func (p *processor) processEdge(ctx context.Context, event *model.EdgeOutboxEven
 		if errors.Is(stopErr.cause, errMessageTooLarge) {
 			reasonCode = model.ReasonCodeMessageTooLarge
 		}
-		persisted := p.routeEdgeToPoisonDLQ(ctx, event, stopErr.cause, reasonCode, attemptCount, topic)
-		if !persisted {
-			return processorResult{eventID: event.EventID, success: false, err: stopErr.cause}
+		if err := p.routeEdgeToPoisonDLQ(ctx, event, stopErr.cause, reasonCode, attemptCount, topic); err != nil {
+			return processorResult{eventID: event.EventID, success: false, isPoison: false, err: err}
 		}
 		return processorResult{eventID: event.EventID, isPoison: true, err: stopErr.cause}
 	}
@@ -330,7 +326,7 @@ func (p *processor) routeEdgeToPoisonDLQ(
 	reasonCode string,
 	attempts int,
 	destinationTopic string,
-) bool {
+) error {
 	msg := &model.DLQMessage{
 		EdgeEvent:       event,
 		EventID:         event.EventID,
@@ -347,6 +343,7 @@ func (p *processor) routeEdgeToPoisonDLQ(
 			zap.String("event_id", event.EventID),
 			zap.Error(err),
 		)
+		return err
 	}
 	metrics.DLQTotal.WithLabelValues(p.serviceName, string(publisher.DLQTypePoison)).Inc()
 	p.log.Error("edge event routed to poison DLQ",
@@ -355,7 +352,7 @@ func (p *processor) routeEdgeToPoisonDLQ(
 		zap.Error(cause),
 	)
 
-	return p.recordDurableFailure(ctx, event.EventID, event.Topic, destinationTopic, event.Payload, attempts, reasonCode, cause)
+	return nil
 }
 
 func (p *processor) routeEdgeToPublishFailureDLQ(
@@ -447,9 +444,8 @@ func (p *processor) processIntent(ctx context.Context, event *model.IntentOutbox
 
 	if err := validateIntentEvent(event); err != nil {
 		log.Warn("poison intent event detected during validation", zap.Error(err))
-		persisted := p.routeIntentToPoisonDLQ(ctx, event, err, model.ReasonCodeMissingRequiredField, 1, topic)
-		if !persisted {
-			return processorResult{eventID: event.EventID, success: false, err: err}
+		if dlqErr := p.routeIntentToPoisonDLQ(ctx, event, err, model.ReasonCodeMissingRequiredField, 1, topic); dlqErr != nil {
+			return processorResult{eventID: event.EventID, success: false, isPoison: false, err: dlqErr}
 		}
 		return processorResult{eventID: event.EventID, isPoison: true, err: err}
 	}
@@ -506,9 +502,8 @@ func (p *processor) processIntent(ctx context.Context, event *model.IntentOutbox
 		if errors.Is(stopErr.cause, errMessageTooLarge) {
 			reasonCode = model.ReasonCodeMessageTooLarge
 		}
-		persisted := p.routeIntentToPoisonDLQ(ctx, event, stopErr.cause, reasonCode, attemptCount, topic)
-		if !persisted {
-			return processorResult{eventID: event.EventID, success: false, err: stopErr.cause}
+		if err := p.routeIntentToPoisonDLQ(ctx, event, stopErr.cause, reasonCode, attemptCount, topic); err != nil {
+			return processorResult{eventID: event.EventID, success: false, isPoison: false, err: err}
 		}
 		return processorResult{eventID: event.EventID, isPoison: true, err: stopErr.cause}
 	}
@@ -530,7 +525,7 @@ func (p *processor) routeIntentToPoisonDLQ(
 	reasonCode string,
 	attempts int,
 	destinationTopic string,
-) bool {
+) error {
 	msg := &model.DLQMessage{
 		IntentEvent:     event,
 		EventID:         event.EventID,
@@ -547,6 +542,7 @@ func (p *processor) routeIntentToPoisonDLQ(
 			zap.String("event_id", event.EventID),
 			zap.Error(err),
 		)
+		return err
 	}
 	metrics.DLQTotal.WithLabelValues(p.serviceName, string(publisher.DLQTypePoison)).Inc()
 	p.log.Error("intent event routed to poison DLQ",
@@ -555,7 +551,7 @@ func (p *processor) routeIntentToPoisonDLQ(
 		zap.Error(cause),
 	)
 
-	return p.recordDurableFailure(ctx, event.EventID, intentEventTopic, destinationTopic, event.Payload, attempts, reasonCode, cause)
+	return nil
 }
 
 func (p *processor) routeIntentToPublishFailureDLQ(
@@ -624,7 +620,7 @@ func (p *processor) routeToPoisonDLQ(
 	reasonCode string,
 	attempts int,
 	destinationTopic string,
-) bool {
+) error {
 	msg := &model.DLQMessage{
 		Event:           event,
 		EventID:         event.EventID,
@@ -641,6 +637,7 @@ func (p *processor) routeToPoisonDLQ(
 			zap.String("event_id", event.EventID),
 			zap.Error(err),
 		)
+		return err
 	}
 	metrics.DLQTotal.WithLabelValues(p.serviceName, string(publisher.DLQTypePoison)).Inc()
 	p.log.Error("event routed to poison DLQ",
@@ -649,7 +646,7 @@ func (p *processor) routeToPoisonDLQ(
 		zap.Error(cause),
 	)
 
-	return p.recordDurableFailure(ctx, event.EventID, event.Topic, destinationTopic, event.Payload, attempts, reasonCode, cause)
+	return nil
 }
 
 func (p *processor) routeToPublishFailureDLQ(
