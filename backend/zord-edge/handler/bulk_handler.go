@@ -249,8 +249,9 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		EventType:            "Envelope.Created",
 		BatchID:              finalBatchID,
 	}
+	fileEnvelopeId := uuid.NewString()
 
-	data, err := services.ProcessRawIntent(context.Background(), fileMsg, h.S3store, uuid.NewString(), time.Now().UTC())
+	data, err := services.ProcessRawIntent(context.Background(), fileMsg, h.S3store, fileEnvelopeId, time.Now().UTC())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    "S3_STORE_ERROR",
@@ -260,6 +261,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 	}
 	fileartifact := model.Artifact{
 		TenantId:         tenantID,
+		FileEnvelopeId:   fileEnvelopeId,
 		BatchId:          finalBatchID,
 		FileName:         &file.Filename,
 		FileSizeByte:     &fileSizeBytes,

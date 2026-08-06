@@ -158,12 +158,13 @@ func UpsertArtifact(ctx context.Context, forcereprocess bool, input model.Artifa
 		}
 	}
 
-	query := `INSERT INTO artifacts(artifact_id,artifact_version_id,tenant_id,file_hash,file_name,
-			file_size_bytes,row_count_estimate,object_ref,batch_id)VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`
+	query := `INSERT INTO artifacts(artifact_id,artifact_version_id,file_envelope_id,tenant_id,file_hash,file_name,
+			file_size_bytes,row_count_estimate,object_ref,batch_id)VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`
 
 	_, err := db.DB.ExecContext(ctx, query,
 		artifactID.String(),
 		artifactVersionId.String(),
+		input.FileEnvelopeId,
 		input.TenantId,
 		input.FileHash,
 		input.FileName,

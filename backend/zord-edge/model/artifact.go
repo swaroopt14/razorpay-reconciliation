@@ -8,6 +8,7 @@ import (
 
 type Artifact struct {
 	TenantId         uuid.UUID `json:"tenant_id" db:"tenant_id"`
+	FileEnvelopeId   string    `json:"file_envelope_id" db:"file_envelope_id"`
 	FileHash         string    `json:"file_hash" db:"file_hash"`
 	FileName         *string   `json:"file_name" db:"file_name"`
 	FileSizeByte     *int64    `json:"file_size_bytes" db:"file_size_bytes"`

@@ -2,6 +2,7 @@
 CREATE TABLE IF NOT EXISTS "artifacts"(
 artifact_id UUID NOT NULL ,
 artifact_version_id UUID NOT NULL,
+file_envelope_id UUID NOT NULL,
 tenant_id UUID NOT NULL REFERENCES tenants(tenant_id),
 file_hash TEXT NOT NULL,
 file_name TEXT NOT NULL,
