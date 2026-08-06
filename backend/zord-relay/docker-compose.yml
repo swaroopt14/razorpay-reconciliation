@@ -25,6 +25,8 @@ services:
       - RELAY_TOKEN_ENCLAVE_BASE_URL=
       - ENVIRONMENT=production
       - SERVICE_NAME=zord-relay
+      - RELAY_METRICS_ENABLED=true
+      - RELAY_METRICS_ADDR=:8082
       - OUTBOX_POLL_INTERVAL=5s
       - OUTBOX_BATCH_SIZE=10
     depends_on:

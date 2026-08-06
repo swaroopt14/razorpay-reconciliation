@@ -12,6 +12,7 @@ import (
 	"zord-evidence/config"
 	"zord-evidence/db"
 	"zord-evidence/handlers"
+	"zord-evidence/internal/health"
 	"zord-evidence/kafka"
 	"zord-evidence/repositories"
 	"zord-evidence/routes"
@@ -175,6 +176,12 @@ func main() {
 	r.Use(otelgin.Middleware("zord-evidence"))
 	routes.Register(r, h, outboxHandler)
 	routes.RegisterProofRoutes(r, proofHandler)
+
+	// Readiness endpoint — checks DB connectivity
+	readinessHandler := health.NewReadinessHandler([]health.DependencyCheck{
+		health.DBCheck("postgres", database),
+	})
+	r.GET("/ready", readinessHandler.Ready)
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%s", cfg.HTTPPort),

@@ -15,6 +15,7 @@ import (
 	"zord-prompt-layer/client"
 	"zord-prompt-layer/config"
 	"zord-prompt-layer/handler"
+	"zord-prompt-layer/internal/health"
 	"zord-prompt-layer/repositories"
 	"zord-prompt-layer/routes"
 	"zord-prompt-layer/services"
@@ -111,6 +112,20 @@ func main() {
 	queryHandler := handler.NewQueryHandler(ragService)
 
 	routes.Register(router, healthHandler, queryHandler)
+
+	// Readiness endpoint — checks read-only DB connectivity
+	var readinessChecks []health.DependencyCheck
+	if edgeDB != nil {
+		readinessChecks = append(readinessChecks, health.DBCheck("edge-db", edgeDB))
+	}
+	if intentDB != nil {
+		readinessChecks = append(readinessChecks, health.DBCheck("intent-db", intentDB))
+	}
+	if relayDB != nil {
+		readinessChecks = append(readinessChecks, health.DBCheck("relay-db", relayDB))
+	}
+	readinessH := health.NewReadinessHandler(readinessChecks)
+	router.GET("/ready", readinessH.Ready)
 
 	addr := ":" + cfg.HTTPPort
 	log.Printf("starting %s on %s", cfg.ServiceName, addr)
