@@ -17,34 +17,60 @@ func TestExtractEnvelopeFieldsBestEffort(t *testing.T) {
 		payload       string
 		wantEventType string
 		wantSchemaVer string
+		wantTraceID   string
 	}{
 		{
 			name:          "RelayEvent-enveloped payload",
-			payload:       `{"event_id":"e1","event_type":"DispatchCreated","schema_version":"v1","payload":{}}`,
+			payload:       `{"event_id":"e1","event_type":"DispatchCreated","schema_version":"v1","trace_id":"trace-abc","payload":{}}`,
 			wantEventType: "DispatchCreated",
 			wantSchemaVer: "v1",
+			wantTraceID:   "trace-abc",
 		},
 		{
 			name:          "flat DLQItemEvent payload carries neither field",
 			payload:       `{"dlq_id":"d1","tenant_id":"t1","stage":"canonicalize"}`,
 			wantEventType: "",
 			wantSchemaVer: "",
+			wantTraceID:   "",
 		},
 		{
 			name:          "malformed JSON returns zero values, never errors",
 			payload:       `not json`,
 			wantEventType: "",
 			wantSchemaVer: "",
+			wantTraceID:   "",
+		},
+		{
+			// zord-outcome-engine-sourced events (live-confirmed 2026-08-06):
+			// schema_version is real but only set inside "payload", never
+			// promoted to the envelope top level. trace_id has no such nested
+			// value worth falling back to (see the function doc), so it stays
+			// "" here even though a (also-zero) trace_id exists in payload too.
+			name:          "schema_version only present nested in payload falls back",
+			payload:       `{"event_id":"e2","event_type":"variance.record.created","payload":{"schema_version":"v1","trace_id":"00000000-0000-0000-0000-000000000000"}}`,
+			wantEventType: "variance.record.created",
+			wantSchemaVer: "v1",
+			wantTraceID:   "",
+		},
+		{
+			name:          "top-level schema_version wins over nested payload value",
+			payload:       `{"event_type":"e","schema_version":"v1","payload":{"schema_version":"v2-should-be-ignored"}}`,
+			wantEventType: "e",
+			wantSchemaVer: "v1",
+			wantTraceID:   "",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotType, gotVer := extractEnvelopeFieldsBestEffort([]byte(tt.payload))
+			gotType, gotVer, gotTraceID := extractEnvelopeFieldsBestEffort([]byte(tt.payload))
 			if gotType != tt.wantEventType {
 				t.Errorf("eventType = %q, want %q", gotType, tt.wantEventType)
 			}
 			if gotVer != tt.wantSchemaVer {
 				t.Errorf("schemaVersion = %q, want %q", gotVer, tt.wantSchemaVer)
+			}
+			if gotTraceID != tt.wantTraceID {
+				t.Errorf("traceID = %q, want %q", gotTraceID, tt.wantTraceID)
 			}
 		})
 	}

@@ -127,6 +127,7 @@ func (s *ProjectionService) eventMeta(ctx context.Context, tenantID, eventID, sc
 		PayloadHash:  env.PayloadHash,
 		ScopeType:    scopeType,
 		ScopeRef:     scopeRef,
+		TraceID:      env.TraceID,
 	}
 }
 

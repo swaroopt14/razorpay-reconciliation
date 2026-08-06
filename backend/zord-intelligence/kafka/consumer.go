@@ -571,7 +571,7 @@ func consumeSingleTopic(
 		// to the topic name / "legacy" for the two flat, non-enveloped
 		// topics that carry neither field.
 		hash := sha256.Sum256(msg.Value)
-		domainEventType, schemaVersion := extractEnvelopeFieldsBestEffort(msg.Value)
+		domainEventType, schemaVersion, traceID := extractEnvelopeFieldsBestEffort(msg.Value)
 		if domainEventType == "" {
 			domainEventType = msg.Topic
 		}
@@ -585,6 +585,7 @@ func consumeSingleTopic(
 			EventType:    domainEventType,
 			EventVersion: eventVersion,
 			PayloadHash:  hex.EncodeToString(hash[:]),
+			TraceID:      traceID,
 		})
 
 		// Unknown major schema version: route straight to the DLQ without
@@ -673,21 +674,48 @@ func isUnmarshalError(err error) bool {
 // poison message, retrying cannot help — the event goes straight to the DLQ.
 var errUnsupportedSchemaVersion = errors.New("unsupported schema version")
 
-// extractEnvelopeFieldsBestEffort tries to pull the domain event_type and
-// schema_version out of raw message bytes without knowing the topic's real
-// shape — same best-effort, topic-agnostic idiom as extractEventIDBestEffort
-// below, used because the typed RelayEvent unmarshal only happens inside
-// each topic's own handler closure in StartConsumers, not here. Both fields
-// come back "" for the two flat, non-RelayEvent-enveloped topics
-// (dlq.event, payments.intent.dlq); the caller falls back to the topic name
-// and DefaultEventVersion in that case.
-func extractEnvelopeFieldsBestEffort(payload []byte) (eventType, schemaVersion string) {
+// extractEnvelopeFieldsBestEffort tries to pull the domain event_type,
+// schema_version, and trace_id out of raw message bytes without knowing the
+// topic's real shape — same best-effort, topic-agnostic idiom as
+// extractEventIDBestEffort below, used because the typed RelayEvent unmarshal
+// only happens inside each topic's own handler closure in StartConsumers, not
+// here. All three fields come back "" for the two flat, non-RelayEvent-
+// enveloped topics (dlq.event, payments.intent.dlq); the caller falls back to
+// the topic name and DefaultEventVersion in that case.
+//
+// schema_version has a nested fallback: some producers (confirmed live
+// 2026-08-06 for zord-outcome-engine-sourced events — variance.record.created,
+// attachment.decision.created, canonical.settlement.created, etc.) set a real
+// schema_version inside the envelope's "payload" object but never promote it
+// to the envelope's own top level, so the top-level check alone silently
+// under-reports it as "legacy" even though a real value exists one level
+// down. trace_id deliberately has NO such fallback: the same live check found
+// its nested payload value is independently just as unset (zord-outcome-
+// engine's own uuid.Nil default) as the top-level one — a fallback there
+// would just read a different flavor of the same non-value. That is an
+// upstream data-quality gap (see the outcome-engine buildRow()/observation-
+// lookup code), not an extraction-location gap, so no ZPI-side fallback fixes
+// it.
+func extractEnvelopeFieldsBestEffort(payload []byte) (eventType, schemaVersion, traceID string) {
 	var v struct {
-		EventType     string `json:"event_type"`
-		SchemaVersion string `json:"schema_version"`
+		EventType     string          `json:"event_type"`
+		SchemaVersion string          `json:"schema_version"`
+		TraceID       string          `json:"trace_id"`
+		Payload       json.RawMessage `json:"payload"`
 	}
 	_ = json.Unmarshal(payload, &v)
-	return v.EventType, v.SchemaVersion
+
+	schemaVersion = v.SchemaVersion
+	if schemaVersion == "" && len(v.Payload) > 0 {
+		var nested struct {
+			SchemaVersion string `json:"schema_version"`
+		}
+		if json.Unmarshal(v.Payload, &nested) == nil {
+			schemaVersion = nested.SchemaVersion
+		}
+	}
+
+	return v.EventType, schemaVersion, v.TraceID
 }
 
 // buildDLQRecord assembles the durable failure record for msg. TenantID is
