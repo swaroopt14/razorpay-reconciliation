@@ -120,6 +120,7 @@ const (
 type CanonicalIntent struct {
 	IntentID               uuid.UUID       `json:"intent_id" db:"intent_id"`
 	TenantID               uuid.UUID       `json:"tenant_id" db:"tenant_id"`
+	TraceID                *uuid.UUID      `json:"trace_id,omitempty" db:"trace_id"`
 	ContractID             uuid.UUID       `json:"contract_id" db:"contract_id"`
 	ClientPayoutRef        *string         `json:"client_payout_ref,omitempty" db:"client_payout_ref"`
 	ClientBatchRef         *string         `json:"client_batch_ref,omitempty" db:"client_batch_ref"`
