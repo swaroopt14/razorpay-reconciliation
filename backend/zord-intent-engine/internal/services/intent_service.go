@@ -127,8 +127,11 @@ var enclaveHTTPClient = &http.Client{
 }
 
 // getTenantSynonyms returns tenant-specific synonym overrides from DB.
-// Returns empty map if tenant has no custom synonyms — falls back to global dict.
-func (s *IntentService) getTenantSynonyms(ctx context.Context, tenantID uuid.UUID) map[string]string {
+// Returns an empty map if the tenant has no custom synonyms configured — the
+// global synonym dict still applies. Returns a non-nil error only on a real
+// DB failure (see loadTenantSynonyms / INT-06); the caller must fail the row
+// rather than normalize it without the tenant's real overrides.
+func (s *IntentService) getTenantSynonyms(ctx context.Context, tenantID uuid.UUID) (map[string]string, error) {
 	return loadTenantSynonyms(ctx, s.db, tenantID)
 }
 
@@ -1513,8 +1516,26 @@ func (s *IntentService) processIncomingIntentInternal(
 			artifactFamily,
 		)
 		if profileErr != nil {
-			log.Printf("⚠️ [profile] lookup failed envelope=%s: %v — continuing without profile",
+			// INT-06: a real profile-lookup failure (DB outage, etc.) must
+			// never be treated as "no profile configured" — this replica
+			// cannot tell whether the tenant actually has a profile driving
+			// stricter validation, so proceeding here risks silently
+			// accepting (or differently canonicalizing) a row that a
+			// healthy replica — or a retry of this same row once the DB
+			// recovers — would process under the tenant's real rules. Fail
+			// the row back to the Kafka handler so it retries (kafka.
+			// callWithRetry) instead of falling through to default rules.
+			log.Printf("⚠️ [profile] lookup failed envelope=%s: %v — failing row instead of continuing without profile",
 				in.EnvelopeID, profileErr)
+			retIn = in
+			retProfile = resolvedProfile
+			retDecrypted = decryptedPayload
+			retRawAudit = rawAuditPayload
+			retAuditProfileID = auditProfileID
+			retAuditProfileVersion = auditProfileVersion
+			retSourceRowNum = sourceRowNum
+			retErr = fmt.Errorf("mapping profile resolution unavailable for envelope=%s: %w", in.EnvelopeID, profileErr)
+			return
 		} else if profile != nil {
 			resolvedProfile = profile
 			parser := NewGenericSourceParser()
@@ -1535,7 +1556,28 @@ func (s *IntentService) processIncomingIntentInternal(
 	// -------- STEP 5.1: Header normalization (ETL 10.1 / 10.2 / 10.3) --------
 	// Normalize tenant-specific field names → Zord canonical JSON keys.
 	// If payload is already canonical, this is a no-op (fast path).
-	normResult, normErr := normalizer.Normalize(decryptedPayload, s.getTenantSynonyms(ctx, in.TenantID))
+	tenantSynonyms, synonymErr := s.getTenantSynonyms(ctx, in.TenantID)
+	if synonymErr != nil {
+		// INT-06: same reasoning as the mapping-profile failure above — a
+		// real DB failure while loading the tenant's synonym overrides must
+		// not be treated as "tenant has no overrides". Normalizing without
+		// them here could produce a different NIR (and a different
+		// canonical hash) than a healthy replica, or a retry of this same
+		// row after the DB recovers, would produce. Fail the row instead of
+		// silently normalizing without the tenant's real overrides.
+		log.Printf("⚠️ [synonyms] lookup failed envelope=%s: %v — failing row instead of normalizing without tenant overrides",
+			in.EnvelopeID, synonymErr)
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
+		retErr = fmt.Errorf("tenant synonym resolution unavailable for envelope=%s: %w", in.EnvelopeID, synonymErr)
+		return
+	}
+	normResult, normErr := normalizer.Normalize(decryptedPayload, tenantSynonyms)
 	if normErr != nil {
 		log.Printf("⚠️ Normalization failed for EnvelopeID=%s: %v — falling back to raw payload", in.EnvelopeID, normErr)
 		// Do NOT DLQ — fall through with original payload (graceful degradation)

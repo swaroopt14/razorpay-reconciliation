@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
@@ -16,13 +17,23 @@ import (
 var tenantSynonymCache sync.Map // key: tenant_id string -> map[string]string
 
 // loadTenantSynonyms fetches this tenant's active synonym overrides from
-// tenant_synonym_profiles. Returns an empty map (not an error) on any DB
-// failure or when the tenant has no overrides — the global synonym dict in
-// the normalizer package still applies either way.
-func loadTenantSynonyms(ctx context.Context, db *sql.DB, tenantID uuid.UUID) map[string]string {
+// tenant_synonym_profiles. Returns an empty map when the tenant legitimately
+// has no overrides configured — the global synonym dict in the normalizer
+// package still applies either way.
+//
+// INT-06: a real DB failure is returned as an error rather than silently
+// substituted with an empty map. Swallowing it here used to mean a query
+// timeout during header normalization was indistinguishable from "this
+// tenant has no synonym overrides" — this replica (or this row, if the DB
+// recovers on retry) would then normalize a payload without translations a
+// healthy lookup would have applied, producing a different NIR/canonical
+// hash for the same source row depending on nothing but DB health at the
+// moment it was processed. The caller (intent_service.go) fails the row
+// instead of proceeding on a non-nil error.
+func loadTenantSynonyms(ctx context.Context, db *sql.DB, tenantID uuid.UUID) (map[string]string, error) {
 	cacheKey := tenantID.String()
 	if cached, ok := tenantSynonymCache.Load(cacheKey); ok {
-		return cached.(map[string]string)
+		return cached.(map[string]string), nil
 	}
 
 	synonyms := make(map[string]string)
@@ -33,8 +44,7 @@ func loadTenantSynonyms(ctx context.Context, db *sql.DB, tenantID uuid.UUID) map
 		WHERE tenant_id = $1 AND is_active = true
 	`, tenantID)
 	if err != nil {
-		log.Printf("⚠️ loadTenantSynonyms: query failed for tenant=%s: %v", tenantID, err)
-		return synonyms
+		return nil, fmt.Errorf("tenant synonym query failed for tenant=%s: %w", tenantID, err)
 	}
 	defer rows.Close()
 
@@ -47,11 +57,11 @@ func loadTenantSynonyms(ctx context.Context, db *sql.DB, tenantID uuid.UUID) map
 		synonyms[strings.ToLower(strings.TrimSpace(sourceKey))] = canonicalPath
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("⚠️ loadTenantSynonyms: row iteration failed for tenant=%s: %v", tenantID, err)
+		return nil, fmt.Errorf("tenant synonym row iteration failed for tenant=%s: %w", tenantID, err)
 	}
 
 	tenantSynonymCache.Store(cacheKey, synonyms)
-	return synonyms
+	return synonyms, nil
 }
 
 // InvalidateTenantSynonymCache removes a tenant's cached synonym map. Call

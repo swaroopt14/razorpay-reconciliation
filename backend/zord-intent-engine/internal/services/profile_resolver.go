@@ -49,28 +49,52 @@ func ResolveProfileForIntent(
 		return p, nil
 	}
 
+	// INT-06: each tier below only falls through to the next one when the
+	// lookup genuinely found nothing (err == nil, p == nil). A real DB error
+	// is returned immediately instead of being treated the same as "tenant
+	// has no profile configured" — silently continuing past a failed lookup
+	// used to fall all the way through to the priority-4 in-memory default
+	// (or nil), so a transient DB blip could make this replica canonicalize
+	// a row under different rules than a healthy replica (or the same
+	// replica after recovery) would. See ResolveProfileForIntent's caller in
+	// intent_service.go, which now fails the row instead of proceeding on a
+	// non-nil error here.
+
 	// Priority 1: exact tenant + source_system + artifact_family
 	p, err := loadMappingProfile(ctx, db, &tenantID, sourceSystem, artifactFamily)
-	if err == nil && p != nil {
+	if err != nil {
+		return nil, fmt.Errorf("mapping profile lookup (tenant+source+family) failed: %w", err)
+	}
+	if p != nil {
 		profileCache.Store(cacheKey, p)
 		return p, nil
 	}
 
 	// Priority 2: tenant + source_system (ignore artifact_family)
 	p, err = loadMappingProfile(ctx, db, &tenantID, sourceSystem, "")
-	if err == nil && p != nil {
+	if err != nil {
+		return nil, fmt.Errorf("mapping profile lookup (tenant+source) failed: %w", err)
+	}
+	if p != nil {
 		profileCache.Store(cacheKey, p)
 		return p, nil
 	}
 
 	// Priority 3: global profile (tenant_id IS NULL)
 	p, err = loadMappingProfile(ctx, db, nil, sourceSystem, "")
-	if err == nil && p != nil {
+	if err != nil {
+		return nil, fmt.Errorf("mapping profile lookup (global) failed: %w", err)
+	}
+	if p != nil {
 		profileCache.Store(cacheKey, p)
 		return p, nil
 	}
 
-	// Priority 4: built-in profile from config/global_profiles.json.
+	// Priority 4: built-in profile from config/global_profiles.json. This is
+	// an in-memory fallback, but it's an intentional one — it's reached only
+	// after every DB tier above genuinely returned "not found" (no error),
+	// so it degrades to a deterministic, compiled-in default rather than
+	// masking a failure.
 	p = loadBuiltInMappingProfile(sourceSystem, artifactFamily)
 	if p != nil {
 		profileCache.Store(cacheKey, p)
