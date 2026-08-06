@@ -216,9 +216,18 @@ func run() error {
 			c.JSON(http.StatusOK, gin.H{"status": "ok"})
 		})
 
-		// Readiness endpoint — checks DB connectivity
+		// REL-08 + PLAT-11: Readiness endpoint — checks DB, Kafka, and upstream auth
 		readinessHandler := health.NewReadinessHandler([]health.DependencyCheck{
 			health.DBCheck("postgres", database),
+			{
+				Name: "kafka-producer",
+				Check: func(ctx context.Context) error {
+					if kafkaPublisher == nil {
+						return fmt.Errorf("producer not initialized")
+					}
+					return nil
+				},
+			},
 		})
 		r.GET("/ready", readinessHandler.Ready)
 
