@@ -2,8 +2,10 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"os"
 
@@ -117,4 +119,67 @@ func CheckBatchIDExists(ctx context.Context, tenantID uuid.UUID, batchID *string
 		return false, err
 	}
 	return exists, nil
+}
+func UpsertArtifact(ctx context.Context, forcereprocess bool, input model.Artifact) (bool, uuid.UUID, uuid.UUID, error) {
+
+	var existingArtifactId, existingArtifactVerId, artifactID, artifactVersionId uuid.UUID
+
+	if !forcereprocess {
+		query := `SELECT artifact_id,artifact_version_id FROM artifacts WHERE tenant_id=$1 AND file_hash=$2`
+		err := db.DB.QueryRowContext(ctx, query, input.TenantId, input.FileHash).Scan(&existingArtifactId, &existingArtifactVerId)
+		if err == nil {
+			logger.Log.Info("artifact already exist",
+				slog.String("artifactId", existingArtifactId.String()),
+				slog.String("tenant_id", input.TenantId.String()))
+			return true, existingArtifactId, existingArtifactVerId, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			logger.Log.Error("artifact lookup failed",
+				slog.String("tenant_id", input.TenantId.String()),
+				slog.String("error", err.Error()))
+			return false, uuid.Nil, uuid.Nil, err
+		}
+	}
+	artifactID = uuid.Must(uuid.NewV7())
+	artifactVersionId = uuid.Must(uuid.NewV7())
+	if forcereprocess {
+		query := `SELECT artifact_id FROM artifacts WHERE tenant_id=$1 AND file_hash=$2`
+		err := db.DB.QueryRowContext(ctx, query, input.TenantId, input.FileHash).Scan(&existingArtifactId)
+		if err == nil {
+			logger.Log.Info("artifact already exist",
+				slog.String("artifactId", existingArtifactId.String()),
+				slog.String("tenant_id", input.TenantId.String()))
+			artifactID = existingArtifactId
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			logger.Log.Error("artifact lookup failed",
+				slog.String("tenant_id", input.TenantId.String()),
+				slog.String("error", err.Error()))
+			return false, uuid.Nil, uuid.Nil, err
+		}
+	}
+
+	query := `INSERT INTO artifacts(artifact_id,artifact_version_id,file_envelope_id,tenant_id,file_hash,file_name,
+			file_size_bytes,row_count_estimate,object_ref,batch_id)VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`
+
+	_, err := db.DB.ExecContext(ctx, query,
+		artifactID.String(),
+		artifactVersionId.String(),
+		input.FileEnvelopeId,
+		input.TenantId,
+		input.FileHash,
+		input.FileName,
+		input.FileSizeByte,
+		input.RowCountEstimate,
+		input.ObjectRef,
+		input.BatchId,
+	)
+	if err != nil {
+		logger.Log.Error("error in artifact persist",
+			slog.String("tenat_id", string(input.TenantId.String())),
+			slog.String("file_name", *input.FileName),
+			slog.String("Error", err.Error()),
+		)
+		return false, uuid.Nil, uuid.Nil, err
+	}
+	return false, artifactID, artifactVersionId, nil
 }
