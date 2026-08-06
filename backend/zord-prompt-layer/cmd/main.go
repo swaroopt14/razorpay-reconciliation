@@ -61,7 +61,18 @@ func main() {
 	evidenceDB := mustOpenReadOnlyDB("evidence", cfg.EvidenceReadDSN)
 	outcomeDB := mustOpenReadOnlyDB("outcome", cfg.OutcomeReadDSN)
 	liveRetriever := repositories.NewLiveSQLRetriever(edgeDB, intentDB, relayDB, intelligenceDB, evidenceDB, outcomeDB)
+	vectorStateDB := mustOpenDB("vector-index-state", cfg.VectorIndexStateDSN)
 
+	var vectorStateRepo repositories.VectorIndexStateRepository
+	if vectorStateDB != nil {
+		vectorStateRepo = repositories.NewPostgresVectorIndexStateRepository(vectorStateDB)
+		if err := vectorStateRepo.EnsureSchema(context.Background()); err != nil {
+			log.Printf("[prompt-layer][vector-index] state schema setup failed err=%v", err)
+			vectorStateRepo = nil
+		} else {
+			log.Printf("[prompt-layer][vector-index] state db ready")
+		}
+	}
 	var vectorRetriever services.VectorRetriever
 	if strings.TrimSpace(cfg.PineconeAPIKey) != "" && strings.TrimSpace(cfg.PineconeHost) != "" {
 		pineconeClient := client.NewPineconeClient(
@@ -84,6 +95,8 @@ func main() {
 			liveRetriever,
 			geminiClient,
 			pineconeClient,
+			vectorStateRepo,
+			cfg.PineconeNamespace,
 			cfg.GeminiEmbeddingModel,
 			cfg.GeminiEmbeddingDimension,
 			cfg.VectorIndexIntervalSeconds,
@@ -176,5 +189,23 @@ func mustOpenReadOnlyDB(name, dsn string) *sql.DB {
 		log.Fatalf("failed pinging %s db: %v", name, err)
 	}
 	log.Printf("%s read-only db connected", name)
+	return db
+}
+func mustOpenDB(name, dsn string) *sql.DB {
+	if strings.TrimSpace(dsn) == "" {
+		log.Printf("%s DSN not configured; vector index state dedupe disabled", name)
+		return nil
+	}
+
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		log.Fatalf("failed opening %s db: %v", name, err)
+	}
+
+	if err := db.Ping(); err != nil {
+		log.Fatalf("failed pinging %s db: %v", name, err)
+	}
+
+	log.Printf("%s db connected", name)
 	return db
 }

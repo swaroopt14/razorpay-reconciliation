@@ -431,56 +431,12 @@ export function useWorkspaceState(
     }
   }, [])
 
-  useEffect(() => {
-    const hasUserTurn = conversationRef.current.some((m) => m.role === 'user')
-    if (hasUserTurn || activeThreadId) return
-
-    const tenantGate = sessionTenantForPromptLayer(tenantId, tenantReady)
-    if (!tenantGate.ok || authLoading) return
-
-    const userId = user?.id?.trim()
-    if (!userId) return
-
-    const requestId = ++initialAnswerRequestRef.current
-    const tabQuestion = workspacePromptCopy[activeTab].question
-
-    setInitialAnswer({ body: '', status: 'loading' })
-
-    void (async () => {
-      try {
-        const result = await postPromptLayerQuery(
-          { query: tabQuestion, top_k: 6 },
-          {
-            tenantId: tenantGate.tenantId,
-            sessionId: initialSessionIdRef.current,
-            userId,
-          },
-        )
-
-        if (initialAnswerRequestRef.current !== requestId) return
-
-        if (!result.ok) {
-          setInitialAnswer({ body: '', status: 'error' })
-          return
-        }
-
-        const mapped = mapLiveAnswer(result.payload)
-        if (!mapped?.body.trim()) {
-          setInitialAnswer({ body: '', status: 'error' })
-          return
-        }
-
-        setInitialAnswer({ body: mapped.body, status: 'done' })
-      } catch {
-        if (initialAnswerRequestRef.current !== requestId) return
-        setInitialAnswer({ body: '', status: 'error' })
-      }
-    })()
-
-    return () => {
-      initialAnswerRequestRef.current += 1
-    }
-  }, [activeTab, activeThreadId, authLoading, initialAnswerNonce, tenantId, tenantReady, user?.id])
+    useEffect(() => {
+    // Do not call prompt-layer automatically when the Ask page opens.
+    // Prompt-layer should run only when the user submits a message.
+    initialAnswerRequestRef.current += 1
+    setInitialAnswer({ body: '', status: 'idle' })
+  }, [activeTab, activeThreadId, initialAnswerNonce])
 
   const refreshStarterAnswer = useCallback(() => {
     const hasUserTurn = conversationRef.current.some((m) => m.role === 'user')

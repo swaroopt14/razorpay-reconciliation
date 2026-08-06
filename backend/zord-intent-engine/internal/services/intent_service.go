@@ -3010,40 +3010,40 @@ func (s *IntentService) ProcessIncomingIntentsBatch(
 			log.Printf("⚠️ Failed to update batch aggregate confidence for batch=%s: %v", *firstIn.BatchID, err)
 		}
 	}
-	emittedBatches := map[string]bool{}
+	emittedBatches := map[string]string{}
 
 	for _, saved := range savedIntents {
 		batchID := ""
 		if saved.BatchID != nil {
 			batchID = strings.TrimSpace(*saved.BatchID)
 		}
-
-		s.emitVectorIndexRequest(
-			"payment_intent.saved.v1",
-			saved.TenantID,
-			"payment_intent",
-			saved.IntentID,
-			batchID,
-			map[string]string{
-				"governance_state": saved.GovernanceState,
-			},
-		)
-
-		if batchID != "" && !emittedBatches[batchID] {
-			s.emitVectorIndexRequest(
-				"intent_batch.updated.v1",
-				saved.TenantID,
-				"intent_batch",
-				batchID,
-				batchID,
-				nil,
-			)
-			emittedBatches[batchID] = true
+		if batchID != "" {
+			emittedBatches[batchID] = saved.TenantID
 		}
 	}
 
 	for _, dlq := range savedDLQs {
+		batchID := strings.TrimSpace(dlq.BatchID)
+		if batchID != "" {
+			emittedBatches[batchID] = dlq.TenantID
+			continue
+		}
+
+		// Non-batch DLQ items still need direct indexing because there is no batch summary key.
 		s.EmitDLQVectorIndexRequest(dlq)
+	}
+
+	for batchID, tenantID := range emittedBatches {
+		s.emitVectorIndexRequest(
+			"intent_batch.updated.v1",
+			tenantID,
+			"intent_batch",
+			batchID,
+			batchID,
+			map[string]string{
+				"vector_summary_scope": "batch",
+			},
+		)
 	}
 	return savedIntents, savedDLQs, nil
 }

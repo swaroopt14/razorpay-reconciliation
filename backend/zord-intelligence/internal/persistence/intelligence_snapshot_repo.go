@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -104,14 +105,46 @@ func (r *IntelligenceSnapshotRepo) Create(
 		"intelligence_snapshot.created.v1",
 		snap.TenantID,
 		"intelligence_snapshot",
-		snap.SnapshotID,
+		intelligenceSnapshotVectorEntityID(snap),
 		snapshotBatchID(snap.ScopeType, snap.ScopeRef),
 		map[string]string{
 			"snapshot_type": snap.SnapshotType,
 			"scope_type":    snap.ScopeType,
+			"scope_ref":     snapshotScopeRef(snap.ScopeRef),
 		},
 	)
 	return nil
+}
+func snapshotScopeRef(scopeRef *string) string {
+	if scopeRef == nil {
+		return ""
+	}
+	return strings.TrimSpace(*scopeRef)
+}
+func intelligenceSnapshotVectorEntityID(snap IntelligenceSnapshot) string {
+	scopeType := strings.TrimSpace(snap.ScopeType)
+	scopeRef := ""
+	if snap.ScopeRef != nil {
+		scopeRef = strings.TrimSpace(*snap.ScopeRef)
+	}
+	snapshotType := strings.TrimSpace(snap.SnapshotType)
+
+	if scopeRef == "" {
+		scopeRef = "tenant"
+	}
+	if scopeType == "" {
+		scopeType = "TENANT"
+	}
+	if snapshotType == "" {
+		snapshotType = "UNKNOWN"
+	}
+
+	return strings.ToLower(strings.Join([]string{
+		"intelligence_snapshot",
+		scopeType,
+		scopeRef,
+		snapshotType,
+	}, ":"))
 }
 
 // GetByID returns one snapshot by its primary key.
