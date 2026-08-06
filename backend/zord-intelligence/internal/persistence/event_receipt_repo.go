@@ -73,6 +73,7 @@ type EventMeta struct {
 	PayloadHash  string // sha256 hex over raw message bytes, computed by ZPI
 	ScopeType    string // optional: BATCH/INTENT/... when cheaply known
 	ScopeRef     string
+	TraceID      string // required event-contract field (clarification doc §13); "" when upstream omits it
 }
 
 // EventReceiptRepo manages event_receipts rows and the per-event transaction.
@@ -175,10 +176,10 @@ func (r *EventReceiptRepo) runOnceAttempt(
 	claimSQL := `
 		INSERT INTO event_receipts
 			(tenant_id, event_source, source_topic, event_type, event_version, event_id,
-			 payload_hash, scope_type, scope_ref, processing_status, attempt_count,
+			 payload_hash, scope_type, scope_ref, trace_id, processing_status, attempt_count,
 			 processing_started_at, lease_owner, lease_expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7,''), NULLIF($8,''), NULLIF($9,''), 'PROCESSING', 1,
-		        now(), $10, now() + ($11 * INTERVAL '1 second'))
+		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7,''), NULLIF($8,''), NULLIF($9,''), NULLIF($12,''),
+		        'PROCESSING', 1, now(), $10, now() + ($11 * INTERVAL '1 second'))
 		ON CONFLICT (tenant_id, event_source, event_id) DO UPDATE
 			SET attempt_count = event_receipts.attempt_count + 1,
 			    processing_started_at = CASE WHEN event_receipts.processing_status IN ('PROCESSED','CONFLICTED')
@@ -192,7 +193,7 @@ func (r *EventReceiptRepo) runOnceAttempt(
 	`
 	if err := tx.QueryRow(ctx, claimSQL,
 		m.TenantID, m.EventSource, m.SourceTopic, m.EventType, m.EventVersion, m.EventID,
-		m.PayloadHash, m.ScopeType, m.ScopeRef, r.leaseOwner, r.leaseDurationSeconds,
+		m.PayloadHash, m.ScopeType, m.ScopeRef, r.leaseOwner, r.leaseDurationSeconds, m.TraceID,
 	).Scan(&status, &storedHash, &receivedAt, &storedEventType, &storedEventVersion,
 		&attemptCount, &leaseOwner, &processingStartedAt); err != nil {
 		return false, isRetryableTxError(err), fmt.Errorf("event_receipt_repo.RunOnce claim event_id=%s: %w", m.EventID, err)
@@ -372,9 +373,9 @@ func (r *EventReceiptRepo) markFailed(ctx context.Context, m EventMeta, cause er
 	sql := `
 		INSERT INTO event_receipts
 			(tenant_id, event_source, source_topic, event_type, event_version, event_id,
-			 payload_hash, scope_type, scope_ref,
+			 payload_hash, scope_type, scope_ref, trace_id,
 			 processing_status, attempt_count, error_code, error_detail)
-		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7,''), NULLIF($8,''), NULLIF($9,''),
+		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7,''), NULLIF($8,''), NULLIF($9,''), NULLIF($11,''),
 		        'FAILED', 1, 'HANDLER_ERROR', $10)
 		ON CONFLICT (tenant_id, event_source, event_id) DO UPDATE
 			SET processing_status = 'FAILED',
@@ -390,7 +391,7 @@ func (r *EventReceiptRepo) markFailed(ctx context.Context, m EventMeta, cause er
 	defer cancel()
 	if _, err := r.pool.Exec(bgCtx, sql,
 		m.TenantID, m.EventSource, m.SourceTopic, m.EventType, m.EventVersion, m.EventID,
-		m.PayloadHash, m.ScopeType, m.ScopeRef, detail,
+		m.PayloadHash, m.ScopeType, m.ScopeRef, detail, m.TraceID,
 	); err != nil {
 		log.Printf("event_receipts: markFailed write failed tenant=%s event_id=%s: %v", m.TenantID, m.EventID, err)
 	}

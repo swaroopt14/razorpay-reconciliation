@@ -39,6 +39,7 @@ type EnvelopeMeta struct {
 	EventType    string // domain event type from the envelope payload; falls back to SourceTopic when absent
 	EventVersion string // envelope schema_version; "legacy" until upstream sends one
 	PayloadHash  string // sha256 hex over the raw Kafka message value
+	TraceID      string // required event-contract field (clarification doc §13); "" when upstream omits it, no synthetic fallback
 }
 
 // SupportedSchemaVersions lists the schema_version values this build knows

@@ -8,6 +8,9 @@ CREATE TABLE event_receipts (
 	payload_hash      TEXT,
 	scope_type        TEXT,
 	scope_ref         TEXT,
+	-- required event-contract field (docs/service_7_refactoring_clarifications.md
+	-- §13); nullable/no default, no meaningful synthetic value for a missing one.
+	trace_id          TEXT,
 	processing_status TEXT NOT NULL DEFAULT 'RECEIVED',
 	-- CONFLICTED added for corrective-action-report P0-03: a payload-hash
 	-- mismatch on a duplicate event_id is a terminal, ops-resolvable state,
