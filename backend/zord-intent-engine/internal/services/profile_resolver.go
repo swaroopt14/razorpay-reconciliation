@@ -61,7 +61,7 @@ func ResolveProfileForIntent(
 	// non-nil error here.
 
 	// Priority 1: exact tenant + source_system + artifact_family
-	p, err := loadMappingProfile(ctx, db, &tenantID, sourceSystem, artifactFamily)
+	p, err := LoadMappingProfile(ctx, db, &tenantID, sourceSystem, artifactFamily)
 	if err != nil {
 		return nil, fmt.Errorf("mapping profile lookup (tenant+source+family) failed: %w", err)
 	}
@@ -71,7 +71,7 @@ func ResolveProfileForIntent(
 	}
 
 	// Priority 2: tenant + source_system (ignore artifact_family)
-	p, err = loadMappingProfile(ctx, db, &tenantID, sourceSystem, "")
+	p, err = LoadMappingProfile(ctx, db, &tenantID, sourceSystem, "")
 	if err != nil {
 		return nil, fmt.Errorf("mapping profile lookup (tenant+source) failed: %w", err)
 	}
@@ -81,7 +81,7 @@ func ResolveProfileForIntent(
 	}
 
 	// Priority 3: global profile (tenant_id IS NULL)
-	p, err = loadMappingProfile(ctx, db, nil, sourceSystem, "")
+	p, err = LoadMappingProfile(ctx, db, nil, sourceSystem, "")
 	if err != nil {
 		return nil, fmt.Errorf("mapping profile lookup (global) failed: %w", err)
 	}
@@ -95,7 +95,7 @@ func ResolveProfileForIntent(
 	// after every DB tier above genuinely returned "not found" (no error),
 	// so it degrades to a deterministic, compiled-in default rather than
 	// masking a failure.
-	p = loadBuiltInMappingProfile(sourceSystem, artifactFamily)
+	p = LoadBuiltInMappingProfile(sourceSystem, artifactFamily)
 	if p != nil {
 		profileCache.Store(cacheKey, p)
 		return p, nil
@@ -178,7 +178,7 @@ func DetectSourceType(headers []string) string {
 	return ""
 }
 
-func loadBuiltInMappingProfile(sourceSystem, artifactFamily string) *models.MappingProfile {
+func LoadBuiltInMappingProfile(sourceSystem, artifactFamily string) *models.MappingProfile {
 	loadDetectorProfiles()
 
 	def, ok := detectorProfiles[sourceSystem]
@@ -250,9 +250,9 @@ func loadBuiltInMappingProfile(sourceSystem, artifactFamily string) *models.Mapp
 
 // SeedGlobalMappingProfilesFromFile upserts every global_profiles.json entry
 // into mapping_profiles as a global (tenant_id IS NULL) row, so these
-// built-in profiles resolve at priority 3 (loadMappingProfile) with a real,
+// built-in profiles resolve at priority 3 (LoadMappingProfile) with a real,
 // persisted profile_hash instead of only ever existing as the in-memory
-// priority-4 fallback (loadBuiltInMappingProfile).
+// priority-4 fallback (LoadBuiltInMappingProfile).
 //
 // global_profiles.json is the source of truth for these system-* rows: this
 // is safe to call on every service startup, and each run re-syncs the DB from
@@ -266,7 +266,7 @@ func SeedGlobalMappingProfilesFromFile(ctx context.Context, db *sql.DB) error {
 		if len(def.ColumnMap) == 0 {
 			continue
 		}
-		p := loadBuiltInMappingProfile(sourceSystem, "")
+		p := LoadBuiltInMappingProfile(sourceSystem, "")
 		if p == nil || seen[p.ProfileID] {
 			continue
 		}
@@ -349,7 +349,7 @@ func upsertGlobalMappingProfile(ctx context.Context, db *sql.DB, p *models.Mappi
 	return err
 }
 
-func loadMappingProfile(
+func LoadMappingProfile(
 	ctx context.Context,
 	db *sql.DB,
 	tenantID *uuid.UUID,
