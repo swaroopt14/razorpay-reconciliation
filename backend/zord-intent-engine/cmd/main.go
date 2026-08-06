@@ -246,33 +246,9 @@ func main() {
 
 		if dlq != nil {
 			log.Printf("⚠️ Intent rejected [tenant=%s envelope=%s reason=%s]", event.TenantID, event.EnvelopeID, dlq.ReasonCode)
-			if dlq.DLQID == "" {
-				if dlq.TenantID == "" {
-					dlq.TenantID = event.TenantID.String()
-				}
-				if dlq.EnvelopeID == "" {
-					dlq.EnvelopeID = event.EnvelopeID.String()
-				}
-				if dlq.ClientBatchRef == "" && event.BatchID != nil {
-					dlq.ClientBatchRef = *event.BatchID
-				}
-				if dlq.BatchID == "" && event.BatchID != nil {
-					dlq.BatchID = *event.BatchID
-				}
-				savedDLQ, err := dlqRepo.Save(ctx, *dlq)
-				if err != nil {
-					// INT-01: a rejected intent must never be acknowledged
-					// without a durable DLQ record — that's silent
-					// financial-data loss (no intent row, no DLQ row) and it
-					// breaks batch counts/auditability. Returning the error
-					// sends this message back through callWithRetry; if every
-					// attempt fails, kafka.ConsumeClaim durably records it in
-					// consumer_failure_receipts (R-03) before the offset is
-					// allowed to advance, instead of marking it here.
-					log.Printf("Failed to save DLQ entry: %v", err)
-					return fmt.Errorf("failed to persist DLQ entry for envelope=%s: %w", event.EnvelopeID, err)
-				}
-				intentService.EmitDLQVectorIndexRequest(savedDLQ)
+			if err := persistRejectedIntentDLQ(ctx, dlqRepo, dlq, &event, intentService.EmitDLQVectorIndexRequest); err != nil {
+				log.Printf("Failed to save DLQ entry: %v", err)
+				return err
 			}
 			return nil // Reject is a terminal state, return nil so message is marked
 		}
@@ -383,6 +359,50 @@ func durationEnv(key string, def time.Duration) time.Duration {
 		return def
 	}
 	return d
+}
+
+// persistRejectedIntentDLQ finalizes a rejected intent's DLQ record: it fills
+// in identifiers the pipeline may not have set yet, persists the entry if it
+// wasn't already saved upstream (dlq.DLQID == ""), and fires the vector-index
+// side effect only on a confirmed durable save.
+//
+// INT-01: the caller must propagate a non-nil return here rather than
+// acknowledging the Kafka message — a rejected intent with a failed DLQ
+// write has neither an intent row nor a DLQ row, which is silent
+// financial-data loss and corrupts batch counts/auditability. Propagating
+// the error sends the message back through kafka.callWithRetry; if every
+// attempt fails, kafka.ConsumeClaim durably records it in
+// consumer_failure_receipts (R-03) before the offset is allowed to advance.
+func persistRejectedIntentDLQ(
+	ctx context.Context,
+	dlqRepo persistence.DLQRepository,
+	dlq *models.DLQEntry,
+	event *models.Event,
+	emitVectorIndex func(models.DLQEntry),
+) error {
+	if dlq.DLQID != "" {
+		// Already durably saved upstream (inside ProcessIncomingIntent) —
+		// nothing left to do.
+		return nil
+	}
+	if dlq.TenantID == "" {
+		dlq.TenantID = event.TenantID.String()
+	}
+	if dlq.EnvelopeID == "" {
+		dlq.EnvelopeID = event.EnvelopeID.String()
+	}
+	if dlq.ClientBatchRef == "" && event.BatchID != nil {
+		dlq.ClientBatchRef = *event.BatchID
+	}
+	if dlq.BatchID == "" && event.BatchID != nil {
+		dlq.BatchID = *event.BatchID
+	}
+	savedDLQ, err := dlqRepo.Save(ctx, *dlq)
+	if err != nil {
+		return fmt.Errorf("failed to persist DLQ entry for envelope=%s: %w", event.EnvelopeID, err)
+	}
+	emitVectorIndex(savedDLQ)
+	return nil
 }
 
 // newFailureRecorder builds a kafka.FailureRecorder (R-03) that durably
