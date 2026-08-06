@@ -1,0 +1,34 @@
+# Allow all app services to send traces/metrics to OTel Collector in tracing namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-otel
+  namespace: zord
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          - zord-edge
+          - zord-intent-engine
+          - zord-token-enclave
+          - zord-relay
+          - zord-outcome-engine
+          - zord-evidence
+          - zord-intelligence
+          - zord-prompt-layer
+          - zord-console
+  policyTypes:
+    - Egress
+  egress:
+    # OTel Collector in tracing namespace (gRPC port 4317, HTTP port 4318)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tracing
+      ports:
+        - protocol: TCP
+          port: 4317
+        - protocol: TCP
+          port: 4318

@@ -1,8 +1,28 @@
-# Allow all app services to make outbound calls to internal infrastructure (Postgres, Kafka, Redis)
+# ══════════════════════════════════════════════════════════════════════════════
+# PLAT-09: Destination-Specific Egress Policies
+# ══════════════════════════════════════════════════════════════════════════════
+# Each service gets ONLY the outbound access it actually needs.
+# No blanket port 443/80 for all pods.
+# ══════════════════════════════════════════════════════════════════════════════
+# 3. zord-edge, zord-intent-engine, zord-outcome-engine, zord-evidence — AWS S3 only
+#These services can reach:
+#  ✅ DNS
+#  ✅ Internal pods
+#  ✅ Port 443 to public IPs (for S3 API calls)
+#  ❌ Port 80 — BLOCKED
+#  ❌ Any other port — BLOCKED
+
+# Why: These services store/retrieve files from S3.
+# S3 API uses HTTPS (port 443).
+# We block port 80 (HTTP) — there's no reason to use unencrypted connections.
+# ============================================================================================
+---
+# ── Services that need S3 only (no arbitrary internet) ─────────────────────
+# zord-edge, zord-intent-engine, zord-outcome-engine, zord-evidence
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-egress-internal
+  name: allow-egress-s3-services
   namespace: zord
 spec:
   podSelector:
@@ -12,18 +32,12 @@ spec:
         values:
           - zord-edge
           - zord-intent-engine
-          - zord-token-enclave
-          - zord-relay
           - zord-outcome-engine
           - zord-evidence
-          - zord-intelligence
-          - zord-prompt-layer
-          - zord-console
-          - zord-ml-service
   policyTypes:
     - Egress
   egress:
-    # Allow DNS resolution (kube-system)
+    # DNS resolution
     - to:
         - namespaceSelector:
             matchLabels:
@@ -33,14 +47,217 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-    # Allow traffic to any pod in zord namespace (internal services, Postgres, Kafka, Redis)
+    # Internal pods (Postgres, Kafka, other services)
     - to:
         - podSelector: {}
-    # Allow HTTPS to AWS services (S3, Secrets Manager, STS for IRSA)
-    - ports:
+    # AWS S3 + STS (IRSA token exchange) — HTTPS only
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
         - protocol: TCP
           port: 443
-    # Allow HTTP to AWS metadata (IRSA token endpoint)
-    - ports:
+
+---
+# ── zord-relay: Needs external PSP endpoints ──────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-relay
+  namespace: zord
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: zord-relay
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
         - protocol: TCP
-          port: 80
+          port: 53
+    - to:
+        - podSelector: {}
+    # External PSP APIs (Razorpay, Cashfree, PayU — HTTPS only)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+
+---
+# ── zord-prompt-layer: Needs Google Gemini API ────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-prompt-layer
+  namespace: zord
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: zord-prompt-layer
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector: {}
+    # Google Gemini API (HTTPS only)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+
+---
+# ── zord-console: Needs Slack webhooks ────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-console
+  namespace: zord
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: zord-console
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector: {}
+    # Slack webhooks (HTTPS only)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+
+---
+# ── zord-token-enclave: NO internet — internal only ──────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-token-enclave
+  namespace: zord
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: zord-token-enclave
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector: {}
+
+---
+# ── zord-intelligence: Internal + AWS S3 ─────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-intelligence
+  namespace: zord
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: zord-intelligence
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector: {}
+    # AWS S3 + STS
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+
+---
+# ── ml-service: Internal ONLY (Kafka, no internet) ───────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-ml-service
+  namespace: zord
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: zord-ml-service
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector: {}

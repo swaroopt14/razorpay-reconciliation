@@ -197,6 +197,11 @@ kubectl get deployment -A | grep aws-load-balancer
 # 4. EBS CSI Driver
 kubectl get pods -n kube-system | grep ebs
 # Must show running pods
+
+# 5.1. Verify network policy is enabled
+kubectl get daemonset aws-node -n kube-system -o jsonpath='{.spec.template.spec.containers[0].env}' | grep NETWORK_POLICY
+# 5.2. If it shows ENABLE_NETWORK_POLICY=true, proceed to deploy policies
+
 ```
 
 If any are missing, install them before continuing.
