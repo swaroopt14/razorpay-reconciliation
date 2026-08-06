@@ -77,7 +77,7 @@ func HandleIntentEvent(msg []byte) error {
 		payload.TenantID = event.TenantID
 	}
 
-	intent, err := canonicalIntentFromPayload(payload)
+	intent, err := canonicalIntentFromPayload(payload, event.TraceID)
 	if err != nil {
 		_ = persistDeadLetter(context.Background(), event.EventID, event.EventType, event.SchemaVersion, event.TenantID, event.TraceID, msg, fmt.Sprintf("canonicalization failed: %v", err), "CANONICALIZATION")
 		return err

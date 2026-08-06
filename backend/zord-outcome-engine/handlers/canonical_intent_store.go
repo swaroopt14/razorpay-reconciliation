@@ -19,7 +19,7 @@ func upsertCanonicalIntent(ctx context.Context, intent models.CanonicalIntent) e
 	}
 	_, err := db.DB.ExecContext(ctx, `
 		INSERT INTO canonical_intents (
-			intent_id, tenant_id, contract_id,
+			intent_id, tenant_id, trace_id, contract_id,
 			client_payout_ref, client_batch_ref, business_idempotency_key,
 			amount, currency_code,
 			intended_execution_at, payout_type, provider_hint, corridor,
@@ -28,9 +28,10 @@ func upsertCanonicalIntent(ctx context.Context, intent models.CanonicalIntent) e
 			source_row_num,
 			created_at
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
 		) ON CONFLICT (intent_id) DO UPDATE SET
 			tenant_id               = EXCLUDED.tenant_id,
+			trace_id                = EXCLUDED.trace_id,
 			contract_id             = EXCLUDED.contract_id,
 			client_payout_ref       = EXCLUDED.client_payout_ref,
 			client_batch_ref        = EXCLUDED.client_batch_ref,
@@ -46,7 +47,7 @@ func upsertCanonicalIntent(ctx context.Context, intent models.CanonicalIntent) e
 			canonical_hash          = EXCLUDED.canonical_hash,
 			governance_state        = EXCLUDED.governance_state,
 			source_row_num          = EXCLUDED.source_row_num`,
-		intent.IntentID, intent.TenantID, intent.ContractID,
+		intent.IntentID, intent.TenantID, intent.TraceID, intent.ContractID,
 		intent.ClientPayoutRef, intent.ClientBatchRef, intent.BusinessIdempotencyKey,
 		intent.Amount, intent.CurrencyCode,
 		intent.IntendedExecutionAt, intent.PayoutType, intent.ProviderHint, intent.Corridor,
@@ -70,7 +71,7 @@ func validateAmount(amount string) (decimal.Decimal, error) {
 	return val, nil
 }
 
-func canonicalIntentFromPayload(payload models.IntentPayload) (models.CanonicalIntent, error) {
+func canonicalIntentFromPayload(payload models.IntentPayload, traceID string) (models.CanonicalIntent, error) {
 	intentID, err := parseRequiredUUID(payload.IntentID, "intent_id")
 	if err != nil {
 		return models.CanonicalIntent{}, err
@@ -78,6 +79,12 @@ func canonicalIntentFromPayload(payload models.IntentPayload) (models.CanonicalI
 	tenantID, err := parseRequiredUUID(payload.TenantID, "tenant_id")
 	if err != nil {
 		return models.CanonicalIntent{}, err
+	}
+	var parsedTraceID *uuid.UUID
+	if traceID != "" {
+		if t, err := uuid.Parse(traceID); err == nil {
+			parsedTraceID = &t
+		}
 	}
 	contractID, _ := uuid.Parse(payload.ContractID)
 
@@ -128,6 +135,7 @@ func canonicalIntentFromPayload(payload models.IntentPayload) (models.CanonicalI
 	return models.CanonicalIntent{
 		IntentID:               intentID,
 		TenantID:               tenantID,
+		TraceID:                parsedTraceID,
 		ContractID:             contractID,
 		ClientPayoutRef:        clientPayoutRef,
 		ClientBatchRef:         clientBatchRef,
