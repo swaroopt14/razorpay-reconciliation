@@ -16,7 +16,7 @@ import (
 // InvalidateTenantSynonymCache after an admin writes/deactivates a row.
 var tenantSynonymCache sync.Map // key: tenant_id string -> map[string]string
 
-// loadTenantSynonyms fetches this tenant's active synonym overrides from
+// LoadTenantSynonyms fetches this tenant's active synonym overrides from
 // tenant_synonym_profiles. Returns an empty map when the tenant legitimately
 // has no overrides configured — the global synonym dict in the normalizer
 // package still applies either way.
@@ -30,7 +30,7 @@ var tenantSynonymCache sync.Map // key: tenant_id string -> map[string]string
 // hash for the same source row depending on nothing but DB health at the
 // moment it was processed. The caller (intent_service.go) fails the row
 // instead of proceeding on a non-nil error.
-func loadTenantSynonyms(ctx context.Context, db *sql.DB, tenantID uuid.UUID) (map[string]string, error) {
+func LoadTenantSynonyms(ctx context.Context, db *sql.DB, tenantID uuid.UUID) (map[string]string, error) {
 	cacheKey := tenantID.String()
 	if cached, ok := tenantSynonymCache.Load(cacheKey); ok {
 		return cached.(map[string]string), nil
@@ -51,7 +51,7 @@ func loadTenantSynonyms(ctx context.Context, db *sql.DB, tenantID uuid.UUID) (ma
 	for rows.Next() {
 		var sourceKey, canonicalPath string
 		if err := rows.Scan(&sourceKey, &canonicalPath); err != nil {
-			log.Printf("⚠️ loadTenantSynonyms: scan failed for tenant=%s: %v", tenantID, err)
+			log.Printf("⚠️ LoadTenantSynonyms: scan failed for tenant=%s: %v", tenantID, err)
 			continue
 		}
 		synonyms[strings.ToLower(strings.TrimSpace(sourceKey))] = canonicalPath

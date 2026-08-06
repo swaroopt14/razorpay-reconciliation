@@ -129,10 +129,10 @@ var enclaveHTTPClient = &http.Client{
 // getTenantSynonyms returns tenant-specific synonym overrides from DB.
 // Returns an empty map if the tenant has no custom synonyms configured — the
 // global synonym dict still applies. Returns a non-nil error only on a real
-// DB failure (see loadTenantSynonyms / INT-06); the caller must fail the row
+// DB failure (see LoadTenantSynonyms / INT-06); the caller must fail the row
 // rather than normalize it without the tenant's real overrides.
 func (s *IntentService) getTenantSynonyms(ctx context.Context, tenantID uuid.UUID) (map[string]string, error) {
-	return loadTenantSynonyms(ctx, s.db, tenantID)
+	return LoadTenantSynonyms(ctx, s.db, tenantID)
 }
 
 // Repository abstraction
