@@ -90,15 +90,56 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 			log.Printf("[prompt-layer][memory] followup resolved tenant=%s user=%s session=%s", req.TenantID, req.UserID, req.SessionID)
 		}
 	}
-	log.Printf("[prompt-layer][llm] call=classifier tenant=%s", req.TenantID)
+	selectedUIContext := buildSelectedUIContextBlock(req.UIContext)
 
-	dec, err := s.llm.ClassifyQueryIntent(resolvedQuery, memoryContext)
-	if err != nil {
-		log.Printf("[prompt-layer][classify] llm-classifier failed tenant=%s err=%v; defaulting general", req.TenantID, err)
-		return buildGeneralResponse(), nil
+	log.Printf("[prompt-layer][llm] call=planner tenant=%s", req.TenantID)
+	plan, planErr := s.llm.PlanQuery(resolvedQuery, memoryContext, selectedUIContext)
+
+	var dec QueryClassDecision
+	var class queryClass
+
+	if planErr != nil {
+		log.Printf("[prompt-layer][planner] failed tenant=%s err=%v; falling back to classifier", req.TenantID, planErr)
+		log.Printf("[prompt-layer][llm] call=classifier tenant=%s", req.TenantID)
+
+		dec, err := s.llm.ClassifyQueryIntent(resolvedQuery, memoryContext)
+		if err != nil {
+			log.Printf("[prompt-layer][classify] llm-classifier failed tenant=%s err=%v; defaulting general", req.TenantID, err)
+			return buildGeneralResponse(), nil
+		}
+
+		class = mapLLMClass(dec.Class)
+	} else {
+		log.Printf(
+			"[prompt-layer][planner] decision tenant=%s query_type=%s confidence=%.2f needs_data=%t needs_clarification=%t needs_vector=%t needs_likelihood=%t needs_audit=%t targets=%s",
+			req.TenantID,
+			plan.QueryType,
+			plan.Confidence,
+			plan.NeedsData,
+			plan.NeedsClarification,
+			plan.NeedsVectorContext,
+			plan.NeedsLikelihoodReasoning,
+			plan.NeedsAuditSummary,
+			strings.Join(plan.RetrievalTargets, ","),
+		)
+
+		if shouldAskPlannerClarification(plan, req, memorySummary, historyContext, history) {
+			resp := buildClarificationResponse(plan.ClarificationQuestion)
+			log.Printf("[prompt-layer][planner] clarification tenant=%s question=%q", req.TenantID, resp.Answer)
+			s.persistConversationMemory(ctx, req, memorySummary, resp.Answer)
+			return resp, nil
+		}
+
+		class = mapLLMClass(plan.QueryType)
+		dec = QueryClassDecision{
+			Class:              plan.QueryType,
+			Confidence:         plan.Confidence,
+			NeedsData:          plan.NeedsData,
+			NeedsVisualization: plan.NeedsVisualization,
+			Reason:             plan.Reason,
+		}
 	}
 
-	class := mapLLMClass(dec.Class)
 	if dec.Confidence < 0.50 {
 		log.Printf("[prompt-layer][classify] low confidence tenant=%s class=%s confidence=%.2f; defaulting general", req.TenantID, dec.Class, dec.Confidence)
 		class = classProduct
@@ -110,7 +151,7 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 		dec.NeedsData = true
 	}
 
-	log.Printf("[prompt-layer][router] route=%s source=llm confidence=%.2f tenant=%s", class, dec.Confidence, req.TenantID)
+	log.Printf("[prompt-layer][router] route=%s source=planner confidence=%.2f tenant=%s", class, dec.Confidence, req.TenantID)
 	log.Printf("[prompt-layer][classify] class=%s tenant=%s", class, req.TenantID)
 
 	if class == classProduct {
@@ -173,6 +214,15 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 
 	retrievalReq := req
 	retrievalReq.Query = buildSelectedUIContextQuery(req, resolvedQuery)
+
+	if planErr == nil {
+		retrievalReq.PlannerNeedsVector = plan.NeedsVectorContext
+		retrievalReq.PlannerBusinessIntent = plan.BusinessIntent
+		retrievalReq.PlannerRetrievalTargets = plan.RetrievalTargets
+		retrievalReq.PlannerReferenceCandidates = plan.ReferenceCandidates
+		retrievalReq.PlannerNeedsLikelihood = plan.NeedsLikelihoodReasoning
+		retrievalReq.PlannerNeedsAuditSummary = plan.NeedsAuditSummary
+	}
 
 	if req.UIContext != nil {
 		log.Printf(
@@ -275,8 +325,8 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 		context += "Original user query: " + utils.SanitizeAnswerText(req.Query) + "\n"
 		context += "Resolved business query: " + utils.SanitizeAnswerText(resolvedQuery) + "\n"
 	}
-	if selectedContext := buildSelectedUIContextBlock(req.UIContext); selectedContext != "" {
-		context += "[SELECTED_UI_CONTEXT]\n" + selectedContext + "\n"
+	if selectedUIContext != "" {
+		context += "[SELECTED_UI_CONTEXT]\n" + selectedUIContext + "\n"
 	}
 	context += buildBusinessContext(chunks)
 	if strings.TrimSpace(rcaContext) != "" {

@@ -4,16 +4,18 @@ import (
 	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"io"
-	"log"
-	"database/sql"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
 	"zord-edge/db"
+	"zord-edge/logger"
 
 	"github.com/gin-gonic/gin"
 )
@@ -80,7 +82,10 @@ func VerifyWebhookSignature() gin.HandlerFunc {
 		// Lookup connector
 		binding, err := LookupConnectorBinding(provider, connectorID)
 		if err != nil {
-			log.Printf("Connector lookup failed provider=%s connector=%s: %v", provider, connectorID, err)
+			logger.Log.Error("webhook connector lookup failed",
+				slog.String("provider", provider),
+				slog.String("connector_id", connectorID),
+				slog.String("error", err.Error()))
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 			c.Abort()
 			return
@@ -118,8 +123,10 @@ func VerifyWebhookSignature() gin.HandlerFunc {
 		}
 		c.Request.Body = io.NopCloser(bytes.NewBuffer(body))
 		if !verifySignatureV1(body, binding.Secret, timestampHeader, sigV1) {
-			log.Printf("Webhook signature mismatch provider=%s connector=%s event=%s",
-				provider, connectorID, eventID)
+			logger.Log.Warn("webhook signature mismatch",
+				slog.String("provider", provider),
+				slog.String("connector_id", connectorID),
+				slog.String("event_id", eventID))
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid signature"})
 			c.Abort()
 			return

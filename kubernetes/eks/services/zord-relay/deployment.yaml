@@ -44,10 +44,21 @@ spec:
           labelSelector:
             matchLabels:
               app.kubernetes.io/name: zord-relay
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: zord-relay
           image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/zord/zord-relay:v2
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           ports:
             - containerPort: 8082
               name: http
@@ -91,6 +102,8 @@ spec:
               mountPath: /config.yaml
               subPath: config.yaml
               readOnly: true
+            - name: tmp
+              mountPath: /tmp
           readinessProbe:
             httpGet:
               path: /ready
@@ -114,3 +127,5 @@ spec:
         - name: relay-config
           configMap:
             name: zord-relay-config
+        - name: tmp
+          emptyDir: {}

@@ -11,7 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -19,10 +19,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"zord-edge/db"
+	"zord-edge/logger"
 	"zord-edge/model"
 	"zord-edge/services"
 	"zord-edge/vault"
@@ -44,12 +44,14 @@ func init() {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			minutes = n
 		} else {
-			log.Printf("[BulkHandler] WARNING: BULK_INGEST_JOB_TIMEOUT_MINUTES=%q is not a valid positive integer; using default %d minutes",
-				v, defaultBulkIngestJobTimeoutMinutes)
+			logger.Log.Warn("BULK_INGEST_JOB_TIMEOUT_MINUTES is not a valid positive integer; using default",
+				slog.String("invalid_value", v),
+				slog.Int("default_minutes", defaultBulkIngestJobTimeoutMinutes))
 		}
 	}
 	bulkIngestJobTimeout = time.Duration(minutes) * time.Minute
-	log.Printf("[BulkHandler] bulk ingest job timeout set to %v", bulkIngestJobTimeout)
+	logger.Log.Info("bulk ingest job timeout configured",
+		slog.Duration("timeout", bulkIngestJobTimeout))
 }
 
 type BulkResult struct {
@@ -85,13 +87,19 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 	file, err := c.FormFile("file")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "file is required"})
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    "FILE_REQUIRED",
+			"message": "file is required",
+		})
 		return
 	}
 
 	src, err := file.Open()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "unable to open file"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    "FILE_OPEN_ERROR",
+			"message": "unable to open file",
+		})
 		return
 	}
 	defer src.Close()
@@ -127,9 +135,15 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 	// Drain the TeeReader — this is the single read pass over the file.
 	if _, err := io.Copy(io.Discard, tee); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read file"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    "FILE_READ_ERROR",
+			"message": "failed to read file",
+		})
 		return
 	}
+
+	filebyte := fileBuf.Bytes()
+	mimetype := http.DetectContentType(filebyte[:min(512, len(filebyte))])
 
 	fileHash := hex.EncodeToString(hasher.Sum(nil))
 	fileSizeBytes := int64(cw.total)
@@ -137,7 +151,10 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 	// Reset file pointer so the format-specific parser (CSV/xlsx) starts at byte 0.
 	if _, err := src.Seek(0, io.SeekStart); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to reset file pointer"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    "FILE_SEEK_ERROR",
+			"message": "failed to reset file pointer",
+		})
 		return
 	}
 
@@ -148,22 +165,30 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 	batchIDHeader := c.GetHeader("Batch-ID")
 	originalBatchID := batchIDHeader
-	// if batchIDHeader == "" {
-	// 	batchIDHeader = uuid.Must(uuid.NewV7()).String()
-	// }
-	artifactID := uuid.Must(uuid.NewV7()).String()
-	artifactVersionId := "ART_V1"
+	if batchIDHeader == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    "BATCH_ID_REQUIRED",
+			"message": "Batch-ID header is required",
+		})
+		return
+	}
+	//artifactID := uuid.Must(uuid.NewV7())
+	//artifactVersionId := uuid.Must(uuid.NewV7())
 	finalBatchID := &batchIDHeader
 
 	if originalBatchID != "" {
 		exists, err := services.CheckBatchIDExists(c.Request.Context(), tenantID, finalBatchID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify batch_id uniqueness"})
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"code":    "BATCH_ID_VERIFICATION_FAILED",
+				"message": "failed to verify batch_id uniqueness",
+			})
 			return
 		}
 		if exists {
 			c.JSON(http.StatusConflict, gin.H{
-				"error": "batch_id must be unique for each tenant",
+				"code":    "BATCH_ID_ALREADY_EXISTS",
+				"message": "batch_id must be unique for each tenant",
 			})
 			return
 		}
@@ -176,27 +201,20 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 	// makes reprocess idempotency keys unique and prevents unbounded
 	// re-ingestion if the client hammers the endpoint.
 	forceReprocess := c.GetHeader("X-Zord-Force-Reprocess") == "true"
-	if forceReprocess && originalBatchID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Batch-ID header is required when X-Zord-Force-Reprocess is true",
-		})
-		return
-	}
 
-	log.Printf(
-		"Bulk file stored | filename=%s size=%d hash=%s ",
-		file.Filename,
-		fileSizeBytes,
-		fileHash,
-	)
+	logger.Log.Info("bulk file stored",
+		slog.String("filename", file.Filename),
+		slog.Int64("size", fileSizeBytes),
+		slog.String("hash", fileHash),
+		slog.String("tenant_id", tenantID.String()))
 
 	// REQUIREMENT 12 PRESERVED: "file_data" contains the raw file bytes,
 	// identical to the original. This is the source-of-truth payload stored
 	// in the file-level RawEnvelope on S3 before any row is processed.
 	filePayload := map[string]interface{}{
-		"file_name":           file.Filename,
-		"artifact_id":         artifactID,
-		"artifact_version_id": artifactVersionId,
+		"file_name": file.Filename,
+		// "artifact_id":         artifactID,
+		// "artifact_version_id": artifactVersionId,
 		"file_size":           PayloadSize,
 		"file_content_hash":   fileHash,
 		"row_count_estimate":  rowCountEstimate,
@@ -207,7 +225,8 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 	payloadBytes, err := json.Marshal(filePayload)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "failed to build file payload",
+			"code":    "PAYLOAD_MARSHAL_ERROR",
+			"message": "failed to build file payload",
 		})
 		return
 	}
@@ -228,23 +247,50 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		IngressAPIVersion:    "v1",
 		RetentionPolicyClass: "STANDARD",
 		EventType:            "Envelope.Created",
-		//FileName:             &file.Filename,
-		//FileSizeBytes:        &fileSizeBytes,
-		//FileContentHash:      &fileHash,
-		//RowCountEstimate:     &rowCountEstimate,
-		//FileUploadChannel:    func(s string) *string { return &s }("CSV"),
-		BatchID: finalBatchID,
+		BatchID:              finalBatchID,
 	}
+	fileEnvelopeId := uuid.NewString()
 
-	data, err := services.ProcessRawIntent(context.Background(), fileMsg, h.S3store, artifactID, time.Now().UTC())
+	data, err := services.ProcessRawIntent(context.Background(), fileMsg, h.S3store, fileEnvelopeId, time.Now().UTC())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "failed to store bulk file envelope",
+			"code":    "S3_STORE_ERROR",
+			"message": "failed to store bulk file envelope",
 		})
 		return
 	}
-	data.ArtifactVersionId = artifactVersionId
-	data.ArtifactId = artifactID
+	fileartifact := model.Artifact{
+		TenantId:         tenantID,
+		FileEnvelopeId:   fileEnvelopeId,
+		BatchId:          finalBatchID,
+		FileName:         &file.Filename,
+		FileSizeByte:     &fileSizeBytes,
+		FileHash:         fileHash,
+		RowCountEstimate: rowCountEstimate,
+		ObjectRef:        data.ObjectRef,
+	}
+
+	isExist, artifactID, artifactVersionId, err := services.UpsertArtifact(context.Background(), forceReprocess, fileartifact)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    "Artifact Persist Error",
+			"message": "failed to store file artifact",
+		})
+		return
+	}
+	if isExist {
+		c.JSON(http.StatusConflict, gin.H{
+			"code":              "Artifact already Exist",
+			"ArtifactId":        artifactID,
+			"ArtifactVersionId": artifactVersionId,
+			"message":           "This Artifact has already been processed. All rows exist in the system.",
+			"hint":              "If you intended to reprocess this batch, resend the request with the headers: X-Zord-Force-Reprocess: true and a unique Batch-ID.",
+		})
+		return
+	}
+
+	data.ArtifactVersionId = artifactVersionId.String()
+	data.ArtifactId = artifactID.String()
 
 	// File envelope is now durably stored on S3. Release the buffer — row
 	// processing from this point forward uses only the reset src reader.
@@ -264,32 +310,36 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 	switch {
 	case sourceSystem != "":
-		log.Printf("[BulkHandler] using profile-driven pass-through for source_system=%s tenant=%s",
-			sourceSystem, tenantID)
+		logger.Log.Info("using profile-driven pass-through",
+			slog.String("source_system", sourceSystem),
+			slog.String("tenant_id", tenantID.String()))
 
 	case tenantType == "TALLY" || tenantType == "SAP" || tenantType == "ERP" || tenantType == "QUICKBOOKS":
 		sourceSystem = tenantType
-		log.Printf("[BulkHandler] using profile-driven pass-through for source_system=%s tenant=%s",
-			sourceSystem, tenantID)
+		logger.Log.Info("using profile-driven pass-through",
+			slog.String("source_system", sourceSystem),
+			slog.String("tenant_id", tenantID.String()))
 
 	case tenantType != "":
 		parser, parserErr = services.GetParserByType(tenantType)
 		if parserErr != nil {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{
-				"error":  "invalid tenant type",
-				"detail": parserErr.Error(),
-				"hint":   "Valid static parser types: BANK, NBFC, MERCHANT, VENDOR, GATEWAY",
+				"code":    "INVALID_TENANT_TYPE",
+				"message": "invalid tenant type",
+				"detail":  parserErr.Error(),
+				"hint":    "Valid static parser types: BANK, NBFC, MERCHANT, VENDOR, GATEWAY",
 			})
 			return
 		}
 		sourceSystem = "UNKNOWN"
-		log.Printf("[BulkHandler] using type-based parser type=%s tenant=%s",
-			tenantType, tenantID)
+		logger.Log.Info("using type-based parser",
+			slog.String("tenant_type", tenantType),
+			slog.String("tenant_id", tenantID.String()))
 
 	default:
 		sourceSystem = "UNKNOWN"
-		log.Printf("[BulkHandler] using profile-driven pass-through with source auto-detection tenant=%s",
-			tenantID)
+		logger.Log.Info("using profile-driven pass-through with source auto-detection",
+			slog.String("tenant_id", tenantID.String()))
 	}
 
 	profileIDForAudit := tenantType
@@ -307,17 +357,38 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 	// ── CSV ───────────────────────────────────────────────────────────────────
 	case ".csv":
+		// MIME TYPE DETECTION
+		if !strings.HasPrefix(mimetype, "text/") {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":     "MIME_MISMATCH",
+				"message":  "file extention is .csv  but content is not plain text",
+				"detected": mimetype,
+			})
+			logger.Log.Warn("CSV MIME mismatch",
+				slog.String("detected", mimetype))
+			return
+		}
 		totalDataRows := rowCountEstimate
 
 		if totalDataRows < 1 {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "file must contain header and at least one row",
+				"code":    "FILE_EMPTY_OR_NO_DATA_RECORDS",
+				"message": "file must contain header and at least one row",
 			})
 			return
 		}
-		if totalDataRows >= 10000 {
+
+		maxrowstemp := os.Getenv("MAX_CSV_ROWS")
+		if maxrowstemp == "" {
+			logger.Log.Warn("MAX_CSV_ROWS not set; using default 10000")
+			maxrowstemp = "10000"
+		}
+		if maxrows, err := strconv.Atoi(maxrowstemp); err == nil && totalDataRows > maxrows {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "CSV limit exceeded (max 10000 rows)",
+				"code":    "FILE_ROW_LIMIT_EXCEEDED",
+				"message": "CSV limit exceeded",
+				"limit":   maxrows,
+				"actual":  totalDataRows,
 			})
 			return
 		}
@@ -326,7 +397,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		resultsMap := make(map[int]BulkResult)
 		jobs := make(chan BulkJob, 500)
 
-		var acceptedCount, failedCount, duplicateCount int32
+		//var acceptedCount, failedCount, duplicateCount int32
 
 		workerCount := runtime.NumCPU() * 2
 		var wg sync.WaitGroup
@@ -375,13 +446,13 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 						func(s string) *string { return &s }("CSV"),
 						&job.SourceRowRef,
 						&profileIDForAudit, // Use profileIDForAudit as the audit hint
-						artifactID,
-						artifactVersionId,
+						artifactID.String(),
+						artifactVersionId.String(),
 					)
 
 					resultsMu.Lock()
 					if err != nil {
-						atomic.AddInt32(&failedCount, 1)
+						//atomic.AddInt32(&failedCount, 1)
 						if errors.Is(err, services.ErrFingerprintMismatch) {
 							resultsMap[job.Row] = BulkResult{
 								Row:    job.Row,
@@ -403,7 +474,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 							}
 						}
 					} else if duplicateID != uuid.Nil {
-						atomic.AddInt32(&duplicateCount, 1)
+						//atomic.AddInt32(&duplicateCount, 1)
 						resultsMap[job.Row] = BulkResult{
 							Row:        job.Row,
 							Status:     "DUPLICATE",
@@ -412,7 +483,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 							Error:      "duplicate idempotency key",
 						}
 					} else {
-						atomic.AddInt32(&acceptedCount, 1)
+						//atomic.AddInt32(&acceptedCount, 1)
 						resultsMap[job.Row] = BulkResult{
 							Row:        job.Row,
 							Status:     "Accepted",
@@ -432,13 +503,20 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		if err != nil {
 			close(jobs)
 			wg.Wait()
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid CSV file"})
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    "INVALID_CSV_FILE",
+				"message": "invalid CSV file",
+			})
 			return
 		}
 
 		// ── Collect all non-empty rows for batch parse ──────────────────────
-		var allCSVRows []bulkSourceRow
+		// ── Stream rows directly into jobs channel ───────────────────────────────
+		// Profile-driven path streams one row at a time — no allCSVRows accumulation.
+		// Parser path still accumulates because parser.Parse requires the full slice.
+		var allCSVRows []bulkSourceRow // only used by parser path
 		fileRowNumber := 0
+
 		for {
 			row, err := reader.Read()
 			if err == io.EOF {
@@ -446,9 +524,20 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 			}
 			fileRowNumber++
 			if err != nil {
-				log.Printf("CSV read error (skipping row): %v", err)
+				logger.Log.Warn("CSV parse error",
+					slog.Int("file_row", fileRowNumber),
+					slog.String("error", err.Error()))
+				resultsMu.Lock()
+				resultsMap[fileRowNumber] = BulkResult{
+					Row:    fileRowNumber,
+					Status: "FAILED",
+					Error:  "malformed CSV row",
+				}
+				resultsMu.Unlock()
 				continue
 			}
+
+			// skip empty rows
 			isEmpty := true
 			for _, col := range row {
 				if strings.TrimSpace(col) != "" {
@@ -456,19 +545,24 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 					break
 				}
 			}
-			if !isEmpty {
-				allCSVRows = append(allCSVRows, bulkSourceRow{FileRowNumber: fileRowNumber, Values: row})
+			if isEmpty {
+				continue
 			}
-		}
 
-		var jobsToSend []BulkJob
-		if parser == nil {
-			// Profile-driven path: Bypass static parser.
-			// Construct raw row JSON payloads.
-			for _, row := range allCSVRows {
-				rowNum := row.FileRowNumber
-				sourceRowRef := strconv.Itoa(rowNum)
-				rawJSON, err := buildRowPayload(headers, row.Values, rowNum)
+			// formula check
+			if rejection := CheckRowForFormulas(headers, row, fileRowNumber); rejection != nil {
+				resultsMu.Lock()
+				resultsMap[fileRowNumber] = *rejection
+				resultsMu.Unlock()
+				continue
+			}
+
+			rowNum := fileRowNumber
+			sourceRowRef := strconv.Itoa(rowNum)
+
+			if parser == nil {
+				// Profile-driven path: stream directly, no accumulation
+				rawJSON, err := buildRowPayload(headers, row, rowNum)
 				if err != nil {
 					resultsMu.Lock()
 					resultsMap[rowNum] = BulkResult{Row: rowNum, Status: "FAILED", Error: "failed to build raw row payload"}
@@ -488,14 +582,18 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 					rowIdempotencyKey = hex.EncodeToString(sum[:])
 				}
 
-				jobsToSend = append(jobsToSend, BulkJob{Row: rowNum, Payload: rawJSON, IdempotencyKey: rowIdempotencyKey, SourceRowRef: sourceRowRef})
+				jobs <- BulkJob{Row: rowNum, Payload: rawJSON, IdempotencyKey: rowIdempotencyKey, SourceRowRef: sourceRowRef}
+			} else {
+				// Parser path: still accumulates — parser.Parse needs full slice
+				allCSVRows = append(allCSVRows, bulkSourceRow{FileRowNumber: rowNum, Values: row})
 			}
-		} else {
-			// Type-based static parser path: Parse into UniversalIntentShape.
+		}
+
+		// Parser path batch dispatch — runs after read loop completes
+		if parser != nil {
 			parseRows, rowIndexToFileRow := flattenSourceRows(allCSVRows)
 			shapes, parseErrors := parser.Parse(parseRows, headers)
 
-			// Record parse failures directly in resultsMap
 			for _, pe := range parseErrors {
 				rowNum := sourceFileRowNumber(rowIndexToFileRow, pe.RowIndex)
 				resultsMu.Lock()
@@ -507,7 +605,6 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 				resultsMu.Unlock()
 			}
 
-			// Fan out clean shapes
 			for _, shape := range shapes {
 				parserRowNum, _ := strconv.Atoi(strings.TrimPrefix(shape.SourceRowRef, "row:"))
 				rowNum := sourceFileRowNumber(rowIndexToFileRow, parserRowNum)
@@ -534,17 +631,12 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 					rowIdempotencyKey = hex.EncodeToString(sum[:])
 				}
 
-				jobsToSend = append(jobsToSend, BulkJob{Row: rowNum, Payload: jsonPayload, IdempotencyKey: rowIdempotencyKey, SourceRowRef: sourceRowRef})
+				jobs <- BulkJob{Row: rowNum, Payload: jsonPayload, IdempotencyKey: rowIdempotencyKey, SourceRowRef: sourceRowRef}
 			}
-		}
-
-		for _, job := range jobsToSend {
-			jobs <- job
 		}
 
 		close(jobs)
 		wg.Wait()
-
 		var actualResults []BulkResult
 		maxRow := 0
 		for k := range resultsMap {
@@ -562,9 +654,22 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 	// ── Excel ─────────────────────────────────────────────────────────────────
 	case ".xlsx":
+		if mimetype != "application/zip" && mimetype != "application/octet-stream" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":     "MIME_MISMATCH",
+				"message":  "file extention is .xlsx but content does not appear to be a valid Excel file",
+				"detected": mimetype,
+			})
+			logger.Log.Warn("XLSX MIME mismatch",
+				slog.String("detected", mimetype))
+			return
+		}
 		f, err := excelize.OpenReader(src)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid excel file"})
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    "INVALID_EXCEL_FILE",
+				"message": "invalid excel file",
+			})
 			return
 		}
 
@@ -573,7 +678,10 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		// Pre-scan: count rows (O(1) memory — no row data stored).
 		scanRows, err := f.Rows(sheet)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "unable to read sheet"})
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    "EXCEL_SHEET_READ_ERROR",
+				"message": "unable to read sheet",
+			})
 			return
 		}
 		totalRows := 0
@@ -587,13 +695,22 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 		if totalDataRows < 1 {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "file must contain header and at least one row",
+				"code":    "FILE_EMPTY_OR_NO_DATA_RECORDS",
+				"message": "file must contain header and at least one row",
 			})
 			return
 		}
-		if totalRows > 10000 {
+		maxrowstemp := os.Getenv("MAX_CSV_ROWS")
+		if maxrowstemp == "" {
+			logger.Log.Warn("MAX_CSV_ROWS not set; using default 10000")
+			maxrowstemp = "10000"
+		}
+		if maxrows, err := strconv.Atoi(maxrowstemp); err == nil && totalDataRows > maxrows {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "CSV limit exceeded (max 10000 rows)",
+				"code":    "FILE_ROW_LIMIT_EXCEEDED",
+				"message": "Excel limit exceeded",
+				"limit":   maxrows,
+				"actual":  totalDataRows,
 			})
 			return
 		}
@@ -602,7 +719,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		resultsMap := make(map[int]BulkResult)
 		jobs := make(chan BulkJob, 500)
 
-		var acceptedCount, failedCount, duplicateCount int32
+		//var acceptedCount, failedCount, duplicateCount int32
 
 		workerCount := runtime.NumCPU() * 2
 		var wg sync.WaitGroup
@@ -651,13 +768,13 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 						func(s string) *string { return &s }("XLSX"),
 						&job.SourceRowRef,
 						&profileIDForAudit, // Use profileIDForAudit as the audit hint
-						artifactID,
-						artifactVersionId,
+						artifactID.String(),
+						artifactVersionId.String(),
 					)
 
 					resultsMu.Lock()
 					if err != nil {
-						atomic.AddInt32(&failedCount, 1)
+						//atomic.AddInt32(&failedCount, 1)
 						if errors.Is(err, services.ErrFingerprintMismatch) {
 							resultsMap[job.Row] = BulkResult{
 								Row:    job.Row,
@@ -679,7 +796,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 							}
 						}
 					} else if duplicateID != uuid.Nil {
-						atomic.AddInt32(&duplicateCount, 1)
+						//atomic.AddInt32(&duplicateCount, 1)
 						resultsMap[job.Row] = BulkResult{
 							Row:        job.Row,
 							Status:     "DUPLICATE",
@@ -688,7 +805,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 							Error:      "duplicate idempotency key",
 						}
 					} else {
-						atomic.AddInt32(&acceptedCount, 1)
+						//atomic.AddInt32(&acceptedCount, 1)
 						resultsMap[job.Row] = BulkResult{
 							Row:        job.Row,
 							Status:     "Accepted",
@@ -706,7 +823,10 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		if err != nil {
 			close(jobs)
 			wg.Wait()
-			c.JSON(http.StatusBadRequest, gin.H{"error": "unable to read sheet"})
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    "EXCEL_SHEET_READ_ERROR",
+				"message": "unable to read sheet",
+			})
 			return
 		}
 		defer dataRows.Close()
@@ -714,27 +834,48 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		if !dataRows.Next() {
 			close(jobs)
 			wg.Wait()
-			c.JSON(http.StatusBadRequest, gin.H{"error": "unable to read sheet header"})
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    "EXCEL_HEADER_READ_ERROR",
+				"message": "unable to read sheet header",
+			})
 			return
 		}
 		headers, err := dataRows.Columns()
 		if err != nil {
 			close(jobs)
 			wg.Wait()
-			c.JSON(http.StatusBadRequest, gin.H{"error": "unable to read sheet header"})
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    "EXCEL_HEADER_READ_ERROR",
+				"message": "unable to read sheet header",
+			})
 			return
 		}
 
-		// ── Collect all non-empty XLSX rows for batch parse ─────────────────
-		var allXLSXRows []bulkSourceRow
+		// ── Stream rows directly into jobs channel ───────────────────────────────
+		// Profile-driven path streams one row at a time — no allXLSXRows accumulation.
+		// Parser path still accumulates because parser.Parse requires the full slice.
+		var allXLSXRows []bulkSourceRow // only used by parser path
 		fileRowNumber := 0
+
 		for dataRows.Next() {
 			fileRowNumber++
+
 			row, err := dataRows.Columns()
 			if err != nil {
-				log.Printf("XLSX read error (skipping row): %v", err)
+				logger.Log.Warn("XLSX parse error",
+					slog.Int("file_row_number", fileRowNumber),
+					slog.String("error", err.Error()))
+				resultsMu.Lock()
+				resultsMap[fileRowNumber] = BulkResult{
+					Row:    fileRowNumber,
+					Status: "FAILED",
+					Error:  "malformed XLSX row",
+				}
+				resultsMu.Unlock()
 				continue
 			}
+
+			// skip empty rows
 			isEmpty := true
 			for _, col := range row {
 				if strings.TrimSpace(col) != "" {
@@ -742,19 +883,24 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 					break
 				}
 			}
-			if !isEmpty {
-				allXLSXRows = append(allXLSXRows, bulkSourceRow{FileRowNumber: fileRowNumber, Values: row})
+			if isEmpty {
+				continue
 			}
-		}
 
-		var jobsToSend []BulkJob
-		if parser == nil {
-			// Profile-driven path: Bypass static parser.
-			// Construct raw row JSON payloads.
-			for _, row := range allXLSXRows {
-				rowNum := row.FileRowNumber
-				sourceRowRef := strconv.Itoa(rowNum)
-				rawJSON, err := buildRowPayload(headers, row.Values, rowNum)
+			// formula check
+			if rejection := CheckRowForFormulas(headers, row, fileRowNumber); rejection != nil {
+				resultsMu.Lock()
+				resultsMap[fileRowNumber] = *rejection
+				resultsMu.Unlock()
+				continue
+			}
+
+			rowNum := fileRowNumber
+			sourceRowRef := strconv.Itoa(rowNum)
+
+			if parser == nil {
+				// Profile-driven path: stream directly, no accumulation
+				rawJSON, err := buildRowPayload(headers, row, rowNum)
 				if err != nil {
 					resultsMu.Lock()
 					resultsMap[rowNum] = BulkResult{Row: rowNum, Status: "FAILED", Error: "failed to build raw row payload"}
@@ -774,14 +920,18 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 					rowIdempotencyKey = hex.EncodeToString(sum[:])
 				}
 
-				jobsToSend = append(jobsToSend, BulkJob{Row: rowNum, Payload: rawJSON, IdempotencyKey: rowIdempotencyKey, SourceRowRef: sourceRowRef})
+				jobs <- BulkJob{Row: rowNum, Payload: rawJSON, IdempotencyKey: rowIdempotencyKey, SourceRowRef: sourceRowRef}
+			} else {
+				// Parser path: still accumulates — parser.Parse needs full slice
+				allXLSXRows = append(allXLSXRows, bulkSourceRow{FileRowNumber: rowNum, Values: row})
 			}
-		} else {
-			// Type-based static parser path: Parse into UniversalIntentShape.
+		}
+
+		// Parser path batch dispatch — runs after read loop completes
+		if parser != nil {
 			parseRows, rowIndexToFileRow := flattenSourceRows(allXLSXRows)
 			shapes, parseErrors := parser.Parse(parseRows, headers)
 
-			// Record parse failures directly in resultsMap
 			for _, pe := range parseErrors {
 				rowNum := sourceFileRowNumber(rowIndexToFileRow, pe.RowIndex)
 				resultsMu.Lock()
@@ -793,7 +943,6 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 				resultsMu.Unlock()
 			}
 
-			// Fan out clean shapes
 			for _, shape := range shapes {
 				parserRowNum, _ := strconv.Atoi(strings.TrimPrefix(shape.SourceRowRef, "row:"))
 				rowNum := sourceFileRowNumber(rowIndexToFileRow, parserRowNum)
@@ -820,17 +969,12 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 					rowIdempotencyKey = hex.EncodeToString(sum[:])
 				}
 
-				jobsToSend = append(jobsToSend, BulkJob{Row: rowNum, Payload: jsonPayload, IdempotencyKey: rowIdempotencyKey, SourceRowRef: sourceRowRef})
+				jobs <- BulkJob{Row: rowNum, Payload: jsonPayload, IdempotencyKey: rowIdempotencyKey, SourceRowRef: sourceRowRef}
 			}
-		}
-
-		for _, job := range jobsToSend {
-			jobs <- job
 		}
 
 		close(jobs)
 		wg.Wait()
-
 		var actualResults []BulkResult
 		maxRow := 0
 		for k := range resultsMap {
@@ -848,7 +992,8 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "unsupported file format (.csv or .xlsx only)",
+			"code":    "UNSUPPORTED_FILE_FORMAT",
+			"message": "unsupported file format (.csv or .xlsx only)",
 		})
 		return
 	}
@@ -879,21 +1024,31 @@ func (cw *countingWriter) Write(p []byte) (int, error) {
 // This avoids returning a noisy array of N duplicate rows when the client
 // simply re-uploaded a file they already sent.
 func respondBulkResults(c *gin.Context, results []BulkResult, fileName, fileHash string) {
-	// empty result set means all rows were skipped/empty, not a duplicate batch
 	if len(results) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "no processable rows found in file",
+			"code":    "NO_PROCESSABLE_ROWS",
+			"message": "no processable rows found in file",
 		})
 		return
 	}
-	duplicateCount := 0
+
+	var accepted, failed, duplicate, conflict, rejected int
 	for _, r := range results {
-		if r.Status == "DUPLICATE" {
-			duplicateCount++
+		switch r.Status {
+		case "Accepted":
+			accepted++
+		case "FAILED":
+			failed++
+		case "DUPLICATE":
+			duplicate++
+		case "CONFLICT":
+			conflict++
+		case "REJECTED":
+			rejected++
 		}
 	}
 
-	if duplicateCount == len(results) {
+	if duplicate == len(results) {
 		c.JSON(http.StatusConflict, gin.H{
 			"status":     "DUPLICATE_BATCH",
 			"message":    "This batch has already been processed. All rows exist in the system.",
@@ -905,7 +1060,14 @@ func respondBulkResults(c *gin.Context, results []BulkResult, fileName, fileHash
 	}
 
 	c.JSON(http.StatusAccepted, gin.H{
-		"total":   len(results),
+		"total": len(results),
+		"summary": gin.H{
+			"accepted":  accepted,
+			"failed":    failed,
+			"duplicate": duplicate,
+			"conflict":  conflict,
+			"rejected":  rejected,
+		},
 		"results": results,
 	})
 }
@@ -937,7 +1099,10 @@ func buildRowPayload(headers, row []string, rowNum int) ([]byte, error) {
 		if j < len(row) {
 			value = row[j]
 		} else {
-			log.Printf("buildRowPayload: row has %d cols, header expects %d, filling '%s' with empty string", len(row), len(headers), header)
+			logger.Log.Warn("row has fewer columns than headers, padding with empty string",
+				slog.Int("row_cols", len(row)),
+				slog.Int("header_cols", len(headers)),
+				slog.String("header", header))
 		}
 
 		keys := strings.Split(header, ".")
@@ -1008,7 +1173,10 @@ func (h *Handler) processBulkIntentRow(
 
 	encryptedPayload, err := vault.Encrypt(rawPayload)
 	if err != nil {
-		log.Printf("Error encrypting payload for bulk row, trace_id=%s: %v", traceID, err)
+		logger.Log.Error("failed to encrypt payload for bulk row",
+			slog.String("trace_id", traceID),
+			slog.String("tenant_id", tenantID.String()),
+			slog.String("error", err.Error()))
 		return nil, uuid.Nil, err
 	}
 
@@ -1065,11 +1233,16 @@ func (h *Handler) processBulkIntentRow(
 
 	storageAck, err := services.ProcessRawIntent(ctx, rawIntent, h.S3store, envelopeID, receivedAt)
 	if err != nil {
-		log.Printf("Error processing raw intent for bulk row, trace_id=%s: %v", traceID, err)
+		logger.Log.Error("failed to process raw intent for bulk row",
+			slog.String("trace_id", traceID),
+			slog.String("tenant_id", tenantID.String()),
+			slog.String("error", err.Error()))
 		return nil, uuid.Nil, err
 	}
 	if storageAck == nil {
-		log.Printf("S3 data is nil for bulk row, trace_id=%s", traceID)
+		logger.Log.Error("S3 storage returned nil ack for bulk row",
+			slog.String("trace_id", traceID),
+			slog.String("tenant_id", tenantID.String()))
 		return nil, uuid.Nil, fmt.Errorf("S3 store returned nil ack for trace_id=%s", traceID)
 	}
 	storageAck.ArtifactId = artifactID
@@ -1080,16 +1253,51 @@ func (h *Handler) processBulkIntentRow(
 
 	rawRowHash, err := services.ComputeRawRowHash(rawPayload)
 	if err != nil {
-		log.Printf("Error computing raw_row_hash for bulk row, trace_id=%s: %v", traceID, err)
+		logger.Log.Error("failed to compute raw_row_hash for bulk row",
+			slog.String("trace_id", traceID),
+			slog.String("tenant_id", tenantID.String()),
+			slog.String("error", err.Error()))
 		return nil, uuid.Nil, err
 	}
 	rawIntent.RawRowHash = rawRowHash
 
 	if err := services.RawIntent(ctx, rawIntent, storageAck); err != nil {
-		log.Printf("Error persisting raw intent for bulk row, trace_id=%s: %v", traceID, err)
+		logger.Log.Error("failed to persist raw intent for bulk row",
+			slog.String("trace_id", traceID),
+			slog.String("tenant_id", tenantID.String()),
+			slog.String("error", err.Error()))
 		return nil, uuid.Nil, err
 	}
 
 	ingestOK = true
 	return storageAck, uuid.Nil, nil
+}
+
+// ── Sanitization Helpers ────────────────────────────────────────────────────────
+
+func isCsvFormula(val string) bool {
+	trimmer := strings.TrimSpace(val)
+	if len(trimmer) == 0 {
+		return false
+	}
+	return trimmer[0] == '=' || trimmer[0] == '+' || trimmer[0] == '-' || trimmer[0] == '@'
+}
+
+func CheckRowForFormulas(headers, row []string, rowNum int) *BulkResult {
+	for i, val := range row {
+		if isCsvFormula(val) {
+			header := ""
+			if i < len(headers) {
+				header = headers[i]
+			}
+			return &BulkResult{
+				Row:    rowNum,
+				Status: "REJECTED",
+				Error:  fmt.Sprintf("formula injection detected in column %q", header),
+				// structured code for 3.1.4
+			}
+
+		}
+	}
+	return nil
 }

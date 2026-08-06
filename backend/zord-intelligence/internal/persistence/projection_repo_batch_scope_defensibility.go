@@ -18,6 +18,19 @@ func defensibilityBatchKey(batchID string) string {
 }
 
 // recomputeDefensibilityRatesTx is the transactional twin of recomputeDefensibilityRates.
+//
+// Bug fix (found live 2026-07-31 via the P1-04 ratio self-consistency
+// checker, metric_registry.go): audit_ready_pct/dispute_ready_pct sum
+// MULTIPLE JSON fields before dividing. A row can genuinely have one of
+// those fields missing from value_json (e.g. with_governance_decision is
+// never set until AtomicRecordGovernanceCoverageBothScopes runs at least
+// once for that batch — a batch can have an evidence pack recorded long
+// before any governance decision exists). `->>'missing_key'` returns SQL
+// NULL, and NULL + anything = NULL, so the old code silently zeroed the
+// entire numerator (and therefore the stored rate) the moment any ONE
+// contributing field was absent, even when the others were present and
+// nonzero. Each term is now individually COALESCEd to 0 so a missing field
+// contributes 0 to the sum instead of nullifying it.
 func recomputeDefensibilityRatesTx(ctx context.Context, tx pgx.Tx, tenantID, key string, windowStart time.Time) error {
 	sql := `
 		UPDATE projection_state
@@ -60,8 +73,8 @@ func recomputeDefensibilityRatesTx(ctx context.Context, tx pgx.Tx, tenantID, key
 				to_jsonb(
 					COALESCE(
 						(
-							(value_json->>'with_evidence_pack')::numeric +
-							(value_json->>'with_governance_decision')::numeric
+							COALESCE((value_json->>'with_evidence_pack')::numeric, 0) +
+							COALESCE((value_json->>'with_governance_decision')::numeric, 0)
 						) /
 						NULLIF((value_json->>'total_intents')::numeric * 2, 0),
 						0
@@ -72,9 +85,9 @@ func recomputeDefensibilityRatesTx(ctx context.Context, tx pgx.Tx, tenantID, key
 			to_jsonb(
 				COALESCE(
 					(
-						(value_json->>'with_evidence_pack')::numeric +
-						(value_json->>'with_governance_decision')::numeric +
-						(value_json->>'with_replay_equivalence')::numeric
+						COALESCE((value_json->>'with_evidence_pack')::numeric, 0) +
+						COALESCE((value_json->>'with_governance_decision')::numeric, 0) +
+						COALESCE((value_json->>'with_replay_equivalence')::numeric, 0)
 					) /
 					NULLIF((value_json->>'total_intents')::numeric * 3, 0),
 					0

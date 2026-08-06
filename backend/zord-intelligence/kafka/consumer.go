@@ -35,8 +35,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/segmentio/kafka-go"
 	"github.com/zord/zord-intelligence/config"
@@ -130,7 +133,12 @@ type SLATimerTickHandler interface {
 
 // StartConsumers builds the topic→handler map and starts the Kafka reader goroutine.
 // Call this once from main.go after all services are created.
-func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandler) {
+//
+// producer is the SAME Producer instance main.go already constructs for
+// outbox delivery — reused here (not a dedicated second producer) to
+// publish permanently-failed events to cfg.TopicIntelligenceDLQ before
+// their source offset is committed (corrective-action-report P0-02).
+func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandler, producer *Producer) {
 	brokers := strings.Split(cfg.KafkaBrokers, ",")
 
 	// topicHandlers maps each Kafka topic name to a function that:
@@ -168,6 +176,10 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 			e.TenantID = re.TenantID
 			e.TraceID = re.TraceID
 			e.ContractID = re.ContractID
+			e.EventType = re.EventType
+			e.EventVersion = re.EventVersion
+			e.SchemaVersion = re.SchemaVersion
+			e.SourceService = re.SourceService
 			if re.ClientBatchID != "" {
 				e.ClientBatchRef = re.ClientBatchID
 			}
@@ -426,7 +438,7 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 	topicCount := 0
 	for topic, fn := range topicHandlers {
 		t, f := topic, fn // capture loop variables before goroutine launch
-		go consumeSingleTopic(ctx, brokers, cfg.KafkaGroupID, t, f)
+		go consumeSingleTopic(ctx, brokers, cfg.KafkaGroupID, t, f, producer, cfg.TopicIntelligenceDLQ)
 		topicCount++
 	}
 
@@ -492,13 +504,18 @@ func (c KafkaGoHeaderCarrier) Keys() []string {
 // so all events for the same tenant land on the same partition and are processed
 // sequentially by this goroutine — no cross-tenant race conditions.
 //
-// CommitInterval: 0 (manual commit) — offset is committed only after a successful
-// handler call. A persistent handler error commits to advance past a poison message.
+// CommitInterval: 0 (manual commit) — offset is committed only after a
+// successful handler call OR (corrective-action-report P0-02) after a
+// permanently-failed event's durable DLQ record is confirmed published to
+// dlqTopic via producer. The offset is NEVER advanced while that DLQ
+// publish is still failing — see the retry loop below.
 func consumeSingleTopic(
 	ctx context.Context,
 	brokers []string,
 	groupID, topic string,
 	handle func(context.Context, kafka.Message) error,
+	producer *Producer,
+	dlqTopic string,
 ) {
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        brokers,
@@ -542,25 +559,91 @@ func consumeSingleTopic(
 			),
 		)
 
-		// PHASE 1 REFACTOR: attach envelope metadata (payload hash + topic +
-		// source/version) so handlers can claim an event_receipts row before
-		// writing any projection counters. event_source/event_version do not
-		// exist on the upstream envelope yet — models.EnvelopeMetaFromContext
-		// defaults them; nothing here blocks on their absence.
+		// PHASE 1 REFACTOR / P1-01: attach envelope metadata (payload hash +
+		// source topic + domain event type/version) so handlers can claim an
+		// event_receipts row before writing any projection counters.
+		// SourceTopic is always the Kafka topic (transport identity).
+		// EventType/EventVersion are read out of the envelope payload itself
+		// (zord-relay's OutboxEvent already carries real event_type/
+		// schema_version fields — see envelope_meta.go's package doc) via a
+		// best-effort partial decode, since the typed RelayEvent unmarshal
+		// only happens inside each topic's handler closure below. Falls back
+		// to the topic name / "legacy" for the two flat, non-enveloped
+		// topics that carry neither field.
 		hash := sha256.Sum256(msg.Value)
+		domainEventType, schemaVersion := extractEnvelopeFieldsBestEffort(msg.Value)
+		if domainEventType == "" {
+			domainEventType = msg.Topic
+		}
+		eventVersion := schemaVersion
+		if eventVersion == "" {
+			eventVersion = models.DefaultEventVersion
+		}
 		msgCtx = models.ContextWithEnvelopeMeta(msgCtx, models.EnvelopeMeta{
 			EventSource:  models.DefaultEventSource,
-			EventType:    msg.Topic,
-			EventVersion: models.DefaultEventVersion,
+			SourceTopic:  msg.Topic,
+			EventType:    domainEventType,
+			EventVersion: eventVersion,
 			PayloadHash:  hex.EncodeToString(hash[:]),
 		})
 
-		if err := handle(msgCtx, msg); err != nil {
+		// Unknown major schema version: route straight to the DLQ without
+		// ever calling the handler — an unrecognized version means this
+		// build cannot safely interpret the payload (corrective-action-report
+		// P1-01), the same "don't guess, quarantine it" principle as a
+		// poison/unmarshal-error message. Reuses the `err` already declared
+		// by FetchMessage above (always nil here — the fetch-error branch
+		// continues the loop before reaching this point).
+		if !models.IsKnownSchemaVersion(eventVersion) {
+			err = fmt.Errorf("%w: schema_version=%q topic=%s", errUnsupportedSchemaVersion, eventVersion, msg.Topic)
+		} else {
+			err = handle(msgCtx, msg)
+		}
+
+		if err != nil {
 			span.RecordError(err)
 			log.Printf("kafka: handler error topic=%s partition=%d offset=%d: %v",
 				msg.Topic, msg.Partition, msg.Offset, err)
-			// Commit even on handler error to avoid an infinite redelivery loop
-			// for poison messages (e.g. bad JSON from upstream).
+
+			// Bounded retry for transient failures (e.g. Postgres briefly
+			// unavailable) — event_receipt_repo.RunOnce only retries
+			// deadlock/serialization errors internally, not connection
+			// failures, so without this a brief outage would go straight to
+			// the DLQ instead of recovering. A genuine poison message (bad
+			// JSON) or an unsupported schema version skips this — retrying
+			// identical bytes/version cannot help either case.
+			if !isUnmarshalError(err) && !errors.Is(err, errUnsupportedSchemaVersion) {
+				for attempt, backoff := 2, time.Second; attempt <= 3 && err != nil; attempt, backoff = attempt+1, backoff*3 {
+					time.Sleep(backoff)
+					log.Printf("kafka: retrying handler topic=%s partition=%d offset=%d attempt=%d/3",
+						msg.Topic, msg.Partition, msg.Offset, attempt)
+					err = handle(msgCtx, msg)
+				}
+			}
+
+			if err != nil {
+				// Permanent failure: durably record it BEFORE advancing the
+				// offset (corrective-action-report P0-02). This blocks —
+				// deliberately — until the DLQ publish succeeds or the
+				// service is shutting down; not committing means Kafka will
+				// redeliver this same message on restart, which is correct.
+				rec := buildDLQRecord(msgCtx, msg, err)
+				for {
+					if perr := producer.Publish(ctx, dlqTopic, rec.TenantID, rec); perr != nil {
+						log.Printf("kafka: CRITICAL dlq publish failed, offset NOT advancing topic=%s partition=%d offset=%d: %v",
+							msg.Topic, msg.Partition, msg.Offset, perr)
+						if ctx.Err() != nil {
+							span.End()
+							return
+						}
+						time.Sleep(5 * time.Second)
+						continue
+					}
+					break
+				}
+				log.Printf("kafka: event sent to DLQ topic=%s dlq_topic=%s partition=%d offset=%d event_id=%s error_class=%s: %v",
+					msg.Topic, dlqTopic, msg.Partition, msg.Offset, rec.EventID, rec.ErrorClass, err)
+			}
 		}
 
 		if err := reader.CommitMessages(ctx, msg); err != nil {
@@ -572,4 +655,87 @@ func consumeSingleTopic(
 		log.Printf("kafka: processed topic=%s partition=%d offset=%d",
 			msg.Topic, msg.Partition, msg.Offset)
 	}
+}
+
+// isUnmarshalError reports whether err is a JSON decoding failure (a genuine
+// poison message) rather than a downstream handler/database error —
+// corrective-action-report P0-02's retry loop skips straight to the DLQ for
+// these, since retrying identical malformed bytes cannot succeed.
+func isUnmarshalError(err error) bool {
+	var syntaxErr *json.SyntaxError
+	var typeErr *json.UnmarshalTypeError
+	return errors.As(err, &syntaxErr) || errors.As(err, &typeErr)
+}
+
+// errUnsupportedSchemaVersion is the sentinel wrapped into the synthetic
+// error consumeSingleTopic raises when a message's schema_version is not in
+// models.SupportedSchemaVersions (corrective-action-report P1-01). Like a
+// poison message, retrying cannot help — the event goes straight to the DLQ.
+var errUnsupportedSchemaVersion = errors.New("unsupported schema version")
+
+// extractEnvelopeFieldsBestEffort tries to pull the domain event_type and
+// schema_version out of raw message bytes without knowing the topic's real
+// shape — same best-effort, topic-agnostic idiom as extractEventIDBestEffort
+// below, used because the typed RelayEvent unmarshal only happens inside
+// each topic's own handler closure in StartConsumers, not here. Both fields
+// come back "" for the two flat, non-RelayEvent-enveloped topics
+// (dlq.event, payments.intent.dlq); the caller falls back to the topic name
+// and DefaultEventVersion in that case.
+func extractEnvelopeFieldsBestEffort(payload []byte) (eventType, schemaVersion string) {
+	var v struct {
+		EventType     string `json:"event_type"`
+		SchemaVersion string `json:"schema_version"`
+	}
+	_ = json.Unmarshal(payload, &v)
+	return v.EventType, v.SchemaVersion
+}
+
+// buildDLQRecord assembles the durable failure record for msg. TenantID is
+// read from msg.Key — every producer in this system uses tenant_id as the
+// partition key (see the ordering comment above consumeSingleTopic's call
+// site), so this is reliable even when the payload itself never got far
+// enough to unmarshal. EventID is recovered best-effort via a minimal,
+// topic-agnostic decode, working for both RelayEvent-enveloped topics and
+// the flat DLQItemEvent-shaped ones without touching any of the per-topic
+// closures in StartConsumers.
+func buildDLQRecord(msgCtx context.Context, msg kafka.Message, handlerErr error) models.IntelligenceDLQRecord {
+	meta := models.EnvelopeMetaFromContext(msgCtx)
+	errClass := models.DLQErrorClassHandler
+	switch {
+	case isUnmarshalError(handlerErr):
+		errClass = models.DLQErrorClassUnmarshal
+	case errors.Is(handlerErr, errUnsupportedSchemaVersion):
+		errClass = models.DLQErrorClassUnsupportedVersion
+	}
+	errMsg := handlerErr.Error()
+	const maxErrLen = 2000
+	if len(errMsg) > maxErrLen {
+		errMsg = errMsg[:maxErrLen]
+	}
+	return models.IntelligenceDLQRecord{
+		TenantID:     string(msg.Key),
+		SourceTopic:  msg.Topic,
+		Partition:    msg.Partition,
+		Offset:       msg.Offset,
+		EventID:      extractEventIDBestEffort(msg.Value),
+		EventType:    meta.EventType,
+		EventVersion: meta.EventVersion,
+		PayloadHash:  meta.PayloadHash,
+		Payload:      string(msg.Value),
+		ErrorClass:   errClass,
+		ErrorMessage: errMsg,
+		OccurredAt:   time.Now().UTC(),
+	}
+}
+
+// extractEventIDBestEffort tries to pull an "event_id" field out of raw
+// message bytes without knowing the topic's real shape. Returns "" on any
+// failure — this is metadata for the DLQ record, never used for control
+// flow, so a miss here is not fatal.
+func extractEventIDBestEffort(payload []byte) string {
+	var v struct {
+		EventID string `json:"event_id"`
+	}
+	_ = json.Unmarshal(payload, &v)
+	return v.EventID
 }

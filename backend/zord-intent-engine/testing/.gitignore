@@ -1,0 +1,5 @@
+# Regenerated on every `python generate_report.py` run from the real
+# captured output stored in generate_report.py's TASKS list - not source of
+# truth, don't commit.
+screenshots/
+__pycache__/

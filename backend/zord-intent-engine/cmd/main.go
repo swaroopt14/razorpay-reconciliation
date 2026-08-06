@@ -62,6 +62,10 @@ func main() {
 		log.Fatal("failed to initialize JWT signing secret:", err)
 	}
 
+	if err := services.InitTokenizedDataHashMasterSecret(); err != nil {
+		log.Fatal("failed to initialize tokenized data hash master secret:", err)
+	}
+
 	ctx := context.Background()
 
 	// Seed built-in mapping profiles (TALLY, SAP, etc.) from global_profiles.json
@@ -71,6 +75,15 @@ func main() {
 	if err := services.SeedGlobalMappingProfilesFromFile(ctx, db.DB); err != nil {
 		log.Printf("⚠️ Failed to seed global mapping profiles: %v", err)
 	}
+
+	// 4.2.4: a stuck intent_ingest_runs row (writer crashed mid-batch) would
+	// otherwise sit in PROCESSING forever and never become leaseable by
+	// Relay. Safe to run on every replica — see SweepStuckIngestRuns.
+	go db.StartIngestRunSweeper(ctx, db.DB,
+		durationEnv("INGEST_RUN_SWEEP_INTERVAL", 5*time.Minute),
+		durationEnv("INGEST_RUN_STALE_AFTER", 30*time.Minute),
+		durationEnv("INGEST_RUN_TERMINAL_AFTER", 24*time.Hour),
+	)
 
 	brokers := strings.Split(os.Getenv("KAFKA_BROKERS"), ",")
 	topic := os.Getenv("KAFKA_TOPIC")
@@ -116,6 +129,7 @@ func main() {
 	}
 
 	tokenizeQueue := services.NewKafkaTokenizeQueue(producer)
+	tenantBusinessDateRepo := persistence.NewTenantBusinessDateRepo(db.DB)
 	intentService := services.NewIntentService(
 		intentValidator,
 		intentRepo,
@@ -123,7 +137,9 @@ func main() {
 		tokenizeQueue,
 		db.DB,
 		tenantDailyUsageRepo,
+		tenantBusinessDateRepo,
 	)
+	intentService.SetVectorIndexPublisher(producer)
 
 	// -------- DLQ HTTP (READ-ONLY) --------
 	dlqHandler := handlers.NewDLQHandler(dlqRepo)
@@ -225,6 +241,9 @@ func main() {
 			return err
 		}
 
+		log.Printf("edge event consumed [event_id=%s event_type=%s trace_id=%s tenant_id=%s envelope_id=%s]",
+			event.EventID, event.EventType, event.TraceID, event.TenantID, event.EnvelopeID)
+
 		canonical, dlq, err := intentService.ProcessIncomingIntent(ctx, &event)
 		if err != nil {
 			log.Printf("System error processing intent: %v\n", err)
@@ -233,23 +252,9 @@ func main() {
 
 		if dlq != nil {
 			log.Printf("⚠️ Intent rejected [tenant=%s envelope=%s reason=%s]", event.TenantID, event.EnvelopeID, dlq.ReasonCode)
-			if dlq.DLQID == "" {
-				if dlq.TenantID == "" {
-					dlq.TenantID = event.TenantID.String()
-				}
-				if dlq.EnvelopeID == "" {
-					dlq.EnvelopeID = event.EnvelopeID.String()
-				}
-				if dlq.ClientBatchRef == "" && event.BatchID != nil {
-					dlq.ClientBatchRef = *event.BatchID
-				}
-				if dlq.BatchID == "" && event.BatchID != nil {
-					dlq.BatchID = *event.BatchID
-				}
-				_, err := dlqRepo.Save(ctx, *dlq)
-				if err != nil {
-					log.Printf("Failed to save DLQ entry: %v", err)
-				}
+			if err := intentService.PersistRejectedIntentDLQ(ctx, dlq, &event); err != nil {
+				log.Printf("Failed to save DLQ entry: %v", err)
+				return err
 			}
 			return nil // Reject is a terminal state, return nil so message is marked
 		}
@@ -345,6 +350,21 @@ func main() {
 		Handler: otelhttp.NewHandler(mux, "http"),
 	}
 	log.Fatal(server.ListenAndServe())
+}
+
+// durationEnv reads a time.ParseDuration-formatted env var (e.g. "5m",
+// "30m", "24h"), falling back to def when unset or unparsable.
+func durationEnv(key string, def time.Duration) time.Duration {
+	val := os.Getenv(key)
+	if val == "" {
+		return def
+	}
+	d, err := time.ParseDuration(val)
+	if err != nil {
+		log.Printf("⚠️ invalid duration for %s=%q, using default %s: %v", key, val, def, err)
+		return def
+	}
+	return d
 }
 
 // newFailureRecorder builds a kafka.FailureRecorder (R-03) that durably

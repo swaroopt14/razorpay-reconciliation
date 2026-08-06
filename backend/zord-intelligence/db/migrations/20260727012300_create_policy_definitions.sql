@@ -16,7 +16,12 @@ CREATE TABLE policy_definitions (
 	severity                 TEXT,
 	requires_manual_approval BOOLEAN      NOT NULL DEFAULT false,
 	created_at               TIMESTAMPTZ  NOT NULL DEFAULT now(),
-	UNIQUE (tenant_id, policy_key, policy_version, policy_source)
+	-- Corrective action report (2026-07-23) P0-06: plain UNIQUE lets Postgres
+	-- treat every NULL tenant_id (global policies) as distinct from every
+	-- other, so two global definitions for the same key/version/source could
+	-- silently coexist. NULLS NOT DISTINCT (PG15+; PG16 confirmed in use via
+	-- docker-compose.yml) closes that gap.
+	UNIQUE NULLS NOT DISTINCT (tenant_id, policy_key, policy_version, policy_source)
 );
 
 CREATE INDEX idx_policy_def_trigger

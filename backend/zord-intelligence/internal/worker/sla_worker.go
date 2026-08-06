@@ -36,18 +36,24 @@ type SLAWorker struct {
 	slaRepo           *persistence.SLATimerRepo
 	actionService     *services.ActionService
 	projectionService *services.ProjectionService // needed to update sla_breach_rate projection
+	receiptRepo       *persistence.EventReceiptRepo // P1-03: stale PROCESSING lease sweep
 }
 
-// NewSLAWorker creates an SLAWorker.
+// NewSLAWorker creates an SLAWorker. receiptRepo's SweepStaleLeases runs on
+// this worker's 5-minute tick (P1-03) — chosen over the 5s outbox tick
+// (too frequent for a lease on this timescale) and the 1h consistency tick
+// (too slow), matching the default lease duration's cadence.
 func NewSLAWorker(
 	slaRepo *persistence.SLATimerRepo,
 	actionService *services.ActionService,
 	projectionService *services.ProjectionService,
+	receiptRepo *persistence.EventReceiptRepo,
 ) *SLAWorker {
 	return &SLAWorker{
 		slaRepo:           slaRepo,
 		actionService:     actionService,
 		projectionService: projectionService,
+		receiptRepo:       receiptRepo,
 	}
 }
 
@@ -75,6 +81,14 @@ func (w *SLAWorker) Start(ctx context.Context) {
 
 // runOnce fetches all breached timers and handles each one.
 func (w *SLAWorker) runOnce(ctx context.Context) {
+	// P1-03: reclaim any event_receipts row stuck in PROCESSING past its
+	// lease. A sweep failure never blocks SLA breach handling.
+	if reclaimed, err := w.receiptRepo.SweepStaleLeases(ctx); err != nil {
+		log.Printf("sla_worker: lease sweep error: %v", err)
+	} else if reclaimed > 0 {
+		log.Printf("sla_worker: reclaimed %d stale PROCESSING lease(s)", reclaimed)
+	}
+
 	breached, err := w.slaRepo.FetchBreachedTimers(ctx)
 	if err != nil {
 		log.Printf("sla_worker: FetchBreachedTimers error: %v", err)

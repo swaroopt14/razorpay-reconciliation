@@ -45,6 +45,11 @@ type Config struct {
 	// ── Database ────────────────────────────────────────────────
 	DatabaseURL string
 
+	// LeaseDurationSeconds bounds how long an event_receipts PROCESSING
+	// claim is considered live before the sweep treats it as stale and
+	// reclaims it (corrective-action-report P1-03).
+	LeaseDurationSeconds int
+
 	// ── Kafka ───────────────────────────────────────────────────
 	KafkaBrokers string
 	KafkaGroupID string
@@ -79,6 +84,17 @@ type Config struct {
 	TopicActuationEvidence   string
 	TopicActuationAlert      string
 	TopicActuationBatchPatch string
+
+	// TopicIntelligenceDLQ — corrective-action-report P0-02: a permanently
+	// failed inbound event (after retries) is durably published here BEFORE
+	// its source offset is committed, so it can never be silently dropped.
+	TopicIntelligenceDLQ string
+
+	// TopicOutboxDLQ — corrective-action-report P1-07: an actuation_outbox
+	// entry that exhausts its 5 delivery attempts is durably published here
+	// BEFORE the row's dead_lettered_at is set, mirroring TopicIntelligenceDLQ's
+	// discipline for the outbound side.
+	TopicOutboxDLQ string
 
 	// ── ML Service Topics ─────────────────────────────────────────
 	// Go publishes ML requests to TopicMLRequest; Python publishes
@@ -115,7 +131,8 @@ func Load() *Config {
 		Environment: getWithDefault("ENVIRONMENT", "development"),
 
 		// ── Database ────────────────────────────────────────────
-		DatabaseURL: getRequired("DATABASE_URL"),
+		DatabaseURL:          getRequired("DATABASE_URL"),
+		LeaseDurationSeconds: getIntWithDefault("EVENT_RECEIPT_LEASE_DURATION_SECONDS", 300),
 
 		// ── Kafka ───────────────────────────────────────────────
 		KafkaBrokers: getRequired("KAFKA_BROKERS"),
@@ -148,6 +165,8 @@ func Load() *Config {
 		TopicActuationEvidence:   getWithDefault("TOPIC_ACTUATION_EVIDENCE", "zpi.actuation.evidence"),
 		TopicActuationAlert:      getWithDefault("TOPIC_ACTUATION_ALERT", "zpi.actuation.alert"),
 		TopicActuationBatchPatch: getWithDefault("TOPIC_ACTUATION_BATCH_PATCH", "zpi.actuation.batch_patch"),
+		TopicIntelligenceDLQ:     getWithDefault("TOPIC_INTELLIGENCE_DLQ", "zord-intelligence.dlq.v1"),
+		TopicOutboxDLQ:           getWithDefault("TOPIC_OUTBOX_DLQ", "zord-intelligence.outbox-dlq.v1"),
 
 		// ── ML Service Topics ────────────────────────────────────────
 		TopicMLRequest:                  getWithDefault("TOPIC_ML_REQUEST", "ml.request.events"),

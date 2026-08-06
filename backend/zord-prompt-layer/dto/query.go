@@ -17,14 +17,20 @@ type UIContext struct {
 	BatchID             string            `json:"batch_id,omitempty"`
 }
 type QueryRequest struct {
-	TenantID  string     `json:"tenant_id,omitempty"`
-	UserID    string     `json:"-"`
-	SessionID string     `json:"-"`
-	Query     string     `json:"query" binding:"required"`
-	IntentID  string     `json:"intent_id,omitempty"`
-	TraceID   string     `json:"trace_id,omitempty"`
-	TopK      int        `json:"top_k,omitempty"`
-	UIContext *UIContext `json:"ui_context,omitempty"`
+	TenantID                   string     `json:"tenant_id,omitempty"`
+	UserID                     string     `json:"-"`
+	SessionID                  string     `json:"-"`
+	Query                      string     `json:"query" binding:"required"`
+	IntentID                   string     `json:"intent_id,omitempty"`
+	TraceID                    string     `json:"trace_id,omitempty"`
+	TopK                       int        `json:"top_k,omitempty"`
+	UIContext                  *UIContext `json:"ui_context,omitempty"`
+	PlannerNeedsVector         bool       `json:"-"`
+	PlannerBusinessIntent      string     `json:"-"`
+	PlannerRetrievalTargets    []string   `json:"-"`
+	PlannerReferenceCandidates []string   `json:"-"`
+	PlannerNeedsLikelihood     bool       `json:"-"`
+	PlannerNeedsAuditSummary   bool       `json:"-"`
 }
 
 type Citation struct {

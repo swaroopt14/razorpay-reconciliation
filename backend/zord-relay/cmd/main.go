@@ -126,6 +126,29 @@ func run() error {
 	dispatchRepo := services.NewDispatchRepo(database)
 	relayOutboxRepo := services.NewRelayOutboxRepo(database)
 
+	// Durable publish-failure persistence (P0 6.1.3) — used by the Kafka
+	// relay path (worker.Scheduler) so an exhausted publish attempt is never
+	// reduced to a log line, and the upstream lease is only acknowledged
+	// after success or a durable replayable failure record.
+	publishFailureRepo := services.NewPublishFailureRepo(database)
+
+	// ── Payload hash verifier (P0 6.1.2) ─────────────────────────────────────
+	// Verifies SHA-256(payload bytes) == upstream payload_hash before publish.
+	// On mismatch: persist conflict, do not publish, do not ACK lease.
+	hashVerifierCfg := services.ConflictRepoConfig{
+		Strict:             cfg.Relay.StrictPayloadHash,
+		MaxConflictRetries: cfg.Relay.MaxConflictRetries,
+	}
+	hashVerifier := services.NewConflictRepo(database, hashVerifierCfg)
+	effectiveMaxRetries := cfg.Relay.MaxConflictRetries
+	if effectiveMaxRetries <= 0 {
+		effectiveMaxRetries = services.DefaultMaxConflictRetries
+	}
+	log.Info("payload hash verifier initialised",
+		zap.Bool("strict", cfg.Relay.StrictPayloadHash),
+		zap.Int("max_conflict_retries", effectiveMaxRetries),
+	)
+
 	// ── Dispatch Loop ────────────────────────────────────────────────────────
 	dispatchLoopCfg := &services.DispatchLoopConfig{
 		ConnectorID:                cfg.Dispatch.ConnectorID,
@@ -139,6 +162,7 @@ func run() error {
 		dispatchRepo,
 		pspClient,
 		tokenClient,
+		hashVerifier,
 		dispatchLoopCfg,
 	)
 
@@ -199,7 +223,7 @@ func run() error {
 	)
 
 	// ── Existing Kafka Relay Scheduler (unchanged — Kafka relay path) ─────────
-	sched, err := worker.NewScheduler(cfg, kafkaPublisher, log)
+	sched, err := worker.NewScheduler(cfg, kafkaPublisher, log, publishFailureRepo)
 	if err != nil {
 		return fmt.Errorf("creating scheduler: %w", err)
 	}

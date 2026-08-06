@@ -7,8 +7,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 
+	"zord-edge/logger"
 	"zord-edge/model"
 
 	"github.com/google/uuid"
@@ -35,7 +36,7 @@ const staleInProgressReclaim = "90 seconds"
 //   - (uuid.Nil, ErrIdempotencyInFlight) → concurrent duplicate in progress, retry later
 func PersistIdempotency(ctx context.Context, msg model.RawIntentMessage, db *sql.DB) (uuid.UUID, error) {
 	if msg.IdempotencyKey == "" {
-		log.Print("Idempotency key is missing, skipping idempotency validation")
+		logger.Log.Warn("idempotency key is missing, skipping idempotency validation")
 		return uuid.Nil, nil
 	}
 
@@ -58,13 +59,19 @@ func PersistIdempotency(ctx context.Context, msg model.RawIntentMessage, db *sql
 		msg.RequestFingerprint,
 	)
 	if err != nil {
-		log.Printf("Error in idempotency persist: %v", err)
+		logger.Log.Error("error in idempotency persist",
+			slog.String("tenant_id", msg.TenantID),
+			slog.String("idempotency_key", msg.IdempotencyKey),
+			slog.String("error", err.Error()))
 		return uuid.Nil, err
 	}
 
 	rows, err := res.RowsAffected()
 	if err != nil {
-		log.Printf("Error checking idempotency rows affected: %v", err)
+		logger.Log.Error("error checking idempotency rows affected",
+			slog.String("tenant_id", msg.TenantID),
+			slog.String("idempotency_key", msg.IdempotencyKey),
+			slog.String("error", err.Error()))
 		return uuid.Nil, err
 	}
 
@@ -94,7 +101,10 @@ func PersistIdempotency(ctx context.Context, msg model.RawIntentMessage, db *sql
 		&status, &storedFingerprint, &firstEnvelopeID, &conflictCount, &principalID, &sourceClass,
 	)
 	if err != nil {
-		log.Printf("Error fetching stored idempotency record: %v", err)
+		logger.Log.Error("error fetching stored idempotency record",
+			slog.String("tenant_id", msg.TenantID),
+			slog.String("idempotency_key", msg.IdempotencyKey),
+			slog.String("error", err.Error()))
 		return uuid.Nil, err
 	}
 
@@ -121,7 +131,9 @@ func PersistIdempotency(ctx context.Context, msg model.RawIntentMessage, db *sql
 			updateFields += ", principal_id_first_seen = $5, source_class_first_seen = $6"
 			updateArgs = append(updateArgs, pID, sc)
 		} else {
-			log.Printf("Warning: Failed to fetch metadata for envelope %s: %v", firstEnvelopeID.UUID.String(), err)
+			logger.Log.Warn("failed to fetch metadata for first envelope",
+				slog.String("first_envelope_id", firstEnvelopeID.UUID.String()),
+				slog.String("error", err.Error()))
 		}
 	}
 
@@ -137,8 +149,9 @@ func PersistIdempotency(ctx context.Context, msg model.RawIntentMessage, db *sql
 		if err := tx.Commit(); err != nil {
 			return uuid.Nil, err
 		}
-		log.Printf("Idempotency key reused with different payload: tenant_id=%s key=%s",
-			msg.TenantID, msg.IdempotencyKey)
+		logger.Log.Warn("idempotency key reused with different payload",
+			slog.String("tenant_id", msg.TenantID),
+			slog.String("idempotency_key", msg.IdempotencyKey))
 		return uuid.Nil, ErrFingerprintMismatch
 	}
 
@@ -155,8 +168,10 @@ func PersistIdempotency(ctx context.Context, msg model.RawIntentMessage, db *sql
 		if err := tx.Commit(); err != nil {
 			return uuid.Nil, err
 		}
-		log.Printf("Duplicate idempotency key with same fingerprint: tenant_id=%s key=%s envelope_id=%v",
-			msg.TenantID, msg.IdempotencyKey, firstEnvelopeID.UUID.String())
+		logger.Log.Info("duplicate idempotency key with same fingerprint",
+			slog.String("tenant_id", msg.TenantID),
+			slog.String("idempotency_key", msg.IdempotencyKey),
+			slog.String("first_envelope_id", firstEnvelopeID.UUID.String()))
 		return firstEnvelopeID.UUID, nil
 	}
 
@@ -189,7 +204,9 @@ func PersistIdempotency(ctx context.Context, msg model.RawIntentMessage, db *sql
 	if err := tx.Commit(); err != nil {
 		return uuid.Nil, err
 	}
-	log.Printf("Idempotency key in flight: tenant_id=%s key=%s", msg.TenantID, msg.IdempotencyKey)
+	logger.Log.Warn("idempotency key in flight",
+		slog.String("tenant_id", msg.TenantID),
+		slog.String("idempotency_key", msg.IdempotencyKey))
 	return uuid.Nil, ErrIdempotencyInFlight
 }
 
@@ -208,6 +225,9 @@ func ReleaseIdempotencyClaim(ctx context.Context, db *sql.DB, tenantID, idempote
 		  AND first_envelope_id IS NULL
 	`, tenantID, idempotencyKey, fingerprint)
 	if err != nil {
-		log.Printf("ReleaseIdempotencyClaim failed tenant=%s key=%s: %v", tenantID, idempotencyKey, err)
+		logger.Log.Error("release idempotency claim failed",
+			slog.String("tenant_id", tenantID),
+			slog.String("idempotency_key", idempotencyKey),
+			slog.String("error", err.Error()))
 	}
 }

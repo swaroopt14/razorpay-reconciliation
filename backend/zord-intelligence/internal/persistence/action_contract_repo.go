@@ -55,11 +55,11 @@ const insertSQL = `
 	INSERT INTO action_contracts
 		(action_id, tenant_id, policy_id, policy_version,
 		 scope_refs, input_refs_json, decision, confidence,
-		 payload_json, signature, idempotency_key,
+		 payload_json, integrity_digest, idempotency_key,
 		 contract_status, expires_at, policy_family, severity,
 		 created_at,
 		 policy_registry_id, policy_source, policy_digest,
-		 scope_type, scope_ref,
+		 scope_type, scope_ref, scope_refs_hash,
 		 trigger_event_id, trigger_event_source, trigger_event_type, trigger_event_version,
 		 input_facts_hash, payload_hash, payload_schema_version,
 		 mapping_profile_id, mapping_profile_version, mapping_profile_hash,
@@ -70,12 +70,12 @@ const insertSQL = `
 		 $12, $13, $14, $15,
 		 $16,
 		 $17, $18, $19,
-		 $20, $21,
-		 $22, $23, $24, $25,
-		 $26, $27, $28,
-		 $29, $30, $31,
-		 $32, $33, $34,
-		 $35, $36, $37)
+		 $20, $21, $22,
+		 $23, $24, $25, $26,
+		 $27, $28, $29,
+		 $30, $31, $32,
+		 $33, $34, $35,
+		 $36, $37, $38)
 	ON CONFLICT (idempotency_key) DO NOTHING
 `
 
@@ -118,7 +118,7 @@ func buildInsertArgs(ac models.ActionContract) ([]any, error) {
 		string(ac.Decision),
 		ac.Confidence,
 		ac.PayloadJSON,
-		ac.Signature,
+		ac.IntegrityDigest,
 		ac.IdempotencyKey,
 		string(ac.ContractStatus), // PHASE 5
 		ac.ExpiresAt,              // PHASE 5 — *time.Time, nil → NULL
@@ -131,6 +131,7 @@ func buildInsertArgs(ac models.ActionContract) ([]any, error) {
 		nilIfEmpty(ac.PolicyDigest),
 		nilIfEmpty(ac.ScopeType),
 		nilIfEmpty(ac.ScopeRef),
+		nilIfEmpty(ac.ScopeRefsHash),
 		nilIfEmpty(ac.TriggerEventID),
 		nilIfEmpty(ac.TriggerEventSource),
 		nilIfEmpty(ac.TriggerEventType),
@@ -249,11 +250,11 @@ func (r *ActionContractRepo) MarkExpiredContracts(ctx context.Context) (int64, e
 const selectCols = `
 	action_id, tenant_id, policy_id, policy_version,
 	scope_refs::text, input_refs_json::text, decision, confidence,
-	payload_json::text, signature, idempotency_key,
+	payload_json::text, integrity_digest, idempotency_key,
 	contract_status, expires_at, policy_family, severity,
 	created_at,
 	policy_registry_id::text, policy_source, policy_digest,
-	scope_type, scope_ref,
+	scope_type, scope_ref, scope_refs_hash,
 	trigger_event_id, trigger_event_source, trigger_event_type, trigger_event_version,
 	input_facts_hash, payload_hash, payload_schema_version,
 	mapping_profile_id, mapping_profile_version, mapping_profile_hash,
@@ -513,7 +514,7 @@ func scanActionContract(scan func(...any) error) (*models.ActionContract, error)
 
 	// PHASE 5 (refactor) nullable scan destinations.
 	var policyRegistryID, policySource, policyDigest *string
-	var scopeType, scopeRef *string
+	var scopeType, scopeRef, scopeRefsHash *string
 	var triggerEventID, triggerEventSource, triggerEventType, triggerEventVersion *string
 	var inputFactsHash, payloadHash, payloadSchemaVersion *string
 	var signatureAlgorithm, signatureKeyID, signaturePayloadHash *string
@@ -529,7 +530,7 @@ func scanActionContract(scan func(...any) error) (*models.ActionContract, error)
 		&decision,
 		&ac.Confidence,
 		&ac.PayloadJSON,
-		&ac.Signature,
+		&ac.IntegrityDigest,
 		&ac.IdempotencyKey,
 		&contractStatus, // PHASE 5
 		&ac.ExpiresAt,   // PHASE 5 — *time.Time, pgx sets nil for NULL
@@ -537,7 +538,7 @@ func scanActionContract(scan func(...any) error) (*models.ActionContract, error)
 		&severity,       // PHASE 5
 		&ac.CreatedAt,
 		&policyRegistryID, &policySource, &policyDigest,
-		&scopeType, &scopeRef,
+		&scopeType, &scopeRef, &scopeRefsHash,
 		&triggerEventID, &triggerEventSource, &triggerEventType, &triggerEventVersion,
 		&inputFactsHash, &payloadHash, &payloadSchemaVersion,
 		&ac.MappingProfileID, &ac.MappingProfileVersion, &ac.MappingProfileHash,
@@ -574,6 +575,9 @@ func scanActionContract(scan func(...any) error) (*models.ActionContract, error)
 	}
 	if scopeRef != nil {
 		ac.ScopeRef = *scopeRef
+	}
+	if scopeRefsHash != nil {
+		ac.ScopeRefsHash = *scopeRefsHash
 	}
 	if triggerEventID != nil {
 		ac.TriggerEventID = *triggerEventID

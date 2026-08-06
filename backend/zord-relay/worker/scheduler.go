@@ -9,6 +9,7 @@ import (
 
 	"zord-relay/config"
 	"zord-relay/publisher"
+	"zord-relay/services"
 )
 
 // WorkerRunner defines the interface for running a service worker loop.
@@ -29,6 +30,7 @@ func NewScheduler(
 	cfg *config.Config,
 	pub publisher.Publisher,
 	log *zap.Logger,
+	failureRepo *services.PublishFailureRepo,
 ) (*Scheduler, error) {
 	if len(cfg.Services) == 0 {
 		return nil, fmt.Errorf("scheduler: no services configured")
@@ -42,7 +44,7 @@ func NewScheduler(
 		} else if svcCfg.IsBatch {
 			w = NewBatchWorker(svcCfg, cfg.Relay, pub, log)
 		} else {
-			w = NewWorker(svcCfg, cfg.Relay, pub, log)
+			w = NewWorker(svcCfg, cfg.Relay, pub, log, failureRepo)
 		}
 		workers = append(workers, w)
 		log.Info("registered worker",

@@ -27,7 +27,12 @@ CREATE TABLE action_contracts (
 	CHECK (confidence >= 0 AND confidence <= 1),
 	payload_json     JSONB        NOT NULL,
 	reason_codes_json JSONB,
-	signature        TEXT         NOT NULL,
+	-- Corrective action report (2026-07-23) P0-07: named integrity_digest, not
+	-- "signature" -- today this is always a plain DevSigner SHA-256 digest
+	-- with no authenticity property; see signature_algorithm below (always
+	-- 'DEV_SHA256' today) and signature_verification_status (always
+	-- 'UNVERIFIED' -- no verification endpoint exists yet).
+	integrity_digest TEXT         NOT NULL,
 	idempotency_key  TEXT         NOT NULL UNIQUE,
 	expires_at       TIMESTAMPTZ,
 	contract_status  TEXT         NOT NULL DEFAULT 'ACTIVE'

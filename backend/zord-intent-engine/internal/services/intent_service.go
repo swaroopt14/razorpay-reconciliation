@@ -25,6 +25,7 @@ import (
 	"zord-intent-engine/internal/canonicalizer"
 	"zord-intent-engine/internal/models"
 	"zord-intent-engine/internal/normalizer"
+	"zord-intent-engine/kafka"
 
 	// "zord-intent-engine/internal/pii"
 	"zord-intent-engine/internal/guards"
@@ -103,12 +104,21 @@ const (
 var batchAggregateGroup singleflight.Group
 
 type IntentService struct {
-	validator        *validator.Validator
-	repo             CanonicalIntentRepository
-	s3               *storage.S3Store
-	tokenizeQueue    *KafkaTokenizeQueue
-	db               *sql.DB
-	tenantDailyUsage persistence.TenantDailyUsageRepository
+	validator          *validator.Validator
+	repo               CanonicalIntentRepository
+	s3                 *storage.S3Store
+	tokenizeQueue      *KafkaTokenizeQueue
+	db                 *sql.DB
+	tenantDailyUsage   persistence.TenantDailyUsageRepository
+	tenantBusinessDate persistence.TenantBusinessDateRepository
+	vectorPublisher    VectorIndexPublisher
+}
+type VectorIndexPublisher interface {
+	PublishVectorIndexRequest(ctx context.Context, event kafka.VectorIndexRequestEvent) error
+}
+
+func (s *IntentService) SetVectorIndexPublisher(p VectorIndexPublisher) {
+	s.vectorPublisher = p
 }
 
 var enclaveHTTPClient = &http.Client{
@@ -117,9 +127,12 @@ var enclaveHTTPClient = &http.Client{
 }
 
 // getTenantSynonyms returns tenant-specific synonym overrides from DB.
-// Returns empty map if tenant has no custom synonyms — falls back to global dict.
-func (s *IntentService) getTenantSynonyms(ctx context.Context, tenantID uuid.UUID) map[string]string {
-	return loadTenantSynonyms(ctx, s.db, tenantID)
+// Returns an empty map if the tenant has no custom synonyms configured — the
+// global synonym dict still applies. Returns a non-nil error only on a real
+// DB failure (see LoadTenantSynonyms / INT-06); the caller must fail the row
+// rather than normalize it without the tenant's real overrides.
+func (s *IntentService) getTenantSynonyms(ctx context.Context, tenantID uuid.UUID) (map[string]string, error) {
+	return LoadTenantSynonyms(ctx, s.db, tenantID)
 }
 
 // Repository abstraction
@@ -196,15 +209,98 @@ func NewIntentService(
 	q *KafkaTokenizeQueue,
 	db *sql.DB,
 	tenantDailyUsage persistence.TenantDailyUsageRepository,
+	tenantBusinessDate persistence.TenantBusinessDateRepository,
 ) *IntentService {
 	return &IntentService{
-		validator:        v,
-		repo:             r,
-		s3:               s3,
-		tokenizeQueue:    q,
-		db:               db,
-		tenantDailyUsage: tenantDailyUsage,
+		validator:          v,
+		repo:               r,
+		s3:                 s3,
+		tokenizeQueue:      q,
+		db:                 db,
+		tenantDailyUsage:   tenantDailyUsage,
+		tenantBusinessDate: tenantBusinessDate,
 	}
+}
+func (s *IntentService) emitVectorIndexRequest(
+	sourceEventType string,
+	tenantID string,
+	entityType string,
+	entityID string,
+	batchID string,
+	metadata map[string]string,
+) {
+	if s == nil || s.vectorPublisher == nil {
+		return
+	}
+
+	tenantID = strings.TrimSpace(tenantID)
+	entityID = strings.TrimSpace(entityID)
+	batchID = strings.TrimSpace(batchID)
+
+	if tenantID == "" || entityID == "" {
+		return
+	}
+
+	if metadata == nil {
+		metadata = map[string]string{}
+	}
+
+	event := kafka.VectorIndexRequestEvent{
+		EventID:         uuid.NewString(),
+		SchemaVersion:   "v1",
+		EventType:       kafka.VectorIndexEventRequested,
+		SourceService:   "zord-intent-engine",
+		SourceEventType: sourceEventType,
+		TenantID:        tenantID,
+		EntityType:      entityType,
+		EntityID:        entityID,
+		BatchID:         batchID,
+		Operation:       kafka.VectorIndexOperationUpsert,
+		OccurredAt:      time.Now().UTC(),
+		ContentVersion:  "v1",
+		Metadata:        metadata,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := s.vectorPublisher.PublishVectorIndexRequest(ctx, event); err != nil {
+		log.Printf("[intent-engine][vector-index] publish failed tenant=%s entity=%s id=%s err=%v", tenantID, entityType, entityID, err)
+		return
+	}
+
+	log.Printf("[intent-engine][vector-index] publish ok tenant=%s entity=%s id=%s", tenantID, entityType, entityID)
+}
+
+func (s *IntentService) EmitDLQVectorIndexRequest(dlq models.DLQEntry) {
+	batchID := strings.TrimSpace(dlq.BatchID)
+	if batchID == "" {
+		batchID = strings.TrimSpace(dlq.ClientBatchRef)
+	}
+
+	s.emitVectorIndexRequest(
+		"intent_dlq.saved.v1",
+		dlq.TenantID,
+		"intent_dlq",
+		dlq.DLQID,
+		batchID,
+		map[string]string{
+			"stage":       dlq.Stage,
+			"reason_code": dlq.ReasonCode,
+			"dlq_status":  dlq.DLQStatus,
+		},
+	)
+}
+
+// resolveBusinessDate returns tenantID's business_date for now, via the
+// per-tenant timezone configured in tenant_business_date_config (4.2.7),
+// falling back to persistence.BusinessDateUTC when no resolver is wired —
+// defensive only; NewIntentService always supplies one in production.
+func (s *IntentService) resolveBusinessDate(ctx context.Context, tenantID string) string {
+	if s.tenantBusinessDate == nil {
+		return persistence.BusinessDateUTC(time.Now())
+	}
+	return s.tenantBusinessDate.ResolveBusinessDate(ctx, tenantID, time.Now())
 }
 
 // ErrIntentNotHeld is returned by ApproveHeldIntent when the target intent's
@@ -227,13 +323,14 @@ func (s *IntentService) ApproveHeldIntent(ctx context.Context, tenantID, intentI
 		return "", ErrIntentNotHeld
 	}
 
-	businessDate := persistence.BusinessDateUTC(time.Now())
+	businessDate := s.resolveBusinessDate(ctx, tenantID)
 	decision, _, err := s.tenantDailyUsage.ReserveIfWithinLimit(
-		ctx, tenantID, businessDate, currency, amount, decimal.NewFromInt(guards.TenantDailyLimit),
+		ctx, tenantID, businessDate, currency, amount, guards.DailyLimitForCurrency(currency),
 	)
 	if err != nil {
 		return "", fmt.Errorf("approve held intent: daily usage reservation: %w", err)
 	}
+	recordDailyLimitApproval(ctx, tenantID, intentID, currency, businessDate, decision)
 	if decision != persistence.DailyLimitDecisionAccept {
 		// Still over today's limit — remains FLAGGED_FOR_REVIEW, no change.
 		return decision, nil
@@ -429,6 +526,19 @@ func (s *IntentService) computeCanonicalRowHash(intent *models.CanonicalIntent) 
 // used to derive a per-tenant HMAC key for tokenized_data_hash — see
 // canonicalizer.DeriveTenantScopedKey. No per-tenant key store exists yet.
 var tokenizedDataHashMasterSecret = os.Getenv("TOKENIZED_DATA_HASH_MASTER_SECRET")
+
+// InitTokenizedDataHashMasterSecret fails closed if the master secret is
+// unset. DeriveTenantScopedKey and the underlying HMAC accept an empty key
+// without error, so without this check a missing secret wouldn't crash
+// anything — it would silently derive tokenized_data_hash from a known
+// empty key, a value anyone could reproduce, defeating the point of a
+// tenant-scoped secret hash.
+func InitTokenizedDataHashMasterSecret() error {
+	if tokenizedDataHashMasterSecret == "" {
+		return errors.New("TOKENIZED_DATA_HASH_MASTER_SECRET environment variable is required")
+	}
+	return nil
+}
 
 // computeTokenizedDataHash returns tokenized_data_hash for the tenant-scoped
 // tokenized beneficiary fields in tokenMap. Missing token keys hash as null,
@@ -1406,8 +1516,26 @@ func (s *IntentService) processIncomingIntentInternal(
 			artifactFamily,
 		)
 		if profileErr != nil {
-			log.Printf("⚠️ [profile] lookup failed envelope=%s: %v — continuing without profile",
+			// INT-06: a real profile-lookup failure (DB outage, etc.) must
+			// never be treated as "no profile configured" — this replica
+			// cannot tell whether the tenant actually has a profile driving
+			// stricter validation, so proceeding here risks silently
+			// accepting (or differently canonicalizing) a row that a
+			// healthy replica — or a retry of this same row once the DB
+			// recovers — would process under the tenant's real rules. Fail
+			// the row back to the Kafka handler so it retries (kafka.
+			// callWithRetry) instead of falling through to default rules.
+			log.Printf("⚠️ [profile] lookup failed envelope=%s: %v — failing row instead of continuing without profile",
 				in.EnvelopeID, profileErr)
+			retIn = in
+			retProfile = resolvedProfile
+			retDecrypted = decryptedPayload
+			retRawAudit = rawAuditPayload
+			retAuditProfileID = auditProfileID
+			retAuditProfileVersion = auditProfileVersion
+			retSourceRowNum = sourceRowNum
+			retErr = fmt.Errorf("mapping profile resolution unavailable for envelope=%s: %w", in.EnvelopeID, profileErr)
+			return
 		} else if profile != nil {
 			resolvedProfile = profile
 			parser := NewGenericSourceParser()
@@ -1428,7 +1556,28 @@ func (s *IntentService) processIncomingIntentInternal(
 	// -------- STEP 5.1: Header normalization (ETL 10.1 / 10.2 / 10.3) --------
 	// Normalize tenant-specific field names → Zord canonical JSON keys.
 	// If payload is already canonical, this is a no-op (fast path).
-	normResult, normErr := normalizer.Normalize(decryptedPayload, s.getTenantSynonyms(ctx, in.TenantID))
+	tenantSynonyms, synonymErr := s.getTenantSynonyms(ctx, in.TenantID)
+	if synonymErr != nil {
+		// INT-06: same reasoning as the mapping-profile failure above — a
+		// real DB failure while loading the tenant's synonym overrides must
+		// not be treated as "tenant has no overrides". Normalizing without
+		// them here could produce a different NIR (and a different
+		// canonical hash) than a healthy replica, or a retry of this same
+		// row after the DB recovers, would produce. Fail the row instead of
+		// silently normalizing without the tenant's real overrides.
+		log.Printf("⚠️ [synonyms] lookup failed envelope=%s: %v — failing row instead of normalizing without tenant overrides",
+			in.EnvelopeID, synonymErr)
+		retIn = in
+		retProfile = resolvedProfile
+		retDecrypted = decryptedPayload
+		retRawAudit = rawAuditPayload
+		retAuditProfileID = auditProfileID
+		retAuditProfileVersion = auditProfileVersion
+		retSourceRowNum = sourceRowNum
+		retErr = fmt.Errorf("tenant synonym resolution unavailable for envelope=%s: %w", in.EnvelopeID, synonymErr)
+		return
+	}
+	normResult, normErr := normalizer.Normalize(decryptedPayload, tenantSynonyms)
 	if normErr != nil {
 		log.Printf("⚠️ Normalization failed for EnvelopeID=%s: %v — falling back to raw payload", in.EnvelopeID, normErr)
 		// Do NOT DLQ — fall through with original payload (graceful degradation)
@@ -1660,6 +1809,21 @@ func (s *IntentService) processIncomingIntentInternal(
 	// path, so REVIEW_STRICT and OBSERVE tenants see zero behavior change.
 	hardStrictRejected := applyHardStrictReject(resolvedProfile, nir.RequiredFieldGapCount, missingRequiredFieldNames, &governance)
 
+	// 4.2.8: attach an explainability record whenever a mapping-profile
+	// required-field gap drove this decision — HARD_STRICT reject (surfaced
+	// on the DLQ entry's intent_context below) or REVIEW_STRICT hold
+	// (surfaced on the row itself via GovernanceReasonCodesJSON).
+	if nir.RequiredFieldGapCount > 0 {
+		gapDecision := models.StrictModeDecisionReviewStrictHeld
+		gapReasonCode := "REQUIRED_FIELD_GAPS"
+		if hardStrictRejected {
+			gapDecision = models.StrictModeDecisionHardStrictRejected
+			gapReasonCode = "HARD_STRICT_REQUIRED_FIELD_MISSING"
+		}
+		explanation := models.BuildStrictModeExplanation(gapDecision, gapReasonCode, resolvedProfile, parsed.SourceRowRef, missingRequiredFieldNames)
+		governance.RequiredFieldGapDecision = &explanation
+	}
+
 	if !governance.SemanticValid {
 		log.Printf("⚠️ Semantic Policy Violation for EnvelopeID=%s: %v", in.EnvelopeID, governance.SemanticErrors)
 		reasonCode := "SEMANTIC_INVALID"
@@ -1684,6 +1848,11 @@ func (s *IntentService) processIncomingIntentInternal(
 			errorDetail = "semantic policy validation failed"
 		}
 
+		intentContext := models.BuildIntentContext(policyDLQStatus, parsed)
+		if hardStrictRejected && governance.RequiredFieldGapDecision != nil {
+			intentContext = models.BuildIntentContextWithStrictMode(policyDLQStatus, parsed, *governance.RequiredFieldGapDecision)
+		}
+
 		dlqEntry := models.DLQEntry{
 			TenantID:       in.TenantID.String(),
 			EnvelopeID:     in.EnvelopeID.String(),
@@ -1694,7 +1863,7 @@ func (s *IntentService) processIncomingIntentInternal(
 			BatchID:        batchIDStr,
 			ClientBatchRef: batchIDStr,
 			SourceRowNum:   sourceRowNum,
-			IntentContext:  models.BuildIntentContext(policyDLQStatus, parsed),
+			IntentContext:  intentContext,
 			TraceID:        in.TraceID.String(),
 			CreatedAt:      time.Now().UTC(),
 		}
@@ -2244,23 +2413,26 @@ func (s *IntentService) processIncomingIntentInternal(
 	// what's actually in payment_intents until the next request corrects
 	// course. A full compensating-transaction/saga wasn't built for this
 	// rare failure mode; none of R-05's acceptance tests exercise it.
-	businessDate := persistence.BusinessDateUTC(time.Now())
+	businessDate := s.resolveBusinessDate(ctx, canonical.TenantID)
+	dailyLimit := guards.DailyLimitForCurrency(canonical.Currency)
 	dailyLimitDecision, dailyTotalBefore, errDailyUsage := s.tenantDailyUsage.ReserveIfWithinLimit(
 		ctx, canonical.TenantID, businessDate, canonical.Currency,
-		canonical.Amount, decimal.NewFromInt(guards.TenantDailyLimit),
+		canonical.Amount, dailyLimit,
 	)
-	if errDailyUsage != nil {
+	reservationErrored := errDailyUsage != nil
+	if reservationErrored {
 		// Fail safe, not fail open: R-05 exists because the old check could
 		// be silently bypassed. An usage-tracking failure holds for review
 		// rather than risking an unverified amount passing as ACCEPTED.
-		log.Printf("⚠️ tenant_daily_usage reservation failed, holding for review [tenant=%s currency=%s]: %v",
-			canonical.TenantID, canonical.Currency, errDailyUsage)
+		recordDailyLimitReservationFailure(ctx, canonical.TenantID, canonical.Currency, businessDate, canonical.Amount, errDailyUsage)
 		dailyLimitDecision = persistence.DailyLimitDecisionRequiresReview
 		dailyTotalBefore = decimal.Zero
+	} else {
+		recordDailyLimitReservation(ctx, canonical.TenantID, canonical.Currency, businessDate, dailyLimitDecision, canonical.Amount)
 	}
 	if dailyLimitDecision == persistence.DailyLimitDecisionRequiresReview {
 		canonical.GovernanceState = "REQUIRES_REVIEW"
-		canonical.Governance.PolicyFlags = append(canonical.Governance.PolicyFlags, "TENANT_DAILY_LIMIT_EXCEEDED")
+		canonical.Governance.PolicyFlags = append(canonical.Governance.PolicyFlags, DailyLimitPolicyFlagFor(reservationErrored))
 	}
 
 	canonical.GovernanceReasonCodesJSON = s.aggregateGovernanceReasons(&canonical, nir)
@@ -2321,7 +2493,7 @@ func (s *IntentService) processIncomingIntentInternal(
 		return
 	}
 
-	outbox, err := CanonicalIntentToOutboxEvent(canonical, canonicalPayload, "intent.created.v1")
+	outbox, err := CanonicalIntentToOutboxEvent(canonical, canonicalPayload, EventTypeCanonicalIntentCreatedV1)
 	if err != nil {
 		log.Printf("⚠️ Failed to create outbox event: %v", err)
 		retErr = err
@@ -2459,11 +2631,17 @@ func (s *IntentService) ProcessIncomingIntent(
 			runStatus = "COMPLETED"
 		}
 
+		runLastErrorCode := ""
+		if status == "FAILED" {
+			runLastErrorCode = errDetail
+		}
+
 		errUpsert := db.UpsertIngestRun(ctx, s.db,
 			runID, *in.BatchID, in.TenantID.String(),
 			mappingID, profileIDHint, fileName, fileHash,
 			totalRows, acceptedCount, failedCount, duplicateCount,
 			runStatus,
+			runLastErrorCode, runLastErrorCode,
 		)
 		if errUpsert != nil {
 			log.Printf("⚠️ Audit: failed to upsert run audit for batch=%s: %v", *in.BatchID, errUpsert)
@@ -2565,7 +2743,32 @@ func (s *IntentService) ProcessIncomingIntent(
 			log.Printf("⚠️ Failed to update batch aggregate confidence for batch=%s: %v", *in.BatchID, err)
 		}
 	}
+	batchID := ""
+	if in.BatchID != nil {
+		batchID = *in.BatchID
+	}
 
+	s.emitVectorIndexRequest(
+		"payment_intent.saved.v1",
+		saved.TenantID,
+		"payment_intent",
+		saved.IntentID,
+		batchID,
+		map[string]string{
+			"governance_state": saved.GovernanceState,
+		},
+	)
+
+	if batchID != "" {
+		s.emitVectorIndexRequest(
+			"intent_batch.updated.v1",
+			saved.TenantID,
+			"intent_batch",
+			batchID,
+			batchID,
+			nil,
+		)
+	}
 	return &saved, nil, nil
 }
 
@@ -2783,11 +2986,17 @@ func (s *IntentService) ProcessIncomingIntentsBatch(
 		if batchRunID == "" {
 			batchRunID = uuid.New().String()
 		}
+		runLastErrorCode := ""
+		if len(savedDLQs) > 0 {
+			runLastErrorCode = savedDLQs[len(savedDLQs)-1].ReasonCode
+		}
+
 		errUpsert := db.UpsertIngestRun(ctx, s.db,
 			batchRunID, *firstIn.BatchID, firstIn.TenantID.String(),
 			resolvedMappingID, resolvedProfileVersion, fileName, fileHash,
 			totalRows, actualAccepted, actualFailed, actualDuplicate,
 			runStatus,
+			runLastErrorCode, runLastErrorCode,
 		)
 		if errUpsert != nil {
 			log.Printf("⚠️ Batch Audit: failed to upsert run audit for batch=%s: %v", *firstIn.BatchID, errUpsert)
@@ -2801,7 +3010,41 @@ func (s *IntentService) ProcessIncomingIntentsBatch(
 			log.Printf("⚠️ Failed to update batch aggregate confidence for batch=%s: %v", *firstIn.BatchID, err)
 		}
 	}
+	emittedBatches := map[string]bool{}
 
+	for _, saved := range savedIntents {
+		batchID := ""
+		if saved.BatchID != nil {
+			batchID = strings.TrimSpace(*saved.BatchID)
+		}
+
+		s.emitVectorIndexRequest(
+			"payment_intent.saved.v1",
+			saved.TenantID,
+			"payment_intent",
+			saved.IntentID,
+			batchID,
+			map[string]string{
+				"governance_state": saved.GovernanceState,
+			},
+		)
+
+		if batchID != "" && !emittedBatches[batchID] {
+			s.emitVectorIndexRequest(
+				"intent_batch.updated.v1",
+				saved.TenantID,
+				"intent_batch",
+				batchID,
+				batchID,
+				nil,
+			)
+			emittedBatches[batchID] = true
+		}
+	}
+
+	for _, dlq := range savedDLQs {
+		s.EmitDLQVectorIndexRequest(dlq)
+	}
 	return savedIntents, savedDLQs, nil
 }
 
@@ -3211,7 +3454,7 @@ func (s *IntentService) ProcessTokenizeResult(
 		return nil, err
 	}
 
-	outbox, err := CanonicalIntentToOutboxEvent(intent, payload, "intent.created.v1")
+	outbox, err := CanonicalIntentToOutboxEvent(intent, payload, EventTypeCanonicalIntentCreatedV1)
 	if err != nil {
 		return nil, err
 	}
@@ -3363,7 +3606,12 @@ func (s *IntentService) processWebhook(
 	// did — this literal used to omit Constraints/PIITokens/Beneficiary/
 	// RoutingHintsJSON/GovernanceReasonCodesJSON entirely, which would have
 	// failed the outbox INSERT on any real webhook.
-	outbox, err := CanonicalIntentToOutboxEvent(canonical, payload, "WEBHOOK_RECEIVED")
+	//
+	// eventType is the same canonical-intent-v1 type every other producer
+	// call site uses (previously a bespoke "WEBHOOK_RECEIVED" literal that
+	// Relay/Outcome never recognized, so webhook-originated intents never
+	// reached Service 5 as a normal canonical intent).
+	outbox, err := CanonicalIntentToOutboxEvent(canonical, payload, EventTypeCanonicalIntentCreatedV1)
 	if err != nil {
 		return nil, nil, err
 	}

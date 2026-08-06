@@ -15,6 +15,7 @@ import (
 	"zord-outcome-engine/internal/health"
 	"zord-outcome-engine/kafka"
 	"zord-outcome-engine/routes"
+	"zord-outcome-engine/services"
 	"zord-outcome-engine/storage"
 	"zord-outcome-engine/tracing"
 
@@ -55,6 +56,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Kafka producer creation failure: %v", err)
 	}
+	services.SetVectorIndexPublisher(producer)
 	defer producer.Close()
 
 	dispatchTopic := os.Getenv("KAFKA_TOPIC")

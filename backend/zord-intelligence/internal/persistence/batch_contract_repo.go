@@ -344,7 +344,22 @@ func (r *BatchContractRepo) Upsert(ctx context.Context, bc BatchContract) error 
 	// belongs to batch_risk_summary in the new split, not batch_reconciliation_summary
 	// — caught live by the shadow-diff worker (blueprint-alignment pass,
 	// 2026-07-14): it was never being shadow-written anywhere until now.
-	return r.upsertRiskAmbiguityScoreShadow(ctx, bc)
+	if err := r.upsertRiskAmbiguityScoreShadow(ctx, bc); err != nil {
+		return err
+	}
+
+	emitVectorIndexRequest(
+		"batch_contract.upserted.v1",
+		bc.TenantID,
+		"intelligence_batch_contract",
+		bc.BatchID,
+		bc.BatchID,
+		map[string]string{
+			"batch_finality_status": bc.BatchFinalityStatus,
+		},
+	)
+
+	return nil
 }
 
 // upsertRiskAmbiguityScoreShadow writes Upsert's ambiguity_score into

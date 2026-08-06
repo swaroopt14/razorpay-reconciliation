@@ -123,27 +123,27 @@ func (s *ActionService) CreateAction(
 	req CreateActionRequest,
 ) error {
 
-	// SHA-256(policy_id + scope_refs + trigger_event_id) input, still needed
-	// for the ScopeRefs field itself further down.
-	_, err := json.Marshal(req.ScopeRefs)
-	if err != nil {
-		return fmt.Errorf("action_service.CreateAction marshal scope_refs: %w", err)
-	}
-
 	// ── PHASE 5 (refactor): scope classifier + envelope lineage + integrity
 	// hashes — computed before the idempotency key and signature so both can
 	// depend on them.
 	scopeType, scopeRef := deriveScope(req.ScopeRefs, req.TenantID)
+	scopeRefsHash, err := canonicalHash(req.ScopeRefs)
+	if err != nil {
+		return fmt.Errorf("action_service.CreateAction hash scope_refs: %w", err)
+	}
 	envMeta := models.EnvelopeMetaFromContext(ctx)
 	inputFactsHash := fmt.Sprintf("%x", sha256.Sum256([]byte(req.InputRefsJSON)))
 	payloadHash := fmt.Sprintf("%x", sha256.Sum256([]byte(req.PayloadJSON)))
 
 	// ── Build idempotency key ─────────────────────────────────────────────
 	// Same inputs → same key → DB UNIQUE constraint silently ignores duplicate.
-	idempotencyKey := buildIdempotencyKey(
+	idempotencyKey, err := buildIdempotencyKey(
 		req.TenantID, req.PolicyID, req.PolicyVersion, req.PolicySource, req.PolicyDigest,
-		scopeType, scopeRef, req.TriggerEventID, envMeta.EventVersion, payloadHash,
+		scopeRefsHash, req.TriggerEventID, envMeta.EventVersion, inputFactsHash, payloadHash,
 	)
+	if err != nil {
+		return fmt.Errorf("action_service.CreateAction build idempotency key: %w", err)
+	}
 
 	// ── Determine contract status ─────────────────────────────────────────
 	// PHASE 5: the approval gate. Two conditions force PENDING_APPROVAL:
@@ -187,6 +187,7 @@ func (s *ActionService) CreateAction(
 		PolicyDigest:         req.PolicyDigest,
 		ScopeType:            scopeType,
 		ScopeRef:             scopeRef,
+		ScopeRefsHash:        scopeRefsHash,
 		TriggerEventID:       req.TriggerEventID,
 		TriggerEventSource:   envMeta.EventSource,
 		TriggerEventType:     envMeta.EventType,
@@ -198,12 +199,15 @@ func (s *ActionService) CreateAction(
 
 	// PHASE 5 (refactor): sign the canonical hash of the immutable fields via
 	// the Signer abstraction (clarification §5) — never sign raw mutable JSON.
-	sigPayloadHash := buildSignaturePayloadHash(contract)
+	sigPayloadHash, err := buildSignaturePayloadHash(contract)
+	if err != nil {
+		return fmt.Errorf("action_service.CreateAction build signature payload: %w", err)
+	}
 	sigResult, err := s.signer.Sign(ctx, sigPayloadHash)
 	if err != nil {
 		return fmt.Errorf("action_service.CreateAction sign: %w", err)
 	}
-	contract.Signature = sigResult.Signature
+	contract.IntegrityDigest = sigResult.Signature
 	contract.SignatureAlgorithm = sigResult.Algorithm
 	contract.SignatureKeyID = sigResult.KeyID
 	contract.SignaturePayloadHash = sigPayloadHash
@@ -419,6 +423,27 @@ func (s *ActionService) DismissAction(
 
 // ── Private helpers ────────────────────────────────────────────────────────────
 
+// canonicalActionIdentity is the exact set of fields corrective-action-report
+// P1-05 requires bound into an action's idempotency key: tenant, complete
+// policy definition identity, the FULL scope (as a hash — P1-06), trigger
+// event identity/version, the complete input-fact set (P1-05 flagged
+// input_facts_hash as present on the contract but never fed into the key
+// before), and the canonical action payload hash. Field order here is fixed
+// by struct declaration, which is what makes canonicalHash deterministic —
+// see canonical.go.
+type canonicalActionIdentity struct {
+	TenantID            string `json:"tenant_id"`
+	PolicyID            string `json:"policy_id"`
+	PolicyVersion       int    `json:"policy_version"`
+	PolicySource        string `json:"policy_source"`
+	PolicyDigest        string `json:"policy_digest"`
+	ScopeRefsHash       string `json:"scope_refs_hash"`
+	TriggerEventID      string `json:"trigger_event_id"`
+	TriggerEventVersion string `json:"trigger_event_version"`
+	InputFactsHash      string `json:"input_facts_hash"`
+	PayloadHash         string `json:"payload_hash"`
+}
+
 // buildIdempotencyKey creates a stable SHA-256 key identifying "the same
 // decision, for the same reason, on the same data" — adapted from blueprint
 // §6's 12-input formula (tenant_id, policy_key, policy_version,
@@ -430,18 +455,33 @@ func (s *ActionService) DismissAction(
 // projection row whose source/version could stand in for "the" projection
 // that fed the decision — hashing an arbitrary pick would misrepresent the
 // data more than honestly omitting it. Every other field is genuinely
-// available and hashed. Same inputs always produce the same key — duplicate
-// events are silently skipped via the idempotency_key UNIQUE constraint.
+// available and hashed.
+//
+// P1-05/P1-06 (corrective-action-report): scope_type/scope_ref (the single
+// precedence-selected primary scope) is replaced with scopeRefsHash (a hash
+// of the FULL ScopeRefs object), and input_facts_hash — previously computed
+// but never bound into this key — is now included. Hashing is via
+// canonicalHash (JSON, not pipe-delimited concatenation): a delimiter
+// character embedded in any value can no longer make two distinct inputs
+// collide into the same key. Same inputs always produce the same key —
+// duplicate events are silently skipped via the idempotency_key UNIQUE
+// constraint.
 func buildIdempotencyKey(
 	tenantID, policyID string, policyVersion int, policySource, policyDigest,
-	scopeType, scopeRef, triggerEventID, triggerEventVersion, payloadHash string,
-) string {
-	raw := fmt.Sprintf("%s|%s|%d|%s|%s|%s|%s|%s|%s|%s",
-		tenantID, policyID, policyVersion, policySource, policyDigest,
-		scopeType, scopeRef, triggerEventID, triggerEventVersion, payloadHash,
-	)
-	hash := sha256.Sum256([]byte(raw))
-	return fmt.Sprintf("%x", hash)
+	scopeRefsHash, triggerEventID, triggerEventVersion, inputFactsHash, payloadHash string,
+) (string, error) {
+	return canonicalHash(canonicalActionIdentity{
+		TenantID:            tenantID,
+		PolicyID:            policyID,
+		PolicyVersion:       policyVersion,
+		PolicySource:        policySource,
+		PolicyDigest:        policyDigest,
+		ScopeRefsHash:       scopeRefsHash,
+		TriggerEventID:      triggerEventID,
+		TriggerEventVersion: triggerEventVersion,
+		InputFactsHash:      inputFactsHash,
+		PayloadHash:         payloadHash,
+	})
 }
 
 // deriveScope classifies an ActionContract's primary scope from its
@@ -476,21 +516,47 @@ func deriveScope(refs models.ScopeRefs, tenantID string) (scopeType, scopeRef st
 	}
 }
 
+// canonicalSignaturePayload mirrors canonicalActionIdentity's P1-05/P1-06
+// correction: scope_type/scope_ref (primary scope only) is replaced with
+// ScopeRefsHash (the full scope), and encoding is canonical JSON rather than
+// pipe-delimited concatenation.
+type canonicalSignaturePayload struct {
+	TenantID       string  `json:"tenant_id"`
+	ActionID       string  `json:"action_id"`
+	PolicyID       string  `json:"policy_id"`
+	PolicyVersion  int     `json:"policy_version"`
+	PolicySource   string  `json:"policy_source"`
+	PolicyDigest   string  `json:"policy_digest"`
+	ScopeRefsHash  string  `json:"scope_refs_hash"`
+	InputFactsHash string  `json:"input_facts_hash"`
+	PayloadHash    string  `json:"payload_hash"`
+	Decision       string  `json:"decision"`
+	Confidence     float64 `json:"confidence"`
+	CreatedAt      string  `json:"created_at"`
+}
+
 // buildSignaturePayloadHash returns the canonical hash to sign — clarification
-// §5's exact field list: tenant_id, action_id, policy_key, policy_version,
-// policy_source, policy_digest, scope_type, scope_ref, input_facts_hash,
-// payload_hash, decision, confidence, created_at. Never sign raw mutable
-// JSON — this replaces the old signContract() placeholder, which signed an
-// ad hoc field subset with plain sha256 and no algorithm/key metadata.
-func buildSignaturePayloadHash(ac models.ActionContract) string {
-	raw := fmt.Sprintf("%s|%s|%s|%d|%s|%s|%s|%s|%s|%s|%s|%.3f|%s",
-		ac.TenantID, ac.ActionID, ac.PolicyID, ac.PolicyVersion,
-		ac.PolicySource, ac.PolicyDigest, ac.ScopeType, ac.ScopeRef,
-		ac.InputFactsHash, ac.PayloadHash, string(ac.Decision), ac.Confidence,
-		ac.CreatedAt.Format(time.RFC3339Nano),
-	)
-	sum := sha256.Sum256([]byte(raw))
-	return fmt.Sprintf("%x", sum)
+// §5's field list (tenant_id, action_id, policy_key, policy_version,
+// policy_source, policy_digest, input_facts_hash, payload_hash, decision,
+// confidence, created_at), with scope_type/scope_ref widened to the full
+// scope_refs_hash per P1-06. Never sign raw mutable JSON — this replaces the
+// old signContract() placeholder, which signed an ad hoc field subset with
+// plain sha256 and no algorithm/key metadata.
+func buildSignaturePayloadHash(ac models.ActionContract) (string, error) {
+	return canonicalHash(canonicalSignaturePayload{
+		TenantID:       ac.TenantID,
+		ActionID:       ac.ActionID,
+		PolicyID:       ac.PolicyID,
+		PolicyVersion:  ac.PolicyVersion,
+		PolicySource:   ac.PolicySource,
+		PolicyDigest:   ac.PolicyDigest,
+		ScopeRefsHash:  ac.ScopeRefsHash,
+		InputFactsHash: ac.InputFactsHash,
+		PayloadHash:    ac.PayloadHash,
+		Decision:       string(ac.Decision),
+		Confidence:     ac.Confidence,
+		CreatedAt:      ac.CreatedAt.Format(time.RFC3339Nano),
+	})
 }
 
 // needsActuation returns true when the decision should produce a Kafka message.

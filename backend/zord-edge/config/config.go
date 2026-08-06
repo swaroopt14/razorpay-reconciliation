@@ -3,11 +3,12 @@ package config
 import (
 	"database/sql"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"time"
 
 	"zord-edge/db"
+	"zord-edge/logger"
 
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
@@ -30,7 +31,9 @@ func InitDB() {
 	)
 	db.DB, err = sql.Open("postgres", dsn)
 	if err != nil {
-		log.Fatalf("Database configuration failed: %v", err)
+		logger.Log.Error("database configuration failed",
+			slog.String("error", err.Error()))
+		os.Exit(1)
 	}
 
 	maxRetries := 10
@@ -39,16 +42,23 @@ func InitDB() {
 	for i := 0; i < maxRetries; i++ {
 		err = db.DB.Ping()
 		if err == nil {
-			log.Println("Database connection established successfully")
+			logger.Log.Info("database connection established successfully")
 			break
 		}
 
 		if i < maxRetries-1 {
-			log.Printf("Database Ping Error (attempt %d/%d): %v - retrying in %v", i+1, maxRetries, err, retryDelay)
+			logger.Log.Warn("database ping failed, retrying",
+				slog.Int("attempt", i+1),
+				slog.Int("max_retries", maxRetries),
+				slog.String("error", err.Error()),
+				slog.Duration("retry_in", retryDelay))
 			time.Sleep(retryDelay)
 			retryDelay *= 2 // Exponential backoff
 		} else {
-			log.Fatalf("Database Ping Error after %d attempts: %v", maxRetries, err)
+			logger.Log.Error("database ping failed after all attempts",
+				slog.Int("max_retries", maxRetries),
+				slog.String("error", err.Error()))
+			os.Exit(1)
 		}
 	}
 	db.DB.SetMaxOpenConns(50)

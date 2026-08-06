@@ -39,15 +39,27 @@ func NewPolicyRepo(pool *pgxpool.Pool) *PolicyRepo {
 // subquery, not a JOIN: a policy missing its dual-written definition (should
 // not happen post-backfill, but must never silently drop a live policy from
 // evaluation) still returns normally with empty strings.
+//
+// Corrective-action-report P0-05: the tenant predicate below is load-bearing,
+// not cosmetic. Without it, two tenants sharing the same policy_key+version
+// (e.g. both on "LIMIT_HIGH_VALUE" v3) could have the correlated subquery
+// return either tenant's digest depending only on created_at ordering — a
+// wrong policy_registry_id/digest attached to a real action. IS NOT DISTINCT
+// FROM is required (not =) because global policies store tenant_id NULL on
+// both policy_registry and policy_definitions, and NULL = NULL is never true
+// in plain SQL equality.
 const policyDefinitionCols = `
 	COALESCE((SELECT pd.policy_registry_id::text FROM policy_definitions pd
 	          WHERE pd.policy_key = policy_registry.policy_id AND pd.policy_version = policy_registry.version
+	            AND pd.tenant_id IS NOT DISTINCT FROM policy_registry.tenant_id
 	          ORDER BY pd.created_at DESC LIMIT 1), ''),
 	COALESCE((SELECT pd.policy_digest FROM policy_definitions pd
 	          WHERE pd.policy_key = policy_registry.policy_id AND pd.policy_version = policy_registry.version
+	            AND pd.tenant_id IS NOT DISTINCT FROM policy_registry.tenant_id
 	          ORDER BY pd.created_at DESC LIMIT 1), ''),
 	COALESCE((SELECT pd.policy_source FROM policy_definitions pd
 	          WHERE pd.policy_key = policy_registry.policy_id AND pd.policy_version = policy_registry.version
+	            AND pd.tenant_id IS NOT DISTINCT FROM policy_registry.tenant_id
 	          ORDER BY pd.created_at DESC LIMIT 1), '')
 `
 
@@ -322,17 +334,41 @@ func (r *PolicyRepo) insertDefinition(ctx context.Context, p models.Policy, sour
 }
 
 // insertActivation appends one immutable policy_activations row.
+//
+// Corrective-action-report P0-06: the previous open-ended interval (if any)
+// must be closed and the new row inserted in the SAME transaction, or a
+// crash/race between the two statements can leave two open (effective_to IS
+// NULL) rows for the same policy — which uq_policy_activations_open (a
+// partial unique index on policy_registry_id WHERE effective_to IS NULL)
+// would then reject on the next call instead of preventing the drift itself.
 func (r *PolicyRepo) insertActivation(ctx context.Context, tenantID, policyRegistryID string, enabled bool, activatedBy string) error {
 	var tenantIDArg *string
 	if tenantID != "" {
 		tenantIDArg = &tenantID
 	}
-	_, err := r.pool.Exec(ctx, `
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("policy_repo.insertActivation begin policy_registry_id=%s: %w", policyRegistryID, err)
+	}
+	defer tx.Rollback(ctx) // no-op once committed
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE policy_activations
+		SET    effective_to = now()
+		WHERE  policy_registry_id = $1 AND effective_to IS NULL
+	`, policyRegistryID); err != nil {
+		return fmt.Errorf("policy_repo.insertActivation close-prior policy_registry_id=%s: %w", policyRegistryID, err)
+	}
+
+	if _, err := tx.Exec(ctx, `
 		INSERT INTO policy_activations (tenant_id, policy_registry_id, enabled, activated_by)
 		VALUES ($1, $2, $3, $4)
-	`, tenantIDArg, policyRegistryID, enabled, activatedBy)
-	if err != nil {
+	`, tenantIDArg, policyRegistryID, enabled, activatedBy); err != nil {
 		return fmt.Errorf("policy_repo.insertActivation policy_registry_id=%s: %w", policyRegistryID, err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("policy_repo.insertActivation commit policy_registry_id=%s: %w", policyRegistryID, err)
 	}
 	return nil
 }
@@ -342,12 +378,24 @@ func (r *PolicyRepo) insertActivation(ctx context.Context, tenantID, policyRegis
 // creates one version per policy_id (no re-versioning flow exists yet), so
 // "latest" is simply "the one there is" — ORDER BY future-proofs this for
 // whenever a real re-versioning flow is added.
+//
+// Corrective-action-report P0-05: joined against policy_registry (matched by
+// policy_id, the table's actual PRIMARY KEY) with a tenant-matching predicate
+// so this can never return a policy_definitions row belonging to a different
+// tenant than the policy_registry row policyID actually identifies — the
+// same class of fix as policyDefinitionCols above, applied here because this
+// lookup builds the tenant/policy_registry_id pair used to write the next
+// action's lineage.
 func (r *PolicyRepo) latestDefinitionFor(ctx context.Context, policyID string) (tenantID, policyRegistryID string, err error) {
 	var tenantIDPtr *string
 	err = r.pool.QueryRow(ctx, `
-		SELECT tenant_id, policy_registry_id FROM policy_definitions
-		WHERE policy_key = $1
-		ORDER BY policy_version DESC, created_at DESC
+		SELECT pd.tenant_id, pd.policy_registry_id
+		FROM   policy_definitions pd
+		JOIN   policy_registry pr
+		       ON pr.policy_id = pd.policy_key
+		      AND pr.tenant_id IS NOT DISTINCT FROM pd.tenant_id
+		WHERE  pr.policy_id = $1
+		ORDER BY pd.policy_version DESC, pd.created_at DESC
 		LIMIT 1
 	`, policyID).Scan(&tenantIDPtr, &policyRegistryID)
 	if err != nil {

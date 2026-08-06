@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"log"
 	"net/http"
@@ -59,7 +60,54 @@ func main() {
 	intelligenceDB := mustOpenReadOnlyDB("intelligence", cfg.IntelligenceReadDSN)
 	evidenceDB := mustOpenReadOnlyDB("evidence", cfg.EvidenceReadDSN)
 	outcomeDB := mustOpenReadOnlyDB("outcome", cfg.OutcomeReadDSN)
-	retriever := repositories.NewLiveSQLRetriever(edgeDB, intentDB, relayDB, intelligenceDB, evidenceDB, outcomeDB)
+	liveRetriever := repositories.NewLiveSQLRetriever(edgeDB, intentDB, relayDB, intelligenceDB, evidenceDB, outcomeDB)
+
+	var vectorRetriever services.VectorRetriever
+	if strings.TrimSpace(cfg.PineconeAPIKey) != "" && strings.TrimSpace(cfg.PineconeHost) != "" {
+		pineconeClient := client.NewPineconeClient(
+			cfg.PineconeAPIKey,
+			cfg.PineconeHost,
+			cfg.PineconeNamespace,
+			cfg.VectorRequestTimeoutSeconds,
+		)
+
+		vectorRetriever = repositories.NewPineconeVectorRetriever(
+			geminiClient,
+			pineconeClient,
+			cfg.GeminiEmbeddingModel,
+			cfg.GeminiEmbeddingDimension,
+			cfg.VectorQueryTopK,
+			cfg.VectorRequestTimeoutSeconds,
+		)
+
+		vectorIndexer := repositories.NewVectorIndexer(
+			liveRetriever,
+			geminiClient,
+			pineconeClient,
+			cfg.GeminiEmbeddingModel,
+			cfg.GeminiEmbeddingDimension,
+			cfg.VectorIndexIntervalSeconds,
+			cfg.VectorIndexBatchSize,
+			cfg.VectorIndexTimeoutSeconds,
+		)
+
+		vectorConsumer := repositories.NewVectorIndexConsumer(
+			repositories.VectorIndexConsumerConfig{
+				Brokers:    cfg.VectorIndexKafkaBrokers,
+				Topic:      cfg.VectorIndexKafkaTopic,
+				GroupID:    cfg.VectorIndexKafkaGroupID,
+				MaxRetries: cfg.VectorIndexKafkaMaxRetries,
+			},
+			vectorIndexer,
+		)
+		vectorConsumer.Start(context.Background())
+
+		log.Printf("[prompt-layer][vector] pinecone query retriever enabled host=%s namespace=%s top_k=%d timeout_seconds=%d", cfg.PineconeHost, cfg.PineconeNamespace, cfg.VectorQueryTopK, cfg.VectorRequestTimeoutSeconds)
+	} else {
+		log.Printf("[prompt-layer][vector] pinecone query retriever not configured; using sql-only retrieval")
+	}
+
+	retriever := services.NewHybridEvidenceRetriever(liveRetriever, vectorRetriever)
 	ragService := services.NewDefaultRAGService(cfg.GeminiModel, cfg.DefaultTopK, retriever, llmService, intelligenceClient, memoryStore)
 	queryHandler := handler.NewQueryHandler(ragService)
 

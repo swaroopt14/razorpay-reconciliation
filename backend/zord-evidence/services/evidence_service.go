@@ -115,6 +115,58 @@ func NewEvidenceService(
 	}
 }
 
+type vectorIndexPublisher interface {
+	PublishVectorIndexRequest(ctx context.Context, event kafka.VectorIndexRequestEvent) error
+}
+
+func (s *EvidenceService) emitVectorIndexRequest(pack *models.EvidencePack, sourceEventType string) {
+	if s == nil || s.publisher == nil || pack == nil {
+		return
+	}
+
+	publisher, ok := s.publisher.(vectorIndexPublisher)
+	if !ok {
+		return
+	}
+
+	tenantID := strings.TrimSpace(pack.TenantID)
+	entityID := strings.TrimSpace(pack.EvidencePackID)
+	batchID := strings.TrimSpace(pack.ClientBatchID)
+
+	if tenantID == "" || entityID == "" {
+		return
+	}
+
+	event := kafka.VectorIndexRequestEvent{
+		EventID:         uuid.NewString(),
+		SchemaVersion:   "v1",
+		EventType:       kafka.VectorIndexEventRequested,
+		SourceService:   "zord-evidence",
+		SourceEventType: sourceEventType,
+		TenantID:        tenantID,
+		EntityType:      "evidence_pack",
+		EntityID:        entityID,
+		BatchID:         batchID,
+		Operation:       kafka.VectorIndexOperationUpsert,
+		OccurredAt:      time.Now().UTC(),
+		ContentVersion:  "v1",
+		Metadata: map[string]string{
+			"pack_status": pack.PackStatus,
+			"mode":        pack.Mode,
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := publisher.PublishVectorIndexRequest(ctx, event); err != nil {
+		log.Printf("[evidence][vector-index] publish failed tenant=%s entity=evidence_pack id=%s err=%v", tenantID, entityID, err)
+		return
+	}
+
+	log.Printf("[evidence][vector-index] publish ok tenant=%s entity=evidence_pack id=%s", tenantID, entityID)
+}
+
 // HandleLeafUpdate persists incoming leaves on the Kafka fast path and delegates
 // readiness checks plus pack generation to the worker pool.
 //
@@ -825,6 +877,8 @@ func (s *EvidenceService) GeneratePackInTx(ctx context.Context, packTx *sql.Tx, 
 		RulesetVersion:             req.RulesetVersion,
 		SchemaVersions:             req.SchemaVersions,
 		SupersedesPackID:           req.SupersedesPackID,
+		RevisionReason:             req.RevisionReason,
+		BasedOnVersions:            req.BasedOnVersions,
 		Signatures:                 []models.Signature{packSig},
 		ZordSignature:              packSig.Sig,
 		PaymentInstructionReceived: req.PaymentInstructionReceived,
@@ -981,6 +1035,7 @@ func (s *EvidenceService) GeneratePackInTx(ctx context.Context, packTx *sql.Tx, 
 	// When packTx is non-nil the caller holds an uncommitted advisory-lock tx;
 	// proof enrichment runs after Commit in processIntentJob.
 	if packTx == nil {
+		s.emitVectorIndexRequest(pack, "evidence_pack.generated.v1")
 		s.writeProofEnrichment(ctx, pack)
 	}
 
@@ -1058,7 +1113,9 @@ func (s *EvidenceService) persistPackDBFirst(
 			err = s.repo.MarkPackSuperseded(ctx, supersedesPackID, pack.EvidencePackID)
 		}
 		if err != nil {
-			log.Printf("warn: mark superseded pack failed: %v", err)
+			// P0-1.4: supersession failure must be surfaced — leaving two ACTIVE
+			// packs for the same intent violates pack immutability guarantees.
+			return fmt.Errorf("mark superseded pack %s: %w", supersedesPackID, err)
 		}
 	}
 
@@ -1186,6 +1243,7 @@ func (s *EvidenceService) GenerateBatchPackInTx(ctx context.Context, packTx *sql
 	log.Printf("evidence.service.generate_batch_pack save_ok pack=%s", packID)
 
 	if packTx == nil {
+		s.emitVectorIndexRequest(pack, "evidence_batch_pack.generated.v1")
 		s.writeProofEnrichment(ctx, pack)
 	}
 
@@ -1307,7 +1365,12 @@ func (s *EvidenceService) ReplayPack(ctx context.Context, req models.ReplayReque
 		// ReplayPack call created a new ACTIVE pack for the same intent, making it
 		// impossible to determine the canonical pack from a list query.
 		SupersedesPackID: req.OriginalPackID,
-		Items:            req.Items,
+		// P0-1.4: carry revision context onto the superseding pack.
+		RevisionReason: req.RevisionReason,
+		// BasedOnVersions captures the version snapshot of the pack being replaced
+		// so auditors can compare what changed between the two generations.
+		BasedOnVersions: buildBasedOnVersions(oldPack, req),
+		Items:           req.Items,
 	})
 	if err != nil {
 		// FIX-16: If generation fails, update the job to FAILED status so callers
@@ -1375,6 +1438,24 @@ func (s *EvidenceService) ReplayPack(ctx context.Context, req models.ReplayReque
 		RulesetVersion:   req.RulesetVersion,
 		ReplayComparison: comparison,
 	}, nil
+}
+
+// buildBasedOnVersions captures the version snapshot of the original pack
+// being replaced by a superseding pack or replay operation.
+func buildBasedOnVersions(oldPack *models.EvidencePack, req models.ReplayRequest) map[string]string {
+	versions := map[string]string{
+		"ruleset_version": oldPack.RulesetVersion,
+	}
+	for k, v := range oldPack.SchemaVersions {
+		versions["schema_"+k] = v
+	}
+	// Replay request can bring new mapping versions. If we want to capture
+	// what the old pack was based on, we should try to extract it.
+	// Since mapping versions are not directly stored on EvidencePack natively in this implementation,
+	// we will record what was explicitly passed in the original pack creation, if available, 
+	// or what is in the replay request as a fallback/record of the new version. 
+	// Note: P0-1.4 spec says "what the original pack was built from", so we rely on schema and ruleset.
+	return versions
 }
 
 // GetPackView returns a role-specific projection of the canonical pack (spec §18).

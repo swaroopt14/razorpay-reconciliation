@@ -26,6 +26,9 @@ type RelayEvent struct {
 	AggregateID            string          `json:"aggregate_id"`
 	ContractID             string          `json:"contract_id,omitempty"`
 	EventType              string          `json:"event_type"`
+	EventVersion           string          `json:"event_version,omitempty"`
+	SchemaVersion          string          `json:"schema_version,omitempty"`
+	SourceService          string          `json:"source_service,omitempty"`
 	Payload                json.RawMessage `json:"payload"`
 	TraceID                string          `json:"trace_id"`
 	DuplicateRiskFlag      bool            `json:"duplicate_risk_flag"`
@@ -46,6 +49,10 @@ type RelayEvent struct {
 
 type IntentCreatedEvent struct {
 	EventID                string     `json:"event_id"`
+	EventType              string     `json:"event_type"`
+	EventVersion           string     `json:"event_version"`
+	SchemaVersion          string     `json:"schema_version"`
+	SourceService          string     `json:"source_service"`
 	TenantID               string     `json:"tenant_id"`
 	IntentID               string     `json:"intent_id"`
 	ContractID             string     `json:"contract_id"`
@@ -306,10 +313,14 @@ type SLATimerTickEvent struct {
 // CanonicalSettlementCreatedEvent represents one parsed settlement observation
 // from a bank or PSP settlement file.
 type CanonicalSettlementCreatedEvent struct {
-	EventID    string    `json:"event_id"`
-	TenantID   string    `json:"tenant_id"`
-	TraceID    string    `json:"trace_id"`
-	OccurredAt time.Time `json:"occurred_at"` // when this event was emitted
+	EventID       string    `json:"event_id"`
+	EventType     string    `json:"event_type"`
+	EventVersion  string    `json:"event_version"`
+	SchemaVersion string    `json:"schema_version"`
+	TenantID      string    `json:"tenant_id"`
+	TraceID       string    `json:"trace_id"`
+	SourceService string    `json:"source_service"`
+	OccurredAt    time.Time `json:"occurred_at"` // when this event was emitted
 
 	// ── Settlement observation identity ──────────────────────────────────────
 	SettlementID string `json:"settlement_id"` // ZPI-internal ID: "sobs_" + uuid
@@ -405,10 +416,14 @@ type CanonicalSettlementCreatedEvent struct {
 // AttachmentDecisionCreatedEvent represents Service 5C's decision about
 // which payout intent a settlement observation belongs to.
 type AttachmentDecisionCreatedEvent struct {
-	EventID    string    `json:"event_id"`
-	TenantID   string    `json:"tenant_id"`
-	TraceID    string    `json:"trace_id"`
-	OccurredAt time.Time `json:"occurred_at"`
+	EventID       string    `json:"event_id"`
+	EventType     string    `json:"event_type"`
+	EventVersion  string    `json:"event_version"`
+	SchemaVersion string    `json:"schema_version"`
+	SourceService string    `json:"source_service"`
+	TenantID      string    `json:"tenant_id"`
+	TraceID       string    `json:"trace_id"`
+	OccurredAt    time.Time `json:"occurred_at"`
 
 	// ── Decision identity ─────────────────────────────────────────────────────
 	DecisionID      string `json:"attachment_decision_id"`
@@ -488,10 +503,14 @@ type AttachmentDecisionCreatedEvent struct {
 // VarianceRecordCreatedEvent represents a financial mismatch between
 // what was intended and what was actually settled.
 type VarianceRecordCreatedEvent struct {
-	EventID    string    `json:"event_id"`
-	TenantID   string    `json:"tenant_id"`
-	TraceID    string    `json:"trace_id"`
-	OccurredAt time.Time `json:"occurred_at"`
+	EventID       string    `json:"event_id"`
+	EventType     string    `json:"event_type"`
+	EventVersion  string    `json:"event_version"`
+	SchemaVersion string    `json:"schema_version"`
+	SourceService string    `json:"source_service"`
+	TenantID      string    `json:"tenant_id"`
+	TraceID       string    `json:"trace_id"`
+	OccurredAt    time.Time `json:"occurred_at"`
 
 	// ── Variance identity ─────────────────────────────────────────────────────
 	VarianceID   string `json:"variance_id"`   // "var_" + uuid
@@ -561,10 +580,14 @@ type VarianceRecordCreatedEvent struct {
 
 // BatchSummaryUpdatedEvent represents the current aggregate state of a batch.
 type BatchSummaryUpdatedEvent struct {
-	EventID    string    `json:"event_id"`
-	TenantID   string    `json:"tenant_id"`
-	TraceID    string    `json:"trace_id"`
-	OccurredAt time.Time `json:"occurred_at"`
+	EventID       string    `json:"event_id"`
+	EventType     string    `json:"event_type"`
+	EventVersion  string    `json:"event_version"`
+	SchemaVersion string    `json:"schema_version"`
+	SourceService string    `json:"source_service"`
+	TenantID      string    `json:"tenant_id"`
+	TraceID       string    `json:"trace_id"`
+	OccurredAt    time.Time `json:"occurred_at"`
 
 	// ── Batch identity ────────────────────────────────────────────────────────
 	BatchID         string `json:"batch_id"`         // e.g. "PAYROLL-2026-04-01"
@@ -711,10 +734,14 @@ type GovernanceDecisionCreatedEvent struct {
 // DLQItemEvent represents a single payment intent row that was routed to
 // manual review due to a validation or quality failure.
 type DLQItemEvent struct {
-	EventID    string    `json:"event_id"`
-	TenantID   string    `json:"tenant_id"`
-	TraceID    string    `json:"trace_id"`
-	OccurredAt time.Time `json:"occurred_at"`
+	EventID       string    `json:"event_id"`
+	EventType     string    `json:"event_type"`
+	EventVersion  string    `json:"event_version"`
+	SchemaVersion string    `json:"schema_version"`
+	SourceService string    `json:"source_service"`
+	TenantID      string    `json:"tenant_id"`
+	TraceID       string    `json:"trace_id"`
+	OccurredAt    time.Time `json:"occurred_at"`
 
 	// ── Intent reference ──────────────────────────────────────────────────────
 	IntentID string `json:"intent_id"` // the intent that was flagged

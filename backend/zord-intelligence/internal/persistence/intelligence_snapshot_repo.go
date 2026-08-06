@@ -100,6 +100,17 @@ func (r *IntelligenceSnapshotRepo) Create(
 		return fmt.Errorf("intelligence_snapshot_repo.Create snap_id=%s type=%s: %w",
 			snap.SnapshotID, snap.SnapshotType, err)
 	}
+	emitVectorIndexRequest(
+		"intelligence_snapshot.created.v1",
+		snap.TenantID,
+		"intelligence_snapshot",
+		snap.SnapshotID,
+		snapshotBatchID(snap.ScopeType, snap.ScopeRef),
+		map[string]string{
+			"snapshot_type": snap.SnapshotType,
+			"scope_type":    snap.ScopeType,
+		},
+	)
 	return nil
 }
 

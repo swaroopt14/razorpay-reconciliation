@@ -11,14 +11,14 @@ import (
 // service schemas. Field mapping is handled in the outbox client per service.
 type OutboxEvent struct {
 	// --- Identity ---
-	EventID    string `json:"event_id"`    // PK from upstream outbox
-	EnvelopeID string `json:"envelope_id"` // logical grouping ID
-	TraceID    string `json:"trace_id"`
-	TenantID   string `json:"tenant_id"`
-	ArtifactID string `json:"artifact_id,omitempty"`
+	EventID           string `json:"event_id"`    // PK from upstream outbox
+	EnvelopeID        string `json:"envelope_id"` // logical grouping ID
+	TraceID           string `json:"trace_id"`
+	TenantID          string `json:"tenant_id"`
+	ArtifactID        string `json:"artifact_id,omitempty"`
 	ArtifactVersionID string `json:"artifact_version_id,omitempty"`
-	ObjectRef  string `json:"object_ref"`
-	Source     string `json:"source"`
+	ObjectRef         string `json:"object_ref"`
+	Source            string `json:"source"`
 
 	// --- Routing ---
 	Topic          string `json:"topic"`           // Kafka topic; may come from outbox row or config
@@ -133,7 +133,15 @@ type AckNackResponse struct {
 // Both publish-failure DLQ and poison-event DLQ use this envelope.
 type DLQMessage struct {
 	// Original event — may be nil for extreme corruption cases.
-	Event *OutboxEvent `json:"event,omitempty"`
+	// Exactly one of Event / EdgeEvent / IntentEvent is set, depending on
+	// which worker produced this failure.
+	Event       *OutboxEvent       `json:"event,omitempty"`
+	EdgeEvent   *EdgeOutboxEvent   `json:"edge_event,omitempty"`
+	IntentEvent *IntentOutboxEvent `json:"intent_event,omitempty"`
+
+	// EventID is always set (regardless of which of the above is populated)
+	// so PublishDLQ can key the Kafka message without depending on event shape.
+	EventID string `json:"event_id,omitempty"`
 
 	// Error details.
 	Error       string `json:"error"`
@@ -184,6 +192,16 @@ type DLQItemEvent struct {
 	SourceRowNum   *int            `json:"source_row_num,omitempty"`
 	IntentContext  json.RawMessage `json:"intent_context,omitempty"`
 	TraceID        string          `json:"trace_id,omitempty"`
+
+	// EventType / EventVersion / SchemaVersion / SourceService are the
+	// standard cross-service event envelope fields, stamped by
+	// zord-intent-engine's DLQ lease handler. PublishDLQItem below copies
+	// them into the flat Kafka payload it publishes on payments.intent.dlq.
+	EventType     string `json:"event_type,omitempty"`
+	EventVersion  string `json:"event_version,omitempty"`
+	SchemaVersion string `json:"schema_version,omitempty"`
+	SourceService string `json:"source_service,omitempty"`
+
 	LeaseID        string          `json:"lease_id,omitempty"`
 	LeasedBy       string          `json:"leased_by,omitempty"`
 	LeaseUntil     *time.Time      `json:"lease_until,omitempty"`
@@ -236,3 +254,30 @@ type BatchLeaseResponse struct {
 	Events     []BatchCanonicalizationCompletedEvent `json:"events"`
 }
 
+const (
+	VectorIndexRequestTopic = "zord.vector.index.request.v1"
+
+	VectorIndexEventRequested = "vector.index.requested"
+
+	VectorIndexOperationUpsert = "upsert"
+	VectorIndexOperationDelete = "delete"
+)
+
+// VectorIndexRequestEvent is the lightweight Kafka contract consumed later by
+// zord-prompt-layer's vector index worker. It carries only pointers, never raw
+// sensitive payloads.
+type VectorIndexRequestEvent struct {
+	EventID         string            `json:"event_id"`
+	SchemaVersion   string            `json:"schema_version"`
+	EventType       string            `json:"event_type"`
+	SourceService   string            `json:"source_service"`
+	SourceEventType string            `json:"source_event_type"`
+	TenantID        string            `json:"tenant_id"`
+	EntityType      string            `json:"entity_type"`
+	EntityID        string            `json:"entity_id"`
+	BatchID         string            `json:"batch_id,omitempty"`
+	Operation       string            `json:"operation"`
+	OccurredAt      time.Time         `json:"occurred_at"`
+	ContentVersion  string            `json:"content_version,omitempty"`
+	Metadata        map[string]string `json:"metadata,omitempty"`
+}
