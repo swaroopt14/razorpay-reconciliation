@@ -2748,17 +2748,6 @@ func (s *IntentService) ProcessIncomingIntent(
 		batchID = *in.BatchID
 	}
 
-	s.emitVectorIndexRequest(
-		"payment_intent.saved.v1",
-		saved.TenantID,
-		"payment_intent",
-		saved.IntentID,
-		batchID,
-		map[string]string{
-			"governance_state": saved.GovernanceState,
-		},
-	)
-
 	if batchID != "" {
 		s.emitVectorIndexRequest(
 			"intent_batch.updated.v1",
@@ -2766,7 +2755,21 @@ func (s *IntentService) ProcessIncomingIntent(
 			"intent_batch",
 			batchID,
 			batchID,
-			nil,
+			map[string]string{
+				"vector_summary_scope": "batch",
+			},
+		)
+	} else {
+		s.emitVectorIndexRequest(
+			"payment_intent.saved.v1",
+			saved.TenantID,
+			"payment_intent",
+			saved.IntentID,
+			"",
+			map[string]string{
+				"governance_state":     saved.GovernanceState,
+				"vector_summary_scope": "single_intent",
+			},
 		)
 	}
 	return &saved, nil, nil

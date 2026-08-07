@@ -89,6 +89,38 @@ func (i *VectorIndexer) HandleVectorIndexRequest(ctx context.Context, event Vect
 		return fmt.Errorf("unsupported vector index operation=%q", operation)
 	}
 }
+func (i *VectorIndexer) RetryDueRateLimited(ctx context.Context, limit int) {
+	if i == nil || i.state == nil || !i.state.Enabled() {
+		return
+	}
+
+	items, err := i.state.ListDueRateLimited(ctx, limit)
+	if err != nil {
+		log.Printf("[prompt-layer][vector-index] retry list failed err=%v", err)
+		return
+	}
+
+	for _, item := range items {
+		event := VectorIndexRequestEvent{
+			EventID:        item.LastEventID,
+			EventType:      VectorIndexEventRequested,
+			SourceService:  item.SourceService,
+			TenantID:       item.TenantID,
+			EntityType:     item.EntityType,
+			EntityID:       item.EntityID,
+			Operation:      VectorIndexOperationUpsert,
+			ContentVersion: item.ContentVersion,
+			OccurredAt:     time.Now().UTC(),
+		}
+
+		if err := i.HandleVectorIndexRequest(ctx, event); err != nil {
+			log.Printf("[prompt-layer][vector-index] deferred retry failed tenant=%s entity=%s id=%s err=%v", item.TenantID, item.EntityType, item.EntityID, err)
+			continue
+		}
+
+		log.Printf("[prompt-layer][vector-index] deferred retry ok tenant=%s entity=%s id=%s", item.TenantID, item.EntityType, item.EntityID)
+	}
+}
 func (i *VectorIndexer) upsertEventVectors(ctx context.Context, event VectorIndexRequestEvent) error {
 	start := time.Now()
 
@@ -99,6 +131,7 @@ func (i *VectorIndexer) upsertEventVectors(ctx context.Context, event VectorInde
 	}
 
 	chunks = sanitizeVectorIndexChunks(tenantID, chunks)
+	chunks = compactVectorEventChunks(event, chunks)
 	if len(chunks) == 0 {
 		log.Printf("[prompt-layer][vector-index] event indexed no chunks tenant=%s entity=%s id=%s", tenantID, event.EntityType, event.EntityID)
 		return nil
@@ -125,6 +158,16 @@ func (i *VectorIndexer) upsertEventVectors(ctx context.Context, event VectorInde
 
 	upserted, err := i.pinecone.Upsert(ctx, vectors)
 	if err != nil {
+		if isRateLimitError(err) {
+			for _, state := range states {
+				_ = i.markVectorStateRateLimited(ctx, state, err)
+			}
+			return VectorIndexDeferredError{
+				Reason: "pinecone rate limited",
+				Cause:  err,
+			}
+		}
+
 		for _, state := range states {
 			_ = i.markVectorStateFailed(ctx, state, err)
 		}
@@ -215,7 +258,53 @@ func sanitizeVectorIndexChunks(tenantID string, chunks []model.RetrievedChunk) [
 
 	return safe
 }
+func compactVectorEventChunks(event VectorIndexRequestEvent, chunks []model.RetrievedChunk) []model.RetrievedChunk {
+	safeParts := make([]string, 0, len(chunks))
+	sourceTypes := make([]string, 0, len(chunks))
+	seenSource := map[string]bool{}
 
+	for _, chunk := range chunks {
+		text := strings.TrimSpace(chunk.Text)
+		if text == "" {
+			continue
+		}
+
+		source := strings.TrimSpace(chunk.SourceType)
+		if source != "" && !seenSource[source] {
+			seenSource[source] = true
+			sourceTypes = append(sourceTypes, source)
+		}
+
+		if source != "" {
+			safeParts = append(safeParts, fmt.Sprintf("[%s] %s", source, text))
+		} else {
+			safeParts = append(safeParts, text)
+		}
+	}
+
+	if len(safeParts) == 0 {
+		return []model.RetrievedChunk{}
+	}
+
+	sourceType := strings.ToLower(strings.TrimSpace(event.EntityType))
+	if sourceType == "" {
+		sourceType = "vector_event_summary"
+	}
+
+	return []model.RetrievedChunk{{
+		SourceType: sourceType,
+		Score:      1.0,
+		Text: strings.Join(nonEmptyParts([]string{
+			"Business vector summary",
+			"Source service: " + safeOptional(event.SourceService),
+			"Entity type: " + safeOptional(event.EntityType),
+			"Entity reference: " + safeOptional(event.EntityID),
+			"Batch reference: " + safeOptional(event.BatchID),
+			"Included source sections: " + safeOptional(strings.Join(sourceTypes, ", ")),
+			strings.Join(safeParts, " | "),
+		}), " . "),
+	}}
+}
 func (i *VectorIndexer) embedChangedEventChunks(ctx context.Context, event VectorIndexRequestEvent, chunks []model.RetrievedChunk) ([]client.PineconeVector, []VectorIndexState, int, error) {
 	tenantID := strings.ToLower(strings.TrimSpace(event.TenantID))
 	entityType := strings.ToLower(strings.TrimSpace(event.EntityType))
@@ -277,6 +366,15 @@ func (i *VectorIndexer) embedChangedEventChunks(ctx context.Context, event Vecto
 
 		values, err := i.gemini.Embed(text, i.embeddingModel, i.embeddingDimension)
 		if err != nil {
+			if isRateLimitError(err) {
+				_ = i.markVectorStateRateLimited(ctx, state, err)
+				return nil, nil, skipped, VectorIndexDeferredError{
+					Reason:      "embedding provider rate limited",
+					NextRetryAt: state.NextRetryAt,
+					Cause:       err,
+				}
+			}
+
 			_ = i.markVectorStateFailed(ctx, state, err)
 			return nil, nil, skipped, err
 		}
@@ -362,4 +460,44 @@ func (i *VectorIndexer) markVectorStateFailed(ctx context.Context, state VectorI
 		return nil
 	}
 	return i.state.MarkFailed(ctx, state, cause)
+}
+func (i *VectorIndexer) markVectorStateRateLimited(ctx context.Context, state VectorIndexState, cause error) error {
+	if i == nil || i.state == nil || !i.state.Enabled() {
+		return nil
+	}
+
+	nextRetryAt := time.Now().UTC().Add(extractRetryDelay(cause))
+	return i.state.MarkRateLimited(ctx, state, cause, nextRetryAt)
+}
+
+func extractRetryDelay(err error) time.Duration {
+	if err == nil {
+		return 5 * time.Minute
+	}
+
+	msg := err.Error()
+
+	if idx := strings.Index(msg, `"retryDelay"`); idx >= 0 {
+		tail := msg[idx:]
+		if strings.Contains(tail, `"57s"`) {
+			return 57 * time.Second
+		}
+		if strings.Contains(tail, `"32s"`) {
+			return 32 * time.Second
+		}
+	}
+
+	return 5 * time.Minute
+}
+
+func isRateLimitError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "status=429") ||
+		strings.Contains(msg, "resource_exhausted") ||
+		strings.Contains(msg, "quota exceeded") ||
+		strings.Contains(msg, "rate limit")
 }

@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -114,6 +115,33 @@ func main() {
 			vectorIndexer,
 		)
 		vectorConsumer.Start(context.Background())
+		go func() {
+			interval := time.Duration(cfg.VectorIndexIntervalSeconds) * time.Second
+			if interval <= 0 {
+				interval = 5 * time.Minute
+			}
+
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+
+			log.Printf(
+				"[prompt-layer][vector-index] deferred retry scheduler started interval_seconds=%d batch_size=%d timeout_seconds=%d",
+				cfg.VectorIndexIntervalSeconds,
+				cfg.VectorIndexBatchSize,
+				cfg.VectorIndexTimeoutSeconds,
+			)
+
+			for range ticker.C {
+				timeout := time.Duration(cfg.VectorIndexTimeoutSeconds) * time.Second
+				if timeout <= 0 {
+					timeout = 60 * time.Second
+				}
+
+				runCtx, cancel := context.WithTimeout(context.Background(), timeout)
+				vectorIndexer.RetryDueRateLimited(runCtx, cfg.VectorIndexBatchSize)
+				cancel()
+			}
+		}()
 
 		log.Printf("[prompt-layer][vector] pinecone query retriever enabled host=%s namespace=%s top_k=%d timeout_seconds=%d", cfg.PineconeHost, cfg.PineconeNamespace, cfg.VectorQueryTopK, cfg.VectorRequestTimeoutSeconds)
 	} else {

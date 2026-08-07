@@ -33,6 +33,23 @@ type VectorIndexRequestEvent struct {
 	ContentVersion  string            `json:"content_version,omitempty"`
 	Metadata        map[string]string `json:"metadata,omitempty"`
 }
+type VectorIndexDeferredError struct {
+	Reason      string
+	NextRetryAt time.Time
+	Cause       error
+}
+
+func (e VectorIndexDeferredError) Error() string {
+	if e.Cause != nil {
+		return e.Cause.Error()
+	}
+	return e.Reason
+}
+
+func IsVectorIndexDeferredError(err error) bool {
+	_, ok := err.(VectorIndexDeferredError)
+	return ok
+}
 
 type VectorIndexEventHandler interface {
 	HandleVectorIndexRequest(ctx context.Context, event VectorIndexRequestEvent) error
@@ -180,6 +197,21 @@ func (h *vectorIndexConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGr
 					time.Since(start).Milliseconds(),
 				)
 				session.MarkMessage(msg, "")
+				break
+			}
+
+			if IsVectorIndexDeferredError(lastErr) {
+				log.Printf(
+					"[prompt-layer][vector-consumer] deferred event_id=%s tenant=%s entity=%s operation=%s attempt=%d err=%v",
+					event.EventID,
+					event.TenantID,
+					event.EntityType,
+					event.Operation,
+					attempt,
+					lastErr,
+				)
+				session.MarkMessage(msg, "")
+				lastErr = nil
 				break
 			}
 
