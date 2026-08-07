@@ -38,6 +38,24 @@ type RelayEvent struct {
 	BeneficiaryFingerprint string          `json:"beneficiary_fingerprint"`
 	IntendedExecutionAt    *time.Time      `json:"intended_execution_at"`
 	ClientBatchID          string         `json:"batchid,omitempty"`
+
+	// INT-10: decision/quality reason codes and the remaining score fields
+	// zord-intent-engine computes and zord-relay now carries on its outer
+	// envelope (see zord-relay/model.IntentOutboxEvent) — added here, and
+	// explicitly copied into IntentCreatedEvent in kafka/consumer.go, so
+	// this envelope is the authoritative source for them rather than
+	// depending on Payload happening to carry a matching nested copy.
+	GovernanceReasonCodesJSON json.RawMessage `json:"governance_reason_codes_json,omitempty"`
+	ScoreVersion              string          `json:"score_version,omitempty"`
+	ScoreValidityStatus       string          `json:"score_validity_status,omitempty"`
+	ScoreBreakdownJSON        json.RawMessage `json:"score_breakdown_json,omitempty"`
+	ScoreReasonCodesJSON      json.RawMessage `json:"score_reason_codes_json,omitempty"`
+	ScoredAt                  *time.Time      `json:"scored_at,omitempty"`
+	ReferenceQualityScore     float64         `json:"reference_quality_score,omitempty"`
+	DuplicateRiskScore        float64         `json:"duplicate_risk_score,omitempty"`
+	MappingConfidenceScore    float64         `json:"mapping_confidence_score,omitempty"`
+	SchemaCompletenessScore   float64         `json:"schema_completeness_score,omitempty"`
+	DuplicateReasonCode       string          `json:"duplicate_reason_code,omitempty"`
 }
 
 // ── Event 1: from Service 2 ───────────────────────────────────────────────────
@@ -78,6 +96,22 @@ type IntentCreatedEvent struct {
 	DeadlineAt             *time.Time `json:"deadline_at"`              // hard SLA deadline set by merchant
 	CanonicalHash          string     `json:"canonical_hash"`           // content hash of canonical intent — for replay equivalence
 	GovernanceState        string     `json:"governance_state"`         // governance approval state at intent creation
+
+	// INT-10: machine-readable decision/quality reason codes and score
+	// fields, explicitly copied from RelayEvent in kafka/consumer.go —
+	// see RelayEvent above for why. GovernanceReasonCodesJSON carries
+	// remediability (nested under strict_mode) for held/rejected rows.
+	GovernanceReasonCodesJSON json.RawMessage `json:"governance_reason_codes_json"`
+	ScoreVersion              string          `json:"score_version"`
+	ScoreValidityStatus       string          `json:"score_validity_status"`
+	ScoreBreakdownJSON        json.RawMessage `json:"score_breakdown_json"`
+	ScoreReasonCodesJSON      json.RawMessage `json:"score_reason_codes_json"`
+	ScoredAt                  *time.Time      `json:"scored_at"`
+	ReferenceQualityScore     float64         `json:"reference_quality_score"`
+	DuplicateRiskScore        float64         `json:"duplicate_risk_score"`
+	MappingConfidenceScore    float64         `json:"mapping_confidence_score"`
+	SchemaCompletenessScore   float64         `json:"schema_completeness_score"`
+	DuplicateReasonCode       string          `json:"duplicate_reason_code"`
 }
 
 // ── Event 2: from Service 4 ───────────────────────────────────────────────────
