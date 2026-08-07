@@ -164,7 +164,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 	fileTraceID := uuid.Must(uuid.NewV7()).String()
 
 	batchIDHeader := c.GetHeader("Batch-ID")
-	originalBatchID := batchIDHeader
+
 	if batchIDHeader == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    "BATCH_ID_REQUIRED",
@@ -172,27 +172,8 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		})
 		return
 	}
-	//artifactID := uuid.Must(uuid.NewV7())
-	//artifactVersionId := uuid.Must(uuid.NewV7())
-	finalBatchID := &batchIDHeader
 
-	if originalBatchID != "" {
-		exists, err := services.CheckBatchIDExists(c.Request.Context(), tenantID, finalBatchID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"code":    "BATCH_ID_VERIFICATION_FAILED",
-				"message": "failed to verify batch_id uniqueness",
-			})
-			return
-		}
-		if exists {
-			c.JSON(http.StatusConflict, gin.H{
-				"code":    "BATCH_ID_ALREADY_EXISTS",
-				"message": "batch_id must be unique for each tenant",
-			})
-			return
-		}
-	}
+	finalBatchID := &batchIDHeader
 
 	// ── Force-Reprocess guard ─────────────────────────────────────────────────
 	// X-Zord-Force-Reprocess: true signals the client explicitly wants to
@@ -212,9 +193,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 	// identical to the original. This is the source-of-truth payload stored
 	// in the file-level RawEnvelope on S3 before any row is processed.
 	filePayload := map[string]interface{}{
-		"file_name": file.Filename,
-		// "artifact_id":         artifactID,
-		// "artifact_version_id": artifactVersionId,
+		"file_name":           file.Filename,
 		"file_size":           PayloadSize,
 		"file_content_hash":   fileHash,
 		"row_count_estimate":  rowCountEstimate,
@@ -249,47 +228,120 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		EventType:            "Envelope.Created",
 		BatchID:              finalBatchID,
 	}
-	fileEnvelopeId := uuid.NewString()
+	ext := strings.ToLower(filepath.Ext(file.Filename))
 
-	data, err := services.ProcessRawIntent(context.Background(), fileMsg, h.S3store, fileEnvelopeId, time.Now().UTC())
+	// MIME validation — before touching DB or S3
+	switch ext {
+	case ".csv":
+		if !strings.HasPrefix(mimetype, "text/") {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":     "MIME_MISMATCH",
+				"message":  "file extension is .csv but content is not plain text",
+				"detected": mimetype,
+			})
+			return
+		}
+	case ".xlsx":
+		if mimetype != "application/zip" && mimetype != "application/octet-stream" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":     "MIME_MISMATCH",
+				"message":  "file extension is .xlsx but content does not appear to be a valid Excel file",
+				"detected": mimetype,
+			})
+			return
+		}
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    "UNSUPPORTED_FILE_FORMAT",
+			"message": "unsupported file format (.csv or .xlsx only)",
+		})
+		return
+	}
+
+	// Row count validation — before touching DB or S3
+	if rowCountEstimate < 1 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    "FILE_EMPTY_OR_NO_DATA_RECORDS",
+			"message": "file must contain header and at least one row",
+		})
+		return
+	}
+
+	maxrowstemp := os.Getenv("MAX_CSV_ROWS")
+	if maxrowstemp == "" {
+		maxrowstemp = "10000"
+	}
+	if maxrows, err := strconv.Atoi(maxrowstemp); err == nil && rowCountEstimate > maxrows {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    "FILE_ROW_LIMIT_EXCEEDED",
+			"message": "file row limit exceeded",
+			"limit":   maxrows,
+			"actual":  rowCountEstimate,
+		})
+		return
+	}
+
+	// NOW safe to reserve artifact and upload to S3
+	FileEnvelopeId := uuid.Must(uuid.NewV7())
+	artifactID, artifactVersionID, err := services.ReserveArtifact(
+		c.Request.Context(),
+		forceReprocess,
+		model.Artifact{
+			TenantId:         tenantID,
+			FileHash:         fileHash,
+			FileName:         &file.Filename,
+			FileSizeByte:     &fileSizeBytes,
+			RowCountEstimate: rowCountEstimate,
+			BatchID:          *finalBatchID,
+		},
+	)
+
 	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrBatchInProgress):
+			c.JSON(http.StatusConflict, gin.H{
+				"code":    "BATCH_IN_PROGRESS",
+				"message": "this batch is currently being processed by another request",
+			})
+		case errors.Is(err, services.ErrBatchAlreadyProcessed):
+			c.JSON(http.StatusConflict, gin.H{
+				"code":    "BATCH_ALREADY_EXISTS",
+				"message": "this batch has already been processed",
+				"hint":    "use X-Zord-Force-Reprocess: true with a new Batch-ID to reprocess",
+			})
+		case errors.Is(err, services.ErrBatchFailedRetry):
+			c.JSON(http.StatusConflict, gin.H{
+				"code":    "BATCH_FAILED_RETRY",
+				"message": "previous attempt for this batch failed, submit again to retry",
+			})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"code":    "ARTIFACT_RESERVE_FAILED",
+				"message": "failed to reserve artifact",
+			})
+		}
+		return
+	}
+
+	data, err := services.ProcessRawIntent(context.Background(), fileMsg, h.S3store, FileEnvelopeId.String(), time.Now().UTC())
+	if err != nil {
+		services.MarkArtifactFailed(context.Background(), artifactVersionID)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    "S3_STORE_ERROR",
 			"message": "failed to store bulk file envelope",
 		})
 		return
 	}
-	fileartifact := model.Artifact{
-		TenantId:         tenantID,
-		FileEnvelopeId:   fileEnvelopeId,
-		BatchId:          finalBatchID,
-		FileName:         &file.Filename,
-		FileSizeByte:     &fileSizeBytes,
-		FileHash:         fileHash,
-		RowCountEstimate: rowCountEstimate,
-		ObjectRef:        data.ObjectRef,
-	}
-
-	isExist, artifactID, artifactVersionId, err := services.UpsertArtifact(context.Background(), forceReprocess, fileartifact)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    "Artifact Persist Error",
-			"message": "failed to store file artifact",
-		})
-		return
-	}
-	if isExist {
-		c.JSON(http.StatusConflict, gin.H{
-			"code":              "Artifact already Exist",
-			"ArtifactId":        artifactID,
-			"ArtifactVersionId": artifactVersionId,
-			"message":           "This Artifact has already been processed. All rows exist in the system.",
-			"hint":              "If you intended to reprocess this batch, resend the request with the headers: X-Zord-Force-Reprocess: true and a unique Batch-ID.",
+	if err := services.FinalizeArtifact(context.Background(), artifactVersionID, data.ObjectRef, FileEnvelopeId); err != nil {
+		services.MarkArtifactFailed(context.Background(), artifactVersionID)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    "ARTIFACT_FINALIZE_FAILED",
+			"message": "failed to finalize artifact",
 		})
 		return
 	}
 
-	data.ArtifactVersionId = artifactVersionId.String()
+	data.ArtifactVersionId = artifactVersionID.String()
 	data.ArtifactId = artifactID.String()
 
 	// File envelope is now durably stored on S3. Release the buffer — row
@@ -297,8 +349,6 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 	fileBuf.Reset()
 
 	// ── Phase 2: Stream rows for per-row processing ───────────────────────────
-
-	ext := strings.ToLower(filepath.Ext(file.Filename))
 
 	// ── Parser resolution — profile-driven first, type-based fallback ──────────
 
@@ -357,41 +407,6 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 	// ── CSV ───────────────────────────────────────────────────────────────────
 	case ".csv":
-		// MIME TYPE DETECTION
-		if !strings.HasPrefix(mimetype, "text/") {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"code":     "MIME_MISMATCH",
-				"message":  "file extention is .csv  but content is not plain text",
-				"detected": mimetype,
-			})
-			logger.Log.Warn("CSV MIME mismatch",
-				slog.String("detected", mimetype))
-			return
-		}
-		totalDataRows := rowCountEstimate
-
-		if totalDataRows < 1 {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"code":    "FILE_EMPTY_OR_NO_DATA_RECORDS",
-				"message": "file must contain header and at least one row",
-			})
-			return
-		}
-
-		maxrowstemp := os.Getenv("MAX_CSV_ROWS")
-		if maxrowstemp == "" {
-			logger.Log.Warn("MAX_CSV_ROWS not set; using default 10000")
-			maxrowstemp = "10000"
-		}
-		if maxrows, err := strconv.Atoi(maxrowstemp); err == nil && totalDataRows > maxrows {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"code":    "FILE_ROW_LIMIT_EXCEEDED",
-				"message": "CSV limit exceeded",
-				"limit":   maxrows,
-				"actual":  totalDataRows,
-			})
-			return
-		}
 
 		var resultsMu sync.Mutex
 		resultsMap := make(map[int]BulkResult)
@@ -447,12 +462,11 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 						&job.SourceRowRef,
 						&profileIDForAudit, // Use profileIDForAudit as the audit hint
 						artifactID.String(),
-						artifactVersionId.String(),
+						artifactVersionID.String(),
 					)
 
 					resultsMu.Lock()
 					if err != nil {
-						//atomic.AddInt32(&failedCount, 1)
 						if errors.Is(err, services.ErrFingerprintMismatch) {
 							resultsMap[job.Row] = BulkResult{
 								Row:    job.Row,
@@ -474,7 +488,6 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 							}
 						}
 					} else if duplicateID != uuid.Nil {
-						//atomic.AddInt32(&duplicateCount, 1)
 						resultsMap[job.Row] = BulkResult{
 							Row:        job.Row,
 							Status:     "DUPLICATE",
@@ -483,7 +496,6 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 							Error:      "duplicate idempotency key",
 						}
 					} else {
-						//atomic.AddInt32(&acceptedCount, 1)
 						resultsMap[job.Row] = BulkResult{
 							Row:        job.Row,
 							Status:     "Accepted",
@@ -510,7 +522,6 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 			return
 		}
 
-		// ── Collect all non-empty rows for batch parse ──────────────────────
 		// ── Stream rows directly into jobs channel ───────────────────────────────
 		// Profile-driven path streams one row at a time — no allCSVRows accumulation.
 		// Parser path still accumulates because parser.Parse requires the full slice.
@@ -654,16 +665,6 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 	// ── Excel ─────────────────────────────────────────────────────────────────
 	case ".xlsx":
-		if mimetype != "application/zip" && mimetype != "application/octet-stream" {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"code":     "MIME_MISMATCH",
-				"message":  "file extention is .xlsx but content does not appear to be a valid Excel file",
-				"detected": mimetype,
-			})
-			logger.Log.Warn("XLSX MIME mismatch",
-				slog.String("detected", mimetype))
-			return
-		}
 		f, err := excelize.OpenReader(src)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
@@ -700,26 +701,10 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 			})
 			return
 		}
-		maxrowstemp := os.Getenv("MAX_CSV_ROWS")
-		if maxrowstemp == "" {
-			logger.Log.Warn("MAX_CSV_ROWS not set; using default 10000")
-			maxrowstemp = "10000"
-		}
-		if maxrows, err := strconv.Atoi(maxrowstemp); err == nil && totalDataRows > maxrows {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"code":    "FILE_ROW_LIMIT_EXCEEDED",
-				"message": "Excel limit exceeded",
-				"limit":   maxrows,
-				"actual":  totalDataRows,
-			})
-			return
-		}
 
 		var resultsMu sync.Mutex
 		resultsMap := make(map[int]BulkResult)
 		jobs := make(chan BulkJob, 500)
-
-		//var acceptedCount, failedCount, duplicateCount int32
 
 		workerCount := runtime.NumCPU() * 2
 		var wg sync.WaitGroup
@@ -769,12 +754,11 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 						&job.SourceRowRef,
 						&profileIDForAudit, // Use profileIDForAudit as the audit hint
 						artifactID.String(),
-						artifactVersionId.String(),
+						artifactVersionID.String(),
 					)
 
 					resultsMu.Lock()
 					if err != nil {
-						//atomic.AddInt32(&failedCount, 1)
 						if errors.Is(err, services.ErrFingerprintMismatch) {
 							resultsMap[job.Row] = BulkResult{
 								Row:    job.Row,
@@ -796,7 +780,6 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 							}
 						}
 					} else if duplicateID != uuid.Nil {
-						//atomic.AddInt32(&duplicateCount, 1)
 						resultsMap[job.Row] = BulkResult{
 							Row:        job.Row,
 							Status:     "DUPLICATE",
@@ -805,7 +788,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 							Error:      "duplicate idempotency key",
 						}
 					} else {
-						//atomic.AddInt32(&acceptedCount, 1)
+
 						resultsMap[job.Row] = BulkResult{
 							Row:        job.Row,
 							Status:     "Accepted",
