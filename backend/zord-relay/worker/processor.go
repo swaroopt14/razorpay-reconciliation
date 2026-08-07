@@ -40,6 +40,12 @@ type processor struct {
 	// A poison event's upstream lease is only acknowledged once a record has
 	// been committed here — never on the strength of a DLQ Kafka publish alone.
 	failureRepo *services.PublishFailureRepo
+
+	// hashVerifier re-computes SHA-256(payload) and compares it to the
+	// upstream payload_hash field. Only populated for IsIntent workers;
+	// nil for all other worker types (edge, generic, DLQ, batch).
+	// When non-nil, verification runs inside processIntent() before publish.
+	hashVerifier services.PayloadHashVerifier
 }
 
 func newProcessor(
@@ -48,6 +54,7 @@ func newProcessor(
 	instanceID string,
 	log *zap.Logger,
 	failureRepo *services.PublishFailureRepo,
+	hashVerifier services.PayloadHashVerifier,
 ) *processor {
 	maxAttempts, baseDelay, maxDelay := svcCfg.RetryConfig()
 	return &processor{
@@ -64,6 +71,7 @@ func newProcessor(
 		instanceID:   instanceID,
 		log:          log.With(zap.String("component", "processor")),
 		failureRepo:  failureRepo,
+		hashVerifier: hashVerifier,
 	}
 }
 
@@ -450,6 +458,59 @@ func (p *processor) processIntent(ctx context.Context, event *model.IntentOutbox
 		return processorResult{eventID: event.EventID, isPoison: true, err: err}
 	}
 
+	// ── Payload hash verification (intent-engine only) ─────────────────────
+	// Recomputes SHA-256(payload bytes) and compares to event.PayloadHash.
+	// Must run BEFORE publish so altered envelopes never reach downstream.
+	//
+	// DecisionNack   → return retryable failure; upstream will re-lease the
+	//                  event on the next cycle (conflict row persisted in DB).
+	// DecisionAckPermanent → max conflict retries exceeded; route to poison
+	//                  DLQ and ack it out so the outbox is unblocked.
+	if p.hashVerifier != nil {
+		vr, verifyErr := p.hashVerifier.VerifyPayload(
+			ctx,
+			p.serviceName,
+			event.EventID,
+			event.EventType,
+			event.LeaseID,
+			event.Payload,
+			event.PayloadHash,
+		)
+		if verifyErr != nil {
+			// Verifier itself errored (e.g. DB down). Do NOT publish.
+			// Return retryable so the upstream lease is NACKed and retried.
+			log.Error("intent payload hash verifier error — withholding publish",
+				zap.String("event_id", event.EventID),
+				zap.Error(verifyErr),
+			)
+			return processorResult{eventID: event.EventID, success: false, err: verifyErr}
+		}
+		if !vr.OK {
+			if vr.Decision == services.DecisionAckPermanent {
+				// Exhausted retries — route to poison DLQ and ack out.
+				hashErr := services.ErrHashMismatch
+				log.Error("intent payload hash MISMATCH (permanent) — routing to poison DLQ",
+					zap.String("event_id", event.EventID),
+					zap.String("expected_hash", vr.ExpectedHash),
+					zap.String("computed_hash", vr.ComputedHash),
+					zap.Int("conflict_count", vr.ConflictCount),
+				)
+				if dlqErr := p.routeIntentToPoisonDLQ(ctx, event, hashErr, model.ReasonCodePayloadHashMismatch, vr.ConflictCount, topic); dlqErr != nil {
+					return processorResult{eventID: event.EventID, success: false, err: dlqErr}
+				}
+				return processorResult{eventID: event.EventID, isPoison: true, err: hashErr}
+			}
+			// DecisionNack — NACK so upstream re-leases; conflict row is in DB.
+			log.Error("intent payload hash MISMATCH — withholding publish, NACKing upstream lease",
+				zap.String("event_id", event.EventID),
+				zap.String("expected_hash", vr.ExpectedHash),
+				zap.String("computed_hash", vr.ComputedHash),
+				zap.Int("conflict_count", vr.ConflictCount),
+			)
+			return processorResult{eventID: event.EventID, success: false, err: services.ErrHashMismatch}
+		}
+	}
+
 	firstAttemptAt := time.Now()
 	var lastErr error
 	var attemptCount int
@@ -595,8 +656,20 @@ func (p *processor) routeIntentToPublishFailureDLQ(
 	p.recordDurableFailure(ctx, event.EventID, intentEventTopic, destinationTopic, event.Payload, attempts, reasonCode, cause)
 }
 
-// validateIntentEvent performs the same structural validation as
-// validateEvent, scoped to model.IntentOutboxEvent's fields.
+// validateIntentEvent validates the structural and envelope-metadata
+// requirements for intent-engine events before they are published to Kafka.
+//
+// Required fields:
+//   - event_id, tenant_id, event_type, payload — basic structural fields
+//   - trace_id     — cross-service traceability; must be present so downstream
+//                    services can correlate intent events in distributed traces
+//   - schema_version — required for consumer schema compatibility checks;
+//                    must be present so downstream services can reject stale
+//                    message formats rather than silently misinterpret them
+//
+// Payload hash verification (SHA-256 recompute) is done separately in
+// processIntent() via hashVerifier so the conflict repo can be called with
+// the full context (event_id, lease_id, service_name).
 func validateIntentEvent(e *model.IntentOutboxEvent) error {
 	if e.EventID == "" {
 		return errMissingField("event_id")
@@ -609,6 +682,12 @@ func validateIntentEvent(e *model.IntentOutboxEvent) error {
 	}
 	if len(e.Payload) == 0 || string(e.Payload) == "null" {
 		return errMissingField("payload")
+	}
+	if e.TraceID == "" {
+		return errMissingField("trace_id")
+	}
+	if e.SchemaVersion == "" {
+		return errMissingField("schema_version")
 	}
 	return nil
 }

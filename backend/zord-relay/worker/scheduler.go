@@ -31,6 +31,7 @@ func NewScheduler(
 	pub publisher.Publisher,
 	log *zap.Logger,
 	failureRepo *services.PublishFailureRepo,
+	hashVerifier services.PayloadHashVerifier,
 ) (*Scheduler, error) {
 	if len(cfg.Services) == 0 {
 		return nil, fmt.Errorf("scheduler: no services configured")
@@ -44,7 +45,14 @@ func NewScheduler(
 		} else if svcCfg.IsBatch {
 			w = NewBatchWorker(svcCfg, cfg.Relay, pub, log)
 		} else {
-			w = NewWorker(svcCfg, cfg.Relay, pub, log, failureRepo)
+			// Pass hashVerifier only for IsIntent workers; nil for all others.
+			// This scopes payload hash verification strictly to intent-engine
+			// events on the Kafka relay path.
+			var wv services.PayloadHashVerifier
+			if svcCfg.IsIntent {
+				wv = hashVerifier
+			}
+			w = NewWorker(svcCfg, cfg.Relay, pub, log, failureRepo, wv)
 		}
 		workers = append(workers, w)
 		log.Info("registered worker",
@@ -53,6 +61,7 @@ func NewScheduler(
 			zap.String("default_topic", svcCfg.DefaultTopic),
 			zap.Bool("is_dlq", svcCfg.IsDLQ),
 			zap.Bool("is_batch", svcCfg.IsBatch),
+			zap.Bool("hash_verify", svcCfg.IsIntent),
 		)
 	}
 
