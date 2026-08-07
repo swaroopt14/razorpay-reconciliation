@@ -236,7 +236,7 @@ func run() error {
 	)
 
 	// ── Existing Kafka Relay Scheduler (unchanged — Kafka relay path) ─────────
-	sched, err := worker.NewScheduler(cfg, kafkaPublisher, log, publishFailureRepo)
+	sched, err := worker.NewScheduler(cfg, kafkaPublisher, log, publishFailureRepo, hashVerifier)
 	if err != nil {
 		return fmt.Errorf("creating scheduler: %w", err)
 	}

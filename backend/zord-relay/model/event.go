@@ -169,6 +169,11 @@ const (
 	ReasonCodeSchemaViolation      = "SCHEMA_VIOLATION"
 	ReasonCodeMessageTooLarge      = "MESSAGE_TOO_LARGE"
 	ReasonCodeMissingRequiredField = "MISSING_REQUIRED_FIELD"
+
+	// ReasonCodePayloadHashMismatch is used when SHA-256(payload) does not
+	// match the upstream payload_hash on the Kafka relay path.
+	// Events carrying this code have NOT been forwarded to any consumer topic.
+	ReasonCodePayloadHashMismatch = "PAYLOAD_HASH_MISMATCH"
 )
 
 // PublishResult carries the outcome of a single Kafka publish attempt.

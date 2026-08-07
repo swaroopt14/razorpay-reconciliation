@@ -112,6 +112,34 @@ func (l *DispatchLoop) processEvent(ctx context.Context, workerID int, e model.O
 	}
 	contractID := e.ContractID
 
+	// ── Validate envelope metadata — trace_id and schema_version ─────────────
+	// Both fields are required for cross-service traceability and schema
+	// compatibility. An event missing either cannot be safely dispatched:
+	// - trace_id absent → downstream services lose distributed trace context.
+	// - schema_version absent → consumers cannot detect format mismatches.
+	// Commit the offset (return true) so the partition is not blocked; the
+	// missing-metadata event is permanently unusable and is discarded with a
+	// structured error log.
+	if e.TraceID == "" {
+		logger.Logger.Error("dispatch_loop: poison event — trace_id is empty, skipping",
+			zap.String("event_id", e.EventID),
+			zap.String("contract_id", contractID),
+			zap.String("tenant_id", e.TenantID),
+		)
+		metrics.DispatchTotal.WithLabelValues("poison_no_trace_id").Inc()
+		return true
+	}
+	if e.SchemaVersion == "" {
+		logger.Logger.Error("dispatch_loop: poison event — schema_version is empty, skipping",
+			zap.String("event_id", e.EventID),
+			zap.String("contract_id", contractID),
+			zap.String("tenant_id", e.TenantID),
+			zap.String("trace_id", e.TraceID),
+		)
+		metrics.DispatchTotal.WithLabelValues("poison_no_schema_version").Inc()
+		return true
+	}
+
 	log := logger.Logger.With(
 		zap.Int("worker_id", workerID),
 		zap.String("event_id", e.EventID),
