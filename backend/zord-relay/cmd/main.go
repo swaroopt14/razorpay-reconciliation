@@ -111,16 +111,29 @@ func run() error {
 	)
 
 	// ── Token Client ────────────────────────────────────────────────────────
-	// StubTokenClient is used when TOKEN_ENCLAVE_BASE_URL is not configured.
-	// This is intentional for local development. In production, set RELAY_TOKEN_ENCLAVE_BASE_URL.
-	var tokenClient services.TokenClient
-	if cfg.TokenEnclave.BaseURL != "" {
-		tokenClient = services.NewHTTPTokenClient(cfg.TokenEnclave.BaseURL, cfg.TokenEnclave.TimeoutSeconds)
-		log.Info("token enclave client initialised", zap.String("base_url", cfg.TokenEnclave.BaseURL))
-	} else {
-		tokenClient = services.NewStubTokenClient()
-		log.Warn("token enclave URL not configured — using StubTokenClient (NOT for production)")
+	// RELAY_TOKEN_ENCLAVE_BASE_URL is required in all environments.
+	// Startup fails hard if the URL is absent or if the enclave is unreachable.
+	if cfg.TokenEnclave.BaseURL == "" {
+		// config.validate() should have caught this already, but guard defensively.
+		return fmt.Errorf(
+			"RELAY_TOKEN_ENCLAVE_BASE_URL is not set; " +
+				"the relay service cannot start without a real token enclave. " ,
+		)
 	}
+	tokenClient, tokenClientErr := services.NewHTTPTokenClientWithConnectivityCheck(
+		cfg.TokenEnclave.BaseURL,
+		cfg.TokenEnclave.TimeoutSeconds,
+	)
+	if tokenClientErr != nil {
+		log.Error("startup: token enclave connectivity check failed — cannot start",
+			zap.String("base_url", cfg.TokenEnclave.BaseURL),
+			zap.Error(tokenClientErr),
+		)
+		return fmt.Errorf("token enclave unreachable at startup: %w", tokenClientErr)
+	}
+	log.Info("token enclave client initialised and reachable",
+		zap.String("base_url", cfg.TokenEnclave.BaseURL),
+	)
 
 	// ── Repos ────────────────────────────────────────────────────────────────
 	dispatchRepo := services.NewDispatchRepo(database)
@@ -252,6 +265,7 @@ func run() error {
 					return nil
 				},
 			},
+			health.HTTPCheck("token-enclave", cfg.TokenEnclave.BaseURL+"/health"),
 		})
 		r.GET("/ready", readinessHandler.Ready)
 

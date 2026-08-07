@@ -357,6 +357,13 @@ func (c *Config) validate() error {
 	if c.Tracing.Enabled && c.Tracing.OTLPEndpoint == "" {
 		return fmt.Errorf("tracing.otlp_endpoint is required when tracing is enabled")
 	}
+	// Token enclave is required whenever dispatch is active.
+	if c.TokenEnclave.BaseURL == "" {
+		return fmt.Errorf(
+			"RELAY_TOKEN_ENCLAVE_BASE_URL is required: " +
+				"dispatch flows must not proceed without a real token enclave. " ,
+		)
+	}
 	return nil
 }
 
