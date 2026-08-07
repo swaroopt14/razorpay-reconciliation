@@ -101,18 +101,27 @@ func (r *IntelligenceSnapshotRepo) Create(
 		return fmt.Errorf("intelligence_snapshot_repo.Create snap_id=%s type=%s: %w",
 			snap.SnapshotID, snap.SnapshotType, err)
 	}
-	emitVectorIndexRequest(
-		"intelligence_snapshot.created.v1",
-		snap.TenantID,
-		"intelligence_snapshot",
-		intelligenceSnapshotVectorEntityID(snap),
-		snapshotBatchID(snap.ScopeType, snap.ScopeRef),
-		map[string]string{
-			"snapshot_type": snap.SnapshotType,
-			"scope_type":    snap.ScopeType,
-			"scope_ref":     snapshotScopeRef(snap.ScopeRef),
-		},
-	)
+	if strings.EqualFold(strings.TrimSpace(snap.SnapshotType), "RCA_CLUSTER") &&
+		strings.EqualFold(strings.TrimSpace(snap.ScopeType), "BATCH") &&
+		snap.ScopeRef != nil &&
+		strings.TrimSpace(*snap.ScopeRef) != "" {
+		batchID := strings.TrimSpace(*snap.ScopeRef)
+
+		emitVectorIndexRequest(
+			"intelligence_rca_cluster.created.v1",
+			snap.TenantID,
+			"intelligence_batch_contract",
+			batchID,
+			batchID,
+			map[string]string{
+				"snapshot_type":        snap.SnapshotType,
+				"scope_type":           snap.ScopeType,
+				"scope_ref":            batchID,
+				"vector_summary_scope": "batch_with_rca",
+			},
+		)
+	}
+
 	return nil
 }
 func snapshotScopeRef(scopeRef *string) string {

@@ -130,8 +130,14 @@ func (s *EvidenceService) emitVectorIndexRequest(pack *models.EvidencePack, sour
 	}
 
 	tenantID := strings.TrimSpace(pack.TenantID)
-	entityID := strings.TrimSpace(pack.EvidencePackID)
 	batchID := strings.TrimSpace(pack.ClientBatchID)
+	entityType := "evidence_pack"
+	entityID := strings.TrimSpace(pack.EvidencePackID)
+
+	if batchID != "" && strings.Contains(strings.ToLower(sourceEventType), "batch") {
+		entityType = "evidence_batch_summary"
+		entityID = batchID
+	}
 
 	if tenantID == "" || entityID == "" {
 		return
@@ -144,7 +150,7 @@ func (s *EvidenceService) emitVectorIndexRequest(pack *models.EvidencePack, sour
 		SourceService:   "zord-evidence",
 		SourceEventType: sourceEventType,
 		TenantID:        tenantID,
-		EntityType:      "evidence_pack",
+		EntityType:      entityType,
 		EntityID:        entityID,
 		BatchID:         batchID,
 		Operation:       kafka.VectorIndexOperationUpsert,
@@ -160,11 +166,11 @@ func (s *EvidenceService) emitVectorIndexRequest(pack *models.EvidencePack, sour
 	defer cancel()
 
 	if err := publisher.PublishVectorIndexRequest(ctx, event); err != nil {
-		log.Printf("[evidence][vector-index] publish failed tenant=%s entity=evidence_pack id=%s err=%v", tenantID, entityID, err)
+		log.Printf("[evidence][vector-index] publish failed tenant=%s entity=%s id=%s err=%v", tenantID, entityType, entityID, err)
 		return
 	}
 
-	log.Printf("[evidence][vector-index] publish ok tenant=%s entity=evidence_pack id=%s", tenantID, entityID)
+	log.Printf("[evidence][vector-index] publish ok tenant=%s entity=%s id=%s", tenantID, entityType, entityID)
 }
 
 // HandleLeafUpdate persists incoming leaves on the Kafka fast path and delegates
@@ -172,9 +178,10 @@ func (s *EvidenceService) emitVectorIndexRequest(pack *models.EvidencePack, sour
 //
 // P1-04: Before each UpsertLeaf call, WriteReceipt classifies the event as
 // ACCEPTED / DUPLICATE / CONFLICT and writes an immutable receipt row.
-//   ACCEPTED  → upsert proceeds normally.
-//   DUPLICATE → skip upsert (idempotent Kafka re-delivery, leaf unchanged).
-//   CONFLICT  → upsert proceeds (latest wins) + WARNING log so ops can investigate.
+//
+//	ACCEPTED  → upsert proceeds normally.
+//	DUPLICATE → skip upsert (idempotent Kafka re-delivery, leaf unchanged).
+//	CONFLICT  → upsert proceeds (latest wins) + WARNING log so ops can investigate.
 func (s *EvidenceService) HandleLeafUpdate(ctx context.Context, tenantID, envelopeID, intentID, contractID, traceID string, newLeaves []models.PendingLeafCandidate) error {
 	// 0. If intentID is missing but envelopeID is present, try to resolve it from existing leaves
 	if intentID == "" && envelopeID != "" {
@@ -1452,8 +1459,8 @@ func buildBasedOnVersions(oldPack *models.EvidencePack, req models.ReplayRequest
 	// Replay request can bring new mapping versions. If we want to capture
 	// what the old pack was based on, we should try to extract it.
 	// Since mapping versions are not directly stored on EvidencePack natively in this implementation,
-	// we will record what was explicitly passed in the original pack creation, if available, 
-	// or what is in the replay request as a fallback/record of the new version. 
+	// we will record what was explicitly passed in the original pack creation, if available,
+	// or what is in the replay request as a fallback/record of the new version.
 	// Note: P0-1.4 spec says "what the original pack was built from", so we rely on schema and ruleset.
 	return versions
 }

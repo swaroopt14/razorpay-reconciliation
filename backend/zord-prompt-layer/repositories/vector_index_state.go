@@ -15,7 +15,9 @@ type VectorIndexStateRepository interface {
 	Get(ctx context.Context, vectorID string) (VectorIndexState, bool, error)
 	MarkUpserted(ctx context.Context, state VectorIndexState) error
 	MarkFailed(ctx context.Context, state VectorIndexState, cause error) error
+	MarkRateLimited(ctx context.Context, state VectorIndexState, cause error, nextRetryAt time.Time) error
 	DeleteForEntity(ctx context.Context, tenantID, entityType, entityID string) error
+	ListDueRateLimited(ctx context.Context, limit int) ([]VectorIndexState, error)
 }
 
 type VectorIndexState struct {
@@ -33,6 +35,8 @@ type VectorIndexState struct {
 	LastEventID        string
 	Status             string
 	ErrorMessage       string
+	AttemptCount       int
+	NextRetryAt        time.Time
 	LastIndexedAt      time.Time
 }
 
@@ -69,6 +73,8 @@ func (r *PostgresVectorIndexStateRepository) EnsureSchema(ctx context.Context) e
 			last_event_id TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'indexed',
 			error_message TEXT NOT NULL DEFAULT '',
+			attempt_count INTEGER NOT NULL DEFAULT 0,
+			next_retry_at TIMESTAMPTZ,
 			last_indexed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -77,6 +83,9 @@ func (r *PostgresVectorIndexStateRepository) EnsureSchema(ctx context.Context) e
 			ON vector_index_state (tenant_id, entity_type, entity_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_vector_index_state_hash
 			ON vector_index_state (tenant_id, content_hash)`,
+		`CREATE INDEX IF NOT EXISTS idx_vector_index_state_retry
+			ON vector_index_state (status, next_retry_at)
+			WHERE status = 'rate_limited'`,
 	}
 
 	for _, stmt := range statements {
@@ -99,6 +108,7 @@ func (r *PostgresVectorIndexStateRepository) Get(ctx context.Context, vectorID s
 	}
 
 	var state VectorIndexState
+	var nextRetryAt sql.NullTime
 	err := r.db.QueryRowContext(ctx, `
 		SELECT
 			vector_id,
@@ -115,6 +125,8 @@ func (r *PostgresVectorIndexStateRepository) Get(ctx context.Context, vectorID s
 			last_event_id,
 			status,
 			error_message,
+			attempt_count,
+			next_retry_at,
 			last_indexed_at
 		FROM vector_index_state
 		WHERE vector_id = $1
@@ -133,8 +145,13 @@ func (r *PostgresVectorIndexStateRepository) Get(ctx context.Context, vectorID s
 		&state.LastEventID,
 		&state.Status,
 		&state.ErrorMessage,
+		&state.AttemptCount,
+		&nextRetryAt,
 		&state.LastIndexedAt,
 	)
+	if nextRetryAt.Valid {
+		state.NextRetryAt = nextRetryAt.Time
+	}
 
 	if err == sql.ErrNoRows {
 		return VectorIndexState{}, false, nil
@@ -269,7 +286,158 @@ func (r *PostgresVectorIndexStateRepository) MarkFailed(ctx context.Context, sta
 
 	return err
 }
+func (r *PostgresVectorIndexStateRepository) MarkRateLimited(ctx context.Context, state VectorIndexState, cause error, nextRetryAt time.Time) error {
+	if !r.Enabled() {
+		return nil
+	}
 
+	msg := ""
+	if cause != nil {
+		msg = cause.Error()
+	}
+	if len(msg) > 500 {
+		msg = msg[:500]
+	}
+
+	if nextRetryAt.IsZero() {
+		nextRetryAt = time.Now().UTC().Add(5 * time.Minute)
+	}
+
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO vector_index_state (
+			vector_id,
+			tenant_id,
+			source_service,
+			entity_type,
+			entity_id,
+			source_type,
+			content_hash,
+			content_version,
+			pinecone_namespace,
+			embedding_model,
+			embedding_dimension,
+			last_event_id,
+			status,
+			error_message,
+			attempt_count,
+			next_retry_at,
+			last_indexed_at,
+			updated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'rate_limited', $13, 1, $14, now(), now())
+		ON CONFLICT (vector_id) DO UPDATE SET
+			last_event_id = EXCLUDED.last_event_id,
+			status = 'rate_limited',
+			error_message = EXCLUDED.error_message,
+			attempt_count = vector_index_state.attempt_count + 1,
+			next_retry_at = EXCLUDED.next_retry_at,
+			updated_at = now()
+	`,
+		state.VectorID,
+		state.TenantID,
+		state.SourceService,
+		state.EntityType,
+		state.EntityID,
+		state.SourceType,
+		state.ContentHash,
+		state.ContentVersion,
+		state.PineconeNamespace,
+		state.EmbeddingModel,
+		state.EmbeddingDimension,
+		state.LastEventID,
+		msg,
+		nextRetryAt,
+	)
+
+	if err == nil {
+		log.Printf(
+			"[prompt-layer][vector-index] state rate_limited tenant=%s entity=%s id=%s vector=%s next_retry_at=%s err=%s",
+			state.TenantID,
+			state.EntityType,
+			state.EntityID,
+			state.VectorID,
+			nextRetryAt.Format(time.RFC3339),
+			msg,
+		)
+	}
+
+	return err
+}
+func (r *PostgresVectorIndexStateRepository) ListDueRateLimited(ctx context.Context, limit int) ([]VectorIndexState, error) {
+	if !r.Enabled() {
+		return []VectorIndexState{}, nil
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT
+			vector_id,
+			tenant_id,
+			source_service,
+			entity_type,
+			entity_id,
+			source_type,
+			content_hash,
+			content_version,
+			pinecone_namespace,
+			embedding_model,
+			embedding_dimension,
+			last_event_id,
+			status,
+			error_message,
+			attempt_count,
+			next_retry_at,
+			last_indexed_at
+		FROM vector_index_state
+		WHERE status = 'rate_limited'
+		  AND next_retry_at IS NOT NULL
+		  AND next_retry_at <= now()
+		ORDER BY next_retry_at ASC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]VectorIndexState, 0, limit)
+	for rows.Next() {
+		var state VectorIndexState
+		var nextRetryAt sql.NullTime
+
+		if err := rows.Scan(
+			&state.VectorID,
+			&state.TenantID,
+			&state.SourceService,
+			&state.EntityType,
+			&state.EntityID,
+			&state.SourceType,
+			&state.ContentHash,
+			&state.ContentVersion,
+			&state.PineconeNamespace,
+			&state.EmbeddingModel,
+			&state.EmbeddingDimension,
+			&state.LastEventID,
+			&state.Status,
+			&state.ErrorMessage,
+			&state.AttemptCount,
+			&nextRetryAt,
+			&state.LastIndexedAt,
+		); err != nil {
+			return nil, err
+		}
+
+		if nextRetryAt.Valid {
+			state.NextRetryAt = nextRetryAt.Time
+		}
+
+		out = append(out, state)
+	}
+
+	return out, rows.Err()
+}
 func (r *PostgresVectorIndexStateRepository) DeleteForEntity(ctx context.Context, tenantID, entityType, entityID string) error {
 	if !r.Enabled() {
 		return nil

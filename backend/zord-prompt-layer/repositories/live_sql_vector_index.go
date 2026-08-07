@@ -47,6 +47,9 @@ func (r *LiveSQLRetriever) BuildVectorIndexChunks(ctx context.Context, event Vec
 	case "intelligence_batch_contract", "batch_contract":
 		return r.fetchVectorBatchContract(ctx, tenantID, entityID)
 
+	case "evidence_batch_summary", "evidence_batch":
+		return r.fetchVectorEvidenceBatchSummary(ctx, tenantID, entityID)
+
 	case "evidence_pack":
 		return r.fetchVectorEvidencePack(ctx, tenantID, entityID)
 
@@ -699,6 +702,10 @@ func (r *LiveSQLRetriever) fetchVectorBatchContract(ctx context.Context, tenantI
 			"Updated: " + readableTime(nullText(updatedAt)),
 			"Created: " + readableTime(nullText(createdAt)),
 		}), " · ")
+		rcaContext := r.fetchLatestVectorRCAContext(ctx, tenantID, entityID)
+		if strings.TrimSpace(rcaContext) != "" {
+			text = strings.Join(nonEmptyParts([]string{text, rcaContext}), " Â· ")
+		}
 
 		out = append(out, model.RetrievedChunk{
 			SourceType: "intelligence_batch_contracts",
@@ -753,7 +760,77 @@ func (r *LiveSQLRetriever) fetchVectorEvidencePack(ctx context.Context, tenantID
 
 	return out, rows.Err()
 }
+func (r *LiveSQLRetriever) fetchVectorEvidenceBatchSummary(ctx context.Context, tenantID, batchID string) ([]model.RetrievedChunk, error) {
+	if r.evidenceDB == nil {
+		return []model.RetrievedChunk{}, nil
+	}
 
+	rows, err := r.evidenceDB.QueryContext(ctx, `
+		SELECT
+			COALESCE(mode, '') AS mode,
+			COALESCE(pack_status, '') AS pack_status,
+			COALESCE(replay_equivalence_status, '') AS replay_status,
+			COALESCE(proof_status, '') AS proof_status,
+			COUNT(*)::text AS pack_count,
+			COALESCE(SUM(leaf_count), 0)::text AS leaf_count,
+			COALESCE(SUM(required_leaf_count), 0)::text AS required_leaf_count,
+			MIN(created_at)::text AS first_created,
+			MAX(updated_at)::text AS last_updated
+		FROM evidence_packs
+		WHERE tenant_id = $1
+		  AND batch_id = $2
+		GROUP BY mode, pack_status, replay_equivalence_status, proof_status
+		ORDER BY COUNT(*) DESC
+		LIMIT 12
+	`, tenantID, batchID)
+	if err != nil {
+		return nil, fmt.Errorf("vector evidence batch summary retrieval failed: %w", err)
+	}
+	defer rows.Close()
+
+	parts := make([]string, 0, 12)
+	for rows.Next() {
+		var mode, status, replay, proofStatus, packCount, leafCount, requiredLeafCount, firstCreated, lastUpdated sql.NullString
+		if err := rows.Scan(
+			&mode,
+			&status,
+			&replay,
+			&proofStatus,
+			&packCount,
+			&leafCount,
+			&requiredLeafCount,
+			&firstCreated,
+			&lastUpdated,
+		); err != nil {
+			return nil, err
+		}
+
+		parts = append(parts, strings.Join(nonEmptyParts([]string{
+			"Mode: " + safeOptional(nullText(mode)),
+			"Evidence status: " + safeOptional(nullText(status)),
+			"Replay readiness: " + safeOptional(nullText(replay)),
+			"Proof status: " + safeOptional(nullText(proofStatus)),
+			"Evidence packs: " + safeOptional(nullText(packCount)),
+			"Available proof items: " + safeOptional(nullText(leafCount)),
+			"Required proof items: " + safeOptional(nullText(requiredLeafCount)),
+			"First created: " + readableTime(nullText(firstCreated)),
+			"Last updated: " + readableTime(nullText(lastUpdated)),
+		}), " Â· "))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if len(parts) == 0 {
+		return []model.RetrievedChunk{}, nil
+	}
+
+	return []model.RetrievedChunk{{
+		SourceType: "evidence_batch_summary",
+		Score:      0.95,
+		Text:       "Batch evidence summary: " + strings.Join(parts, " | "),
+	}}, nil
+}
 func eventMetadataChunk(event VectorIndexRequestEvent) []model.RetrievedChunk {
 	text := strings.Join(nonEmptyParts([]string{
 		"Index event summary",
