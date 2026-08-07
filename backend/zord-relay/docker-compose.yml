@@ -22,7 +22,7 @@ services:
       - RELAY_DB_URL=postgres://relay_user:relay_password@postgres:5432/zord_relay_db?sslmode=disable
       - RELAY_PSP_BASE_URL=http://localhost:8099
       - RELAY_PSP_TIMEOUT_SECONDS=30
-      - RELAY_TOKEN_ENCLAVE_BASE_URL=
+      - RELAY_TOKEN_ENCLAVE_BASE_URL=http://zord-token-enclave:8087
       - ENVIRONMENT=production
       - SERVICE_NAME=zord-relay
       - RELAY_METRICS_ENABLED=true

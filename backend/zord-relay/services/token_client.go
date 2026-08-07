@@ -50,11 +50,17 @@ type DetokenizeResponse struct {
 }
 
 // HTTPTokenClient calls Service 3's real /v1/detokenize endpoint.
+// This is the only supported TokenClient implementation.
+// There is no stub fallback — a missing or unreachable enclave is a fatal
+// startup error to prevent any dispatch flow from proceeding without real
+// tokenization controls.
 type HTTPTokenClient struct {
 	baseURL string
 	http    *http.Client
 }
 
+// NewHTTPTokenClient creates an HTTPTokenClient without a connectivity probe.
+// Prefer NewHTTPTokenClientWithConnectivityCheck for production startup.
 func NewHTTPTokenClient(baseURL string, timeoutSecs int) *HTTPTokenClient {
 	return &HTTPTokenClient{
 		baseURL: baseURL,
@@ -62,6 +68,44 @@ func NewHTTPTokenClient(baseURL string, timeoutSecs int) *HTTPTokenClient {
 			Timeout: time.Duration(timeoutSecs) * time.Second,
 		},
 	}
+}
+
+// NewHTTPTokenClientWithConnectivityCheck creates an HTTPTokenClient and
+// immediately probes GET <baseURL>/health to confirm the enclave is reachable.
+//
+// If the probe fails the error is returned to the caller (main.run) which
+// treats it as a fatal startup failure — the process exits before accepting
+// any work. This guarantees that no dispatch flow can silently proceed
+// without a live, verified token enclave connection.
+func NewHTTPTokenClientWithConnectivityCheck(baseURL string, timeoutSecs int) (*HTTPTokenClient, error) {
+	c := NewHTTPTokenClient(baseURL, timeoutSecs)
+
+	probeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	probeURL := baseURL + "/health"
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, probeURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("token_client: build probe request: %w", err)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"token_client: connectivity check failed — token enclave at %q is unreachable: %w",
+			baseURL, err,
+		)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 500 {
+		return nil, fmt.Errorf(
+			"token_client: connectivity check failed — token enclave at %q returned HTTP %d",
+			baseURL, resp.StatusCode,
+		)
+	}
+
+	return c, nil
 }
 
 func (c *HTTPTokenClient) Detokenize(ctx context.Context, req DetokenizeRequest) (*DetokenizeResponse, error) {
@@ -91,32 +135,4 @@ func (c *HTTPTokenClient) Detokenize(ctx context.Context, req DetokenizeRequest)
 		return nil, fmt.Errorf("token_client: decode response: %w", err)
 	}
 	return &result, nil
-}
-
-// StubTokenClient returns placeholder values for local development.
-// Returns the token string itself prefixed with STUB_ so it is obvious
-// in logs that real PII is not being used.
-// NEVER use in production or against any real PSP.
-type StubTokenClient struct{}
-
-func NewStubTokenClient() *StubTokenClient {
-	return &StubTokenClient{}
-}
-
-func (c *StubTokenClient) Detokenize(_ context.Context, req DetokenizeRequest) (*DetokenizeResponse, error) {
-	return &DetokenizeResponse{
-		AccountNumber: stubResolve(req.AccountNumber),
-		Name:          stubResolve(req.Name),
-		IFSC:          stubResolve(req.IFSC),
-		VPA:           stubResolve(req.VPA),
-		Email:         stubResolve(req.Email),
-		Phone:         stubResolve(req.Phone),
-	}, nil
-}
-
-func stubResolve(token string) string {
-	if token == "" {
-		return ""
-	}
-	return "STUB_" + token
 }
