@@ -1,13 +1,13 @@
 package middleware
 
 import (
-	"encoding/base64"
-	"encoding/json"
+	"errors"
 	"net/http"
 	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 const (
@@ -17,26 +17,34 @@ const (
 
 var tenantUUIDRe = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
-// NOTE:
-// Preferred source: trusted upstream header X-Tenant-ID.
-// Fallback source: tenant_id claim from bearer token payload (only for trusted internal flow
-// where token is already validated upstream; this middleware does not verify signature).
-func TenantContextMiddleware() gin.HandlerFunc {
+type AuthConfig struct {
+	SigningSecret string
+	Issuer        string
+	Audience      string
+}
+
+type AccessClaims struct {
+	TenantID string `json:"tenant_id"`
+	UserID   string `json:"user_id"`
+	Email    string `json:"email,omitempty"`
+	Role     string `json:"role,omitempty"`
+	jwt.RegisteredClaims
+}
+
+func TenantContextMiddleware(auth AuthConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		tenantID := strings.TrimSpace(c.GetHeader("X-Tenant-ID"))
-
-		if tenantID == "" {
-			tenantID = extractTenantFromBearer(c.GetHeader("Authorization"))
-		}
-
-		if tenantID == "" {
+		claims, err := verifyBearerAccessToken(c.GetHeader("Authorization"), auth)
+		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error":   "unauthorized",
-				"details": "Missing tenant context. Please login again.",
+				"details": "Invalid or expired authentication token. Please login again.",
 			})
 			c.Abort()
 			return
 		}
+
+		tenantID := strings.ToLower(strings.TrimSpace(claims.TenantID))
+		userID := strings.ToLower(strings.TrimSpace(claims.UserID))
 
 		if !tenantUUIDRe.MatchString(tenantID) {
 			c.JSON(http.StatusForbidden, gin.H{
@@ -47,110 +55,85 @@ func TenantContextMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		c.Set(TenantIDContextKey, strings.ToLower(tenantID))
-		userID := strings.TrimSpace(c.GetHeader("X-User-ID"))
-		if userID == "" {
-			userID = extractUserFromBearer(c.GetHeader("Authorization"))
-		}
-		if strings.TrimSpace(userID) == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error":   "unauthorized",
-				"details": "Missing user context. Please login again.",
+		if !tenantUUIDRe.MatchString(userID) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error":   "forbidden",
+				"details": "Invalid user context.",
 			})
 			c.Abort()
 			return
 		}
-		c.Set(UserIDContextKey, strings.ToLower(strings.TrimSpace(userID)))
+
+		if !optionalHeaderMatches(c.GetHeader("X-Tenant-ID"), tenantID) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error":   "forbidden",
+				"details": "Tenant mismatch with authenticated context.",
+			})
+			c.Abort()
+			return
+		}
+
+		if !optionalHeaderMatches(c.GetHeader("X-User-ID"), userID) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error":   "forbidden",
+				"details": "User mismatch with authenticated context.",
+			})
+			c.Abort()
+			return
+		}
+
+		c.Set(TenantIDContextKey, tenantID)
+		c.Set(UserIDContextKey, userID)
 		c.Next()
 	}
 }
-func extractUserFromBearer(authHeader string) string {
+
+func verifyBearerAccessToken(authHeader string, auth AuthConfig) (*AccessClaims, error) {
+	if strings.TrimSpace(auth.SigningSecret) == "" {
+		return nil, errors.New("jwt signing secret is not configured")
+	}
+
 	authHeader = strings.TrimSpace(authHeader)
 	if !strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
-		return ""
-	}
-	token := strings.TrimSpace(authHeader[len("Bearer "):])
-	parts := strings.Split(token, ".")
-	if len(parts) < 2 {
-		return ""
+		return nil, errors.New("missing bearer token")
 	}
 
-	payloadJSON, err := decodeBase64URL(parts[1])
+	tokenString := strings.TrimSpace(authHeader[len("Bearer "):])
+	if tokenString == "" {
+		return nil, errors.New("empty bearer token")
+	}
+
+	claims := &AccessClaims{}
+
+	options := []jwt.ParserOption{}
+	if strings.TrimSpace(auth.Issuer) != "" {
+		options = append(options, jwt.WithIssuer(strings.TrimSpace(auth.Issuer)))
+	}
+	if strings.TrimSpace(auth.Audience) != "" {
+		options = append(options, jwt.WithAudience(strings.TrimSpace(auth.Audience)))
+	}
+
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (any, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, errors.New("unexpected jwt signing method")
+		}
+		return []byte(auth.SigningSecret), nil
+	}, options...)
+
 	if err != nil {
-		return ""
+		return nil, err
+	}
+	if token == nil || !token.Valid {
+		return nil, errors.New("invalid jwt")
 	}
 
-	var claims map[string]any
-	if err := json.Unmarshal(payloadJSON, &claims); err != nil {
-		return ""
-	}
-
-	candidates := []string{"user_id", "userId", "uid", "sub", "email"}
-	for _, key := range candidates {
-		if v, ok := claims[key]; ok {
-			if s, ok := v.(string); ok {
-				return strings.TrimSpace(s)
-			}
-		}
-	}
-
-	if sess, ok := claims["session"].(map[string]any); ok {
-		if v, ok := sess["user_id"]; ok {
-			if s, ok := v.(string); ok {
-				return strings.TrimSpace(s)
-			}
-		}
-	}
-
-	return ""
-}
-func extractTenantFromBearer(authHeader string) string {
-	authHeader = strings.TrimSpace(authHeader)
-	if !strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
-		return ""
-	}
-	token := strings.TrimSpace(authHeader[len("Bearer "):])
-	parts := strings.Split(token, ".")
-	if len(parts) < 2 {
-		return ""
-	}
-
-	payloadJSON, err := decodeBase64URL(parts[1])
-	if err != nil {
-		return ""
-	}
-
-	var claims map[string]any
-	if err := json.Unmarshal(payloadJSON, &claims); err != nil {
-		return ""
-	}
-
-	// Common claim locations
-	candidates := []string{"tenant_id", "tenantId", "tid"}
-	for _, key := range candidates {
-		if v, ok := claims[key]; ok {
-			if s, ok := v.(string); ok {
-				return strings.TrimSpace(s)
-			}
-		}
-	}
-
-	// Optional nested claim support: session.tenant_id
-	if sess, ok := claims["session"].(map[string]any); ok {
-		if v, ok := sess["tenant_id"]; ok {
-			if s, ok := v.(string); ok {
-				return strings.TrimSpace(s)
-			}
-		}
-	}
-
-	return ""
+	return claims, nil
 }
 
-func decodeBase64URL(seg string) ([]byte, error) {
-	// JWT uses base64url without padding
-	if m := len(seg) % 4; m != 0 {
-		seg += strings.Repeat("=", 4-m)
+func optionalHeaderMatches(headerValue, verifiedValue string) bool {
+	headerValue = strings.ToLower(strings.TrimSpace(headerValue))
+	if headerValue == "" {
+		return true
 	}
-	return base64.URLEncoding.DecodeString(seg)
+	return headerValue == strings.ToLower(strings.TrimSpace(verifiedValue))
 }

@@ -10,13 +10,18 @@ type AppConfig struct {
 	ServiceName string
 	HTTPPort    string
 
-	GeminiAPIKey  string
-	GeminiModel   string
-	GeminiBaseURL string
+	GeminiAPIKey     string
+	GeminiModel      string
+	GeminiBaseURL    string
+	JWTSigningSecret string
+	JWTIssuer        string
+	JWTAudience      string
 
-	EdgeReadDSN   string
-	IntentReadDSN string
-	RelayReadDSN  string
+	DBStatementTimeoutMS int
+	DBLockTimeoutMS      int
+	EdgeReadDSN          string
+	IntentReadDSN        string
+	RelayReadDSN         string
 
 	DefaultTopK int
 
@@ -79,6 +84,19 @@ func Load() AppConfig {
 	if v := os.Getenv("DEFAULT_TOP_K"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			topK = n
+		}
+	}
+	dbStatementTimeoutMS := 5000
+	if v := os.Getenv("DB_STATEMENT_TIMEOUT_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			dbStatementTimeoutMS = n
+		}
+	}
+
+	dbLockTimeoutMS := 1000
+	if v := os.Getenv("DB_LOCK_TIMEOUT_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			dbLockTimeoutMS = n
 		}
 	}
 	intelTimeout := 3
@@ -149,13 +167,19 @@ func Load() AppConfig {
 		ServiceName: get("SERVICE_NAME", "zord-prompt-layer"),
 		HTTPPort:    get("HTTP_PORT", "8086"),
 
-		GeminiAPIKey:  os.Getenv("GEMINI_API_KEY"),
-		GeminiAPIKeys: parseCSVKeys(os.Getenv("GEMINI_API_KEYS")),
-		GeminiModel:   get("GEMINI_MODEL", "gemini-3.1-flash-lite"),
-		GeminiBaseURL: get("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"),
-		EdgeReadDSN:   os.Getenv("EDGE_READ_DSN"),
-		IntentReadDSN: os.Getenv("INTENT_READ_DSN"),
-		RelayReadDSN:  os.Getenv("RELAY_READ_DSN"),
+		GeminiAPIKey:     os.Getenv("GEMINI_API_KEY"),
+		GeminiAPIKeys:    parseCSVKeys(os.Getenv("GEMINI_API_KEYS")),
+		GeminiModel:      get("GEMINI_MODEL", "gemini-3.1-flash-lite"),
+		GeminiBaseURL:    get("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"),
+		JWTSigningSecret: os.Getenv("JWT_SIGNING_SECRET"),
+		JWTIssuer:        get("JWT_ISSUER", "zord-edge"),
+		JWTAudience:      get("JWT_AUDIENCE", "zord-console"),
+
+		DBStatementTimeoutMS: dbStatementTimeoutMS,
+		DBLockTimeoutMS:      dbLockTimeoutMS,
+		EdgeReadDSN:          os.Getenv("EDGE_READ_DSN"),
+		IntentReadDSN:        os.Getenv("INTENT_READ_DSN"),
+		RelayReadDSN:         os.Getenv("RELAY_READ_DSN"),
 
 		DefaultTopK: topK,
 

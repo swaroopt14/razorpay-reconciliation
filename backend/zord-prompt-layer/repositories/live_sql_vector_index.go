@@ -726,7 +726,7 @@ func (r *LiveSQLRetriever) fetchVectorEvidencePack(ctx context.Context, tenantID
 		SELECT mode, pack_status, ruleset_version, signature_alg, replay_equivalence_status, created_at::text, updated_at::text
 		FROM evidence_packs
 		WHERE tenant_id = $1
-		  AND (pack_id::text = $2 OR subject_ref = $2)
+		  AND (evidence_pack_id = $2 OR batch_id = $2 OR intent_id = $2 OR client_payout_ref = $2)
 		ORDER BY updated_at DESC, created_at DESC
 		LIMIT 10
 	`, tenantID, entityID)

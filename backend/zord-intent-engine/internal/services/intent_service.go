@@ -2749,16 +2749,9 @@ func (s *IntentService) ProcessIncomingIntent(
 	}
 
 	if batchID != "" {
-		s.emitVectorIndexRequest(
-			"intent_batch.updated.v1",
-			saved.TenantID,
-			"intent_batch",
-			batchID,
-			batchID,
-			map[string]string{
-				"vector_summary_scope": "batch",
-			},
-		)
+		// Batch-level vector indexing is emitted once from the batch completion path.
+		// Do not emit one vector event per row here, otherwise large uploads create noisy duplicate events.
+		log.Printf("[intent-engine][vector-index] defer batch vector emit tenant=%s batch_id=%s intent_id=%s", saved.TenantID, batchID, saved.IntentID)
 	} else {
 		s.emitVectorIndexRequest(
 			"payment_intent.saved.v1",
