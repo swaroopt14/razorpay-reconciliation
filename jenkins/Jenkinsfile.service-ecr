@@ -435,5 +435,24 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
         fi
       '''
     }
+    success {
+      script {
+        def coverageText = ""
+        def covFile = "${env.SERVICE_DIR}/coverage.out"
+        if (fileExists(covFile)) {
+          coverageText = sh(returnStdout: true, script: "go tool cover -func=${covFile} | tail -1 | awk '{print \$NF}'").trim()
+        }
+        def summary = "✅ ${params.SERVICE_NAME}:${env.RESOLVED_IMAGE_TAG} | Branch: ${env.CHECKOUT_BRANCH}"
+        if (coverageText) {
+          summary += " | Coverage: ${coverageText}"
+        }
+        currentBuild.description = summary
+      }
+    }
+    failure {
+      script {
+        currentBuild.description = "❌ FAILED | ${params.SERVICE_NAME} | Branch: ${env.CHECKOUT_BRANCH ?: 'unknown'}"
+      }
+    }
   }
 }

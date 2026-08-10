@@ -478,5 +478,33 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
         fi
       '''
     }
+    success {
+      script {
+        // Show coverage + build summary on Jenkins build page
+        def summary = """✅ Build Successful
+Branch: ${env.CHECKOUT_BRANCH}
+Image Tag: ${env.RESOLVED_IMAGE_TAG}
+Services: ${env.SERVICE_LIST}
+"""
+        // Read coverage report if exists
+        def coverageText = ""
+        for (service in env.SERVICE_LIST.split(' ')) {
+          def covFile = "coverage-reports/${service}-coverage.out"
+          if (fileExists(covFile)) {
+            def covLine = sh(returnStdout: true, script: "go tool cover -func=${covFile} | tail -1 | awk '{print \$NF}'").trim()
+            coverageText += "\n  ${service}: ${covLine}"
+          }
+        }
+        if (coverageText) {
+          summary += "\nCoverage:${coverageText}"
+        }
+        currentBuild.description = summary
+      }
+    }
+    failure {
+      script {
+        currentBuild.description = "❌ FAILED | Branch: ${env.CHECKOUT_BRANCH ?: 'unknown'} | Tag: ${env.RESOLVED_IMAGE_TAG ?: 'unknown'}"
+      }
+    }
   }
 }
