@@ -141,6 +141,30 @@ export function setCurrentUser(user: User): void {
 
 export function clearAuth(): void {
   clearUserStorage()
+  // CON-P1-12: drop session Ask Zord / workspace chat memory on sign-out.
+  // Device-persisted copies remain only when the user explicitly opted in.
+  if (typeof window !== 'undefined') {
+    // Inline clear avoids pulling feature modules into every auth import graph.
+    try {
+      const persistApproved = window.localStorage.getItem('ask-zord-persist-approved') === '1'
+      const removeByPrefix = (storage: Storage, prefix: string) => {
+        const keys: string[] = []
+        for (let i = 0; i < storage.length; i += 1) {
+          const key = storage.key(i)
+          if (key && key.startsWith(prefix)) keys.push(key)
+        }
+        for (const key of keys) storage.removeItem(key)
+      }
+      removeByPrefix(window.sessionStorage, 'ask-zord-threads-session-v1:')
+      removeByPrefix(window.sessionStorage, 'zord:workspace-threads-session:')
+      if (!persistApproved) {
+        removeByPrefix(window.localStorage, 'ask-zord-threads-v1:')
+        removeByPrefix(window.localStorage, 'zord:workspace-threads:')
+      }
+    } catch {
+      /* ignore */
+    }
+  }
   clearClientCookie(SESSION_HINT_COOKIE)
   clearClientCookie(ROLE_COOKIE)
   emitAuthChanged()
