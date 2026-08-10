@@ -86,10 +86,16 @@ async function evidenceGet<T>(
       return { ok: false, status: 502, detail: 'Invalid JSON from evidence service' }
     }
   } catch (error) {
+    // CON-P1-06: keep exception text server-side only.
+    console.error('[zord-bff]', {
+      route: '/api/v1/evidence',
+      upstream: url,
+      error: error instanceof Error ? error.message : 'unknown',
+    })
     return {
       ok: false,
       status: 502,
-      detail: error instanceof Error ? error.message : 'evidence service unreachable',
+      detail: 'Evidence service is temporarily unavailable.',
     }
   }
 }

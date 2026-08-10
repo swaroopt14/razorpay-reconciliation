@@ -3,6 +3,7 @@ import {
   applyRefreshedSessionCookies,
   resolveBulkIngestForwardAuthorization,
 } from '@/services/auth/resolvePayoutTenant.server'
+import { publicBffError } from '@/services/bff/publicBffError'
 
 /** Proxies multipart bulk file to zord-edge `POST /v1/bulk-ingest` only (never zord-intelligence).
  * Enforces session vs API-key tenant match when both are present; never trusts client tenant_id. */
@@ -88,14 +89,16 @@ export async function POST(req: NextRequest) {
   }
 
   if (!lastResponse) {
-    const res = NextResponse.json(
-      {
-        error: 'Bulk ingest upstream unavailable',
+    const res = publicBffError({
+      code: 'UPSTREAM_UNAVAILABLE',
+      message: 'Bulk ingest is temporarily unavailable. Retry shortly.',
+      status: 502,
+      log: {
+        route: '/api/bulk-ingest',
         upstream: lastUrl,
-        details: lastError instanceof Error ? lastError.message : 'Unknown upstream error',
+        error: lastError,
       },
-      { status: 502 },
-    )
+    })
     applyRefreshedSessionCookies(res, authResolution.refreshedPayload)
     return res
   }

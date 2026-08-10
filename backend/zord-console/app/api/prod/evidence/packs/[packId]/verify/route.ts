@@ -4,6 +4,7 @@ import {
   applyRefreshedSessionCookies,
   requireSessionTenantForProdProxy,
 } from '@/services/auth/resolvePayoutTenant.server'
+import { publicBffError } from '@/services/bff/publicBffError'
 
 export const dynamic = 'force-dynamic'
 
@@ -40,12 +41,17 @@ export async function POST(
     applyRefreshedSessionCookies(res, gate.refreshedPayload)
     return res
   } catch (error) {
-    const res = NextResponse.json({
-      data_available: false,
-      reason: 'evidence_verify_unreachable',
-      pack_id: packId,
-      detail: error instanceof Error ? error.message : 'unknown',
-    }, { status: 502 })
+    const res = publicBffError({
+      code: 'UPSTREAM_UNAVAILABLE',
+      message: 'Evidence verification is temporarily unavailable. Retry shortly.',
+      status: 502,
+      log: {
+        route: '/api/prod/evidence/packs/[packId]/verify',
+        upstream: url,
+        error,
+        extra: { pack_id: packId },
+      },
+    })
     applyRefreshedSessionCookies(res, gate.refreshedPayload)
     return res
   }

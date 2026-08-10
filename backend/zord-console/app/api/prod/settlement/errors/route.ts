@@ -4,6 +4,7 @@ import {
   resolveSettlementUploadContext,
   TENANT_MISMATCH_BODY,
 } from '@/services/auth/resolvePayoutTenant.server'
+import { publicBffError } from '@/services/bff/publicBffError'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -61,14 +62,16 @@ export async function GET(request: NextRequest) {
     applyRefreshedSessionCookies(res, ctx.refreshedPayload)
     return res
   } catch (error) {
-    const res = NextResponse.json(
-      {
-        error: 'settlement parse errors upstream unavailable',
+    const res = publicBffError({
+      code: 'UPSTREAM_UNAVAILABLE',
+      message: 'Settlement parse errors are temporarily unavailable. Retry shortly.',
+      status: 502,
+      log: {
+        route: '/api/prod/settlement/errors',
         upstream: url,
-        details: error instanceof Error ? error.message : 'unknown',
+        error,
       },
-      { status: 502 },
-    )
+    })
     applyRefreshedSessionCookies(res, ctx.refreshedPayload)
     return res
   }

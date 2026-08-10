@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { publicBffError } from '@/services/bff/publicBffError'
 
 // Always proxy at request time (no caching), since this depends on runtime env + backend state.
 export const dynamic = 'force-dynamic'
@@ -31,7 +32,12 @@ export async function POST(req: Request) {
   try {
     body = await req.json()
   } catch {
-    return NextResponse.json({ details: 'Invalid JSON body' }, { status: 400 })
+    return publicBffError({
+      code: 'INVALID_REQUEST',
+      message: 'Request body must be valid JSON.',
+      status: 400,
+      log: { route: '/api/prompt-layer/query' },
+    })
   }
 
   let res: Response | null = null
@@ -68,14 +74,16 @@ export async function POST(req: Request) {
   }
 
   if (!res) {
-    return NextResponse.json(
-      {
-        details: 'Prompt-layer service unavailable',
+    return publicBffError({
+      code: 'UPSTREAM_UNAVAILABLE',
+      message: 'Ask Zord is temporarily unavailable. Retry shortly.',
+      status: 502,
+      log: {
+        route: '/api/prompt-layer/query',
         upstream: lastUrl,
-        error: lastError instanceof Error ? lastError.message : 'Unknown upstream error',
+        error: lastError,
       },
-      { status: 502 },
-    )
+    })
   }
 
   const text = await res.text()

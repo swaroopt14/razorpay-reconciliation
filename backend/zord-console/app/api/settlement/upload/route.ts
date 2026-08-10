@@ -4,6 +4,7 @@ import {
   applyRefreshedSessionCookies,
   resolveSettlementUploadContext,
 } from '@/services/auth/resolvePayoutTenant.server'
+import { publicBffError } from '@/services/bff/publicBffError'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -85,14 +86,16 @@ export async function POST(req: NextRequest) {
     lastError = error
   }
 
-  const res = NextResponse.json(
-    {
-      error: 'Settlement upload upstream unavailable',
+  const res = publicBffError({
+    code: 'UPSTREAM_UNAVAILABLE',
+    message: 'Settlement upload is temporarily unavailable. Retry shortly.',
+    status: 502,
+    log: {
+      route: '/api/settlement/upload',
       upstream: url,
-      details: lastError instanceof Error ? lastError.message : 'Unknown upstream error',
+      error: lastError,
     },
-    { status: 502 },
-  )
+  })
   if (ctx.refreshedPayload) applyAuthCookies(res, ctx.refreshedPayload)
   applyRefreshedSessionCookies(res, ctx.refreshedPayload)
   return res

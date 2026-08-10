@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { publicBffError } from '@/services/bff/publicBffError'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -63,14 +64,16 @@ async function proxyRequest(req: NextRequest, path: string[] | undefined) {
   }
 
   if (!lastResponse) {
-    return NextResponse.json(
-      {
-        error: 'Intelligence upstream unavailable',
+    return publicBffError({
+      code: 'UPSTREAM_UNAVAILABLE',
+      message: 'Intelligence service is temporarily unavailable. Retry shortly.',
+      status: 502,
+      log: {
+        route: '/api/intelligence',
         upstream: lastUrl,
-        details: lastError instanceof Error ? lastError.message : 'Unknown upstream error',
+        error: lastError,
       },
-      { status: 502 },
-    )
+    })
   }
 
   const payload = await lastResponse.text()
