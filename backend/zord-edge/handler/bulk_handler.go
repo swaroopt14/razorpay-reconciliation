@@ -259,26 +259,71 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 	}
 
 	// Row count validation — before touching DB or S3
-	if rowCountEstimate < 1 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    "FILE_EMPTY_OR_NO_DATA_RECORDS",
-			"message": "file must contain header and at least one row",
-		})
-		return
+	// Row count pre-validation — CSV only (XLSX uses excelize scan inside the case)
+	if ext == ".csv" {
+		if rowCountEstimate < 1 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    "FILE_EMPTY_OR_NO_DATA_RECORDS",
+				"message": "file must contain header and at least one row",
+			})
+			return
+		}
+		maxrowstemp := os.Getenv("MAX_CSV_ROWS")
+		if maxrowstemp == "" {
+			maxrowstemp = "10000"
+		}
+		if maxrows, err := strconv.Atoi(maxrowstemp); err == nil && rowCountEstimate > maxrows {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    "FILE_ROW_LIMIT_EXCEEDED",
+				"message": "file row limit exceeded",
+				"limit":   maxrows,
+				"actual":  rowCountEstimate,
+			})
+			return
+		}
 	}
+	// XLSX row count validation happens inside the xlsx case after excelize scan
 
-	maxrowstemp := os.Getenv("MAX_CSV_ROWS")
-	if maxrowstemp == "" {
-		maxrowstemp = "10000"
-	}
-	if maxrows, err := strconv.Atoi(maxrowstemp); err == nil && rowCountEstimate > maxrows {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    "FILE_ROW_LIMIT_EXCEEDED",
-			"message": "file row limit exceeded",
-			"limit":   maxrows,
-			"actual":  rowCountEstimate,
-		})
-		return
+	// ── Parser resolution — profile-driven first, type-based fallback ──────────
+
+	tenantType := strings.ToUpper(strings.TrimSpace(c.GetHeader("X-Zord-Tenant-Type")))
+	sourceSystem := strings.ToUpper(strings.TrimSpace(c.GetHeader("X-Zord-Source-System"))) // e.g. "TALLY", "SAP", "ERP"
+
+	var parser services.IntentParser
+	var parserErr error
+
+	switch {
+	case sourceSystem != "":
+		logger.Log.Info("using profile-driven pass-through",
+			slog.String("source_system", sourceSystem),
+			slog.String("tenant_id", tenantID.String()))
+
+	case tenantType == "TALLY" || tenantType == "SAP" || tenantType == "ERP" || tenantType == "QUICKBOOKS":
+		sourceSystem = tenantType
+		logger.Log.Info("using profile-driven pass-through",
+			slog.String("source_system", sourceSystem),
+			slog.String("tenant_id", tenantID.String()))
+
+	case tenantType != "":
+		parser, parserErr = services.GetParserByType(tenantType)
+		if parserErr != nil {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"code":    "INVALID_TENANT_TYPE",
+				"message": "invalid tenant type",
+				"detail":  parserErr.Error(),
+				"hint":    "Valid static parser types: BANK, NBFC, MERCHANT, VENDOR, GATEWAY",
+			})
+			return
+		}
+		sourceSystem = "UNKNOWN"
+		logger.Log.Info("using type-based parser",
+			slog.String("tenant_type", tenantType),
+			slog.String("tenant_id", tenantID.String()))
+
+	default:
+		sourceSystem = "UNKNOWN"
+		logger.Log.Info("using profile-driven pass-through with source auto-detection",
+			slog.String("tenant_id", tenantID.String()))
 	}
 
 	// NOW safe to reserve artifact and upload to S3
@@ -352,45 +397,45 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 	// ── Parser resolution — profile-driven first, type-based fallback ──────────
 
-	tenantType := strings.ToUpper(strings.TrimSpace(c.GetHeader("X-Zord-Tenant-Type")))
-	sourceSystem := strings.ToUpper(strings.TrimSpace(c.GetHeader("X-Zord-Source-System"))) // e.g. "TALLY", "SAP", "ERP"
+	// tenantType := strings.ToUpper(strings.TrimSpace(c.GetHeader("X-Zord-Tenant-Type")))
+	// sourceSystem := strings.ToUpper(strings.TrimSpace(c.GetHeader("X-Zord-Source-System"))) // e.g. "TALLY", "SAP", "ERP"
 
-	var parser services.IntentParser
-	var parserErr error
+	// var parser services.IntentParser
+	// var parserErr error
 
-	switch {
-	case sourceSystem != "":
-		logger.Log.Info("using profile-driven pass-through",
-			slog.String("source_system", sourceSystem),
-			slog.String("tenant_id", tenantID.String()))
+	// switch {
+	// case sourceSystem != "":
+	// 	logger.Log.Info("using profile-driven pass-through",
+	// 		slog.String("source_system", sourceSystem),
+	// 		slog.String("tenant_id", tenantID.String()))
 
-	case tenantType == "TALLY" || tenantType == "SAP" || tenantType == "ERP" || tenantType == "QUICKBOOKS":
-		sourceSystem = tenantType
-		logger.Log.Info("using profile-driven pass-through",
-			slog.String("source_system", sourceSystem),
-			slog.String("tenant_id", tenantID.String()))
+	// case tenantType == "TALLY" || tenantType == "SAP" || tenantType == "ERP" || tenantType == "QUICKBOOKS":
+	// 	sourceSystem = tenantType
+	// 	logger.Log.Info("using profile-driven pass-through",
+	// 		slog.String("source_system", sourceSystem),
+	// 		slog.String("tenant_id", tenantID.String()))
 
-	case tenantType != "":
-		parser, parserErr = services.GetParserByType(tenantType)
-		if parserErr != nil {
-			c.JSON(http.StatusUnprocessableEntity, gin.H{
-				"code":    "INVALID_TENANT_TYPE",
-				"message": "invalid tenant type",
-				"detail":  parserErr.Error(),
-				"hint":    "Valid static parser types: BANK, NBFC, MERCHANT, VENDOR, GATEWAY",
-			})
-			return
-		}
-		sourceSystem = "UNKNOWN"
-		logger.Log.Info("using type-based parser",
-			slog.String("tenant_type", tenantType),
-			slog.String("tenant_id", tenantID.String()))
+	// case tenantType != "":
+	// 	parser, parserErr = services.GetParserByType(tenantType)
+	// 	if parserErr != nil {
+	// 		c.JSON(http.StatusUnprocessableEntity, gin.H{
+	// 			"code":    "INVALID_TENANT_TYPE",
+	// 			"message": "invalid tenant type",
+	// 			"detail":  parserErr.Error(),
+	// 			"hint":    "Valid static parser types: BANK, NBFC, MERCHANT, VENDOR, GATEWAY",
+	// 		})
+	// 		return
+	// 	}
+	// 	sourceSystem = "UNKNOWN"
+	// 	logger.Log.Info("using type-based parser",
+	// 		slog.String("tenant_type", tenantType),
+	// 		slog.String("tenant_id", tenantID.String()))
 
-	default:
-		sourceSystem = "UNKNOWN"
-		logger.Log.Info("using profile-driven pass-through with source auto-detection",
-			slog.String("tenant_id", tenantID.String()))
-	}
+	// default:
+	// 	sourceSystem = "UNKNOWN"
+	// 	logger.Log.Info("using profile-driven pass-through with source auto-detection",
+	// 		slog.String("tenant_id", tenantID.String()))
+	// }
 
 	profileIDForAudit := tenantType
 	if sourceSystem != "UNKNOWN" {
@@ -698,6 +743,20 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"code":    "FILE_EMPTY_OR_NO_DATA_RECORDS",
 				"message": "file must contain header and at least one row",
+			})
+			return
+		}
+		maxrowstemp := os.Getenv("MAX_CSV_ROWS")
+		if maxrowstemp == "" {
+			logger.Log.Warn("MAX_CSV_ROWS not set; using default 10000")
+			maxrowstemp = "10000"
+		}
+		if maxrows, err := strconv.Atoi(maxrowstemp); err == nil && totalDataRows > maxrows {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    "FILE_ROW_LIMIT_EXCEEDED",
+				"message": "Excel limit exceeded",
+				"limit":   maxrows,
+				"actual":  totalDataRows,
 			})
 			return
 		}
