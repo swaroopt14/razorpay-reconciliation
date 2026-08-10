@@ -42,6 +42,14 @@ pipeline {
     GIT_REPO_URL = 'https://github.com/Arealis-network/Arealis-Zord-intent.git'
     PIPELINE_SCRIPT_PATH = 'jenkins/Jenkinsfile.service-ecr'
     PIPELINE_SIGNATURE = 'service-ecr-2026-05-05-sonar-v1'
+
+    // ── Cache directories (persist across builds) ──────────────────────────
+    GOPATH = '/var/jenkins_home/go'
+    GOCACHE = '/var/jenkins_home/.cache/go-build'
+    GOMODCACHE = '/var/jenkins_home/go/pkg/mod'
+    NPM_CONFIG_CACHE = '/var/jenkins_home/.cache/npm'
+    TRIVY_CACHE_DIR = '/var/jenkins_home/.cache/trivy'
+    DOCKER_BUILDKIT = '1'
   }
 
   stages {
@@ -362,6 +370,7 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
             --severity HIGH,CRITICAL \
             --exit-code 0 \
             --no-progress \
+            --cache-dir "${TRIVY_CACHE_DIR}" \
             --format table \
             "${IMAGE_URI}" || true
 
