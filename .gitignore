@@ -343,3 +343,11 @@ marimo/_lsp/
 # =========================
 
 .kiro/
+
+# =========================
+# Windows reserved names (prevent accidental creation)
+# =========================
+
+$null
+**/nul
+**/NUL
