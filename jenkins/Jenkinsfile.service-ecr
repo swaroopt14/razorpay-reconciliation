@@ -181,16 +181,61 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
       }
     }
 
-    stage('Run Tests') {
+    stage('Lint') {
+      steps {
+        script {
+          sh '''
+            set -euo pipefail
+
+            # Install golangci-lint if not present
+            if ! command -v golangci-lint >/dev/null 2>&1; then
+              echo "=== Installing golangci-lint ==="
+              curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin v1.61.0
+            fi
+          '''
+
+          if (fileExists("${env.SERVICE_DIR}/go.mod")) {
+            sh """
+              set -euo pipefail
+              cd "${env.SERVICE_DIR}"
+              echo "=== golangci-lint ==="
+              go mod download
+              golangci-lint run --timeout 3m ./... || true
+            """
+          } else if (fileExists("${env.SERVICE_DIR}/package.json")) {
+            sh """
+              set -euo pipefail
+              cd "${env.SERVICE_DIR}"
+              echo "=== npm lint ==="
+              npm ci --prefer-offline
+              npm run lint
+            """
+          } else if (fileExists("${env.SERVICE_DIR}/requirements.txt")) {
+            sh """
+              set -euo pipefail
+              cd "${env.SERVICE_DIR}"
+              echo "=== Python lint ==="
+              python3 -m py_compile app/ml_service.py
+              python3 -m py_compile app/config.py
+            """
+          } else {
+            echo "No linter configured — skipping"
+          }
+        }
+      }
+    }
+
+    stage('Unit Tests') {
       steps {
         script {
           echo "Running tests for ${params.SERVICE_NAME}..."
 
           if (fileExists("${env.SERVICE_DIR}/go.mod")) {
-            // Go service — run go vet + go test
             sh """
               set -euo pipefail
               cd "${env.SERVICE_DIR}"
+              echo "=== Go Mod Download ==="
+              go mod download
               echo "=== Go Vet ==="
               go vet ./...
               echo "=== Go Test ==="
@@ -198,20 +243,14 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
               echo "=== Tests Passed ==="
             """
           } else if (fileExists("${env.SERVICE_DIR}/package.json")) {
-            // Node.js service — run lint + type check
             sh """
               set -euo pipefail
               cd "${env.SERVICE_DIR}"
-              echo "=== npm ci ==="
-              npm ci --prefer-offline
-              echo "=== Lint ==="
-              npm run lint 2>&1 | tee lint-output.txt
               echo "=== Type Check ==="
-              npx tsc --noEmit 2>&1 | tee typecheck-output.txt || true
+              npx tsc --noEmit || true
               echo "=== Checks Passed ==="
             """
           } else if (fileExists("${env.SERVICE_DIR}/requirements.txt")) {
-            // Python service — run syntax check
             sh """
               set -euo pipefail
               cd "${env.SERVICE_DIR}"
@@ -295,6 +334,33 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
             }
           }
         }
+      }
+    }
+
+    stage('Trivy Image Scan') {
+      steps {
+        sh '''
+          set -euo pipefail
+
+          # Install Trivy if not present
+          if ! command -v trivy >/dev/null 2>&1; then
+            echo "=== Installing Trivy ==="
+            curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+          fi
+
+          echo "========================================"
+          echo "Trivy scanning: ${IMAGE_URI}"
+          echo "========================================"
+
+          trivy image \
+            --severity HIGH,CRITICAL \
+            --exit-code 0 \
+            --no-progress \
+            --format table \
+            "${IMAGE_URI}" || true
+
+          echo "=== Trivy Scan Complete ==="
+        '''
       }
     }
 
