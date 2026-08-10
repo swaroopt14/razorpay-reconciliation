@@ -123,7 +123,7 @@ services:
         event_type: "outcome.leaf_bundle.created"
         event_version: ""
         schema_version: ""
-        topic: "outcome.leaf_bundle.created"
+        topic: "payments.outcome.events.v1"
       - source_service: ""
         event_type: "attachment.unresolved.flagged"
         event_version: ""
