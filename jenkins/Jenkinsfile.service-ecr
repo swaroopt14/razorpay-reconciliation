@@ -49,7 +49,7 @@ pipeline {
     GOMODCACHE = '/var/jenkins_home/go/pkg/mod'
     NPM_CONFIG_CACHE = '/var/jenkins_home/.cache/npm'
     TRIVY_CACHE_DIR = '/var/jenkins_home/.cache/trivy'
-    DOCKER_BUILDKIT = '1'
+    DOCKER_BUILDKIT = '0'
   }
 
   stages {
