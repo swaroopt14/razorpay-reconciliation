@@ -173,7 +173,8 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
                   -Dsonar.tests=. \
                   -Dsonar.test.inclusions="${sonar_test_inclusions}" \
                   -Dsonar.exclusions="**/node_modules/**,**/.next/**,**/coverage/**,**/public/**,**/assets/models/**,**/*.png,**/*.jpg,**/*.jpeg,**/*.gif,**/*.svg,**/*.webp,**/*.pdf,**/*.tmpl,**/test_output*.txt,**/test_output*.log" \
-                  -Dsonar.coverage.exclusions="**/*_test.go,**/*.spec.ts,**/*.test.ts,**/*.test.tsx,**/cmd/**,**/db/**,**/docs/**,**/public/**"
+                  -Dsonar.coverage.exclusions="**/*_test.go,**/*.spec.ts,**/*.test.ts,**/*.test.tsx,**/cmd/**,**/db/**,**/docs/**,**/public/**" \
+                  -Dsonar.go.coverage.reportPaths="coverage.out"
               '''
             }
           }
@@ -238,8 +239,13 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
               go mod download
               echo "=== Go Vet ==="
               go vet ./...
-              echo "=== Go Test ==="
-              go test ./... -count=1 -timeout 120s -v 2>&1 | tee test-output.txt
+              echo "=== Go Test + Coverage ==="
+              go test ./... -count=1 -timeout 120s -coverprofile=coverage.out -covermode=atomic -v 2>&1 | tee test-output.txt
+
+              if [ -f coverage.out ]; then
+                echo "=== Coverage Summary ==="
+                go tool cover -func=coverage.out | tail -1
+              fi
               echo "=== Tests Passed ==="
             """
           } else if (fileExists("${env.SERVICE_DIR}/package.json")) {

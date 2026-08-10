@@ -164,7 +164,8 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
                     -Dsonar.tests=. \
                     -Dsonar.test.inclusions="${sonar_test_inclusions}" \
                     -Dsonar.exclusions="**/node_modules/**,**/.next/**,**/coverage/**,**/public/**,**/assets/models/**,**/*.png,**/*.jpg,**/*.jpeg,**/*.gif,**/*.svg,**/*.webp,**/*.pdf,**/*.tmpl,**/test_output*.txt,**/test_output*.log" \
-                    -Dsonar.coverage.exclusions="**/*_test.go,**/*.spec.ts,**/*.test.ts,**/*.test.tsx,**/cmd/**,**/db/**,**/docs/**,**/public/**"
+                    -Dsonar.coverage.exclusions="**/*_test.go,**/*.spec.ts,**/*.test.ts,**/*.test.tsx,**/cmd/**,**/db/**,**/docs/**,**/public/**" \
+                    -Dsonar.go.coverage.reportPaths="coverage.out"
                 done
               '''
             }
@@ -220,6 +221,9 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
           sh '''
             set -euo pipefail
 
+            COVERAGE_DIR="coverage-reports"
+            mkdir -p "${COVERAGE_DIR}"
+
             for service in ${SERVICE_LIST}; do
               service_dir="backend/${service}"
 
@@ -238,8 +242,15 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
                 (cd "${service_dir}" && go mod download)
                 echo "=== Go Vet (${service}) ==="
                 (cd "${service_dir}" && go vet ./...)
-                echo "=== Go Test (${service}) ==="
-                (cd "${service_dir}" && go test ./... -count=1 -timeout 120s -v)
+                echo "=== Go Test + Coverage (${service}) ==="
+                (cd "${service_dir}" && go test ./... -count=1 -timeout 120s -coverprofile=coverage.out -covermode=atomic -v)
+
+                # Print coverage summary
+                if [ -f "${service_dir}/coverage.out" ]; then
+                  echo "=== Coverage Summary (${service}) ==="
+                  (cd "${service_dir}" && go tool cover -func=coverage.out | tail -1)
+                  cp "${service_dir}/coverage.out" "${COVERAGE_DIR}/${service}-coverage.out"
+                fi
                 echo "=== Tests Passed (${service}) ==="
 
               elif [ -f "${service_dir}/package.json" ]; then
@@ -259,6 +270,20 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
                 echo "No recognized test framework for ${service} — skipping"
               fi
             done
+
+            # Print all coverage results
+            echo ""
+            echo "========================================"
+            echo "COVERAGE REPORT SUMMARY"
+            echo "========================================"
+            for f in ${COVERAGE_DIR}/*-coverage.out; do
+              if [ -f "$f" ]; then
+                service_name=$(basename "$f" | sed "s/-coverage.out//")
+                total=$(go tool cover -func="$f" | tail -1 | awk "{print \$NF}")
+                echo "  ${service_name}: ${total}"
+              fi
+            done
+            echo "========================================"
           '''
         }
       }
