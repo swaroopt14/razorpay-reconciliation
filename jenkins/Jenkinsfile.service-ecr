@@ -47,7 +47,17 @@ pipeline {
   stages {
     stage('Checkout') {
       steps {
-        checkout scm
+        script {
+          def targetBranch = params.GIT_BRANCH?.trim() ?: 'main'
+          checkout([
+            $class: 'GitSCM',
+            branches: [[name: "*/${targetBranch}"]],
+            userRemoteConfigs: [[
+              url: env.GIT_REPO_URL,
+              credentialsId: env.GIT_CREDENTIALS_ID
+            ]]
+          ])
+        }
       }
     }
 
