@@ -5,7 +5,8 @@ import {
 } from '@/services/auth/resolvePayoutTenant.server'
 
 /** Proxies multipart bulk file to zord-edge `POST /v1/bulk-ingest` only (never zord-intelligence).
- * Enforces session vs API-key tenant match when both are present; never trusts client tenant_id. */
+ * Requires signed-in session JWT and/or explicit Authorization (CON-P0-02).
+ * Never falls back to ZORD_BULK_INGEST_API_KEY. Enforces session vs API-key tenant match. */
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
@@ -20,7 +21,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Expected multipart/form-data with a file field.' }, { status: 400 })
   }
 
-  const authResolution = await resolveBulkIngestForwardAuthorization(req, process.env.ZORD_BULK_INGEST_API_KEY)
+  const authResolution = await resolveBulkIngestForwardAuthorization(req)
   if (!authResolution.ok) return authResolution.response
 
   const bodyBuffer = Buffer.from(await req.arrayBuffer())

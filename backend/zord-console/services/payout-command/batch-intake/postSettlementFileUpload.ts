@@ -23,7 +23,10 @@ export const SETTLEMENT_FILE_ACCEPT =
 
 export type PostSettlementFileUploadParams = {
   file: File
-  /** Optional; server uses `ZORD_SETTLEMENT_API_KEY` or `ZORD_BULK_INGEST_API_KEY` when unset. */
+  /**
+   * Optional explicit Authorization. When empty, `/api/settlement/upload` uses the
+   * signed-in session cookie only — never a server env ingest key (CON-P0-02).
+   */
   apiKeyRaw?: string
   /** Ignored by BFF: tenant is injected from the signed-in session. */
   tenantId?: string
