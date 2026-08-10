@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { assertCookieMutationProtection } from '@/services/auth/assertSameOrigin.server'
 import {
   applyRefreshedSessionCookies,
   resolveBulkIngestForwardAuthorization,
@@ -15,6 +16,10 @@ function candidateEdgeBases(): string[] {
 }
 
 export async function POST(req: NextRequest) {
+  // Cookie browser path: same-origin + CSRF. Explicit Authorization (API key) bypasses.
+  const csrf = assertCookieMutationProtection(req, { allowBearerBypass: true })
+  if (!csrf.ok) return csrf.response
+
   const contentType = req.headers.get('content-type')
   if (!contentType?.toLowerCase().includes('multipart/form-data')) {
     return NextResponse.json({ error: 'Expected multipart/form-data with a file field.' }, { status: 400 })

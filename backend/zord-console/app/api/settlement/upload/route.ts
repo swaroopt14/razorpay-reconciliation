@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { assertCookieMutationProtection } from '@/services/auth/assertSameOrigin.server'
 import { applyAuthCookies } from '@/services/auth/server'
 import {
   applyRefreshedSessionCookies,
@@ -21,6 +22,10 @@ function settlementBase() {
  */
 
 export async function POST(req: NextRequest) {
+  // Cookie browser path: same-origin + CSRF. Explicit Authorization (API key) bypasses.
+  const csrf = assertCookieMutationProtection(req, { allowBearerBypass: true })
+  if (!csrf.ok) return csrf.response
+
   const contentType = req.headers.get('content-type')
   if (!contentType?.toLowerCase().includes('multipart/form-data')) {
     return NextResponse.json({ error: 'Expected multipart/form-data with file.' }, { status: 400 })

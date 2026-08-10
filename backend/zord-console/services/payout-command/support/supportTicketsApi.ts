@@ -1,3 +1,4 @@
+import { csrfMutationHeaders } from '@/services/auth/csrfBrowser'
 import type {
   EmailMessageInput,
   NewSupportTicketInput,
@@ -36,7 +37,7 @@ export async function fetchSupportTickets(tenantId: string): Promise<SupportTick
         const migrateRes = await fetch('/api/support/tickets', {
           method: 'POST',
           credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
+          headers: csrfMutationHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({ migrate: local }),
         })
         const migrated = await parseJson<{ tickets: SupportTicket[] }>(migrateRes)
@@ -59,7 +60,7 @@ export async function createSupportTicketRemote(
   const res = await fetch('/api/support/tickets', {
     method: 'POST',
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    headers: csrfMutationHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(input),
   })
   const data = await parseJson<{ ticket: SupportTicket }>(res)
@@ -70,7 +71,7 @@ export async function postSupportChatReply(ticketId: string, body: string): Prom
   const res = await fetch(`/api/support/tickets/${encodeURIComponent(ticketId)}/messages`, {
     method: 'POST',
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    headers: csrfMutationHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ kind: 'chat', body }),
   })
   const data = await parseJson<{ ticket: SupportTicket }>(res)
@@ -84,7 +85,7 @@ export async function postSupportEmailMessage(
   const res = await fetch(`/api/support/tickets/${encodeURIComponent(ticketId)}/messages`, {
     method: 'POST',
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    headers: csrfMutationHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ kind: 'email', ...input }),
   })
   const data = await parseJson<{ ticket: SupportTicket }>(res)
@@ -95,7 +96,7 @@ export async function markSupportTicketReadRemote(ticketId: string): Promise<Sup
   const res = await fetch(`/api/support/tickets/${encodeURIComponent(ticketId)}`, {
     method: 'PATCH',
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    headers: csrfMutationHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ markRead: true }),
   })
   const data = await parseJson<{ ticket: SupportTicket }>(res)

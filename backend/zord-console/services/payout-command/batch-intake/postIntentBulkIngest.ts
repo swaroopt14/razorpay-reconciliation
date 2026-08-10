@@ -8,6 +8,7 @@
  * Reserve **DLQ** for true ingest/engine **dead letters** that never became a proper intent
  * (or must not be mixed with normal intent lists).
  */
+import { csrfMutationHeaders } from '@/services/auth/csrfBrowser'
 import {
   errorMessageFromProxyResponse,
   extractBatchIdFromBulkIngestResponse,
@@ -58,10 +59,11 @@ export async function postIntentBulkIngest(params: PostIntentBulkIngestParams): 
   const formData = new FormData()
   formData.append('file', params.file, params.file.name)
 
-  const headers: Record<string, string> = {
+  // Cookie session path needs CSRF; explicit Authorization (API key) bypasses server-side.
+  const headers: Record<string, string> = csrfMutationHeaders({
     'x-zord-source-type': params.sourceType,
     'x-zord-source-class': 'INTENT',
-  }
+  })
   const tenantType = params.tenantType?.trim()
   if (tenantType) headers['x-zord-tenant-type'] = tenantType
   if (auth) headers.authorization = auth

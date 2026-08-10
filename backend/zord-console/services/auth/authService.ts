@@ -212,11 +212,13 @@ export async function hydrateSession(): Promise<User | null> {
 
 export async function logout(): Promise<void> {
   try {
+    const { csrfMutationHeaders } = await import('@/services/auth/csrfBrowser')
     await fetch('/api/auth/logout', {
       method: 'POST',
-      headers: {
+      credentials: 'include',
+      headers: csrfMutationHeaders({
         'Content-Type': 'application/json',
-      },
+      }),
       cache: 'no-store',
       body: JSON.stringify({}),
     })
