@@ -38,9 +38,28 @@ services:
     http_timeout: 15s
     default_topic: payments.intent.events.v1
     is_intent: true
-    topic_map:
-      "vector.index.requested": "zord.vector.index.request.v1"
-    # Per-service retry overrides (optional — defaults are production-safe).
+    # Strict route allow-list
+    route_allow_list:
+      - source_service: "zord-intent-engine"
+        event_type: "intent.created.v1"
+        event_version: "1"
+        schema_version: "v1"
+        topic: "payments.intent.events.v1"
+      - source_service: "zord-intent-engine"
+        event_type: "intent.created.v1"
+        event_version: ""
+        schema_version: ""
+        topic: "payments.intent.events.v1"
+      - source_service: "zord-intent-engine"
+        event_type: "vector.index.requested"
+        event_version: "v1"
+        schema_version: "v1"
+        topic: "zord.vector.index.request.v1"
+      - source_service: "zord-intent-engine"
+        event_type: "vector.index.requested"
+        event_version: ""
+        schema_version: ""
+        topic: "zord.vector.index.request.v1"
     # max_retry_attempts: 20
     # retry_base_delay: 1s
     # retry_max_delay: 5m
@@ -65,6 +84,12 @@ services:
     http_timeout: 15s
     default_topic: payments.ledger.events.v1
     is_edge: true
+    route_allow_list:
+      - source_service: "zord-edge-service"
+        event_type: "ledger.entry.created"
+        event_version: ""
+        schema_version: ""
+        topic: "payments.ledger.events.v1"
 
   - name: outcome-engine
     base_url: http://zord-outcome-engine-service:8081
@@ -73,19 +98,73 @@ services:
     # All Merkle leaf-bundle events land on this dedicated topic.
     # zord-evidence consumes it with group: evidence-outcome-consumer-group.
     default_topic: payments.outcome.events.v1
-    topic_map:
-      "canonical.settlement.created": "canonical.settlement.created"
-      "attachment.decision.created": "attachment.decision.created"
-      "variance.record.created": "variance.record.created"
-      "attachment.batch.updated": "batch.summary.updated"
-      "vector.index.requested": "zord.vector.index.request.v1"
+    route_allow_list:
+      - source_service: ""
+        event_type: "canonical.settlement.created"
+        event_version: ""
+        schema_version: ""
+        topic: "canonical.settlement.created"
+      - source_service: ""
+        event_type: "attachment.decision.created"
+        event_version: ""
+        schema_version: ""
+        topic: "attachment.decision.created"
+      - source_service: ""
+        event_type: "variance.record.created"
+        event_version: ""
+        schema_version: ""
+        topic: "variance.record.created"
+      - source_service: ""
+        event_type: "attachment.batch.updated"
+        event_version: ""
+        schema_version: ""
+        topic: "batch.summary.updated"
+      - source_service: ""
+        event_type: "outcome.leaf_bundle.created"
+        event_version: ""
+        schema_version: ""
+        topic: "outcome.leaf_bundle.created"
+      - source_service: ""
+        event_type: "attachment.unresolved.flagged"
+        event_version: ""
+        schema_version: ""
+        topic: "attachment.unresolved.flagged"
+      - source_service: ""
+        event_type: "attachment.ambiguous.flagged"
+        event_version: ""
+        schema_version: ""
+        topic: "attachment.ambiguous.flagged"
+      - source_service: ""
+        event_type: "attachment.review.required"
+        event_version: ""
+        schema_version: ""
+        topic: "attachment.review.required"
+      - source_service: ""
+        event_type: "vector.index.requested"
+        event_version: ""
+        schema_version: ""
+        topic: "zord.vector.index.request.v1"
   - name: evidence-service
     base_url: http://zord-evidence-service:8088
     auth_token: "dev-dummy-token-123"
     http_timeout: 15s
     default_topic: evidence.pack.created
-    topic_map:
-      "vector.index.requested": "zord.vector.index.request.v1"
+    route_allow_list:
+      - source_service: ""
+        event_type: "evidence.pack.created"
+        event_version: ""
+        schema_version: ""
+        topic: "evidence.pack.created"
+      - source_service: ""
+        event_type: "evidence.batch.pack.created"
+        event_version: ""
+        schema_version: ""
+        topic: "evidence.batch.pack.created"
+      - source_service: ""
+        event_type: "vector.index.requested"
+        event_version: ""
+        schema_version: ""
+        topic: "zord.vector.index.request.v1"
 
 tracing:
   enabled: true
