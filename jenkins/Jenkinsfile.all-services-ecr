@@ -212,8 +212,8 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
               elif [ -f "${service_dir}/requirements.txt" ]; then
                 # Python service — run syntax check
                 echo "=== Python Syntax Check (${service}) ==="
-                (cd "${service_dir}" && python -m py_compile app/ml_service.py)
-                (cd "${service_dir}" && python -m py_compile app/config.py)
+                (cd "${service_dir}" && python3 -m py_compile app/ml_service.py)
+                (cd "${service_dir}" && python3 -m py_compile app/config.py)
                 echo "=== Checks Passed (${service}) ==="
 
               else

@@ -216,8 +216,8 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
               set -euo pipefail
               cd "${env.SERVICE_DIR}"
               echo "=== Python Syntax Check ==="
-              python -m py_compile app/ml_service.py
-              python -m py_compile app/config.py
+              python3 -m py_compile app/ml_service.py
+              python3 -m py_compile app/config.py
               echo "=== Checks Passed ==="
             """
           } else {
