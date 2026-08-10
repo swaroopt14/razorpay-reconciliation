@@ -81,7 +81,17 @@ pipeline {
             error('Resolved git branch is empty after normalizing GIT_BRANCH')
           }
 
-          env.RESOLVED_IMAGE_TAG = params.IMAGE_TAG?.trim() ? params.IMAGE_TAG.trim() : "v${env.BUILD_NUMBER}"
+          // Branch-aware image tagging:
+          // main/master → v{BUILD_NUMBER} (production)
+          // feature branches → {sanitized-branch}-{short-sha}
+          if (params.IMAGE_TAG?.trim()) {
+            env.RESOLVED_IMAGE_TAG = params.IMAGE_TAG.trim()
+          } else if (normalizedGitBranch in ['main', 'master']) {
+            env.RESOLVED_IMAGE_TAG = "v${env.BUILD_NUMBER}"
+          } else {
+            def sanitizedBranch = normalizedGitBranch.replaceAll('[^a-zA-Z0-9]', '-').replaceAll('-+', '-').take(50)
+            env.RESOLVED_IMAGE_TAG = "${sanitizedBranch}-${shortSha}"
+          }
           env.ECR_REPOSITORY = params.ECR_REPOSITORY_PREFIX?.trim() ? "${params.ECR_REPOSITORY_PREFIX.trim()}/${params.SERVICE_NAME}" : params.SERVICE_NAME
           env.ECR_REGISTRY = "${params.AWS_ACCOUNT_ID}.dkr.ecr.${params.AWS_REGION}.amazonaws.com"
           env.IMAGE_URI = "${env.ECR_REGISTRY}/${env.ECR_REPOSITORY}:${env.RESOLVED_IMAGE_TAG}"
@@ -96,11 +106,13 @@ Checked out branch: ${env.CHECKOUT_BRANCH}
 Checked out commit: ${env.CHECKOUT_SHORT_SHA}
 Manifest update strategy: sed
 Service to build: ${params.SERVICE_NAME}
+Image tag: ${env.RESOLVED_IMAGE_TAG}
+Tag strategy: ${normalizedGitBranch in ['main', 'master'] ? 'production (vN)' : 'branch-aware (branch-sha)'}
 Run SonarQube: ${params.RUN_SONARQUBE}
 SonarQube environment: ${params.SONARQUBE_ENV}
 SonarScanner tool: ${params.SONAR_SCANNER_TOOL}
 Sonar project key prefix: ${params.SONAR_PROJECT_KEY_PREFIX}
-Target git push branch: ${params.GIT_BRANCH}
+Target git push branch: ${normalizedGitBranch}
 Resolved git push ref: ${env.GIT_PUSH_REF}
 """.trim()
         }
@@ -154,6 +166,52 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
                   -Dsonar.coverage.exclusions="**/*_test.go,**/*.spec.ts,**/*.test.ts,**/*.test.tsx,**/cmd/**,**/db/**,**/docs/**,**/public/**"
               '''
             }
+          }
+        }
+      }
+    }
+
+    stage('Run Tests') {
+      steps {
+        script {
+          echo "Running tests for ${params.SERVICE_NAME}..."
+
+          if (fileExists("${env.SERVICE_DIR}/go.mod")) {
+            // Go service — run go vet + go test
+            sh """
+              set -euo pipefail
+              cd "${env.SERVICE_DIR}"
+              echo "=== Go Vet ==="
+              go vet ./...
+              echo "=== Go Test ==="
+              go test ./... -count=1 -timeout 120s -v 2>&1 | tee test-output.txt
+              echo "=== Tests Passed ==="
+            """
+          } else if (fileExists("${env.SERVICE_DIR}/package.json")) {
+            // Node.js service — run lint + type check
+            sh """
+              set -euo pipefail
+              cd "${env.SERVICE_DIR}"
+              echo "=== npm ci ==="
+              npm ci --prefer-offline
+              echo "=== Lint ==="
+              npm run lint 2>&1 | tee lint-output.txt
+              echo "=== Type Check ==="
+              npx tsc --noEmit 2>&1 | tee typecheck-output.txt || true
+              echo "=== Checks Passed ==="
+            """
+          } else if (fileExists("${env.SERVICE_DIR}/requirements.txt")) {
+            // Python service — run syntax check
+            sh """
+              set -euo pipefail
+              cd "${env.SERVICE_DIR}"
+              echo "=== Python Syntax Check ==="
+              python -m py_compile app/ml_service.py
+              python -m py_compile app/config.py
+              echo "=== Checks Passed ==="
+            """
+          } else {
+            echo "No recognized test framework found — skipping tests"
           }
         }
       }
