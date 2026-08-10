@@ -52,10 +52,10 @@ export default function () {
                 const h = r.headers['X-Request-Id'] || r.headers['x-request-id'];
                 return h && h.length > 0;
             },
-            'not server error': (r) => r.status < 500,
+            'status is 2xx': (r) => r.status >= 200 && r.status < 300,
         });
 
-        if (res.status < 500) securityPassed.add(1);
+        if (res.status >= 200 && res.status < 300) securityPassed.add(1);
         else securityFailed.add(1);
     });
 
@@ -80,7 +80,7 @@ export default function () {
                 const h = r.headers['Access-Control-Allow-Headers'] || r.headers['access-control-allow-headers'];
                 return h && h.toLowerCase().includes('authorization');
             },
-            'preflight not 5xx': (r) => r.status < 500,
+            'preflight is 2xx': (r) => r.status >= 200 && r.status < 300,
         });
     });
 
@@ -98,7 +98,7 @@ export default function () {
                     r.headers['RateLimit-Limit'] || r.headers['ratelimit-limit'];
                 return h !== undefined;
             },
-            'not server error': (r) => r.status < 500,
+            'status is 2xx': (r) => r.status >= 200 && r.status < 300,
         });
     });
 

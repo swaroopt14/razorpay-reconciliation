@@ -82,7 +82,7 @@ export default function (data) {
 
         const passed = check(res, {
             'ingest accepted': (r) => r.status === 200 || r.status === 201 || r.status === 202 || r.status === 400 || r.status === 401 || r.status === 409 || r.status === 429,
-            'not server error': (r) => r.status < 500,
+            'status is 2xx': (r) => r.status >= 200 && r.status < 300,
             'response time < 5s': (r) => r.timings.duration < 5000,
         });
 
@@ -117,7 +117,7 @@ export default function (data) {
         );
 
         check(res, {
-            'bulk ingest accepted or rate limited': (r) => r.status < 500,
+            'bulk ingest accepted or rate limited': (r) => r.status >= 200 && r.status < 300,
             'response time < 5s': (r) => r.timings.duration < 5000,
         });
 

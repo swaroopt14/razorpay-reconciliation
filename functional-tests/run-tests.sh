@@ -60,37 +60,37 @@ echo "════════════════════════�
 # ══════════════════════════════════════════════════════════════════════════════
 run_test "Service Health: zord-edge"
 RESP=$(curl -s -o /dev/null -w "%{http_code}" "${BASE_URL}/edge/health")
-if [ "$RESP" = "200" ] || [ "$RESP" = "404" ]; then log_pass "zord-edge health" "HTTP ${RESP}"
+if [ "$RESP" = "200" ]; then log_pass "zord-edge health" "HTTP ${RESP}"
 else log_fail "zord-edge health" "Expected 200, got ${RESP}"; fi
 
 run_test "Service Health: zord-intent-engine"
 RESP=$(curl -s -o /dev/null -w "%{http_code}" "${BASE_URL}/intent/health")
-if [ "$RESP" = "200" ] || [ "$RESP" = "404" ]; then log_pass "zord-intent-engine health" "HTTP ${RESP}"
+if [ "$RESP" = "200" ]; then log_pass "zord-intent-engine health" "HTTP ${RESP}"
 else log_fail "zord-intent-engine health" "Expected 200, got ${RESP}"; fi
 
 run_test "Service Health: zord-outcome-engine"
 RESP=$(curl -s -o /dev/null -w "%{http_code}" "${BASE_URL}/outcome/health")
-if [ "$RESP" = "200" ] || [ "$RESP" = "404" ]; then log_pass "zord-outcome-engine health" "HTTP ${RESP}"
+if [ "$RESP" = "200" ]; then log_pass "zord-outcome-engine health" "HTTP ${RESP}"
 else log_fail "zord-outcome-engine health" "Expected 200, got ${RESP}"; fi
 
 run_test "Service Health: zord-evidence"
 RESP=$(curl -s -o /dev/null -w "%{http_code}" "${BASE_URL}/evidence/health")
-if [ "$RESP" = "200" ] || [ "$RESP" = "404" ]; then log_pass "zord-evidence health" "HTTP ${RESP}"
+if [ "$RESP" = "200" ]; then log_pass "zord-evidence health" "HTTP ${RESP}"
 else log_fail "zord-evidence health" "Expected 200, got ${RESP}"; fi
 
 run_test "Service Health: zord-intelligence"
 RESP=$(curl -s -o /dev/null -w "%{http_code}" "${BASE_URL}/intelligence/health")
-if [ "$RESP" = "200" ] || [ "$RESP" = "404" ]; then log_pass "zord-intelligence health" "HTTP ${RESP}"
+if [ "$RESP" = "200" ]; then log_pass "zord-intelligence health" "HTTP ${RESP}"
 else log_fail "zord-intelligence health" "Expected 200, got ${RESP}"; fi
 
 run_test "Service Health: zord-prompt-layer"
 RESP=$(curl -s -o /dev/null -w "%{http_code}" "${BASE_URL}/prompt/health")
-if [ "$RESP" = "200" ] || [ "$RESP" = "404" ]; then log_pass "zord-prompt-layer health" "HTTP ${RESP}"
+if [ "$RESP" = "200" ]; then log_pass "zord-prompt-layer health" "HTTP ${RESP}"
 else log_fail "zord-prompt-layer health" "Expected 200, got ${RESP}"; fi
 
 run_test "Service Health: zord-relay"
 RESP=$(curl -s -o /dev/null -w "%{http_code}" "${BASE_URL}/relay/health")
-if [ "$RESP" = "200" ] || [ "$RESP" = "404" ]; then log_pass "zord-relay health" "HTTP ${RESP}"
+if [ "$RESP" = "200" ]; then log_pass "zord-relay health" "HTTP ${RESP}"
 else log_fail "zord-relay health" "Expected 200, got ${RESP}"; fi
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -534,10 +534,8 @@ if [ -n "$TENANT_ID" ]; then
     PROJ_COUNT=$(echo "${INTEL_BODY}" | jq -r '.count // (.projections | length) // 0' 2>/dev/null)
     INTEL_MODE=$(echo "${INTEL_BODY}" | jq -r '.intelligence_mode // "unknown"' 2>/dev/null)
     log_pass "Intelligence KPIs" "HTTP 200, mode=${INTEL_MODE}, projections=${PROJ_COUNT:-0}"
-  elif [ "$INTEL_HTTP" = "401" ] || [ "$INTEL_HTTP" = "404" ]; then
-    log_pass "Intelligence KPIs" "HTTP ${INTEL_HTTP} (service reachable, auth/route issue)"
   else
-    log_fail "Intelligence KPIs" "Expected 200, got ${INTEL_HTTP} — intelligence DB may be disconnected. Check INTELLIGENCE_DATABASE_URL secret."
+    log_fail "Intelligence KPIs" "Expected 200, got ${INTEL_HTTP} — check auth token or INTELLIGENCE_DATABASE_URL secret"
   fi
 else
   log_fail "Intelligence KPIs" "Skipped — no tenant ID"

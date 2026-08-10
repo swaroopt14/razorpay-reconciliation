@@ -50,7 +50,7 @@ export default function () {
 
         check(res, {
             'tenant created (201) or auth error': (r) => r.status === 201 || r.status === 401 || r.status === 403,
-            'not server error': (r) => r.status < 500,
+            'status is 2xx': (r) => r.status >= 200 && r.status < 300,
             'response time < 2s': (r) => r.timings.duration < 2000,
         });
 
@@ -72,7 +72,7 @@ export default function () {
         });
 
         check(res, {
-            'list tenants reachable': (r) => r.status < 500,
+            'list tenants reachable': (r) => r.status >= 200 && r.status < 300,
             'response time < 2s': (r) => r.timings.duration < 2000,
         });
     });
@@ -87,7 +87,7 @@ export default function () {
             });
 
             check(res, {
-                'get tenant reachable': (r) => r.status < 500,
+                'get tenant reachable': (r) => r.status >= 200 && r.status < 300,
                 'response time < 2s': (r) => r.timings.duration < 2000,
             });
         });

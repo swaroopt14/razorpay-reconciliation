@@ -49,7 +49,7 @@ export default function () {
             { headers: { 'Content-Type': 'application/json', 'X-Zord-ADMIN-KEY': ADMIN_KEY } }
         );
         groupLatency.add(Date.now() - start, { group: 'register_tenant' });
-        check(res, { 'tenant endpoint reachable': (r) => r.status < 500 });
+        check(res, { 'tenant endpoint reachable': (r) => r.status === 200 || r.status === 201 });
         if (res.status === 201) {
             try {
                 const body = JSON.parse(res.body);
@@ -76,7 +76,7 @@ export default function () {
             beneficiary_ifsc: 'HDFC0001234', purpose: 'salary',
         }), { headers: authHeaders });
         groupLatency.add(Date.now() - start, { group: 'single_ingest' });
-        check(res, { 'ingest reachable': (r) => r.status < 500 });
+        check(res, { 'ingest reachable': (r) => r.status === 200 || r.status === 201 });
     });
 
     sleep(0.5);
@@ -86,7 +86,7 @@ export default function () {
         const start = Date.now();
         const res = http.get(`${BASE_URL}/v1/intents?tenant_id=${tid}&limit=5`, { headers: authHeaders });
         groupLatency.add(Date.now() - start, { group: 'query_intents' });
-        check(res, { 'intents reachable': (r) => r.status < 500 });
+        check(res, { 'intents reachable': (r) => r.status === 200 || r.status === 201 });
     });
 
     sleep(0.5);
@@ -96,7 +96,7 @@ export default function () {
         const start = Date.now();
         const res = http.get(`${BASE_URL}/v1/dlq?tenant_id=${tid}&limit=5`, { headers: authHeaders });
         groupLatency.add(Date.now() - start, { group: 'query_dlq' });
-        check(res, { 'dlq reachable': (r) => r.status < 500 });
+        check(res, { 'dlq reachable': (r) => r.status === 200 || r.status === 201 });
     });
 
     sleep(0.5);
@@ -106,7 +106,7 @@ export default function () {
         const start = Date.now();
         const res = http.get(`${BASE_URL}/v1/dispatch?tenant_id=${tid}`, { headers: authHeaders });
         groupLatency.add(Date.now() - start, { group: 'dispatch' });
-        check(res, { 'dispatch reachable': (r) => r.status < 500 });
+        check(res, { 'dispatch reachable': (r) => r.status === 200 || r.status === 201 });
     });
 
     sleep(0.5);
@@ -116,7 +116,7 @@ export default function () {
         const start = Date.now();
         const res = http.get(`${BASE_URL}/v1/settlement/supported-psps`, { headers: authHeaders });
         groupLatency.add(Date.now() - start, { group: 'settlement_psps' });
-        check(res, { 'settlement psps reachable': (r) => r.status < 500 });
+        check(res, { 'settlement psps reachable': (r) => r.status === 200 || r.status === 201 });
     });
 
     sleep(0.5);
@@ -138,7 +138,7 @@ export default function () {
             { headers: { 'Authorization': authHeaders['Authorization'] } }
         );
         groupLatency.add(Date.now() - start, { group: 'settlement_upload' });
-        check(res, { 'settlement upload reachable': (r) => r.status < 500 });
+        check(res, { 'settlement upload reachable': (r) => r.status === 200 || r.status === 201 });
     });
 
     sleep(0.5);
@@ -148,7 +148,7 @@ export default function () {
         const start = Date.now();
         const res = http.get(`${BASE_URL}/v1/reconciliation?tenant_id=${tid}`, { headers: authHeaders });
         groupLatency.add(Date.now() - start, { group: 'reconciliation' });
-        check(res, { 'reconciliation reachable': (r) => r.status < 500 });
+        check(res, { 'reconciliation reachable': (r) => r.status === 200 || r.status === 201 });
     });
 
     sleep(0.5);
@@ -158,7 +158,7 @@ export default function () {
         const start = Date.now();
         const res = http.get(`${BASE_URL}/v1/evidence/packs?tenant_id=${tid}`, { headers: authHeaders });
         groupLatency.add(Date.now() - start, { group: 'evidence' });
-        check(res, { 'evidence reachable': (r) => r.status < 500 });
+        check(res, { 'evidence reachable': (r) => r.status === 200 || r.status === 201 });
     });
 
     sleep(0.5);
@@ -168,7 +168,7 @@ export default function () {
         const start = Date.now();
         const res = http.get(`${BASE_URL}/v1/projections?tenant_id=${tid}`, { headers: authHeaders });
         groupLatency.add(Date.now() - start, { group: 'projections' });
-        check(res, { 'projections reachable': (r) => r.status < 500 });
+        check(res, { 'projections reachable': (r) => r.status === 200 || r.status === 201 });
     });
 
     sleep(0.5);
@@ -178,7 +178,7 @@ export default function () {
         const start = Date.now();
         const res = http.get(`${BASE_URL}/v1/policies?tenant_id=${tid}`, { headers: authHeaders });
         groupLatency.add(Date.now() - start, { group: 'policies' });
-        check(res, { 'policies reachable': (r) => r.status < 500 });
+        check(res, { 'policies reachable': (r) => r.status === 200 || r.status === 201 });
     });
 
     sleep(0.5);
@@ -195,7 +195,7 @@ export default function () {
             query: 'show me payout summary for today',
         }), { headers: aiHeaders });
         groupLatency.add(Date.now() - start, { group: 'ai_query' });
-        check(res, { 'ai query reachable': (r) => r.status < 500 });
+        check(res, { 'ai query reachable': (r) => r.status === 200 || r.status === 201 });
     });
 
     sleep(0.5);
@@ -212,7 +212,7 @@ export default function () {
             message: 'what is my failure rate this week?',
         }), { headers: chatHeaders });
         groupLatency.add(Date.now() - start, { group: 'ai_chat' });
-        check(res, { 'ai chat reachable': (r) => r.status < 500 });
+        check(res, { 'ai chat reachable': (r) => r.status === 200 || r.status === 201 });
     });
 
     sleep(1);
