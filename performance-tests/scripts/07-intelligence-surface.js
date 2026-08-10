@@ -41,49 +41,49 @@ export default function () {
     // Intelligence Mode
     group('intelligence_mode', function () {
         const res = http.get(`${BASE_URL}/v1/projections?tenant_id=${tid}`, { headers });
-        check(res, { 'projections reachable': (r) => r.status < 500 });
+        check(res, { 'projections reachable': (r) => r.status === 200 || r.status === 201 });
     });
     sleep(0.3);
 
     // Policies
     group('policies', function () {
         const res = http.get(`${BASE_URL}/v1/policies?tenant_id=${tid}`, { headers });
-        check(res, { 'policies reachable': (r) => r.status < 500 });
+        check(res, { 'policies reachable': (r) => r.status === 200 || r.status === 201 });
     });
     sleep(0.3);
 
     // RCA
     group('rca', function () {
         const res = http.get(`${BASE_URL}/v1/rca?tenant_id=${tid}`, { headers });
-        check(res, { 'rca reachable': (r) => r.status < 500 });
+        check(res, { 'rca reachable': (r) => r.status === 200 || r.status === 201 });
     });
     sleep(0.3);
 
     // Evidence verify
     group('evidence_verify', function () {
         const res = http.get(`${BASE_URL}/v1/verify?tenant_id=${tid}`, { headers });
-        check(res, { 'verify reachable': (r) => r.status < 500 });
+        check(res, { 'verify reachable': (r) => r.status === 200 || r.status === 201 });
     });
     sleep(0.3);
 
     // Evidence packs
     group('evidence_packs', function () {
         const res = http.get(`${BASE_URL}/v1/evidence/packs?tenant_id=${tid}`, { headers });
-        check(res, { 'evidence packs reachable': (r) => r.status < 500 });
+        check(res, { 'evidence packs reachable': (r) => r.status === 200 || r.status === 201 });
     });
     sleep(0.3);
 
     // Settlement observations
     group('settlement_observations', function () {
         const res = http.get(`${BASE_URL}/v1/settlement/observations/batches?tenant_id=${tid}`, { headers });
-        check(res, { 'settlement observations reachable': (r) => r.status < 500 });
+        check(res, { 'settlement observations reachable': (r) => r.status === 200 || r.status === 201 });
     });
     sleep(0.3);
 
     // Reconciliation
     group('reconciliation', function () {
         const res = http.get(`${BASE_URL}/v1/reconciliation?tenant_id=${tid}`, { headers });
-        check(res, { 'reconciliation reachable': (r) => r.status < 500 });
+        check(res, { 'reconciliation reachable': (r) => r.status === 200 || r.status === 201 });
     });
     sleep(0.5);
 }
