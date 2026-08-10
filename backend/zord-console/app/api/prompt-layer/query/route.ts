@@ -1,4 +1,10 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
+import { getSessionTenantIdFromRequest } from '@/services/auth/resolvePayoutTenant.server'
+import {
+  consumeBffRateLimit,
+  rateLimitKeyForIp,
+  rateLimitKeyForTenant,
+} from '@/services/bff/rateLimit.server'
 
 // Always proxy at request time (no caching), since this depends on runtime env + backend state.
 export const dynamic = 'force-dynamic'
@@ -24,7 +30,22 @@ function upstreamCandidates() {
   )
 }
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
+  // CON-P1-20: throttle expensive Ask Zord calls per tenant (session preferred; IP fallback).
+  const session = await getSessionTenantIdFromRequest(req)
+  const headerTenant = req.headers.get('x-tenant-id')?.trim() || ''
+  const rateKey = session.tenantId?.trim()
+    ? rateLimitKeyForTenant(session.tenantId)
+    : headerTenant
+      ? rateLimitKeyForTenant(headerTenant)
+      : rateLimitKeyForIp(req)
+  const rate = consumeBffRateLimit({
+    bucket: 'prompt',
+    key: rateKey,
+    message: 'Too many Ask Zord requests. Try again shortly.',
+  })
+  if (!rate.ok) return rate.response
+
   const candidateUrls = upstreamCandidates().map((base) => `${normalizePromptLayerBase(base)}/query`)
 
   let body: unknown

@@ -10,10 +10,18 @@ import {
   parseJSONSafe,
   BackendAuthEnvelope,
 } from '@/services/auth/server'
+import { consumeBffRateLimit, rateLimitKeyForIp } from '@/services/bff/rateLimit.server'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(request: NextRequest) {
+  const rate = consumeBffRateLimit({
+    bucket: 'auth',
+    key: rateLimitKeyForIp(request),
+    message: 'Too many session refresh attempts. Try again shortly.',
+  })
+  if (!rate.ok) return rate.response
+
   const refreshToken = request.cookies.get(REFRESH_COOKIE_NAME)?.value
   if (!refreshToken) {
     const response = NextResponse.json({ code: 'INVALID_SESSION', message: 'Session expired' }, { status: 401 })

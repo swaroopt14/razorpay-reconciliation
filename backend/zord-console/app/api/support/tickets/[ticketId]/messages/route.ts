@@ -13,6 +13,7 @@ import {
   saveTenantSupportTickets,
 } from '@/services/support/supportTicketStore.server'
 import { notifySupportSlack } from '@/services/support/supportSlack.server'
+import { consumeBffRateLimit, rateLimitKeyForTenant } from '@/services/bff/rateLimit.server'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,6 +31,15 @@ export async function POST(
 ) {
   const gate = await requireSessionTenantForProdProxy(request)
   if (!gate.ok) return gate.response
+  const rate = consumeBffRateLimit({
+    bucket: 'support',
+    key: rateLimitKeyForTenant(gate.tenantId),
+    message: 'Too many support message requests. Try again shortly.',
+  })
+  if (!rate.ok) {
+    applyRefreshedSessionCookies(rate.response, gate.refreshedPayload)
+    return rate.response
+  }
 
   const { ticketId } = await context.params
   if (!ticketId?.trim()) {

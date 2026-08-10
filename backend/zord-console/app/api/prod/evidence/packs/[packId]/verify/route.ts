@@ -4,6 +4,7 @@ import {
   applyRefreshedSessionCookies,
   requireSessionTenantForProdProxy,
 } from '@/services/auth/resolvePayoutTenant.server'
+import { consumeBffRateLimit, rateLimitKeyForTenant } from '@/services/bff/rateLimit.server'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,6 +14,15 @@ export async function POST(
 ) {
   const gate = await requireSessionTenantForProdProxy(request)
   if (!gate.ok) return gate.response
+  const rate = consumeBffRateLimit({
+    bucket: 'evidence_verify',
+    key: rateLimitKeyForTenant(gate.tenantId),
+    message: 'Too many evidence verify requests. Try again shortly.',
+  })
+  if (!rate.ok) {
+    applyRefreshedSessionCookies(rate.response, gate.refreshedPayload)
+    return rate.response
+  }
   const tenantId = gate.tenantId
   const { packId } = await context.params
   const encoded = encodeURIComponent(packId)

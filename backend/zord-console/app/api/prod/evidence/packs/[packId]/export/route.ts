@@ -4,6 +4,7 @@ import {
   applyRefreshedSessionCookies,
   requireSessionTenantForProdProxy,
 } from '@/services/auth/resolvePayoutTenant.server'
+import { consumeBffRateLimit, rateLimitKeyForTenant } from '@/services/bff/rateLimit.server'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -101,6 +102,15 @@ export async function GET(
 ) {
   const gate = await requireSessionTenantForProdProxy(request)
   if (!gate.ok) return gate.response
+  const rate = consumeBffRateLimit({
+    bucket: 'evidence_export',
+    key: rateLimitKeyForTenant(gate.tenantId),
+    message: 'Too many evidence export requests. Try again shortly.',
+  })
+  if (!rate.ok) {
+    applyRefreshedSessionCookies(rate.response, gate.refreshedPayload)
+    return rate.response
+  }
 
   const { packId: rawPackId } = await context.params
   const packId = rawPackId?.trim() || ''

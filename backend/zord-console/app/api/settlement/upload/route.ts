@@ -4,6 +4,7 @@ import {
   applyRefreshedSessionCookies,
   resolveSettlementUploadContext,
 } from '@/services/auth/resolvePayoutTenant.server'
+import { consumeBffRateLimit, rateLimitKeyForTenant } from '@/services/bff/rateLimit.server'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -31,6 +32,16 @@ export async function POST(req: NextRequest) {
     process.env.ZORD_SETTLEMENT_API_KEY ?? process.env.ZORD_BULK_INGEST_API_KEY,
   )
   if (!ctx.ok) return ctx.response
+
+  const rate = consumeBffRateLimit({
+    bucket: 'reprocess',
+    key: rateLimitKeyForTenant(ctx.tenantId),
+    message: 'Too many settlement upload/reprocess requests. Try again shortly.',
+  })
+  if (!rate.ok) {
+    applyRefreshedSessionCookies(rate.response, ctx.refreshedPayload)
+    return rate.response
+  }
 
   const psp = req.nextUrl.searchParams.get('psp')
   if (!psp?.trim()) {

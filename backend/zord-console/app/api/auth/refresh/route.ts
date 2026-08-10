@@ -11,10 +11,18 @@ import {
   parseJSONSafe,
   sanitizeAuthEnvelope,
 } from '@/services/auth/server'
+import { consumeBffRateLimit, rateLimitKeyForIp } from '@/services/bff/rateLimit.server'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(request: NextRequest) {
+  const rate = consumeBffRateLimit({
+    bucket: 'auth',
+    key: rateLimitKeyForIp(request),
+    message: 'Too many refresh attempts. Try again shortly.',
+  })
+  if (!rate.ok) return rate.response
+
   const body = (await parseJSONSafe<{ refresh_token?: string }>(request)) ?? {}
   const refreshToken = body.refresh_token || request.cookies.get(REFRESH_COOKIE_NAME)?.value
 

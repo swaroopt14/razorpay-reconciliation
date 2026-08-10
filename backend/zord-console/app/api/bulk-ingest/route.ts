@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
   applyRefreshedSessionCookies,
+  getTenantIdForBearerAuthorizationHeader,
   resolveBulkIngestForwardAuthorization,
 } from '@/services/auth/resolvePayoutTenant.server'
+import {
+  consumeBffRateLimit,
+  rateLimitKeyForIp,
+  rateLimitKeyForTenant,
+} from '@/services/bff/rateLimit.server'
 
 /** Proxies multipart bulk file to zord-edge `POST /v1/bulk-ingest` only (never zord-intelligence).
  * Enforces session vs API-key tenant match when both are present; never trusts client tenant_id. */
@@ -22,6 +28,17 @@ export async function POST(req: NextRequest) {
 
   const authResolution = await resolveBulkIngestForwardAuthorization(req, process.env.ZORD_BULK_INGEST_API_KEY)
   if (!authResolution.ok) return authResolution.response
+
+  const bearerTenant = await getTenantIdForBearerAuthorizationHeader(authResolution.authorization)
+  const rate = consumeBffRateLimit({
+    bucket: 'reprocess',
+    key: bearerTenant ? rateLimitKeyForTenant(bearerTenant) : rateLimitKeyForIp(req),
+    message: 'Too many ingest/reprocess requests. Try again shortly.',
+  })
+  if (!rate.ok) {
+    applyRefreshedSessionCookies(rate.response, authResolution.refreshedPayload)
+    return rate.response
+  }
 
   const bodyBuffer = Buffer.from(await req.arrayBuffer())
   const sourceType =

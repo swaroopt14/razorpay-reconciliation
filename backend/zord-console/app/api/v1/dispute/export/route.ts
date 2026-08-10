@@ -8,6 +8,7 @@ import {
 } from '../../evidence/_shared'
 import type { EvidencePackFull, EvidencePackSummaryRow } from '@/services/payout-command/prod-api/evidenceTypes'
 import { apiTrimmedString } from '@/services/payout-command/prod-api/coerceApiField'
+import { consumeBffRateLimit, rateLimitKeyForTenant } from '@/services/bff/rateLimit.server'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -184,6 +185,15 @@ async function resolvePack(tenantId: string, paymentReference: string): Promise<
 export async function POST(request: NextRequest) {
   const gate = await gateEvidenceTenant(request)
   if (!gate.ok) return gate.response
+  const rate = consumeBffRateLimit({
+    bucket: 'evidence_export',
+    key: rateLimitKeyForTenant(gate.tenantId),
+    message: 'Too many dispute export requests. Try again shortly.',
+  })
+  if (!rate.ok) {
+    applyEvidenceGateCookies(rate.response, gate.refreshedPayload)
+    return rate.response
+  }
 
   let body: ExportRequestBody
   try {
