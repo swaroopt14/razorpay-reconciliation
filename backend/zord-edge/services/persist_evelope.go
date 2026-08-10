@@ -125,16 +125,45 @@ func ReserveArtifact(ctx context.Context, forceReprocess bool, input model.Artif
 	artifactVersionID := uuid.Must(uuid.NewV7())
 	artifactID := uuid.Must(uuid.NewV7())
 
-	// For reprocess — keep same artifact_id as original
 	if forceReprocess {
+		// reprocess — keep same artifact_id, new version_id
 		var existingID uuid.UUID
 		err := db.DB.QueryRowContext(ctx,
-			`SELECT artifact_id FROM artifacts WHERE tenant_id = $1 AND file_hash = $2 ORDER BY created_at DESC LIMIT 1`,
+			`SELECT artifact_id FROM artifacts 
+             WHERE tenant_id = $1 AND file_hash = $2 
+             ORDER BY created_at DESC LIMIT 1`,
 			input.TenantId, input.FileHash,
 		).Scan(&existingID)
 		if err == nil {
 			artifactID = existingID
 		}
+	} else {
+		// not reprocess — check if this exact file was already processed
+		var existingStatus string
+		err := db.DB.QueryRowContext(ctx,
+			`SELECT status FROM artifacts 
+             WHERE tenant_id = $1 AND file_hash = $2 
+             ORDER BY created_at DESC LIMIT 1`,
+			input.TenantId, input.FileHash,
+		).Scan(&existingStatus)
+
+		if err == nil {
+			// file already exists — reject before touching S3
+			logger.Log.Warn("duplicate file rejected",
+				slog.String("file_hash", input.FileHash),
+				slog.String("tenant_id", input.TenantId.String()),
+				slog.String("existing_status", existingStatus))
+
+			switch existingStatus {
+			case ArtifactStatusProcessing:
+				return uuid.Nil, uuid.Nil, ErrBatchInProgress
+			case ArtifactStatusCompleted:
+				return uuid.Nil, uuid.Nil, ErrBatchAlreadyProcessed
+			case ArtifactStatusFailed:
+				return uuid.Nil, uuid.Nil, ErrBatchFailedRetry
+			}
+		}
+		// err == sql.ErrNoRows → genuinely new file, proceed to INSERT
 	}
 
 	_, err := db.DB.ExecContext(ctx, `
@@ -155,14 +184,14 @@ func ReserveArtifact(ctx context.Context, forceReprocess bool, input model.Artif
 	if err != nil {
 		pqErr, ok := err.(*pq.Error)
 		if ok && pqErr.Code == "23505" {
-			// constraint fired — find out what state the existing batch is in
+			// DB constraint fired — only happens for batch_id conflict now
 			var existingStatus string
 			_ = db.DB.QueryRowContext(ctx,
 				`SELECT status FROM artifacts WHERE tenant_id = $1 AND batch_id = $2`,
 				input.TenantId, input.BatchID,
 			).Scan(&existingStatus)
 
-			logger.Log.Warn("duplicate batch rejected",
+			logger.Log.Warn("duplicate batch_id rejected",
 				slog.String("batch_id", input.BatchID),
 				slog.String("tenant_id", input.TenantId.String()),
 				slog.String("existing_status", existingStatus))
