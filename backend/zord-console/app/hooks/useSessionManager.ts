@@ -28,11 +28,14 @@ export function useSessionManager() {
         broadcastChannelRef.current?.postMessage({ type: 'SESSION_EXTENDED' })
         // Poll status immediately to update local state
         await checkStatus()
-      } else {
+        return
+      }
+      // CON-P1-03: only definitive session rejection logs the operator out.
+      if (response.status === 401 || response.status === 403) {
         await forceLogout()
       }
     } catch {
-      await forceLogout()
+      // Transport failure — keep the session; idle timer will retry later.
     }
   }, [forceLogout])
 
@@ -59,7 +62,8 @@ export function useSessionManager() {
         } else {
           setShowWarning(false)
         }
-      } else {
+      } else if (response.status === 401 || response.status === 403) {
+        // CON-P1-03: definitive rejection only — not Edge outages (503).
         await forceLogout()
       }
     } catch {
