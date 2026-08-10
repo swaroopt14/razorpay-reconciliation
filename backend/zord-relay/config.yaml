@@ -42,7 +42,7 @@ services:
     route_allow_list:
       - source_service: "zord-intent-engine"
         event_type: "intent.created.v1"
-        event_version: "1"
+        event_version: "v1"
         schema_version: "v1"
         topic: "payments.intent.events.v1"
       - source_service: "zord-intent-engine"
