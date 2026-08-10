@@ -330,7 +330,7 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 			e.EventID = re.EventID
 			e.TenantID = re.TenantID
 			e.TraceID = re.TraceID
-	
+
 			return handler.HandleSettlementCreated(ctx, e)
 		})
 
@@ -454,10 +454,33 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 	// so same-tenant events always land on the same partition and are processed sequentially.
 	// Different topics (e.g. attachment.decision vs batch.summary) process concurrently —
 	// this is the main throughput multiplier at 1500-2000 events/sec.
+	//
+	// INTEL-04: topics exempted from the required-field gate below — see
+	// requiredFieldExemptTopics' doc comment for why cfg.TopicDLQItem
+	// ("payments.intent.dlq") is deliberately NOT among them despite
+	// superficially looking like the same kind of flat, non-RelayEvent-
+	// enveloped topic as cfg.TopicDLQ.
+	//
+	// cfg.TopicCorridorHealthTick / cfg.TopicSLATimerTick (senior-engineer
+	// review fix, confirmed against models.CorridorHealthTickEvent /
+	// SLATimerTickEvent in internal/models/events.go): both are flat,
+	// non-RelayEvent-enveloped internal heartbeat/tick events — carrying
+	// EventID/TenantID/CorridorID/TickAt/TraceID but structurally no
+	// EventType or SchemaVersion field at all, the same shape as
+	// cfg.TopicDLQ's DLQEvent, not payments.intent.dlq's DLQItemEvent.
+	// Without this exemption every message on either topic would
+	// permanently fail schemaVersion == "" and go straight to the DLQ.
+	requiredFieldExemptTopics := map[string]bool{
+		cfg.TopicDLQ:                true,
+		cfg.TopicCorridorHealthTick: true,
+		cfg.TopicSLATimerTick:       true,
+	}
+
 	topicCount := 0
 	for topic, fn := range topicHandlers {
 		t, f := topic, fn // capture loop variables before goroutine launch
-		go consumeSingleTopic(ctx, brokers, cfg.KafkaGroupID, t, f, producer, cfg.TopicIntelligenceDLQ)
+		exempt := requiredFieldExemptTopics[t]
+		go consumeSingleTopic(ctx, brokers, cfg.KafkaGroupID, t, f, producer, cfg.TopicIntelligenceDLQ, exempt)
 		topicCount++
 	}
 
@@ -528,6 +551,10 @@ func (c KafkaGoHeaderCarrier) Keys() []string {
 // permanently-failed event's durable DLQ record is confirmed published to
 // dlqTopic via producer. The offset is NEVER advanced while that DLQ
 // publish is still failing — see the retry loop below.
+//
+// exemptFromRequiredFieldCheck disables the INTEL-04 missing-schema_version/
+// missing-trace_id gate for this topic only — see requiredFieldExemptTopics
+// in StartConsumers for which topic that is and why.
 func consumeSingleTopic(
 	ctx context.Context,
 	brokers []string,
@@ -535,6 +562,7 @@ func consumeSingleTopic(
 	handle func(context.Context, kafka.Message) error,
 	producer *Producer,
 	dlqTopic string,
+	exemptFromRequiredFieldCheck bool,
 ) {
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        brokers,
@@ -614,9 +642,24 @@ func consumeSingleTopic(
 		// poison/unmarshal-error message. Reuses the `err` already declared
 		// by FetchMessage above (always nil here — the fetch-error branch
 		// continues the loop before reaching this point).
-		if !models.IsKnownSchemaVersion(eventVersion) {
+		//
+		// INTEL-04: on top of the unsupported-version check above, a
+		// *supported* production event topic must also carry a non-empty
+		// schema_version and trace_id, full stop — this deliberately
+		// reopens the "ZPI never rejects on schema_version absence" leniency
+		// (Locked Decision A.2) per explicit product direction. Checked
+		// against schemaVersion/traceID (the raw extracted values, before
+		// eventVersion's "legacy" default is applied above) so an absent
+		// value is never laundered into a passing "legacy" version by the
+		// defaulting that happens for logging/lineage purposes elsewhere.
+		// exemptFromRequiredFieldCheck carves out cfg.TopicDLQ only — see
+		// requiredFieldExemptTopics in StartConsumers.
+		switch {
+		case !models.IsKnownSchemaVersion(eventVersion):
 			err = fmt.Errorf("%w: schema_version=%q topic=%s", errUnsupportedSchemaVersion, eventVersion, msg.Topic)
-		} else {
+		case !exemptFromRequiredFieldCheck && (schemaVersion == "" || traceID == ""):
+			err = fmt.Errorf("%w: schema_version=%q trace_id=%q topic=%s", errMissingRequiredField, schemaVersion, traceID, msg.Topic)
+		default:
 			err = handle(msgCtx, msg)
 		}
 
@@ -630,9 +673,10 @@ func consumeSingleTopic(
 			// deadlock/serialization errors internally, not connection
 			// failures, so without this a brief outage would go straight to
 			// the DLQ instead of recovering. A genuine poison message (bad
-			// JSON) or an unsupported schema version skips this — retrying
-			// identical bytes/version cannot help either case.
-			if !isUnmarshalError(err) && !errors.Is(err, errUnsupportedSchemaVersion) {
+			// JSON), an unsupported schema version, or a missing required
+			// field (INTEL-04) skips this — retrying identical bytes cannot
+			// supply a field the message never carried in the first place.
+			if !isUnmarshalError(err) && !errors.Is(err, errUnsupportedSchemaVersion) && !errors.Is(err, errMissingRequiredField) {
 				for attempt, backoff := 2, time.Second; attempt <= 3 && err != nil; attempt, backoff = attempt+1, backoff*3 {
 					time.Sleep(backoff)
 					log.Printf("kafka: retrying handler topic=%s partition=%d offset=%d attempt=%d/3",
@@ -693,14 +737,34 @@ func isUnmarshalError(err error) bool {
 // poison message, retrying cannot help — the event goes straight to the DLQ.
 var errUnsupportedSchemaVersion = errors.New("unsupported schema version")
 
+// errMissingRequiredField is the sentinel wrapped into the synthetic error
+// consumeSingleTopic raises when a supported-event topic's message is
+// missing schema_version and/or trace_id (INTEL-04). Like an unsupported
+// schema version, retrying cannot help — the event goes straight to the DLQ.
+// See requiredFieldExemptTopics in StartConsumers for the one topic (dlq.event)
+// this check does not apply to.
+var errMissingRequiredField = errors.New("missing required event field")
+
 // extractEnvelopeFieldsBestEffort tries to pull the domain event_type,
 // schema_version, and trace_id out of raw message bytes without knowing the
 // topic's real shape — same best-effort, topic-agnostic idiom as
 // extractEventIDBestEffort below, used because the typed RelayEvent unmarshal
 // only happens inside each topic's own handler closure in StartConsumers, not
-// here. All three fields come back "" for the two flat, non-RelayEvent-
-// enveloped topics (dlq.event, payments.intent.dlq); the caller falls back to
-// the topic name and DefaultEventVersion in that case.
+// here.
+//
+// CORRECTION (INTEL-04 investigation): this doc previously claimed all three
+// fields come back "" for both flat, non-RelayEvent-enveloped topics
+// (dlq.event, payments.intent.dlq). That was only ever true for dlq.event
+// (models.DLQEvent has no event_type/schema_version field at all — see
+// requiredFieldExemptTopics in StartConsumers, which is why it's the one
+// topic exempted from the INTEL-04 required-field gate). payments.intent.dlq
+// is different: zord-relay's DLQItemEvent carries event_type/event_version/
+// schema_version/trace_id as real flat top-level JSON fields (stamped by
+// zord-intent-engine's DLQ lease handler), which this generic top-level
+// probe successfully reads — verified against zord-relay/model/event.go's
+// DLQItemEvent struct tags, which match this probe's field names exactly.
+// For any topic without a real value, the caller falls back to the topic
+// name and DefaultEventVersion.
 //
 // schema_version has a nested fallback: some producers (confirmed live
 // 2026-08-06 for zord-outcome-engine-sourced events — variance.record.created,
@@ -753,6 +817,8 @@ func buildDLQRecord(msgCtx context.Context, msg kafka.Message, handlerErr error)
 		errClass = models.DLQErrorClassUnmarshal
 	case errors.Is(handlerErr, errUnsupportedSchemaVersion):
 		errClass = models.DLQErrorClassUnsupportedVersion
+	case errors.Is(handlerErr, errMissingRequiredField):
+		errClass = models.DLQErrorClassMissingField
 	}
 	errMsg := handlerErr.Error()
 	const maxErrLen = 2000
