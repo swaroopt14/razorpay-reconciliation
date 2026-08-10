@@ -240,7 +240,7 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
               echo "=== Go Vet ==="
               go vet ./...
               echo "=== Go Test + Coverage ==="
-              go test ./... -count=1 -timeout 120s -coverprofile=coverage.out -covermode=atomic -v 2>&1 | tee test-output.txt
+              go test ./... -count=1 -timeout 120s -coverprofile=coverage.out -v 2>&1 | tee test-output.txt
 
               if [ -f coverage.out ]; then
                 echo "=== Coverage Summary ==="

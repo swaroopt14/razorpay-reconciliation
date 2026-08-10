@@ -243,7 +243,7 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
                 echo "=== Go Vet (${service}) ==="
                 (cd "${service_dir}" && go vet ./...)
                 echo "=== Go Test + Coverage (${service}) ==="
-                (cd "${service_dir}" && go test ./... -count=1 -timeout 120s -coverprofile=coverage.out -covermode=atomic -v)
+                (cd "${service_dir}" && go test ./... -count=1 -timeout 120s -coverprofile=coverage.out -v)
 
                 # Print coverage summary
                 if [ -f "${service_dir}/coverage.out" ]; then
