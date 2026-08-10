@@ -59,6 +59,7 @@ type BulkResult struct {
 	EnvelopeID string `json:"EnvelopeID,omitempty"`
 	TraceID    string `json:"Trace_id,omitempty"`
 	Status     string `json:"Status"`
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
 	ReceivedAt string `json:"Received_At,omitempty"`
 	Error      string `json:"error,omitempty"`
 }
@@ -457,12 +458,14 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 							resultsMap[job.Row] = BulkResult{
 								Row:    job.Row,
 								Status: "CONFLICT",
+								IdempotencyKey: idempotencyKey,
 								Error:  "idempotency key reuse with different payload",
 							}
 						} else if errors.Is(err, services.ErrIdempotencyInFlight) {
 							resultsMap[job.Row] = BulkResult{
 								Row:    job.Row,
 								Status: "CONFLICT",
+								IdempotencyKey: idempotencyKey,
 								Error:  "idempotency key in flight — retry later",
 							}
 						} else {
@@ -470,6 +473,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 								Row:     job.Row,
 								Status:  "FAILED",
 								TraceID: traceID,
+								IdempotencyKey: idempotencyKey,
 								Error:   err.Error(),
 							}
 						}
@@ -480,6 +484,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 							Status:     "DUPLICATE",
 							TraceID:    traceID,
 							EnvelopeID: duplicateID.String(),
+							IdempotencyKey: idempotencyKey,
 							Error:      "duplicate idempotency key",
 						}
 					} else {
@@ -489,6 +494,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 							Status:     "Accepted",
 							TraceID:    traceID,
 							EnvelopeID: storageAck.EnvelopeId,
+							IdempotencyKey: idempotencyKey,
 							ReceivedAt: storageAck.ReceivedAt.Format(time.RFC3339Nano),
 						}
 					}
@@ -571,13 +577,18 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 				}
 
 				rowIdempotencyKey := extractIdempotencyKey(rawJSON)
-				if rowIdempotencyKey == "" {
+				if forceReprocess {
+					// always override regardless of what's in the row
 					var input string
-					if forceReprocess {
-						input = fmt.Sprintf("%s:%d:%s:reprocess:%s", fileHash, rowNum, tenantID.String(), batchIDHeader)
+					if rowIdempotencyKey != "" {
+						input = fmt.Sprintf("%s:%s:reprocess:%s", rowIdempotencyKey, tenantID.String(), batchIDHeader)
 					} else {
-						input = fmt.Sprintf("%s:%d:%s", fileHash, rowNum, tenantID.String())
+						input = fmt.Sprintf("%s:%d:%s:reprocess:%s", fileHash, rowNum, tenantID.String(), batchIDHeader)
 					}
+					sum := sha256.Sum256([]byte(input))
+					rowIdempotencyKey = hex.EncodeToString(sum[:])
+				} else if rowIdempotencyKey == "" {
+					input := fmt.Sprintf("%s:%d:%s", fileHash, rowNum, tenantID.String())
 					sum := sha256.Sum256([]byte(input))
 					rowIdempotencyKey = hex.EncodeToString(sum[:])
 				}
@@ -620,13 +631,18 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 				}
 
 				rowIdempotencyKey := extractIdempotencyKey(jsonPayload)
-				if rowIdempotencyKey == "" {
+				if forceReprocess {
+					// always override regardless of what's in the row
 					var input string
-					if forceReprocess {
-						input = fmt.Sprintf("%s:%d:%s:reprocess:%s", fileHash, rowNum, tenantID.String(), batchIDHeader)
+					if rowIdempotencyKey != "" {
+						input = fmt.Sprintf("%s:%s:reprocess:%s", rowIdempotencyKey, tenantID.String(), batchIDHeader)
 					} else {
-						input = fmt.Sprintf("%s:%d:%s", fileHash, rowNum, tenantID.String())
+						input = fmt.Sprintf("%s:%d:%s:reprocess:%s", fileHash, rowNum, tenantID.String(), batchIDHeader)
 					}
+					sum := sha256.Sum256([]byte(input))
+					rowIdempotencyKey = hex.EncodeToString(sum[:])
+				} else if rowIdempotencyKey == "" {
+					input := fmt.Sprintf("%s:%d:%s", fileHash, rowNum, tenantID.String())
 					sum := sha256.Sum256([]byte(input))
 					rowIdempotencyKey = hex.EncodeToString(sum[:])
 				}
@@ -777,14 +793,16 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 						//atomic.AddInt32(&failedCount, 1)
 						if errors.Is(err, services.ErrFingerprintMismatch) {
 							resultsMap[job.Row] = BulkResult{
-								Row:    job.Row,
-								Status: "CONFLICT",
-								Error:  "idempotency key reuse with different payload",
+								Row:            job.Row,
+								Status:         "CONFLICT",
+								IdempotencyKey: idempotencyKey,
+								Error:          "idempotency key reuse with different payload",
 							}
 						} else if errors.Is(err, services.ErrIdempotencyInFlight) {
 							resultsMap[job.Row] = BulkResult{
 								Row:    job.Row,
 								Status: "CONFLICT",
+								IdempotencyKey: idempotencyKey,
 								Error:  "idempotency key in flight — retry later",
 							}
 						} else {
@@ -792,6 +810,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 								Row:     job.Row,
 								Status:  "FAILED",
 								TraceID: traceID,
+								IdempotencyKey: idempotencyKey,
 								Error:   err.Error(),
 							}
 						}
@@ -802,6 +821,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 							Status:     "DUPLICATE",
 							TraceID:    traceID,
 							EnvelopeID: duplicateID.String(),
+							IdempotencyKey: idempotencyKey,
 							Error:      "duplicate idempotency key",
 						}
 					} else {
@@ -811,6 +831,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 							Status:     "Accepted",
 							TraceID:    traceID,
 							EnvelopeID: storageAck.EnvelopeId,
+							IdempotencyKey: idempotencyKey,
 							ReceivedAt: storageAck.ReceivedAt.Format(time.RFC3339Nano),
 						}
 					}
@@ -909,13 +930,18 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 				}
 
 				rowIdempotencyKey := extractIdempotencyKey(rawJSON)
-				if rowIdempotencyKey == "" {
+				if forceReprocess {
+					// always override regardless of what's in the row
 					var input string
-					if forceReprocess {
-						input = fmt.Sprintf("%s:%d:%s:reprocess:%s", fileHash, rowNum, tenantID.String(), batchIDHeader)
+					if rowIdempotencyKey != "" {
+						input = fmt.Sprintf("%s:%s:reprocess:%s", rowIdempotencyKey, tenantID.String(), batchIDHeader)
 					} else {
-						input = fmt.Sprintf("%s:%d:%s", fileHash, rowNum, tenantID.String())
+						input = fmt.Sprintf("%s:%d:%s:reprocess:%s", fileHash, rowNum, tenantID.String(), batchIDHeader)
 					}
+					sum := sha256.Sum256([]byte(input))
+					rowIdempotencyKey = hex.EncodeToString(sum[:])
+				} else if rowIdempotencyKey == "" {
+					input := fmt.Sprintf("%s:%d:%s", fileHash, rowNum, tenantID.String())
 					sum := sha256.Sum256([]byte(input))
 					rowIdempotencyKey = hex.EncodeToString(sum[:])
 				}
@@ -958,13 +984,18 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 				}
 
 				rowIdempotencyKey := extractIdempotencyKey(jsonPayload)
-				if rowIdempotencyKey == "" {
+				if forceReprocess {
+					// always override regardless of what's in the row
 					var input string
-					if forceReprocess {
-						input = fmt.Sprintf("%s:%d:%s:reprocess:%s", fileHash, rowNum, tenantID.String(), batchIDHeader)
+					if rowIdempotencyKey != "" {
+						input = fmt.Sprintf("%s:%s:reprocess:%s", rowIdempotencyKey, tenantID.String(), batchIDHeader)
 					} else {
-						input = fmt.Sprintf("%s:%d:%s", fileHash, rowNum, tenantID.String())
+						input = fmt.Sprintf("%s:%d:%s:reprocess:%s", fileHash, rowNum, tenantID.String(), batchIDHeader)
 					}
+					sum := sha256.Sum256([]byte(input))
+					rowIdempotencyKey = hex.EncodeToString(sum[:])
+				} else if rowIdempotencyKey == "" {
+					input := fmt.Sprintf("%s:%d:%s", fileHash, rowNum, tenantID.String())
 					sum := sha256.Sum256([]byte(input))
 					rowIdempotencyKey = hex.EncodeToString(sum[:])
 				}
