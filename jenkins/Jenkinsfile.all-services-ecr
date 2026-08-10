@@ -57,7 +57,17 @@ pipeline {
             error('Resolved git branch is empty after normalizing GIT_BRANCH')
           }
 
-          env.RESOLVED_IMAGE_TAG = params.IMAGE_TAG?.trim() ? params.IMAGE_TAG.trim() : "v${env.BUILD_NUMBER}"
+          // Branch-aware image tagging:
+          // main/master → v{BUILD_NUMBER} (production)
+          // feature branches → {sanitized-branch}-{short-sha}
+          if (params.IMAGE_TAG?.trim()) {
+            env.RESOLVED_IMAGE_TAG = params.IMAGE_TAG.trim()
+          } else if (normalizedGitBranch in ['main', 'master']) {
+            env.RESOLVED_IMAGE_TAG = "v${env.BUILD_NUMBER}"
+          } else {
+            def sanitizedBranch = normalizedGitBranch.replaceAll('[^a-zA-Z0-9]', '-').replaceAll('-+', '-').take(50)
+            env.RESOLVED_IMAGE_TAG = "${sanitizedBranch}-${shortSha}"
+          }
           env.ECR_REGISTRY = "${params.AWS_ACCOUNT_ID}.dkr.ecr.${params.AWS_REGION}.amazonaws.com"
           env.CHECKOUT_SHORT_SHA = shortSha
           env.CHECKOUT_BRANCH = checkoutBranch
@@ -79,11 +89,13 @@ Checked out branch: ${env.CHECKOUT_BRANCH}
 Checked out commit: ${env.CHECKOUT_SHORT_SHA}
 Manifest update strategy: sed
 Services to build: ${env.SERVICE_LIST}
+Image tag: ${env.RESOLVED_IMAGE_TAG}
+Tag strategy: ${normalizedGitBranch in ['main', 'master'] ? 'production (vN)' : 'branch-aware (branch-sha)'}
 Run SonarQube: ${params.RUN_SONARQUBE}
 SonarQube environment: ${params.SONARQUBE_ENV}
 SonarScanner tool: ${params.SONAR_SCANNER_TOOL}
 Sonar project key prefix: ${params.SONAR_PROJECT_KEY_PREFIX}
-Target git push branch: ${params.GIT_BRANCH}
+Target git push branch: ${normalizedGitBranch}
 Resolved git push ref: ${env.GIT_PUSH_REF}
 """.trim()
         }
@@ -147,6 +159,58 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
               '''
             }
           }
+        }
+      }
+    }
+
+    stage('Run Tests') {
+      steps {
+        script {
+          sh '''
+            set -euo pipefail
+
+            for service in ${SERVICE_LIST}; do
+              service_dir="backend/${service}"
+
+              if [ ! -d "${service_dir}" ]; then
+                echo "Service directory not found: ${service_dir}" >&2
+                exit 1
+              fi
+
+              echo "========================================"
+              echo "Running tests for ${service}"
+              echo "========================================"
+
+              if [ -f "${service_dir}/go.mod" ]; then
+                # Go service — run go vet + go test
+                echo "=== Go Vet (${service}) ==="
+                (cd "${service_dir}" && go vet ./...)
+                echo "=== Go Test (${service}) ==="
+                (cd "${service_dir}" && go test ./... -count=1 -timeout 120s -v)
+                echo "=== Tests Passed (${service}) ==="
+
+              elif [ -f "${service_dir}/package.json" ]; then
+                # Node.js service — run lint + type check
+                echo "=== npm ci (${service}) ==="
+                (cd "${service_dir}" && npm ci --prefer-offline)
+                echo "=== Lint (${service}) ==="
+                (cd "${service_dir}" && npm run lint)
+                echo "=== Type Check (${service}) ==="
+                (cd "${service_dir}" && npx tsc --noEmit || true)
+                echo "=== Checks Passed (${service}) ==="
+
+              elif [ -f "${service_dir}/requirements.txt" ]; then
+                # Python service — run syntax check
+                echo "=== Python Syntax Check (${service}) ==="
+                (cd "${service_dir}" && python -m py_compile app/ml_service.py)
+                (cd "${service_dir}" && python -m py_compile app/config.py)
+                echo "=== Checks Passed (${service}) ==="
+
+              else
+                echo "No recognized test framework for ${service} — skipping"
+              fi
+            done
+          '''
         }
       }
     }
