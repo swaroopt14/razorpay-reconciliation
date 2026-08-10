@@ -1,0 +1,29 @@
+# PLAT-03: Enforce LF line endings for all shell scripts
+# Prevents CRLF from breaking bash on Linux CI agents
+
+# Shell scripts — always LF
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Dockerfiles — always LF
+Dockerfile text eol=lf
+Dockerfile.* text eol=lf
+
+# Entrypoints — always LF
+entrypoint.sh text eol=lf
+
+# CI/CD config — always LF
+Jenkinsfile* text eol=lf
+
+# YAML/YML — always LF (K8s manifests, docker-compose)
+*.yaml text eol=lf
+*.yml text eol=lf
+
+# Go source — always LF
+*.go text eol=lf
+
+# SQL migrations — always LF
+*.sql text eol=lf
+
+# Default: auto-detect for everything else
+* text=auto
