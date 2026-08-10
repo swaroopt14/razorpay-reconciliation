@@ -108,6 +108,11 @@ type ServiceConfig struct {
 	// Key: event_type, Value: Kafka topic name.
 	TopicMap map[string]string `mapstructure:"topic_map"`
 
+	// RouteAllowList is the explicit allow-list for event routing.
+	// Any event NOT matching an entry in this list goes to the poison DLQ (fail-closed).
+	// When empty, routing falls back to TopicMap + DefaultTopic (legacy mode).
+	RouteAllowList []RouteAllowListEntry `mapstructure:"route_allow_list"`
+
 	// IsDLQ tells relay to use DLQClient/DLQWorker instead of OutboxClient/OutboxWorker
 	IsDLQ bool `mapstructure:"is_dlq"`
 
@@ -127,6 +132,15 @@ type ServiceConfig struct {
 	MaxRetryAttempts int           `mapstructure:"max_retry_attempts"`
 	RetryBaseDelay   time.Duration `mapstructure:"retry_base_delay"`
 	RetryMaxDelay    time.Duration `mapstructure:"retry_max_delay"`
+}
+
+// RouteAllowListEntry defines an exact match rule for routing.
+type RouteAllowListEntry struct {
+	SourceService string `mapstructure:"source_service"`
+	EventType     string `mapstructure:"event_type"`
+	EventVersion  string `mapstructure:"event_version"`
+	SchemaVersion string `mapstructure:"schema_version"`
+	Topic         string `mapstructure:"topic"`
 }
 
 // DBConfig holds connection settings for Service 4's own Postgres database.
