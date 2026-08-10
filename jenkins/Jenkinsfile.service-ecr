@@ -247,8 +247,8 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
               go mod download
               echo "=== Go Vet ==="
               go vet ./...
-              echo "=== Go Test + Coverage ==="
-              go test ./... -count=1 -timeout 120s -coverprofile=coverage.out -v 2>&1 | tee test-output.txt
+              echo "=== Go Test ==="
+              go test ./... -count=1 -timeout 120s -v 2>&1 | tee test-output.txt
 
               if [ -f coverage.out ]; then
                 echo "=== Coverage Summary ==="
@@ -446,16 +446,7 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
     }
     success {
       script {
-        def coverageText = ""
-        def covFile = "${env.SERVICE_DIR}/coverage.out"
-        if (fileExists(covFile)) {
-          coverageText = sh(returnStdout: true, script: "go tool cover -func=${covFile} | tail -1 | awk '{print \$NF}'").trim()
-        }
-        def summary = "✅ ${params.SERVICE_NAME}:${env.RESOLVED_IMAGE_TAG} | Branch: ${env.CHECKOUT_BRANCH}"
-        if (coverageText) {
-          summary += " | Coverage: ${coverageText}"
-        }
-        currentBuild.description = summary
+        currentBuild.description = "✅ ${params.SERVICE_NAME}:${env.RESOLVED_IMAGE_TAG} | Branch: ${env.CHECKOUT_BRANCH}"
       }
     }
     failure {

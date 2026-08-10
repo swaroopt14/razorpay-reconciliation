@@ -250,15 +250,10 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
                 (cd "${service_dir}" && go mod download)
                 echo "=== Go Vet (${service}) ==="
                 (cd "${service_dir}" && go vet ./...)
-                echo "=== Go Test + Coverage (${service}) ==="
-                (cd "${service_dir}" && go test ./... -count=1 -timeout 120s -coverprofile=coverage.out -v)
+                echo "=== Go Test (${service}) ==="
+                (cd "${service_dir}" && go test ./... -count=1 -timeout 120s -v)
 
-                # Print coverage summary
-                if [ -f "${service_dir}/coverage.out" ]; then
-                  echo "=== Coverage Summary (${service}) ==="
-                  (cd "${service_dir}" && go tool cover -func=coverage.out | tail -1)
-                  cp "${service_dir}/coverage.out" "${COVERAGE_DIR}/${service}-coverage.out"
-                fi
+                # Print coverage inline (Go shows per-package coverage automatically)
                 echo "=== Tests Passed (${service}) ==="
 
               elif [ -f "${service_dir}/package.json" ]; then
@@ -278,20 +273,6 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
                 echo "No recognized test framework for ${service} — skipping"
               fi
             done
-
-            # Print all coverage results
-            echo ""
-            echo "========================================"
-            echo "COVERAGE REPORT SUMMARY"
-            echo "========================================"
-            for f in ${COVERAGE_DIR}/*-coverage.out; do
-              if [ -f "$f" ]; then
-                service_name=$(basename "$f" | sed "s/-coverage.out//")
-                total=$(go tool cover -func="$f" | tail -1 | awk "{print \$NF}")
-                echo "  ${service_name}: ${total}"
-              fi
-            done
-            echo "========================================"
           '''
         }
       }
@@ -489,25 +470,7 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
     }
     success {
       script {
-        // Show coverage + build summary on Jenkins build page
-        def summary = """✅ Build Successful
-Branch: ${env.CHECKOUT_BRANCH}
-Image Tag: ${env.RESOLVED_IMAGE_TAG}
-Services: ${env.SERVICE_LIST}
-"""
-        // Read coverage report if exists
-        def coverageText = ""
-        for (service in env.SERVICE_LIST.split(' ')) {
-          def covFile = "coverage-reports/${service}-coverage.out"
-          if (fileExists(covFile)) {
-            def covLine = sh(returnStdout: true, script: "go tool cover -func=${covFile} | tail -1 | awk '{print \$NF}'").trim()
-            coverageText += "\n  ${service}: ${covLine}"
-          }
-        }
-        if (coverageText) {
-          summary += "\nCoverage:${coverageText}"
-        }
-        currentBuild.description = summary
+        currentBuild.description = "✅ Build Successful | Branch: ${env.CHECKOUT_BRANCH} | Tag: ${env.RESOLVED_IMAGE_TAG} | Services: ${env.SERVICE_LIST}"
       }
     }
     failure {
