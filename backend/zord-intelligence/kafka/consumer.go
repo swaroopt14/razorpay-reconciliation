@@ -183,6 +183,25 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 			if re.ClientBatchID != "" {
 				e.ClientBatchRef = re.ClientBatchID
 			}
+			// INT-10: copy decision/quality reason codes and score fields
+			// from the envelope explicitly, rather than relying on the
+			// nested Payload nested-JSON unmarshal above to happen to
+			// carry matching keys — see RelayEvent/IntentCreatedEvent in
+			// internal/models/events.go for why.
+			e.GovernanceReasonCodesJSON = re.GovernanceReasonCodesJSON
+			e.ScoreVersion = re.ScoreVersion
+			e.ScoreValidityStatus = re.ScoreValidityStatus
+			e.ScoreBreakdownJSON = re.ScoreBreakdownJSON
+			e.ScoreReasonCodesJSON = re.ScoreReasonCodesJSON
+			e.ScoredAt = re.ScoredAt
+			e.ReferenceQualityScore = re.ReferenceQualityScore
+			e.DuplicateRiskScore = re.DuplicateRiskScore
+			e.MappingConfidenceScore = re.MappingConfidenceScore
+			e.SchemaCompletenessScore = re.SchemaCompletenessScore
+			e.DuplicateReasonCode = re.DuplicateReasonCode
+			e.IntentQualityScore = re.IntentQualityScore
+			e.MatchabilityScore = re.MatchabilityScore
+			e.ProofReadinessScore = re.ProofReadinessScore
 			return handler.HandleIntentCreated(ctx, e)
 		})
 

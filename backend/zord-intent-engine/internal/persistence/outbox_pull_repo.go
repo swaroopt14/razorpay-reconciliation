@@ -104,7 +104,28 @@ leased AS (
 		COALESCE(o.business_idempotency_key, '') as business_idempotency_key,
 		COALESCE(o.tokenized_data_hash, '') as tokenized_data_hash,
 		COALESCE(o.artifact_id, '') as artifact_id,
-		COALESCE(o.artifact_version_id, '') as artifact_version_id
+		COALESCE(o.artifact_version_id, '') as artifact_version_id,
+		-- INT-10: decision/quality reason codes and score fields are computed
+		-- by IntentService (see intent_service.go computeScores/
+		-- aggregateGovernanceReasons) and persisted on every outbox row, but
+		-- were never selected here — Relay/Intelligence could only recover
+		-- them by parsing the embedded payload JSON blob, not from the lease
+		-- row itself, which is what "lease path does not consistently
+		-- transmit them" means in practice.
+		COALESCE(o.governance_reason_codes_json, '{}'::jsonb) as governance_reason_codes_json,
+		COALESCE(o.score_version, '') as score_version,
+		COALESCE(o.score_validity_status, '') as score_validity_status,
+		COALESCE(o.score_breakdown_json, '{}'::jsonb) as score_breakdown_json,
+		COALESCE(o.score_reason_codes_json, '[]'::jsonb) as score_reason_codes_json,
+		o.scored_at,
+		COALESCE(o.reference_quality_score, 0) as reference_quality_score,
+		COALESCE(o.duplicate_risk_score, 0) as duplicate_risk_score,
+		COALESCE(o.proof_readiness_score, 0) as proof_readiness_score,
+		COALESCE(o.matchability_score, 0) as matchability_score,
+		COALESCE(o.intent_quality_score, 0) as intent_quality_score,
+		COALESCE(o.mapping_confidence_score, 0) as mapping_confidence_score,
+		COALESCE(o.schema_completeness_score, 0) as schema_completeness_score,
+		COALESCE(o.duplicate_reason_code, '') as duplicate_reason_code
 )
 SELECT
 	event_id,
@@ -148,7 +169,21 @@ SELECT
 	business_idempotency_key,
 	tokenized_data_hash,
 	artifact_id,
-	artifact_version_id
+	artifact_version_id,
+	governance_reason_codes_json,
+	score_version,
+	score_validity_status,
+	score_breakdown_json,
+	score_reason_codes_json,
+	scored_at,
+	reference_quality_score,
+	duplicate_risk_score,
+	proof_readiness_score,
+	matchability_score,
+	intent_quality_score,
+	mapping_confidence_score,
+	schema_completeness_score,
+	duplicate_reason_code
 FROM leased
 ORDER BY created_at ASC;
 `
@@ -214,6 +249,20 @@ ORDER BY created_at ASC;
 			&evt.TokenizedDataHash,
 			&evt.ArtifactID,
 			&evt.ArtifactVersionID,
+			&evt.GovernanceReasonCodesJSON,
+			&evt.ScoreVersion,
+			&evt.ScoreValidityStatus,
+			&evt.ScoreBreakdownJSON,
+			&evt.ScoreReasonCodesJSON,
+			&evt.ScoredAt,
+			&evt.ReferenceQualityScore,
+			&evt.DuplicateRiskScore,
+			&evt.ProofReadinessScore,
+			&evt.MatchabilityScore,
+			&evt.IntentQualityScore,
+			&evt.MappingConfidenceScore,
+			&evt.SchemaCompletenessScore,
+			&evt.DuplicateReasonCode,
 		); err != nil {
 			return "", nil, nil, err
 		}

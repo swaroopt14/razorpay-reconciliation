@@ -114,6 +114,16 @@ type IntentOutboxEvent struct {
 	ScoreVersion          string     `json:"score_version,omitempty"`
 	ScoreValidityStatus   string     `json:"score_validity_status,omitempty"`
 	ScoredAt              *time.Time `json:"scored_at,omitempty"`
+
+	// INT-10: these three carried machine-readable decision/quality reason
+	// codes (including remediability, nested inside
+	// GovernanceReasonCodesJSON) that zord-intent-engine's outbox lease
+	// response already sent, but this struct had no field for them —
+	// encoding/json silently drops unknown JSON keys on decode, so they
+	// never survived the LeaseIntent -> PublishIntentEvent round-trip.
+	GovernanceReasonCodesJSON json.RawMessage `json:"governance_reason_codes_json,omitempty"`
+	ScoreBreakdownJSON        json.RawMessage `json:"score_breakdown_json,omitempty"`
+	ScoreReasonCodesJSON      json.RawMessage `json:"score_reason_codes_json,omitempty"`
 }
 
 // IntentLeaseResponse is what zord-intent-engine's /internal/outbox/lease
