@@ -262,10 +262,10 @@ func (r *EvidenceRepository) savePackCoreInTx(
 	// activation time via ActivatePackInTx.
 	res, err := tx.ExecContext(ctx, `
 INSERT INTO evidence_packs(
-	evidence_pack_id, tenant_id, intent_id, contract_id, batch_id, client_payout_ref, amount, currency, mode, pack_status, merkle_root,
+	evidence_pack_id, tenant_id, trace_id, intent_id, contract_id, batch_id, client_payout_ref, amount, currency, mode, pack_status, merkle_root,
 	ruleset_version, schema_versions_json, signature_alg, signature_value, object_ref,
 	supersedes_pack_id, pack_completeness_score, leaf_count, required_leaf_count,
-	settlement_leaf_present_flag, attachment_decision_leaf_present_flag, 
+	settlement_leaf_present_flag, attachment_decision_leaf_present_flag,
 	payment_instruction_received, canonical_intent_created, mapping_profile_used,
 	required_fields_status, tokenization_status, governance_decision,
 	settlement_record_received, canonical_settlement_created, bank_reference,
@@ -275,10 +275,11 @@ INSERT INTO evidence_packs(
 	artifact_id, artifact_version_id,
 	revision_reason, based_on_versions,
 	created_at, updated_at
-) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44)
+) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45)
 ON CONFLICT DO NOTHING`,
 		pack.EvidencePackID,
 		pack.TenantID,
+		pack.TraceID,
 		nullStr(pack.IntentID),
 		nullStr(pack.ContractID),
 		nullStr(pack.ClientBatchID),
@@ -332,8 +333,9 @@ ON CONFLICT DO NOTHING`,
 	for i, item := range pack.Items {
 		_, err = tx.ExecContext(ctx, `
 INSERT INTO evidence_items(
-	evidence_pack_id, position_index, item_type, item_ref, item_hash, leaf_hash, schema_version
-) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+	evidence_pack_id, position_index, item_type, item_ref, item_hash, leaf_hash, schema_version,
+	trace_id, source_event_id, event_version
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
 			pack.EvidencePackID,
 			i,
 			item.Type,
@@ -341,6 +343,9 @@ INSERT INTO evidence_items(
 			item.Hash,
 			item.LeafHash,
 			item.SchemaVersion,
+			item.TraceID,
+			item.SourceEventID,
+			item.EventVersion,
 		)
 		if err != nil {
 			return fmt.Errorf("insert evidence item: %w", err)
@@ -565,7 +570,7 @@ func (r *EvidenceRepository) GetPackByID(ctx context.Context, packID string) (*m
 	var currency sql.NullString
 	var amount decimal.NullDecimal
 
-	q := `SELECT tenant_id, intent_id, contract_id, batch_id, client_payout_ref, amount, currency, mode, pack_status, merkle_root,
+	q := `SELECT tenant_id, COALESCE(trace_id, ''), intent_id, contract_id, batch_id, client_payout_ref, amount, currency, mode, pack_status, merkle_root,
 	             ruleset_version, schema_versions_json, signature_alg, signature_value,
 	             object_ref, supersedes_pack_id, pack_completeness_score, leaf_count,
 	             required_leaf_count, settlement_leaf_present_flag, attachment_decision_leaf_present_flag,
@@ -581,7 +586,7 @@ func (r *EvidenceRepository) GetPackByID(ctx context.Context, packID string) (*m
 	             created_at
 	      FROM evidence_packs WHERE evidence_pack_id=$1`
 	err := r.db.QueryRowContext(ctx, q, packID).Scan(
-		&pack.TenantID, &intentID, &contractID, &batchID, &clientPayoutRef, &amount, &currency, &pack.Mode, &pack.PackStatus,
+		&pack.TenantID, &pack.TraceID, &intentID, &contractID, &batchID, &clientPayoutRef, &amount, &currency, &pack.Mode, &pack.PackStatus,
 		&pack.MerkleRoot, &pack.RulesetVersion, &schemaVersionsJSON,
 		&sigAlg, &signature, &objectRef, &supersedesPackID,
 		&pack.PackCompletenessScore, &pack.LeafCount, &pack.RequiredLeafCount,
@@ -661,7 +666,8 @@ func (r *EvidenceRepository) GetPackByID(ctx context.Context, packID string) (*m
 	pack.Signatures = sigs
 
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT item_type, item_ref, item_hash, leaf_hash, schema_version
+		SELECT item_type, item_ref, item_hash, leaf_hash, schema_version,
+		       COALESCE(trace_id, ''), COALESCE(source_event_id, ''), COALESCE(event_version, '')
 		FROM evidence_items WHERE evidence_pack_id=$1 ORDER BY position_index`, packID)
 	if err != nil {
 		return nil, "", err
@@ -670,7 +676,8 @@ func (r *EvidenceRepository) GetPackByID(ctx context.Context, packID string) (*m
 
 	for rows.Next() {
 		var item models.EvidenceItem
-		if err := rows.Scan(&item.Type, &item.Ref, &item.Hash, &item.LeafHash, &item.SchemaVersion); err != nil {
+		if err := rows.Scan(&item.Type, &item.Ref, &item.Hash, &item.LeafHash, &item.SchemaVersion,
+			&item.TraceID, &item.SourceEventID, &item.EventVersion); err != nil {
 			return nil, "", err
 		}
 		pack.Items = append(pack.Items, item)

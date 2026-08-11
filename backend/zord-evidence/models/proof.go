@@ -106,13 +106,19 @@ type EnrichedEvidencePack struct {
 }
 
 // TimelineEvent is one human-readable milestone in the payment proof lineage.
+// TraceID / SourceEventID link this milestone back to the exact upstream
+// trace and event that produced it, for RCA/audit continuity across services.
 type TimelineEvent struct {
-	Timestamp time.Time `json:"timestamp"`
-	Event     string    `json:"event"`
-	NodeID    string    `json:"node_id,omitempty"`
+	Timestamp     time.Time `json:"timestamp"`
+	Event         string    `json:"event"`
+	NodeID        string    `json:"node_id,omitempty"`
+	TraceID       string    `json:"trace_id,omitempty"`
+	SourceEventID string    `json:"source_event_id,omitempty"`
 }
 
 // LineageNode represents one node in the Merkle DAG for auditor-facing display.
+// TraceID / SourceEventID (empty for synthetic nodes with no upstream source,
+// e.g. the merkle_root seal node) preserve the leaf's causation/source trace.
 type LineageNode struct {
 	ID            string   `json:"id"`
 	Label         string   `json:"label"`
@@ -120,6 +126,8 @@ type LineageNode struct {
 	LeafHash      string   `json:"leaf_hash,omitempty"`
 	ItemRef       string   `json:"item_ref,omitempty"`
 	SchemaVersion string   `json:"schema_version,omitempty"`
+	TraceID       string   `json:"trace_id,omitempty"`
+	SourceEventID string   `json:"source_event_id,omitempty"`
 	Children      []string `json:"children,omitempty"`
 }
 

@@ -43,6 +43,9 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 		if ev == "" {
 			log.Printf("intent.consumer.missing_event_version key=%s intent=%s event_id=%s", key, relayEvt.AggregateID, relayEvt.EventID)
 		}
+		if relayEvt.TraceID == "" {
+			log.Printf("intent.consumer.missing_trace_id key=%s intent=%s event_id=%s", key, relayEvt.AggregateID, relayEvt.EventID)
+		}
 
 		// Carry the originating client_batch_id onto every buffered intent leaf so the
 		// generated pack can later be looked up via GET /v1/evidence/packs?client_batch_id=
@@ -82,6 +85,7 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			EventVersion:      ev,
 			SourceTopic:       "payments.intent.events.v1",
 			SourceEventID:     relayEvt.EventID,
+			TraceID:           relayEvt.TraceID,
 
 			// Traceability & Status Fields
 			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
@@ -112,6 +116,7 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			EventVersion:      ev,
 			SourceTopic:       "payments.intent.events.v1",
 			SourceEventID:     relayEvt.EventID,
+			TraceID:           relayEvt.TraceID,
 
 			// Traceability & Status Fields
 			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
@@ -142,6 +147,7 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			EventVersion:      ev,
 			SourceTopic:       "payments.intent.events.v1",
 			SourceEventID:     relayEvt.EventID,
+			TraceID:           relayEvt.TraceID,
 
 			// Traceability & Status Fields
 			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
@@ -172,6 +178,7 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			EventVersion:      ev,
 			SourceTopic:       "payments.intent.events.v1",
 			SourceEventID:     relayEvt.EventID,
+			TraceID:           relayEvt.TraceID,
 
 			// Traceability & Status Fields
 			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
@@ -202,6 +209,7 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			EventVersion:      ev,
 			SourceTopic:       "payments.intent.events.v1",
 			SourceEventID:     relayEvt.EventID,
+			TraceID:           relayEvt.TraceID,
 
 			// Traceability & Status Fields
 			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
@@ -232,6 +240,7 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			EventVersion:      ev,
 			SourceTopic:       "payments.intent.events.v1",
 			SourceEventID:     relayEvt.EventID,
+			TraceID:           relayEvt.TraceID,
 
 			// Traceability & Status Fields
 			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
@@ -262,6 +271,7 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			EventVersion:      ev,
 			SourceTopic:       "payments.intent.events.v1",
 			SourceEventID:     relayEvt.EventID,
+			TraceID:           relayEvt.TraceID,
 
 			// Traceability & Status Fields
 			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,

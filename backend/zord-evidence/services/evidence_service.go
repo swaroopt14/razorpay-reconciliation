@@ -509,6 +509,8 @@ func (s *EvidenceService) processIntentJob(ctx context.Context, job IntentJob, l
 				Hash:          l.Hash,
 				SchemaVersion: l.SchemaVersion,
 				EventVersion:  l.EventVersion,
+				TraceID:       l.TraceID,
+				SourceEventID: l.SourceEventID,
 			})
 		}
 	}
@@ -695,6 +697,8 @@ func (s *EvidenceService) processBatchJob(ctx context.Context, job BatchJob) err
 				Hash:          l.Hash,
 				SchemaVersion: l.SchemaVersion,
 				EventVersion:  l.EventVersion,
+				TraceID:       l.TraceID,
+				SourceEventID: l.SourceEventID,
 			})
 		}
 	}
@@ -736,6 +740,7 @@ func (s *EvidenceService) processBatchJob(ctx context.Context, job BatchJob) err
 	var clientPayoutRef *string
 	var amount decimal.Decimal
 	var currency string
+	var traceID string
 
 	for _, l := range leaves {
 		if l.ClientPayoutRef != nil {
@@ -761,12 +766,18 @@ func (s *EvidenceService) processBatchJob(ctx context.Context, job BatchJob) err
 			vdc = l.ValueDateCheck
 			am = l.AmountMatch
 		}
+		if traceID == "" && l.TraceID != "" {
+			traceID = l.TraceID
+		}
+	}
+	if traceID == "" {
+		log.Printf("evidence.service.process_batch batch=%s no leaf in this batch carried a trace_id — pack will have an empty generation trace", job.BatchID)
 	}
 
 	req := models.GenerateEvidenceRequest{
 		TenantID:                   job.TenantID,
 		ClientBatchID:              job.BatchID,
-		TraceID:                    "00000000-0000-0000-0000-000000000000",
+		TraceID:                    traceID,
 		Mode:                       "BATCH_ATTACH",
 		RulesetVersion:             "v1",
 		SchemaVersions:             map[string]string{"intent_schema": "v1", "outcome_schema": "v1", "contract_schema": "v1", "attachment_schema": "v1"},
@@ -886,6 +897,7 @@ func (s *EvidenceService) GeneratePackInTx(ctx context.Context, packTx *sql.Tx, 
 	pack := &models.EvidencePack{
 		EvidencePackID:             packID,
 		TenantID:                   req.TenantID,
+		TraceID:                    req.TraceID,
 		IntentID:                   req.IntentID,
 		ContractID:                 req.ContractID,
 		ClientBatchID:              req.ClientBatchID,
@@ -1201,6 +1213,7 @@ func (s *EvidenceService) GenerateBatchPackInTx(ctx context.Context, packTx *sql
 	pack := &models.EvidencePack{
 		EvidencePackID:  packID,
 		TenantID:        req.TenantID,
+		TraceID:         req.TraceID,
 		ClientBatchID:   req.ClientBatchID,
 		Mode:            req.Mode,
 		PackStatus:      models.PackStatusDraft,

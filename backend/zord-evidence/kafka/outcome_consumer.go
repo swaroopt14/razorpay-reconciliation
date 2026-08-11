@@ -155,6 +155,9 @@ func handleLeafBundle(ctx context.Context, raw []byte, pg PackGenerator) error {
 	if envelopeEventVersion == "" {
 		log.Printf("outcome.consumer.missing_event_version tenant=%s intent=%s event_id=%s", tenantID, intentID, relayEvt.EventID)
 	}
+	if relayEvt.TraceID == "" {
+		log.Printf("outcome.consumer.missing_trace_id tenant=%s intent=%s event_id=%s", tenantID, intentID, relayEvt.EventID)
+	}
 	contractID := relayEvt.ContractID
 	batchID := relayEvt.ClientBatchID
 	pendingLeaves := make([]models.PendingLeafCandidate, 0, len(evt.Leaves))
@@ -175,6 +178,7 @@ func handleLeafBundle(ctx context.Context, raw []byte, pg PackGenerator) error {
 			EventVersion:  envelopeEventVersion,
 			SourceTopic:   "payments.outcome.events.v1",
 			SourceEventID: relayEvt.EventID,
+			TraceID:       relayEvt.TraceID,
 
 			// Settlement Metadata
 			SettlementRecordReceived:   relayEvt.SettlementRecordReceived,
@@ -295,6 +299,9 @@ func handleBatchUpdated(ctx context.Context, raw []byte, pg PackGenerator) error
 	if ev == "" {
 		log.Printf("evidence.kafka.handle_batch_updated missing_event_version batch=%s event_id=%s", batchID, relayEvt.EventID)
 	}
+	if relayEvt.TraceID == "" {
+		log.Printf("evidence.kafka.handle_batch_updated missing_trace_id batch=%s event_id=%s", batchID, relayEvt.EventID)
+	}
 
 	leaves := []models.PendingLeafCandidate{
 		{
@@ -307,6 +314,7 @@ func handleBatchUpdated(ctx context.Context, raw []byte, pg PackGenerator) error
 			EventVersion:  ev,
 			SourceTopic:   "batch.summary.updated",
 			SourceEventID: relayEvt.EventID,
+			TraceID:       relayEvt.TraceID,
 		},
 		{
 			TenantID:      relayEvt.TenantID,
@@ -318,6 +326,7 @@ func handleBatchUpdated(ctx context.Context, raw []byte, pg PackGenerator) error
 			EventVersion:  ev,
 			SourceTopic:   "batch.summary.updated",
 			SourceEventID: relayEvt.EventID,
+			TraceID:       relayEvt.TraceID,
 		},
 		{
 			TenantID:      relayEvt.TenantID,
@@ -329,6 +338,7 @@ func handleBatchUpdated(ctx context.Context, raw []byte, pg PackGenerator) error
 			EventVersion:  ev,
 			SourceTopic:   "batch.summary.updated",
 			SourceEventID: relayEvt.EventID,
+			TraceID:       relayEvt.TraceID,
 		},
 		{
 			TenantID:      relayEvt.TenantID,
@@ -340,6 +350,7 @@ func handleBatchUpdated(ctx context.Context, raw []byte, pg PackGenerator) error
 			EventVersion:  ev,
 			SourceTopic:   "batch.summary.updated",
 			SourceEventID: relayEvt.EventID,
+			TraceID:       relayEvt.TraceID,
 		},
 		{
 			TenantID:      relayEvt.TenantID,
@@ -351,6 +362,7 @@ func handleBatchUpdated(ctx context.Context, raw []byte, pg PackGenerator) error
 			EventVersion:  ev,
 			SourceTopic:   "batch.summary.updated",
 			SourceEventID: relayEvt.EventID,
+			TraceID:       relayEvt.TraceID,
 		},
 	}
 
@@ -390,6 +402,9 @@ func handleFileUploaded(ctx context.Context, raw []byte, pg PackGenerator) error
 	if ev == "" {
 		log.Printf("outcome.consumer.handle_file_uploaded missing_event_version batch=%s event_id=%s", batchID, relayEvt.EventID)
 	}
+	if relayEvt.TraceID == "" {
+		log.Printf("outcome.consumer.handle_file_uploaded missing_trace_id batch=%s event_id=%s", batchID, relayEvt.EventID)
+	}
 
 	leaves := []models.PendingLeafCandidate{{
 		TenantID:      relayEvt.TenantID,
@@ -400,6 +415,8 @@ func handleFileUploaded(ctx context.Context, raw []byte, pg PackGenerator) error
 		SchemaVersion: sv,
 		EventVersion:  ev,
 		SourceTopic:   "payments.outcome.events.v1",
+		SourceEventID: relayEvt.EventID,
+		TraceID:       relayEvt.TraceID,
 	}}
 	return pg.HandleBatchLeafUpdate(ctx, relayEvt.TenantID, batchID, leaves, false)
 }
@@ -436,6 +453,9 @@ func handleBatchCanonical(ctx context.Context, raw []byte, pg PackGenerator) err
 	if ev == "" {
 		log.Printf("outcome.consumer.handle_batch_canonical missing_event_version batch=%s event_id=%s", batchID, relayEvt.EventID)
 	}
+	if relayEvt.TraceID == "" {
+		log.Printf("outcome.consumer.handle_batch_canonical missing_trace_id batch=%s event_id=%s", batchID, relayEvt.EventID)
+	}
 
 	leaves := []models.PendingLeafCandidate{{
 		TenantID:      relayEvt.TenantID,
@@ -446,6 +466,8 @@ func handleBatchCanonical(ctx context.Context, raw []byte, pg PackGenerator) err
 		SchemaVersion: sv,
 		EventVersion:  ev,
 		SourceTopic:   "payments.outcome.events.v1",
+		SourceEventID: relayEvt.EventID,
+		TraceID:       relayEvt.TraceID,
 	}}
 	return pg.HandleBatchLeafUpdate(ctx, relayEvt.TenantID, batchID, leaves, false)
 }

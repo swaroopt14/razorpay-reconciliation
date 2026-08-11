@@ -96,6 +96,12 @@ type PendingLeafCandidate struct {
 	// receipt INSERT can use ON CONFLICT DO NOTHING to deduplicate exactly.
 	SourceEventID string `json:"source_event_id,omitempty" db:"source_event_id"`
 
+	// TraceID is the causation/source trace from the upstream RelayEvent that
+	// produced this leaf — preserved through to EvidenceItem and the leaf
+	// receipt so a sealed pack's lineage/timeline can be traced back to the
+	// exact originating operation, independent of the pack-generation trace.
+	TraceID string `json:"trace_id,omitempty" db:"trace_id"`
+
 	// Metadata carried from RelayEvent (traceability & governance).
 	PaymentInstructionReceived *time.Time `json:"payment_instruction_received,omitempty" db:"payment_instruction_received"`
 	CanonicalIntentCreated     *time.Time `json:"canonical_intent_created,omitempty" db:"canonical_intent_created"`
@@ -178,9 +184,10 @@ type RelayEvent struct {
 }
 
 // EvidenceItem is one proof artifact that becomes a typed leaf in the Merkle tree.
-// leaf_hash = SHA256(type || ref || hash || schema_version) — EventVersion is
-// informational metadata only and must never be folded into this formula,
-// since that would break Merkle-proof recomputation for already-sealed packs.
+// leaf_hash = SHA256(type || ref || hash || schema_version) — EventVersion,
+// TraceID, and SourceEventID are informational metadata only and must never
+// be folded into this formula, since that would break Merkle-proof
+// recomputation for already-sealed packs.
 type EvidenceItem struct {
 	Type          string `json:"type"`
 	Ref           string `json:"ref"`
@@ -188,6 +195,14 @@ type EvidenceItem struct {
 	SchemaVersion string `json:"schema_version"`
 	EventVersion  string `json:"event_version,omitempty"`
 	LeafHash      string `json:"leaf_hash,omitempty"`
+
+	// TraceID / SourceEventID preserve this leaf's causation/source trace —
+	// the upstream trace_id and event_id that produced it — so pack
+	// lineage/timeline views can link every leaf back to its originating
+	// operation. Distinct from EvidencePack.TraceID (the pack-generation
+	// request's own trace).
+	TraceID       string `json:"trace_id,omitempty"`
+	SourceEventID string `json:"source_event_id,omitempty"`
 }
 
 // Pack signature canonicalization versions — identify how signed_payload was formed.
@@ -230,8 +245,14 @@ type Signature struct {
 // EvidencePack is the canonical committed proof bundle for one payment lifecycle.
 // Mode: INTELLIGENCE_ATTACH | SECONDARY_DISPATCH | FULL_CONTROL
 type EvidencePack struct {
-	EvidencePackID                    string            `json:"evidence_pack_id"`
-	TenantID                          string            `json:"tenant_id"`
+	EvidencePackID string `json:"evidence_pack_id"`
+	TenantID       string `json:"tenant_id"`
+	// TraceID is the trace of the request/job that generated this pack —
+	// distinct from each item's own causation TraceID/SourceEventID (see
+	// EvidenceItem). Never a zero/placeholder UUID: intent packs already
+	// carry the real upstream trace; batch packs pick the first available
+	// leaf's trace rather than fabricating one.
+	TraceID                           string            `json:"trace_id,omitempty"`
 	IntentID                          string            `json:"intent_id"`
 	ContractID                        string            `json:"contract_id"`
 	ClientBatchID                     string            `json:"batch_id"`

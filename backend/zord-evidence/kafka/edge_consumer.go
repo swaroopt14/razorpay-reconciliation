@@ -43,6 +43,9 @@ func buildEdgeHandler(pg PackGenerator) MessageHandler {
 		if ev == "" {
 			log.Printf("edge.consumer.missing_event_version key=%s envelope=%s event_id=%s", key, relayEvt.EnvelopeID, relayEvt.EventID)
 		}
+		if relayEvt.TraceID == "" {
+			log.Printf("edge.consumer.missing_trace_id key=%s envelope=%s event_id=%s", key, relayEvt.EnvelopeID, relayEvt.EventID)
+		}
 
 		pendingLeaves := []models.PendingLeafCandidate{
 			{
@@ -55,6 +58,7 @@ func buildEdgeHandler(pg PackGenerator) MessageHandler {
 				EventVersion:  ev,
 				SourceTopic:   "payments.ledger.events.v1",
 				SourceEventID: relayEvt.EventID,
+				TraceID:       relayEvt.TraceID,
 			},
 		}
 
@@ -70,6 +74,7 @@ func buildEdgeHandler(pg PackGenerator) MessageHandler {
 				EventVersion:  ev,
 				SourceTopic:   "payments.ledger.events.v1",
 				SourceEventID: relayEvt.EventID,
+				TraceID:       relayEvt.TraceID,
 			})
 		}
 
