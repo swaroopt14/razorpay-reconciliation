@@ -92,4 +92,19 @@ test.describe('console BFF smoke', () => {
     expect(res.status()).not.toBe(403)
     expect([401, 502]).toContain(res.status())
   })
+
+  // CON-P1-02: baseline browser security headers on live HTML.
+  test('GET /signin includes CSP and baseline security headers', async ({ request }) => {
+    const res = await request.get('/signin')
+    expect(res.status()).toBeLessThan(500)
+    const headers = res.headers()
+    expect(headers['x-content-type-options']).toBe('nosniff')
+    expect(headers['referrer-policy']).toBe('strict-origin-when-cross-origin')
+    expect(headers['x-frame-options']).toBe('DENY')
+    const csp = headers['content-security-policy'] || ''
+    expect(csp).toContain("frame-ancestors 'none'")
+    expect(csp).toContain("connect-src 'self'")
+    expect(csp).toContain("default-src 'self'")
+    expect(headers['permissions-policy'] || '').toContain('camera=()')
+  })
 })

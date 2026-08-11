@@ -1,9 +1,12 @@
 /** @type {import('next').NextConfig} */
 const path = require('path')
+const { baselineSecurityHeaders } = require('./security-headers')
 
 const nextConfig = {
   reactStrictMode: true,
   output: 'standalone',
+  // CON-P1-02: do not advertise Next.js via X-Powered-By.
+  poweredByHeader: false,
   eslint: {
     ignoreDuringBuilds: false,
   },
@@ -25,7 +28,10 @@ const nextConfig = {
     },
   },
   // Auth-guarded HTML must not be stored by shared CDNs (stale shell / wrong session after deploy).
+  // CON-P1-02: CSP + baseline browser security headers on all responses.
+  // HSTS remains at Kong/ingress (see kubernetes/api-gateway/kong/configmap.yaml).
   async headers() {
+    const securityHeaders = baselineSecurityHeaders()
     const privateHtml = [
       '/sandbox',
       '/sandbox/:path*',
@@ -36,7 +42,13 @@ const nextConfig = {
       { key: 'Cache-Control', value: 'private, no-cache, no-store, max-age=0, must-revalidate' },
       { key: 'Vary', value: 'Cookie' },
     ]
-    return privateHtml.map((source) => ({ source, headers: cacheHeaders }))
+    return [
+      {
+        source: '/:path*',
+        headers: securityHeaders,
+      },
+      ...privateHtml.map((source) => ({ source, headers: cacheHeaders })),
+    ]
   },
   // Mutate resolve.alias in place — replacing the whole object can drop Next.js
   // internal aliases and cause "Cannot find the middleware module" at runtime.
