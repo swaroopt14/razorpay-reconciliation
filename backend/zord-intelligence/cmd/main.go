@@ -243,6 +243,7 @@ func main() {
 	leakageTimeseriesHandler := handlers.NewLeakageTimeseriesHandler(batchRepo)
 	historyHandler := handlers.NewHistoryHandler(projectionService, snapshotRepo)
 	explanationHandler := handlers.NewExplanationHandler(explSvc)
+	traceHandler := handlers.NewTraceHandler(receiptRepo) // INTEL-04: trace drilldown
 
 	// ── Dashboard handlers (frontend-facing /dashboard/ endpoints) ────────
 	intelligenceMode := string(cfg.IntelligenceMode)
@@ -281,6 +282,7 @@ func main() {
 		dashRCAH,
 		dashBubbleMapH,
 		dashBatchContractH,
+		traceHandler,
 	)
 
 	// ── Step 10: Create the HTTP server ───────────────────────────────────

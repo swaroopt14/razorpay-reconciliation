@@ -20,8 +20,8 @@ export const INTENT_BULK_INGEST_PROXY_PATH = '/api/bulk-ingest'
 export type PostIntentBulkIngestParams = {
   file: File
   /**
-   * Optional. When empty, `/api/bulk-ingest` uses `ZORD_BULK_INGEST_API_KEY` on the server (if set).
-   * Otherwise raw pasted key or full `Bearer …` / `ApiKey …` / `API-Key …` (normalized to `Bearer …` for zord-edge).
+   * Optional explicit Authorization (Bearer / ApiKey). When empty, `/api/bulk-ingest`
+   * uses the signed-in session cookie only — never a server env ingest key (CON-P0-02).
    */
   apiKeyRaw?: string
   /** e.g. CSV, FILE_UPLOAD — must match zord-edge TransportValidation allowlist */

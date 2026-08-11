@@ -31,10 +31,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Expected multipart/form-data with file.' }, { status: 400 })
   }
 
-  const ctx = await resolveSettlementUploadContext(
-    req,
-    process.env.ZORD_SETTLEMENT_API_KEY ?? process.env.ZORD_BULK_INGEST_API_KEY,
-  )
+  // CON-P0-02: session and/or explicit Authorization only — no ZORD_*_API_KEY fallback.
+  const ctx = await resolveSettlementUploadContext(req)
   if (!ctx.ok) return ctx.response
 
   const psp = req.nextUrl.searchParams.get('psp')

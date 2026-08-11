@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Check, X } from 'lucide-react'
 import { persistEnvMode } from '@/services/auth/persistEnvMode'
+import { clearLegacyTenantApiSecrets } from '@/services/auth/readStoredTenantApiKey'
 import { AuthSplitLayout } from '@/components/auth/AuthSplitLayout'
 import { authInputClass, authLabelClass, authPrimaryButtonClass } from '@/components/auth/authUiTokens'
 
@@ -93,11 +94,8 @@ export default function RegisterPage() {
       const tenantId: string | undefined = data?.user?.tenant_id ?? data?.session?.tenant_id
       const newTenantName: string | undefined = data?.user?.tenant_name
       if (apiKey && tenantId) {
-        try {
-          window.localStorage.setItem(`zord_tenant_api_key:${tenantId}`, apiKey)
-        } catch {
-          /* localStorage can be disabled */
-        }
+        // CON-P0-01: one-time disclosure in memory only — never write the full secret to storage.
+        clearLegacyTenantApiSecrets(tenantId)
         setSignupResult({ apiKey, tenantId, tenantName: newTenantName ?? tenantName })
         setLoading(false)
         return

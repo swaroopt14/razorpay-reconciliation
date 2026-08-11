@@ -2,6 +2,7 @@
 
 import { User, UserRole } from '@/types/auth'
 import { STORAGE_KEYS } from '@/constants'
+import { clearLegacyTenantApiSecrets } from '@/services/auth/readStoredTenantApiKey'
 
 const AUTH_KEY = STORAGE_KEYS.AUTH
 const ROLE_KEY = STORAGE_KEYS.CURRENT_ROLE
@@ -112,6 +113,7 @@ function clearUserStorage() {
   localStorage.removeItem('zord_tenant_id')
   localStorage.removeItem('zord_tenant_name')
   localStorage.removeItem('cx_tenant_name')
+  clearLegacyTenantApiSecrets()
 }
 
 async function parseResponse<T>(response: Response): Promise<T | null> {
