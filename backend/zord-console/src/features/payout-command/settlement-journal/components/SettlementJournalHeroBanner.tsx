@@ -7,7 +7,11 @@ import { useSettlementBatchSummary } from '../hooks/useSettlementBatchSummary'
 import { useSettlementBatchIntelligence } from '../hooks/useSettlementBatchIntelligence'
 import { settlementJournalCopy } from '../copy/settlementJournalCopy'
 import { derivePaymentPartnerLabel } from '../selectors/derivePaymentPartnerLabel'
-import { outcomeFromMatchConfidence } from '../settlementJournalSidebarUtils'
+import {
+  formatAttachmentConfidencePct,
+  outcomeFromFinalityAndCoverage,
+  finalityCoverageFromBatchDetail,
+} from '../settlementJournalSidebarUtils'
 
 type SettlementJournalHeroBannerProps = {
   onExport: () => void
@@ -30,7 +34,7 @@ export function SettlementJournalHeroBanner({
 }: SettlementJournalHeroBannerProps) {
   const { selectedClientBatchId, journalEnabled, tenantReady } = useSettlementBatchSelection()
   const { loading, rows, observationTotal } = useSettlementBatchSummary()
-  const { batchContract, kpis, loading: intelligenceLoading } = useSettlementBatchIntelligence(
+  const { batchContract, batchDetail, kpis, loading: intelligenceLoading } = useSettlementBatchIntelligence(
     selectedClientBatchId,
     journalEnabled && tenantReady,
   )
@@ -66,13 +70,21 @@ export function SettlementJournalHeroBanner({
         : '—'
   const varianceSub = varianceAmount != null ? copy.amountVariance : '—'
 
-  const matchOutcome = outcomeFromMatchConfidence(kpis.matchConfidence)
-  const deltaPill =
-    kpis.matchConfidence != null
-      ? `${matchOutcome.label} · ${matchOutcome.progressPct}% match`
-      : intelligenceLoading
-        ? '…'
-        : '—'
+  const settlementOutcome = outcomeFromFinalityAndCoverage(
+    finalityCoverageFromBatchDetail(batchDetail),
+  )
+  const attachmentConfidencePct = formatAttachmentConfidencePct(kpis.matchConfidence)
+  const deltaPill = intelligenceLoading
+    ? '…'
+    : settlementOutcome.finalityStatus || attachmentConfidencePct
+      ? [
+          settlementOutcome.label,
+          settlementOutcome.finalityStatus ? settlementOutcome.finalityStatus : null,
+          attachmentConfidencePct ? `${attachmentConfidencePct} attachment` : null,
+        ]
+          .filter(Boolean)
+          .join(' · ')
+      : '—'
 
   const obsSub =
     filtersActive && recordsTotal != null
