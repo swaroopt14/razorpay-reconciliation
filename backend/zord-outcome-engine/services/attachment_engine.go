@@ -78,10 +78,20 @@ func emitOutcomeBatchSummaryVectorIndex(batchSummary models.BatchAttachmentSumma
 	}
 
 	tenantID := strings.TrimSpace(batchSummary.TenantID.String())
-	entityID := strings.TrimSpace(batchSummary.BatchAttachmentSummaryID.String())
+
+	summaryID := strings.TrimSpace(batchSummary.BatchAttachmentSummaryID.String())
 	batchID := ""
 	if batchSummary.BatchID != nil {
 		batchID = strings.TrimSpace(*batchSummary.BatchID)
+	}
+
+	sourceReference := strings.TrimSpace(batchSummary.SourceReference)
+
+	// Prompt-layer indexes outcome summaries by business batch reference.
+	// Prefer batch_id, then source_reference. Keep summary UUID only as metadata.
+	entityID := batchID
+	if entityID == "" {
+		entityID = sourceReference
 	}
 
 	if tenantID == "" || entityID == "" {
@@ -102,7 +112,9 @@ func emitOutcomeBatchSummaryVectorIndex(batchSummary models.BatchAttachmentSumma
 		OccurredAt:      time.Now().UTC(),
 		ContentVersion:  "v1",
 		Metadata: map[string]string{
-			"batch_status": batchSummary.BatchAttachmentStatus,
+			"batch_status":                batchSummary.BatchAttachmentStatus,
+			"batch_attachment_summary_id": summaryID,
+			"source_reference":            sourceReference,
 		},
 	}
 
@@ -110,11 +122,11 @@ func emitOutcomeBatchSummaryVectorIndex(batchSummary models.BatchAttachmentSumma
 	defer cancel()
 
 	if err := vectorIndexPublisher.PublishVectorIndexRequest(ctx, event); err != nil {
-		log.Printf("[outcome-engine][vector-index] publish failed tenant=%s entity=outcome_batch_summary id=%s err=%v", tenantID, entityID, err)
+		log.Printf("[outcome-engine][vector-index] publish failed tenant=%s entity=outcome_batch_summary id=%s batch_id=%s summary_id=%s err=%v", tenantID, entityID, batchID, summaryID, err)
 		return
 	}
 
-	log.Printf("[outcome-engine][vector-index] publish ok tenant=%s entity=outcome_batch_summary id=%s", tenantID, entityID)
+	log.Printf("[outcome-engine][vector-index] publish ok tenant=%s entity=outcome_batch_summary id=%s batch_id=%s summary_id=%s", tenantID, entityID, batchID, summaryID)
 }
 
 // nonAttachableGovernanceStates lists governance states for which no attachment

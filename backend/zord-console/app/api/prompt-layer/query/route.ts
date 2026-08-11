@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { assertCookieMutationProtection } from '@/services/auth/assertSameOrigin.server'
-
+import {
+  applyRefreshedSessionCookies,
+  resolveProxyForwardAuthorization,
+} from '@/services/auth/resolvePayoutTenant.server'
 // Always proxy at request time (no caching), since this depends on runtime env + backend state.
 export const dynamic = 'force-dynamic'
 
@@ -26,10 +28,6 @@ function upstreamCandidates() {
 }
 
 export async function POST(req: NextRequest) {
-  // Cookie-authenticated Ask Zord calls must be same-origin (+ CSRF when session present).
-  const csrf = assertCookieMutationProtection(req)
-  if (!csrf.ok) return csrf.response
-
   const candidateUrls = upstreamCandidates().map((base) => `${normalizePromptLayerBase(base)}/query`)
 
   let body: unknown
@@ -37,6 +35,10 @@ export async function POST(req: NextRequest) {
     body = await req.json()
   } catch {
     return NextResponse.json({ details: 'Invalid JSON body' }, { status: 400 })
+  }
+  const authResolution = await resolveProxyForwardAuthorization(req, undefined)
+  if (!authResolution.ok) {
+    return authResolution.response
   }
 
   let res: Response | null = null
@@ -46,7 +48,6 @@ export async function POST(req: NextRequest) {
   for (const url of candidateUrls) {
     lastUrl = url
     try {
-      const auth = req.headers.get('authorization') || ''
       const tenant = req.headers.get('x-tenant-id') || ''
       const userId = req.headers.get('x-user-id') || ''
       const sessionId = req.headers.get('x-session-id') || ''
@@ -55,7 +56,7 @@ export async function POST(req: NextRequest) {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          ...(auth ? { authorization: auth } : {}),
+          authorization: authResolution.authorization,
           ...(tenant ? { 'x-tenant-id': tenant } : {}),
           ...(userId ? { 'x-user-id': userId } : {}),
           ...(sessionId ? { 'x-session-id': sessionId } : {}),
@@ -84,13 +85,17 @@ export async function POST(req: NextRequest) {
   }
 
   const text = await res.text()
-  return new NextResponse(text, {
+  const response = new NextResponse(text, {
     status: res.status,
     headers: {
       'content-type': res.headers.get('content-type') || 'application/json; charset=utf-8',
       'cache-control': 'no-store',
     },
   })
+
+  applyRefreshedSessionCookies(response, authResolution.refreshedPayload)
+
+  return response
 }
 
 export async function OPTIONS() {
