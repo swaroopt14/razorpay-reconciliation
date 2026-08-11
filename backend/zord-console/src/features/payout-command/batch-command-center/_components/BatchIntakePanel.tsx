@@ -12,6 +12,10 @@ import { parseBulkIngestAcceptedResponse } from '@/services/payout-command/batch
 import {
   postSettlementFileUpload,
   SETTLEMENT_FILE_ACCEPT,
+  SETTLEMENT_FORCE_REASONS,
+  type SettlementBaselineInfo,
+  type SettlementForceReason,
+  type SettlementUploadMode,
 } from '@/services/payout-command/batch-intake/postSettlementFileUpload'
 import { BatchPortalUploadZone } from './portal/BatchPortalUploadZone'
 import { PORTAL_BLUE_TITLE, PORTAL_PRIMARY_BTN } from './portal/batchPortalTokens'
@@ -117,6 +121,10 @@ export function BatchIntakePanel({
   const [sourceSystem, setSourceSystem] = useState('')
   const [psp, setPsp] = useState(() => process.env.NEXT_PUBLIC_ZORD_SETTLEMENT_PSP ?? 'razorpay')
   const [bulkForceReprocess, setBulkForceReprocess] = useState(false)
+  const [settlementMode, setSettlementMode] = useState<SettlementUploadMode>('new')
+  const [settlementForceReason, setSettlementForceReason] = useState<SettlementForceReason>('MANUAL')
+  const [settlementBaseline, setSettlementBaseline] = useState<SettlementBaselineInfo | null>(null)
+  const [correctionConfirmOpen, setCorrectionConfirmOpen] = useState(false)
   const [selectedIntentFile, setSelectedIntentFile] = useState<File | null>(null)
   const [selectedSettlementFile, setSelectedSettlementFile] = useState<File | null>(null)
   const [intentFileName, setIntentFileName] = useState<string | null>(null)
@@ -300,13 +308,24 @@ export function BatchIntakePanel({
       if (!file) return
       setSelectedSettlementFile(file)
       setSettlementIngestOk(false)
+      setCorrectionConfirmOpen(false)
       reportUploadStatus('idle', null)
       if (intakeStep === 'closed') setIntakeStep('intent_ready')
     },
     [intakeStep, reportUploadStatus],
   )
 
-  const onSettlementBatchUpload = useCallback(async () => {
+  useEffect(() => {
+    if (settlementMode === 'correction') {
+      setSettlementForceReason('CLIENT_CORRECTED_FILE')
+      return
+    }
+    if (settlementMode === 'reprocess') {
+      setSettlementForceReason((prev) => (prev === 'CLIENT_CORRECTED_FILE' ? 'MANUAL' : prev))
+    }
+  }, [settlementMode])
+
+  const runSettlementBatchUpload = useCallback(async () => {
     const file = selectedSettlementFile
     if (!file) return
     const pspVal = psp.trim().toLowerCase()
@@ -319,6 +338,16 @@ export function BatchIntakePanel({
       )
       return
     }
+    if ((settlementMode === 'reprocess' || settlementMode === 'correction') && !bid) {
+      reportUploadStatus('failed', 'Reprocess and correction require a batch reference.')
+      return
+    }
+    if ((settlementMode === 'reprocess' || settlementMode === 'correction') && !settlementForceReason) {
+      reportUploadStatus('failed', 'Choose a reprocess/correction reason before uploading.')
+      return
+    }
+
+    setCorrectionConfirmOpen(false)
     setSettlementFileName(file.name)
     setIntakeStep('settlement_uploading')
     reportUploadStatus('syncing', BATCH_REVIEW_COPY.intake.uploadSettlementBusy)
@@ -328,7 +357,11 @@ export function BatchIntakePanel({
         file,
         psp: pspVal,
         batchId: bid,
+        mode: settlementMode,
+        forceReprocessReason:
+          settlementMode === 'new' ? undefined : settlementForceReason,
       })
+      if (result.baseline) setSettlementBaseline(result.baseline)
       if (!result.ok) {
         const detail = result.errorMessage?.trim() || `HTTP ${result.httpStatus || 'error'}`
         const extra = result.responseText.trim().slice(0, 400)
@@ -338,7 +371,12 @@ export function BatchIntakePanel({
         throw new Error(parts.join(' — '))
       }
       setSettlementIngestOk(true)
-      reportUploadStatus('synced', BATCH_REVIEW_COPY.dialogs.settlementBody(bid))
+      reportUploadStatus(
+        'synced',
+        result.alreadyProcessed
+          ? BATCH_REVIEW_COPY.dialogs.settlementDuplicateBody(bid)
+          : BATCH_REVIEW_COPY.dialogs.settlementBody(bid),
+      )
       markSandboxSetupStep('settlement')
       setIntakeStep('closed')
       onSettlementIngestSuccess({ batchId: bid, fileName: file.name, parsedRows: parsed })
@@ -360,8 +398,25 @@ export function BatchIntakePanel({
     selectedSettlementFile,
     settlementBatchId,
     settlementBlockedReason,
+    settlementForceReason,
+    settlementMode,
     tenantReady,
   ])
+
+  const onSettlementBatchUpload = useCallback(() => {
+    if (settlementMode === 'correction') {
+      setCorrectionConfirmOpen(true)
+      return
+    }
+    void runSettlementBatchUpload()
+  }, [runSettlementBatchUpload, settlementMode])
+
+  const settlementActionLabel = useMemo(() => {
+    if (intakeStep === 'settlement_uploading') return BATCH_REVIEW_COPY.intake.uploadSettlementBusy
+    if (settlementMode === 'reprocess') return BATCH_REVIEW_COPY.intake.uploadSettlementReprocess
+    if (settlementMode === 'correction') return BATCH_REVIEW_COPY.intake.uploadSettlementCorrection
+    return BATCH_REVIEW_COPY.intake.uploadSettlementNew
+  }, [intakeStep, settlementMode])
 
   const c = BATCH_REVIEW_COPY
 
@@ -487,6 +542,76 @@ export function BatchIntakePanel({
             <p className={PORTAL_BLUE_TITLE}>{c.intake.uploadFilesLabel}</p>
             <p className="mt-0.5 text-[12px] font-medium text-[#64748b]">{c.intake.step2Short}</p>
             <p className="mt-1 text-[12px] text-[#64748b]">{c.intake.step2Helper}</p>
+
+            <fieldset className="mt-3 space-y-2" disabled={!settlementFilePickerEnabled && !selectedSettlementFile}>
+              <legend className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#888888]">
+                {c.fields.settlementMode}
+              </legend>
+              {(
+                [
+                  {
+                    value: 'new' as const,
+                    label: c.fields.settlementModeNew,
+                    helper: c.fields.settlementModeNewHelper,
+                  },
+                  {
+                    value: 'reprocess' as const,
+                    label: c.fields.settlementModeReprocess,
+                    helper: c.fields.settlementModeReprocessHelper,
+                  },
+                  {
+                    value: 'correction' as const,
+                    label: c.fields.settlementModeCorrection,
+                    helper: c.fields.settlementModeCorrectionHelper,
+                  },
+                ] as const
+              ).map((option) => (
+                <label
+                  key={option.value}
+                  className="flex cursor-pointer items-start gap-2 rounded-lg border border-[#E5E5E5] bg-white px-2.5 py-2 text-[12px] text-[#0A0A0A]"
+                >
+                  <input
+                    type="radio"
+                    name="settlement-upload-mode"
+                    className="mt-0.5 h-4 w-4"
+                    checked={settlementMode === option.value}
+                    onChange={() => {
+                      setSettlementMode(option.value)
+                      setCorrectionConfirmOpen(false)
+                    }}
+                    data-testid={`settlement-mode-${option.value}`}
+                  />
+                  <span>
+                    <span className="block font-medium text-[#0f172a]">{option.label}</span>
+                    <span className="mt-0.5 block text-[11px] text-[#64748b]">{option.helper}</span>
+                  </span>
+                </label>
+              ))}
+            </fieldset>
+
+            {settlementMode === 'reprocess' || settlementMode === 'correction' ? (
+              <label className="mt-3 flex flex-col gap-1">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#888888]">
+                  {c.fields.settlementReason}
+                </span>
+                <select
+                  value={settlementForceReason}
+                  onChange={(e) => setSettlementForceReason(e.target.value as SettlementForceReason)}
+                  className="h-9 rounded-lg border border-[#E5E5E5] bg-white px-2.5 text-[13px] text-[#0A0A0A] outline-none focus:border-[#6366f1]/50"
+                  data-testid="settlement-force-reason"
+                >
+                  {(settlementMode === 'correction'
+                    ? (['CLIENT_CORRECTED_FILE'] as const)
+                    : SETTLEMENT_FORCE_REASONS.filter((r) => r !== 'CLIENT_CORRECTED_FILE')
+                  ).map((reason) => (
+                    <option key={reason} value={reason}>
+                      {reason}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+
             <div className="mt-3">
               <BatchPortalUploadZone
                 accept={SETTLEMENT_FILE_ACCEPT}
@@ -498,14 +623,76 @@ export function BatchIntakePanel({
                 onFileChosen={onSettlementFileChosen}
               />
             </div>
-            {selectedSettlementFile ? (
+
+            {correctionConfirmOpen && selectedSettlementFile ? (
+              <div
+                className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-[12px] text-amber-950"
+                data-testid="settlement-correction-confirm"
+                role="dialog"
+                aria-label={c.dialogs.settlementCorrectionConfirmTitle}
+              >
+                <p className="font-semibold">{c.dialogs.settlementCorrectionConfirmTitle}</p>
+                <p className="mt-1 text-amber-900/90">{c.dialogs.settlementCorrectionConfirmBody}</p>
+                <dl className="mt-2 space-y-1 font-mono text-[11px] text-amber-950">
+                  <div className="flex justify-between gap-2">
+                    <dt>Batch</dt>
+                    <dd>{settlementBatchIdResolved || '—'}</dd>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <dt>PSP</dt>
+                    <dd>{psp.trim().toLowerCase() || '—'}</dd>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <dt>Artifact</dt>
+                    <dd>{settlementBaseline?.outcomeArtifactId || 'current active (server)'}</dd>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <dt>Version</dt>
+                    <dd>{settlementBaseline?.outcomeArtifactVersionId || 'current active (server)'}</dd>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <dt>Active run</dt>
+                    <dd>
+                      {settlementBaseline?.activeRunId ||
+                        (settlementBaseline?.runNumber != null
+                          ? `run #${settlementBaseline.runNumber}`
+                          : 'current active (server)')}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <dt>Reason</dt>
+                    <dd>{settlementForceReason}</dd>
+                  </div>
+                </dl>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void runSettlementBatchUpload()}
+                    className={PORTAL_PRIMARY_BTN}
+                    data-testid="settlement-correction-confirm-btn"
+                  >
+                    {c.dialogs.settlementCorrectionConfirm}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCorrectionConfirmOpen(false)}
+                    className="rounded-lg border border-[#E5E5E5] bg-white px-3 py-2 text-[12px] font-medium text-[#334155]"
+                  >
+                    {c.dialogs.settlementCorrectionCancel}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            {selectedSettlementFile && !correctionConfirmOpen ? (
               <button
                 type="button"
                 disabled={!settlementUploadEnabled}
-                onClick={() => void onSettlementBatchUpload()}
+                onClick={() => onSettlementBatchUpload()}
                 className={`mt-3 w-full justify-center ${PORTAL_PRIMARY_BTN}`}
+                data-testid="settlement-upload-submit"
               >
-                {intakeStep === 'settlement_uploading' ? c.intake.uploadSettlementBusy : c.intake.uploadSettlement}
+                {settlementActionLabel}
               </button>
             ) : null}
             {settlementIngestOk && settlementBatchIdResolved ? (
