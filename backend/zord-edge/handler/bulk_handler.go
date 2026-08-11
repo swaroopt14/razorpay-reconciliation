@@ -23,6 +23,7 @@ import (
 
 	"zord-edge/db"
 	"zord-edge/logger"
+	"zord-edge/middleware"
 	"zord-edge/model"
 	"zord-edge/services"
 	"zord-edge/vault"
@@ -161,6 +162,20 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 	tenantID := c.MustGet("tenant_id").(uuid.UUID)
 	tenantName := c.MustGet("tenant_name").(string)
+
+	principalType, _ := middleware.GetPrincipalType(c)
+	authMethod := string(principalType)
+
+	var principalID string
+	if uid, exists := c.Get("user_id"); exists {
+		if id, ok := uid.(uuid.UUID); ok {
+			principalID = id.String()
+		}
+	}
+	if principalID == "" {
+		principalID = tenantID.String()
+	}
+
 	PayloadSize := c.MustGet("PayloadSize").(int64)
 	fileTraceID := uuid.Must(uuid.NewV7()).String()
 
@@ -509,6 +524,8 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 						&profileIDForAudit, // Use profileIDForAudit as the audit hint
 						artifactID.String(),
 						artifactVersionID.String(),
+						principalID,
+						authMethod,
 					)
 
 					resultsMu.Lock()
@@ -830,6 +847,8 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 						&profileIDForAudit, // Use profileIDForAudit as the audit hint
 						artifactID.String(),
 						artifactVersionID.String(),
+						principalID,
+						authMethod,
 					)
 
 					resultsMu.Lock()
@@ -1242,6 +1261,8 @@ func (h *Handler) processBulkIntentRow(
 	profileID *string, // audit: which mapping profile parsed this row
 	artifactID string, // shared file-level artifact id, stamped on every row envelope
 	artifactVersionID string,
+	principalID string,
+	authMethod string,
 ) (*model.AckMessage, uuid.UUID, error) {
 
 	encryptedPayload, err := vault.Encrypt(rawPayload)
@@ -1286,6 +1307,8 @@ func (h *Handler) processBulkIntentRow(
 		RowCountEstimate:     rowCountEstimate,
 		FileUploadChannel:    fileUploadChannel,
 		SourceRowRef:         sourceRowRef,
+		PrincipalID:          principalID,
+		AuthMethod:           authMethod,
 	}
 
 	id, err := services.PersistIdempotency(ctx, rawIntent, db.DB)
