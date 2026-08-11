@@ -31,7 +31,6 @@ import (
 //	kafka → services → kafka  (would be circular)
 //	kafka → models            (safe: models has no kafka dependency)
 type PackGenerator interface {
-	GeneratePack(ctx context.Context, req models.GenerateEvidenceRequest) (*models.EvidencePack, error)
 	HandleLeafUpdate(ctx context.Context, tenantID, envelopeID, intentID, contractID, traceID string, newLeaves []models.PendingLeafCandidate) error
 	HandleBatchLeafUpdate(ctx context.Context, tenantID, batchID string, newLeaves []models.PendingLeafCandidate, isFinal bool) error
 }

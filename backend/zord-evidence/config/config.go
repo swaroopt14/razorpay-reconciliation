@@ -38,6 +38,11 @@ type Config struct {
 	ReadTimeout         time.Duration
 	WriteTimeout        time.Duration
 	ShutdownTimeout     time.Duration
+
+	// InternalServiceKey gates the /internal/evidence/* endpoints.
+	// Must be a long random secret, never exposed publicly.
+	// Loaded from EVIDENCE_INTERNAL_KEY env var.
+	InternalServiceKey string
 }
 
 func Load() (*Config, error) {
@@ -115,6 +120,7 @@ func Load() (*Config, error) {
 		ReadTimeout:         10 * time.Second,
 		WriteTimeout:        20 * time.Second,
 		ShutdownTimeout:     time.Duration(shutdownSec) * time.Second,
+		InternalServiceKey:  os.Getenv("EVIDENCE_INTERNAL_KEY"),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -144,6 +150,9 @@ func (c *Config) validate() error {
 	}
 	if strings.TrimSpace(c.ArchiveEncryptKey) == "" {
 		errs = append(errs, "EVIDENCE_ARCHIVE_ENCRYPTION_KEY_BASE64 is required in production")
+	}
+	if strings.TrimSpace(c.InternalServiceKey) == "" {
+		errs = append(errs, "EVIDENCE_INTERNAL_KEY is required in production")
 	}
 
 	if len(errs) > 0 {
