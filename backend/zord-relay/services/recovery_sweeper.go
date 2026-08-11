@@ -308,7 +308,7 @@ func (s *RecoverySweeper) resolveViaQuery(ctx context.Context, d *model.Dispatch
 				ContractID:    d.ContractID,
 				DispatchID:    d.DispatchID,
 				TraceID:       d.TraceID,
-				SchemaVersion: "v1",
+				SchemaVersion: model.SchemaVersionV1,
 				CreatedAt:     now,
 				Payload: model.ProviderAckedPayload{
 					DispatchID:        d.DispatchID,
@@ -355,7 +355,7 @@ func (s *RecoverySweeper) resolveViaQuery(ctx context.Context, d *model.Dispatch
 		ContractID:    d.ContractID,
 		DispatchID:    d.DispatchID,
 		TraceID:       d.TraceID,
-		SchemaVersion: "v1",
+		SchemaVersion: model.SchemaVersionV1,
 		CreatedAt:     now,
 		Payload: model.DispatchRetryScheduledPayload{
 			DispatchID:    d.DispatchID,

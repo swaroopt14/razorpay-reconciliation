@@ -1,0 +1,6 @@
+{
+  "event_version_v1": "v1",
+  "schema_version_v1": "v1",
+  "supported_event_versions": ["v1"],
+  "supported_schema_versions": ["v1"]
+}
