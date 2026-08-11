@@ -3,6 +3,7 @@ package routes
 import (
 	"net/http"
 	"zord-evidence/handlers"
+	"zord-evidence/internal/middleware"
 
 	"github.com/gin-gonic/gin"
 )
@@ -33,15 +34,14 @@ func RegisterProofRoutes(r *gin.Engine, ph *handlers.ProofHandler) {
 	r.GET("/v1/dispute/export/preview", ph.ExportPreview)
 }
 
-func Register(r *gin.Engine, h *handlers.EvidenceHandler, outboxHandler *handlers.OutboxHandler) {
+func Register(r *gin.Engine, h *handlers.EvidenceHandler, outboxHandler *handlers.OutboxHandler, internalKey string) {
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
 	v1 := r.Group("/v1/evidence")
 	{
-		// §13: Pack generation and retrieval
-		v1.POST("/packs", h.GenerateEvidencePack)
+		// Public read-only endpoints
 		v1.GET("/packs", h.ListEvidencePacks) // ?tenant_id=&intent_id=  §17
 
 		v1.GET("/packs/:packID/old", h.GetEvidencePack)
@@ -63,6 +63,13 @@ func Register(r *gin.Engine, h *handlers.EvidenceHandler, outboxHandler *handler
 
 		// §17: Replay and equivalence check
 		v1.POST("/replay", h.ReplayEvidencePack)
+	}
+
+	// Internal-only: pack generation is forbidden from public callers.
+	// Only accessible with a valid X-Internal-Key header (admin recovery).
+	internalV1 := r.Group("/internal/evidence", middleware.RequireInternalKey(internalKey))
+	{
+		internalV1.POST("/packs", h.AdminRecoverEvidencePack)
 	}
 
 	internal := r.Group("/internal/outbox")

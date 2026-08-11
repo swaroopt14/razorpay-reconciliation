@@ -119,6 +119,16 @@ func (r *EventReceiptRepo) RunOnce(
 	if m.SourceTopic == "" {
 		m.SourceTopic = "unknown"
 	}
+	// INTEL-04 defense-in-depth: the primary enforcement point is the
+	// ingestion-time gate in kafka/consumer.go (which rejects a missing
+	// trace_id on any non-exempt topic before RunOnce is ever called), so in
+	// the normal Kafka path m.TraceID is never empty here. This default only
+	// protects a hypothetical future non-Kafka caller that constructs
+	// EventMeta directly and forgets to set TraceID — it stores an explicit
+	// sentinel rather than letting the column go to NULL.
+	if m.TraceID == "" {
+		m.TraceID = "unknown"
+	}
 
 	var lastErr error
 	for attempt := 1; attempt <= maxTxAttempts; attempt++ {
@@ -449,4 +459,61 @@ func (r *EventReceiptRepo) SweepStaleLeases(ctx context.Context) (reclaimed int,
 		reclaimed++
 	}
 	return reclaimed, rows.Err()
+}
+
+// EventReceiptTraceRow is one event_receipts row as returned by
+// ListByTraceID — the read-side shape backing GET /v1/intelligence/trace/{trace_id}
+// (INTEL-04 acceptance criterion: "dashboard metric can navigate to source
+// event/trace").
+type EventReceiptTraceRow struct {
+	EventID          string
+	EventType        string
+	EventSource      string
+	SourceTopic      string
+	EventVersion     string
+	ScopeType        *string
+	ScopeRef         *string
+	PayloadHash      *string
+	ProcessingStatus string
+	ReceivedAt       time.Time
+	ProcessedAt      *time.Time
+	ErrorCode        *string
+	ErrorDetail      *string
+}
+
+// ListByTraceID returns every event_receipts row for (tenantID, traceID),
+// ordered received_at ASC — earliest event first, so a caller can walk a
+// trace in chronological order from the first event that carried this
+// trace_id through to the last. tenantID is required and always part of the
+// WHERE clause: every tenant-scoped query in this codebase is scoped this
+// way (see e.g. PolicyRepo's P0-05 tenant-safe lookups) — this does not
+// introduce the first unscoped-by-tenant read path.
+func (r *EventReceiptRepo) ListByTraceID(ctx context.Context, tenantID, traceID string) ([]EventReceiptTraceRow, error) {
+	const sql = `
+		SELECT event_id, event_type, event_source, source_topic, event_version,
+		       scope_type, scope_ref, payload_hash, processing_status,
+		       received_at, processed_at, error_code, error_detail
+		FROM event_receipts
+		WHERE tenant_id = $1 AND trace_id = $2
+		ORDER BY received_at ASC
+	`
+	rows, err := r.pool.Query(ctx, sql, tenantID, traceID)
+	if err != nil {
+		return nil, fmt.Errorf("event_receipt_repo.ListByTraceID tenant=%s trace_id=%s: %w", tenantID, traceID, err)
+	}
+	defer rows.Close()
+
+	var out []EventReceiptTraceRow
+	for rows.Next() {
+		var row EventReceiptTraceRow
+		if err := rows.Scan(
+			&row.EventID, &row.EventType, &row.EventSource, &row.SourceTopic, &row.EventVersion,
+			&row.ScopeType, &row.ScopeRef, &row.PayloadHash, &row.ProcessingStatus,
+			&row.ReceivedAt, &row.ProcessedAt, &row.ErrorCode, &row.ErrorDetail,
+		); err != nil {
+			return nil, fmt.Errorf("event_receipt_repo.ListByTraceID scan tenant=%s trace_id=%s: %w", tenantID, traceID, err)
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
 }

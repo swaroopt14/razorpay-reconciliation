@@ -90,7 +90,7 @@ func emitOutcomeBatchSummaryVectorIndex(batchSummary models.BatchAttachmentSumma
 
 	event := kafka.VectorIndexRequestEvent{
 		EventID:         uuid.NewString(),
-		SchemaVersion:   "v1",
+		SchemaVersion:   models.SchemaVersionV1,
 		EventType:       kafka.VectorIndexEventRequested,
 		SourceService:   "zord-outcome-engine",
 		SourceEventType: "batch_attachment_summary.saved.v1",

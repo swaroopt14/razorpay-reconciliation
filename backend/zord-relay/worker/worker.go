@@ -39,6 +39,7 @@ func NewWorker(
 	log *zap.Logger,
 	failureRepo *services.PublishFailureRepo,
 	hashVerifier services.PayloadHashVerifier,
+	guard *RouteGuard,
 ) *Worker {
 	workerLog := log.With(zap.String("service", svcCfg.Name))
 
@@ -51,7 +52,7 @@ func NewWorker(
 		workerLog,
 	)
 
-	proc := newProcessor(pub, svcCfg, relayCfg.InstanceID, workerLog, failureRepo, hashVerifier)
+	proc := newProcessor(pub, svcCfg, relayCfg.InstanceID, workerLog, failureRepo, hashVerifier, guard)
 
 	concurrency := int64(relayCfg.MaxPublishConcurrency)
 	if concurrency <= 0 {

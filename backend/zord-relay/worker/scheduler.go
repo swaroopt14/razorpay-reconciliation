@@ -52,7 +52,8 @@ func NewScheduler(
 			if svcCfg.IsIntent {
 				wv = hashVerifier
 			}
-			w = NewWorker(svcCfg, cfg.Relay, pub, log, failureRepo, wv)
+			guard := NewRouteGuard(svcCfg)
+			w = NewWorker(svcCfg, cfg.Relay, pub, log, failureRepo, wv, guard)
 		}
 		workers = append(workers, w)
 		log.Info("registered worker",

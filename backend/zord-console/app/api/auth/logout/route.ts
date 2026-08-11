@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { BACKEND_SERVICES } from '@/config/api.endpoints'
+import { assertCookieMutationProtection } from '@/services/auth/assertSameOrigin.server'
 import {
   REFRESH_COOKIE_NAME,
   buildForwardHeaders,
@@ -11,6 +12,9 @@ import {
 export const dynamic = 'force-dynamic'
 
 export async function POST(request: NextRequest) {
+  const csrf = assertCookieMutationProtection(request)
+  if (!csrf.ok) return csrf.response
+
   const body = (await parseJSONSafe<{ refresh_token?: string }>(request)) ?? {}
   const refreshToken = body.refresh_token || request.cookies.get(REFRESH_COOKIE_NAME)?.value
 

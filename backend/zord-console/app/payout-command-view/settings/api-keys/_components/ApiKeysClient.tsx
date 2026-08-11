@@ -7,6 +7,10 @@ import { SANDBOX_DOCS_LINKS } from '@/services/payout-command/sandbox-data'
 import { ActivateLiveWizard } from '@/features/payout-command/sandbox/ActivateLiveWizard'
 import { Glyph } from '@/features/payout-command/shared'
 import { useSessionTenantId } from '@/services/auth/useSessionTenantId'
+import {
+  clearLegacyTenantApiSecrets,
+  formatSecretKeyPrefix,
+} from '@/services/auth/readStoredTenantApiKey'
 
 type WorkspaceKeysPayload = {
   tenant_id: string
@@ -51,7 +55,6 @@ function ApiKeysClientInner() {
   const [keys, setKeys] = useState<WorkspaceKeysPayload | null>(null)
   const [keysLoading, setKeysLoading] = useState(true)
   const [keysError, setKeysError] = useState<string | null>(null)
-  const [tenantApiKey, setTenantApiKey] = useState<string | null>(null)
 
   const loadKeys = useCallback(async () => {
     setKeysLoading(true)
@@ -65,14 +68,8 @@ function ApiKeysClientInner() {
         return
       }
       const body = (await res.json()) as WorkspaceKeysPayload
+      clearLegacyTenantApiSecrets(body.tenant_id)
       setKeys(body)
-      try {
-        const stored = window.localStorage.getItem(`zord_tenant_api_key:${body.tenant_id}`)
-        if (stored?.trim()) setTenantApiKey(stored.trim())
-        else setTenantApiKey(null)
-      } catch {
-        setTenantApiKey(null)
-      }
     } catch {
       setKeysError('Network error loading keys.')
       setKeys(null)
@@ -82,13 +79,12 @@ function ApiKeysClientInner() {
   }, [])
 
   useEffect(() => {
+    clearLegacyTenantApiSecrets(tenantId || undefined)
     void loadKeys()
   }, [loadKeys, tenantId])
 
   const publishableValue = keys?.publishable_key ?? keys?.workspace_code ?? ''
-  const secretValue =
-    tenantApiKey ??
-    (keys?.secret_key_prefix ? `${keys.secret_key_prefix.slice(0, 16)}…` : '')
+  const secretPrefixDisplay = formatSecretKeyPrefix(keys?.secret_key_prefix ?? keys?.workspace_code)
 
   const sandboxPublishable: DisplayApiKey = {
     type: 'publishable',
@@ -99,7 +95,7 @@ function ApiKeysClientInner() {
   const sandboxSecret: DisplayApiKey = {
     type: 'secret',
     mode: 'sandbox',
-    value: secretValue || '—',
+    value: secretPrefixDisplay,
     lastUsedAt: null,
   }
 
@@ -138,7 +134,7 @@ function ApiKeysClientInner() {
           {/* Secret keys card */}
           <KeyCard
             title="Secret keys"
-            subtitle="Server-side only. Anyone with this key can move money in your account."
+            subtitle="Prefix only after signup. The full secret is shown once at registration and is never stored in this browser."
             warning
           >
             {keysLoading ? (
@@ -147,7 +143,7 @@ function ApiKeysClientInner() {
               <KeyRow
                 apiKey={sandboxSecret}
                 masked
-                copyDisabled={!secretValue || secretValue === '—'}
+                copyDisabled={secretPrefixDisplay === '—'}
                 rotateDisabled
               />
             )}

@@ -13,8 +13,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const supportedIntentSchemaVersion = "v1"
-
 func persistDeadLetter(ctx context.Context, eventID, eventType, schemaVersion, tenantID, traceID string, rawPayload []byte, reason string, stage string) error {
 	payloadJSON := string(rawPayload)
 	if !json.Valid(rawPayload) {
@@ -63,8 +61,8 @@ func HandleIntentEvent(msg []byte) error {
 		return nil
 	}
 
-	if event.SchemaVersion != supportedIntentSchemaVersion {
-		_ = persistDeadLetter(context.Background(), event.EventID, event.EventType, event.SchemaVersion, event.TenantID, event.TraceID, msg, fmt.Sprintf("unsupported schema_version %q for event_type %q (expected %q)", event.SchemaVersion, event.EventType, supportedIntentSchemaVersion), "UNSUPPORTED_VERSION")
+	if event.SchemaVersion != models.SchemaVersionV1 {
+		_ = persistDeadLetter(context.Background(), event.EventID, event.EventType, event.SchemaVersion, event.TenantID, event.TraceID, msg, fmt.Sprintf("unsupported schema_version %q for event_type %q (expected %q)", event.SchemaVersion, event.EventType, models.SchemaVersionV1), "UNSUPPORTED_VERSION")
 		return nil
 	}
 

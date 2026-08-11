@@ -2,6 +2,7 @@
 
 import { User, UserRole } from '@/types/auth'
 import { STORAGE_KEYS } from '@/constants'
+import { clearLegacyTenantApiSecrets } from '@/services/auth/readStoredTenantApiKey'
 
 const AUTH_KEY = STORAGE_KEYS.AUTH
 const ROLE_KEY = STORAGE_KEYS.CURRENT_ROLE
@@ -112,6 +113,7 @@ function clearUserStorage() {
   localStorage.removeItem('zord_tenant_id')
   localStorage.removeItem('zord_tenant_name')
   localStorage.removeItem('cx_tenant_name')
+  clearLegacyTenantApiSecrets()
 }
 
 async function parseResponse<T>(response: Response): Promise<T | null> {
@@ -212,11 +214,13 @@ export async function hydrateSession(): Promise<User | null> {
 
 export async function logout(): Promise<void> {
   try {
+    const { csrfMutationHeaders } = await import('@/services/auth/csrfBrowser')
     await fetch('/api/auth/logout', {
       method: 'POST',
-      headers: {
+      credentials: 'include',
+      headers: csrfMutationHeaders({
         'Content-Type': 'application/json',
-      },
+      }),
       cache: 'no-store',
       body: JSON.stringify({}),
     })

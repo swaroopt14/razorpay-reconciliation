@@ -59,6 +59,7 @@ type BulkResult struct {
 	EnvelopeID string `json:"EnvelopeID,omitempty"`
 	TraceID    string `json:"Trace_id,omitempty"`
 	Status     string `json:"Status"`
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
 	ReceivedAt string `json:"Received_At,omitempty"`
 	Error      string `json:"error,omitempty"`
 }
@@ -164,7 +165,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 	fileTraceID := uuid.Must(uuid.NewV7()).String()
 
 	batchIDHeader := c.GetHeader("Batch-ID")
-	originalBatchID := batchIDHeader
+
 	if batchIDHeader == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    "BATCH_ID_REQUIRED",
@@ -172,27 +173,8 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		})
 		return
 	}
-	//artifactID := uuid.Must(uuid.NewV7())
-	//artifactVersionId := uuid.Must(uuid.NewV7())
-	finalBatchID := &batchIDHeader
 
-	if originalBatchID != "" {
-		exists, err := services.CheckBatchIDExists(c.Request.Context(), tenantID, finalBatchID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"code":    "BATCH_ID_VERIFICATION_FAILED",
-				"message": "failed to verify batch_id uniqueness",
-			})
-			return
-		}
-		if exists {
-			c.JSON(http.StatusConflict, gin.H{
-				"code":    "BATCH_ID_ALREADY_EXISTS",
-				"message": "batch_id must be unique for each tenant",
-			})
-			return
-		}
-	}
+	finalBatchID := &batchIDHeader
 
 	// ── Force-Reprocess guard ─────────────────────────────────────────────────
 	// X-Zord-Force-Reprocess: true signals the client explicitly wants to
@@ -212,9 +194,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 	// identical to the original. This is the source-of-truth payload stored
 	// in the file-level RawEnvelope on S3 before any row is processed.
 	filePayload := map[string]interface{}{
-		"file_name": file.Filename,
-		// "artifact_id":         artifactID,
-		// "artifact_version_id": artifactVersionId,
+		"file_name":           file.Filename,
 		"file_size":           PayloadSize,
 		"file_content_hash":   fileHash,
 		"row_count_estimate":  rowCountEstimate,
@@ -249,56 +229,61 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		EventType:            "Envelope.Created",
 		BatchID:              finalBatchID,
 	}
-	fileEnvelopeId := uuid.NewString()
-
-	data, err := services.ProcessRawIntent(context.Background(), fileMsg, h.S3store, fileEnvelopeId, time.Now().UTC())
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    "S3_STORE_ERROR",
-			"message": "failed to store bulk file envelope",
-		})
-		return
-	}
-	fileartifact := model.Artifact{
-		TenantId:         tenantID,
-		FileEnvelopeId:   fileEnvelopeId,
-		BatchId:          finalBatchID,
-		FileName:         &file.Filename,
-		FileSizeByte:     &fileSizeBytes,
-		FileHash:         fileHash,
-		RowCountEstimate: rowCountEstimate,
-		ObjectRef:        data.ObjectRef,
-	}
-
-	isExist, artifactID, artifactVersionId, err := services.UpsertArtifact(context.Background(), forceReprocess, fileartifact)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    "Artifact Persist Error",
-			"message": "failed to store file artifact",
-		})
-		return
-	}
-	if isExist {
-		c.JSON(http.StatusConflict, gin.H{
-			"code":              "Artifact already Exist",
-			"ArtifactId":        artifactID,
-			"ArtifactVersionId": artifactVersionId,
-			"message":           "This Artifact has already been processed. All rows exist in the system.",
-			"hint":              "If you intended to reprocess this batch, resend the request with the headers: X-Zord-Force-Reprocess: true and a unique Batch-ID.",
-		})
-		return
-	}
-
-	data.ArtifactVersionId = artifactVersionId.String()
-	data.ArtifactId = artifactID.String()
-
-	// File envelope is now durably stored on S3. Release the buffer — row
-	// processing from this point forward uses only the reset src reader.
-	fileBuf.Reset()
-
-	// ── Phase 2: Stream rows for per-row processing ───────────────────────────
-
 	ext := strings.ToLower(filepath.Ext(file.Filename))
+
+	// MIME validation — before touching DB or S3
+	switch ext {
+	case ".csv":
+		if !strings.HasPrefix(mimetype, "text/") {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":     "MIME_MISMATCH",
+				"message":  "file extension is .csv but content is not plain text",
+				"detected": mimetype,
+			})
+			return
+		}
+	case ".xlsx":
+		if mimetype != "application/zip" && mimetype != "application/octet-stream" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":     "MIME_MISMATCH",
+				"message":  "file extension is .xlsx but content does not appear to be a valid Excel file",
+				"detected": mimetype,
+			})
+			return
+		}
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    "UNSUPPORTED_FILE_FORMAT",
+			"message": "unsupported file format (.csv or .xlsx only)",
+		})
+		return
+	}
+
+	// Row count validation — before touching DB or S3
+	// Row count pre-validation — CSV only (XLSX uses excelize scan inside the case)
+	if ext == ".csv" {
+		if rowCountEstimate < 1 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    "FILE_EMPTY_OR_NO_DATA_RECORDS",
+				"message": "file must contain header and at least one row",
+			})
+			return
+		}
+		maxrowstemp := os.Getenv("MAX_CSV_ROWS")
+		if maxrowstemp == "" {
+			maxrowstemp = "10000"
+		}
+		if maxrows, err := strconv.Atoi(maxrowstemp); err == nil && rowCountEstimate > maxrows {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    "FILE_ROW_LIMIT_EXCEEDED",
+				"message": "file row limit exceeded",
+				"limit":   maxrows,
+				"actual":  rowCountEstimate,
+			})
+			return
+		}
+	}
+	// XLSX row count validation happens inside the xlsx case after excelize scan
 
 	// ── Parser resolution — profile-driven first, type-based fallback ──────────
 
@@ -342,6 +327,117 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 			slog.String("tenant_id", tenantID.String()))
 	}
 
+	// NOW safe to reserve artifact and upload to S3
+	FileEnvelopeId := uuid.Must(uuid.NewV7())
+	artifactID, artifactVersionID, err := services.ReserveArtifact(
+		c.Request.Context(),
+		forceReprocess,
+		model.Artifact{
+			TenantId:         tenantID,
+			FileHash:         fileHash,
+			FileName:         &file.Filename,
+			FileSizeByte:     &fileSizeBytes,
+			RowCountEstimate: rowCountEstimate,
+			BatchID:          *finalBatchID,
+		},
+	)
+
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrBatchInProgress):
+			c.JSON(http.StatusConflict, gin.H{
+				"code":    "BATCH_IN_PROGRESS",
+				"message": "this batch is currently being processed by another request",
+			})
+		case errors.Is(err, services.ErrBatchAlreadyProcessed):
+			c.JSON(http.StatusConflict, gin.H{
+				"code":    "BATCH_ALREADY_EXISTS",
+				"message": "this batch has already been processed",
+				"hint":    "use X-Zord-Force-Reprocess: true with a new Batch-ID to reprocess",
+			})
+		case errors.Is(err, services.ErrBatchFailedRetry):
+			c.JSON(http.StatusConflict, gin.H{
+				"code":    "BATCH_FAILED_RETRY",
+				"message": "previous attempt for this batch failed, submit again to retry",
+			})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"code":    "ARTIFACT_RESERVE_FAILED",
+				"message": "failed to reserve artifact",
+			})
+		}
+		return
+	}
+
+	data, err := services.ProcessRawIntent(context.Background(), fileMsg, h.S3store, FileEnvelopeId.String(), time.Now().UTC())
+	if err != nil {
+		services.MarkArtifactFailed(context.Background(), artifactVersionID)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    "S3_STORE_ERROR",
+			"message": "failed to store bulk file envelope",
+		})
+		return
+	}
+	if err := services.FinalizeArtifact(context.Background(), artifactVersionID, data.ObjectRef, FileEnvelopeId); err != nil {
+		services.MarkArtifactFailed(context.Background(), artifactVersionID)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    "ARTIFACT_FINALIZE_FAILED",
+			"message": "failed to finalize artifact",
+		})
+		return
+	}
+
+	data.ArtifactVersionId = artifactVersionID.String()
+	data.ArtifactId = artifactID.String()
+
+	// File envelope is now durably stored on S3. Release the buffer — row
+	// processing from this point forward uses only the reset src reader.
+	fileBuf.Reset()
+
+	// ── Phase 2: Stream rows for per-row processing ───────────────────────────
+
+	// ── Parser resolution — profile-driven first, type-based fallback ──────────
+
+	// tenantType := strings.ToUpper(strings.TrimSpace(c.GetHeader("X-Zord-Tenant-Type")))
+	// sourceSystem := strings.ToUpper(strings.TrimSpace(c.GetHeader("X-Zord-Source-System"))) // e.g. "TALLY", "SAP", "ERP"
+
+	// var parser services.IntentParser
+	// var parserErr error
+
+	// switch {
+	// case sourceSystem != "":
+	// 	logger.Log.Info("using profile-driven pass-through",
+	// 		slog.String("source_system", sourceSystem),
+	// 		slog.String("tenant_id", tenantID.String()))
+
+	// case tenantType == "TALLY" || tenantType == "SAP" || tenantType == "ERP" || tenantType == "QUICKBOOKS":
+	// 	sourceSystem = tenantType
+	// 	logger.Log.Info("using profile-driven pass-through",
+	// 		slog.String("source_system", sourceSystem),
+	// 		slog.String("tenant_id", tenantID.String()))
+
+	// case tenantType != "":
+	// 	parser, parserErr = services.GetParserByType(tenantType)
+	// 	if parserErr != nil {
+	// 		c.JSON(http.StatusUnprocessableEntity, gin.H{
+	// 			"code":    "INVALID_TENANT_TYPE",
+	// 			"message": "invalid tenant type",
+	// 			"detail":  parserErr.Error(),
+	// 			"hint":    "Valid static parser types: BANK, NBFC, MERCHANT, VENDOR, GATEWAY",
+	// 		})
+	// 		return
+	// 	}
+	// 	sourceSystem = "UNKNOWN"
+	// 	logger.Log.Info("using type-based parser",
+	// 		slog.String("tenant_type", tenantType),
+	// 		slog.String("tenant_id", tenantID.String()))
+
+	// default:
+	// 	sourceSystem = "UNKNOWN"
+	// 	logger.Log.Info("using profile-driven pass-through with source auto-detection",
+	// 		slog.String("tenant_id", tenantID.String()))
+	// }
+
 	profileIDForAudit := tenantType
 	if sourceSystem != "UNKNOWN" {
 		profileIDForAudit = sourceSystem + "_pass_through"
@@ -357,41 +453,6 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 	// ── CSV ───────────────────────────────────────────────────────────────────
 	case ".csv":
-		// MIME TYPE DETECTION
-		if !strings.HasPrefix(mimetype, "text/") {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"code":     "MIME_MISMATCH",
-				"message":  "file extention is .csv  but content is not plain text",
-				"detected": mimetype,
-			})
-			logger.Log.Warn("CSV MIME mismatch",
-				slog.String("detected", mimetype))
-			return
-		}
-		totalDataRows := rowCountEstimate
-
-		if totalDataRows < 1 {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"code":    "FILE_EMPTY_OR_NO_DATA_RECORDS",
-				"message": "file must contain header and at least one row",
-			})
-			return
-		}
-
-		maxrowstemp := os.Getenv("MAX_CSV_ROWS")
-		if maxrowstemp == "" {
-			logger.Log.Warn("MAX_CSV_ROWS not set; using default 10000")
-			maxrowstemp = "10000"
-		}
-		if maxrows, err := strconv.Atoi(maxrowstemp); err == nil && totalDataRows > maxrows {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"code":    "FILE_ROW_LIMIT_EXCEEDED",
-				"message": "CSV limit exceeded",
-				"limit":   maxrows,
-				"actual":  totalDataRows,
-			})
-			return
-		}
 
 		var resultsMu sync.Mutex
 		resultsMap := make(map[int]BulkResult)
@@ -447,22 +508,23 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 						&job.SourceRowRef,
 						&profileIDForAudit, // Use profileIDForAudit as the audit hint
 						artifactID.String(),
-						artifactVersionId.String(),
+						artifactVersionID.String(),
 					)
 
 					resultsMu.Lock()
 					if err != nil {
-						//atomic.AddInt32(&failedCount, 1)
 						if errors.Is(err, services.ErrFingerprintMismatch) {
 							resultsMap[job.Row] = BulkResult{
 								Row:    job.Row,
 								Status: "CONFLICT",
+								IdempotencyKey: idempotencyKey,
 								Error:  "idempotency key reuse with different payload",
 							}
 						} else if errors.Is(err, services.ErrIdempotencyInFlight) {
 							resultsMap[job.Row] = BulkResult{
 								Row:    job.Row,
 								Status: "CONFLICT",
+								IdempotencyKey: idempotencyKey,
 								Error:  "idempotency key in flight — retry later",
 							}
 						} else {
@@ -470,25 +532,26 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 								Row:     job.Row,
 								Status:  "FAILED",
 								TraceID: traceID,
+								IdempotencyKey: idempotencyKey,
 								Error:   err.Error(),
 							}
 						}
 					} else if duplicateID != uuid.Nil {
-						//atomic.AddInt32(&duplicateCount, 1)
 						resultsMap[job.Row] = BulkResult{
 							Row:        job.Row,
 							Status:     "DUPLICATE",
 							TraceID:    traceID,
 							EnvelopeID: duplicateID.String(),
+							IdempotencyKey: idempotencyKey,
 							Error:      "duplicate idempotency key",
 						}
 					} else {
-						//atomic.AddInt32(&acceptedCount, 1)
 						resultsMap[job.Row] = BulkResult{
 							Row:        job.Row,
 							Status:     "Accepted",
 							TraceID:    traceID,
 							EnvelopeID: storageAck.EnvelopeId,
+							IdempotencyKey: idempotencyKey,
 							ReceivedAt: storageAck.ReceivedAt.Format(time.RFC3339Nano),
 						}
 					}
@@ -510,7 +573,6 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 			return
 		}
 
-		// ── Collect all non-empty rows for batch parse ──────────────────────
 		// ── Stream rows directly into jobs channel ───────────────────────────────
 		// Profile-driven path streams one row at a time — no allCSVRows accumulation.
 		// Parser path still accumulates because parser.Parse requires the full slice.
@@ -571,13 +633,18 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 				}
 
 				rowIdempotencyKey := extractIdempotencyKey(rawJSON)
-				if rowIdempotencyKey == "" {
+				if forceReprocess {
+					// always override regardless of what's in the row
 					var input string
-					if forceReprocess {
-						input = fmt.Sprintf("%s:%d:%s:reprocess:%s", fileHash, rowNum, tenantID.String(), batchIDHeader)
+					if rowIdempotencyKey != "" {
+						input = fmt.Sprintf("%s:%s:reprocess:%s", rowIdempotencyKey, tenantID.String(), batchIDHeader)
 					} else {
-						input = fmt.Sprintf("%s:%d:%s", fileHash, rowNum, tenantID.String())
+						input = fmt.Sprintf("%s:%d:%s:reprocess:%s", fileHash, rowNum, tenantID.String(), batchIDHeader)
 					}
+					sum := sha256.Sum256([]byte(input))
+					rowIdempotencyKey = hex.EncodeToString(sum[:])
+				} else if rowIdempotencyKey == "" {
+					input := fmt.Sprintf("%s:%d:%s", fileHash, rowNum, tenantID.String())
 					sum := sha256.Sum256([]byte(input))
 					rowIdempotencyKey = hex.EncodeToString(sum[:])
 				}
@@ -620,13 +687,18 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 				}
 
 				rowIdempotencyKey := extractIdempotencyKey(jsonPayload)
-				if rowIdempotencyKey == "" {
+				if forceReprocess {
+					// always override regardless of what's in the row
 					var input string
-					if forceReprocess {
-						input = fmt.Sprintf("%s:%d:%s:reprocess:%s", fileHash, rowNum, tenantID.String(), batchIDHeader)
+					if rowIdempotencyKey != "" {
+						input = fmt.Sprintf("%s:%s:reprocess:%s", rowIdempotencyKey, tenantID.String(), batchIDHeader)
 					} else {
-						input = fmt.Sprintf("%s:%d:%s", fileHash, rowNum, tenantID.String())
+						input = fmt.Sprintf("%s:%d:%s:reprocess:%s", fileHash, rowNum, tenantID.String(), batchIDHeader)
 					}
+					sum := sha256.Sum256([]byte(input))
+					rowIdempotencyKey = hex.EncodeToString(sum[:])
+				} else if rowIdempotencyKey == "" {
+					input := fmt.Sprintf("%s:%d:%s", fileHash, rowNum, tenantID.String())
 					sum := sha256.Sum256([]byte(input))
 					rowIdempotencyKey = hex.EncodeToString(sum[:])
 				}
@@ -654,16 +726,6 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 	// ── Excel ─────────────────────────────────────────────────────────────────
 	case ".xlsx":
-		if mimetype != "application/zip" && mimetype != "application/octet-stream" {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"code":     "MIME_MISMATCH",
-				"message":  "file extention is .xlsx but content does not appear to be a valid Excel file",
-				"detected": mimetype,
-			})
-			logger.Log.Warn("XLSX MIME mismatch",
-				slog.String("detected", mimetype))
-			return
-		}
 		f, err := excelize.OpenReader(src)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
@@ -719,8 +781,6 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		resultsMap := make(map[int]BulkResult)
 		jobs := make(chan BulkJob, 500)
 
-		//var acceptedCount, failedCount, duplicateCount int32
-
 		workerCount := runtime.NumCPU() * 2
 		var wg sync.WaitGroup
 
@@ -769,22 +829,23 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 						&job.SourceRowRef,
 						&profileIDForAudit, // Use profileIDForAudit as the audit hint
 						artifactID.String(),
-						artifactVersionId.String(),
+						artifactVersionID.String(),
 					)
 
 					resultsMu.Lock()
 					if err != nil {
-						//atomic.AddInt32(&failedCount, 1)
 						if errors.Is(err, services.ErrFingerprintMismatch) {
 							resultsMap[job.Row] = BulkResult{
-								Row:    job.Row,
-								Status: "CONFLICT",
-								Error:  "idempotency key reuse with different payload",
+								Row:            job.Row,
+								Status:         "CONFLICT",
+								IdempotencyKey: idempotencyKey,
+								Error:          "idempotency key reuse with different payload",
 							}
 						} else if errors.Is(err, services.ErrIdempotencyInFlight) {
 							resultsMap[job.Row] = BulkResult{
 								Row:    job.Row,
 								Status: "CONFLICT",
+								IdempotencyKey: idempotencyKey,
 								Error:  "idempotency key in flight — retry later",
 							}
 						} else {
@@ -792,25 +853,27 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 								Row:     job.Row,
 								Status:  "FAILED",
 								TraceID: traceID,
+								IdempotencyKey: idempotencyKey,
 								Error:   err.Error(),
 							}
 						}
 					} else if duplicateID != uuid.Nil {
-						//atomic.AddInt32(&duplicateCount, 1)
 						resultsMap[job.Row] = BulkResult{
 							Row:        job.Row,
 							Status:     "DUPLICATE",
 							TraceID:    traceID,
 							EnvelopeID: duplicateID.String(),
+							IdempotencyKey: idempotencyKey,
 							Error:      "duplicate idempotency key",
 						}
 					} else {
-						//atomic.AddInt32(&acceptedCount, 1)
+
 						resultsMap[job.Row] = BulkResult{
 							Row:        job.Row,
 							Status:     "Accepted",
 							TraceID:    traceID,
 							EnvelopeID: storageAck.EnvelopeId,
+							IdempotencyKey: idempotencyKey,
 							ReceivedAt: storageAck.ReceivedAt.Format(time.RFC3339Nano),
 						}
 					}
@@ -909,13 +972,18 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 				}
 
 				rowIdempotencyKey := extractIdempotencyKey(rawJSON)
-				if rowIdempotencyKey == "" {
+				if forceReprocess {
+					// always override regardless of what's in the row
 					var input string
-					if forceReprocess {
-						input = fmt.Sprintf("%s:%d:%s:reprocess:%s", fileHash, rowNum, tenantID.String(), batchIDHeader)
+					if rowIdempotencyKey != "" {
+						input = fmt.Sprintf("%s:%s:reprocess:%s", rowIdempotencyKey, tenantID.String(), batchIDHeader)
 					} else {
-						input = fmt.Sprintf("%s:%d:%s", fileHash, rowNum, tenantID.String())
+						input = fmt.Sprintf("%s:%d:%s:reprocess:%s", fileHash, rowNum, tenantID.String(), batchIDHeader)
 					}
+					sum := sha256.Sum256([]byte(input))
+					rowIdempotencyKey = hex.EncodeToString(sum[:])
+				} else if rowIdempotencyKey == "" {
+					input := fmt.Sprintf("%s:%d:%s", fileHash, rowNum, tenantID.String())
 					sum := sha256.Sum256([]byte(input))
 					rowIdempotencyKey = hex.EncodeToString(sum[:])
 				}
@@ -958,13 +1026,18 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 				}
 
 				rowIdempotencyKey := extractIdempotencyKey(jsonPayload)
-				if rowIdempotencyKey == "" {
+				if forceReprocess {
+					// always override regardless of what's in the row
 					var input string
-					if forceReprocess {
-						input = fmt.Sprintf("%s:%d:%s:reprocess:%s", fileHash, rowNum, tenantID.String(), batchIDHeader)
+					if rowIdempotencyKey != "" {
+						input = fmt.Sprintf("%s:%s:reprocess:%s", rowIdempotencyKey, tenantID.String(), batchIDHeader)
 					} else {
-						input = fmt.Sprintf("%s:%d:%s", fileHash, rowNum, tenantID.String())
+						input = fmt.Sprintf("%s:%d:%s:reprocess:%s", fileHash, rowNum, tenantID.String(), batchIDHeader)
 					}
+					sum := sha256.Sum256([]byte(input))
+					rowIdempotencyKey = hex.EncodeToString(sum[:])
+				} else if rowIdempotencyKey == "" {
+					input := fmt.Sprintf("%s:%d:%s", fileHash, rowNum, tenantID.String())
 					sum := sha256.Sum256([]byte(input))
 					rowIdempotencyKey = hex.EncodeToString(sum[:])
 				}
