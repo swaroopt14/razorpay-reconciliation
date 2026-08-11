@@ -339,7 +339,30 @@ marimo/_lsp/
 # .env.example
 
 # =========================
+# Windows Reserved Filenames
+# =========================
+# These cause "Unlink of file failed" errors on Windows
+**/nul
+**/NUL
+**/con
+**/CON
+**/aux
+**/AUX
+**/prn
+**/PRN
+**/com[0-9]
+**/lpt[0-9]
+
+# =========================
 # Kiro Agent (local only)
 # =========================
 
 .kiro/
+
+# =========================
+# Windows reserved names (prevent accidental creation)
+# =========================
+
+$null
+**/nul
+**/NUL

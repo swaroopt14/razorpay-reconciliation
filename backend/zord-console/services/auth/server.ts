@@ -1,5 +1,7 @@
+import { createHash, randomBytes } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { BACKEND_SERVICES } from '@/config/api.endpoints'
+import { CSRF_COOKIE_NAME } from '@/services/auth/csrfConstants'
 
 export const ACCESS_COOKIE_NAME = 'zord_access_token'
 export const REFRESH_COOKIE_NAME = 'zord_refresh_token'
@@ -75,6 +77,21 @@ function cookieBaseOptions() {
   }
 }
 
+/** CON-P1-01: readable double-submit CSRF cookie for browser mutations. */
+export function applyCsrfCookie(response: NextResponse, accessToken?: string) {
+  const baseOptions = cookieBaseOptions()
+  const value = accessToken
+    ? createHash('sha256').update(`zord-csrf:${accessToken}`).digest('hex')
+    : randomBytes(32).toString('hex')
+  response.cookies.set({
+    name: CSRF_COOKIE_NAME,
+    value,
+    httpOnly: false,
+    maxAge: DEFAULT_REFRESH_COOKIE_MAX_AGE_SECONDS,
+    ...baseOptions,
+  })
+}
+
 export function applyAuthCookies(response: NextResponse, payload: BackendAuthEnvelope) {
   // Access/refresh tokens stay HttpOnly so browser JavaScript never sees them.
   // We keep a separate non-sensitive hint cookie for route guards and fast client checks.
@@ -102,6 +119,7 @@ export function applyAuthCookies(response: NextResponse, payload: BackendAuthEnv
   }
 
   applySessionMarkerCookies(response, payload.user.role)
+  applyCsrfCookie(response, payload.access_token)
 }
 
 export function applySessionMarkerCookies(response: NextResponse, role: string) {
@@ -127,7 +145,13 @@ export function applySessionMarkerCookies(response: NextResponse, role: string) 
 export function clearAuthCookies(response: NextResponse) {
   const baseOptions = cookieBaseOptions()
 
-  for (const cookieName of [ACCESS_COOKIE_NAME, REFRESH_COOKIE_NAME, SESSION_HINT_COOKIE_NAME, ROLE_COOKIE_NAME]) {
+  for (const cookieName of [
+    ACCESS_COOKIE_NAME,
+    REFRESH_COOKIE_NAME,
+    SESSION_HINT_COOKIE_NAME,
+    ROLE_COOKIE_NAME,
+    CSRF_COOKIE_NAME,
+  ]) {
     response.cookies.set({
       name: cookieName,
       value: '',
@@ -139,6 +163,69 @@ export function clearAuthCookies(response: NextResponse) {
       ...baseOptions,
     })
   }
+}
+
+/** Backend codes that mean the session/token is definitely dead (clear cookies). */
+const DEFINITIVE_INVALID_SESSION_CODES = new Set([
+  'INVALID_SESSION',
+  'INVALID_TOKEN',
+  'TOKEN_REVOKED',
+  'SESSION_REVOKED',
+  'SESSION_EXPIRED',
+  'REFRESH_TOKEN_INVALID',
+  'UNAUTHORIZED',
+])
+
+/**
+ * CON-P1-03 — only definitive auth rejection clears cookies.
+ * Transport failures and 5xx must not look like logout.
+ */
+export function isDefinitiveAuthFailure(status: number, code?: string | null): boolean {
+  if (status === 401 || status === 403) return true
+  const normalized = code?.trim().toUpperCase()
+  return Boolean(normalized && DEFINITIVE_INVALID_SESSION_CODES.has(normalized))
+}
+
+export function authServiceUnavailableResponse(message?: string): NextResponse {
+  return NextResponse.json(
+    {
+      code: 'AUTH_SERVICE_UNAVAILABLE',
+      message: message ?? 'Authentication service is unavailable right now. Retry shortly.',
+    },
+    { status: 503, headers: { 'cache-control': 'no-store' } },
+  )
+}
+
+/** Map Edge refresh failures: clear cookies only for revoked/invalid session. */
+export function refreshFailureResponse(
+  status: number,
+  errorBody?: BackendErrorEnvelope | null,
+): NextResponse {
+  if (isDefinitiveAuthFailure(status, errorBody?.code)) {
+    const response = NextResponse.json(
+      {
+        code: errorBody?.code ?? 'INVALID_SESSION',
+        message: errorBody?.message ?? 'Session expired',
+      },
+      {
+        status: status === 403 ? 403 : 401,
+        headers: { 'cache-control': 'no-store' },
+      },
+    )
+    clearAuthCookies(response)
+    return response
+  }
+
+  return NextResponse.json(
+    {
+      code: 'AUTH_SERVICE_UNAVAILABLE',
+      message: errorBody?.message ?? 'Authentication service is unavailable right now. Retry shortly.',
+    },
+    {
+      status: status >= 500 && status < 600 ? status : 503,
+      headers: { 'cache-control': 'no-store' },
+    },
+  )
 }
 
 export function sanitizeAuthEnvelope(payload: BackendAuthEnvelope) {
@@ -203,35 +290,24 @@ async function refreshFromCookie(request: NextRequest): Promise<{ payload?: Back
       body: JSON.stringify({ refresh_token: refreshToken }),
     })
   } catch {
-    const response = NextResponse.json(
-      { code: 'AUTH_SERVICE_UNAVAILABLE', message: 'Authentication service is unavailable right now.' },
-      { status: 503 },
-    )
-    clearAuthCookies(response)
-    return { errorResponse: response }
+    // CON-P1-03: transport/outage ≠ revoked session — keep cookies for retry.
+    return { errorResponse: authServiceUnavailableResponse() }
   }
 
   if (!refreshResponse.ok) {
     const errorBody = await parseJSONSafe<BackendErrorEnvelope>(refreshResponse)
-    const response = NextResponse.json(
-      {
-        code: errorBody?.code ?? 'INVALID_SESSION',
-        message: errorBody?.message ?? 'Session expired',
-      },
-      { status: refreshResponse.status },
-    )
-    clearAuthCookies(response)
-    return { errorResponse: response }
+    return { errorResponse: refreshFailureResponse(refreshResponse.status, errorBody) }
   }
 
   const payload = await parseJSONSafe<BackendAuthEnvelope>(refreshResponse)
   if (!payload?.access_token || !payload.refresh_token) {
-    const response = NextResponse.json(
-      { code: 'AUTH_RESPONSE_INVALID', message: 'Refresh response was incomplete.' },
-      { status: 502 },
-    )
-    clearAuthCookies(response)
-    return { errorResponse: response }
+    // Incomplete upstream body is treated as temporary (502), not logout.
+    return {
+      errorResponse: NextResponse.json(
+        { code: 'AUTH_RESPONSE_INVALID', message: 'Refresh response was incomplete. Retry shortly.' },
+        { status: 502, headers: { 'cache-control': 'no-store' } },
+      ),
+    }
   }
 
   return { payload }

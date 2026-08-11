@@ -5,10 +5,12 @@ import {
   BackendErrorEnvelope,
   REFRESH_COOKIE_NAME,
   applyAuthCookies,
+  authServiceUnavailableResponse,
   buildForwardHeaders,
   clearAuthCookies,
   edgeAuthUrl,
   parseJSONSafe,
+  refreshFailureResponse,
   sanitizeAuthEnvelope,
 } from '@/services/auth/server'
 
@@ -33,35 +35,21 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify({ refresh_token: refreshToken }),
     })
   } catch {
-    const response = NextResponse.json(
-      { code: 'AUTH_SERVICE_UNAVAILABLE', message: 'Authentication service is unavailable right now.' },
-      { status: 503 },
-    )
-    clearAuthCookies(response)
-    return response
+    // CON-P1-03: do not clear cookies on Edge transport failure.
+    return authServiceUnavailableResponse()
   }
 
   if (!edgeResponse.ok) {
     const errorBody = await parseJSONSafe<BackendErrorEnvelope>(edgeResponse)
-    const response = NextResponse.json(
-      {
-        code: errorBody?.code ?? 'INVALID_SESSION',
-        message: errorBody?.message ?? 'Session expired',
-      },
-      { status: edgeResponse.status },
-    )
-    clearAuthCookies(response)
-    return response
+    return refreshFailureResponse(edgeResponse.status, errorBody)
   }
 
   const payload = await parseJSONSafe<BackendAuthEnvelope>(edgeResponse)
   if (!payload?.access_token || !payload.refresh_token) {
-    const response = NextResponse.json(
-      { code: 'AUTH_RESPONSE_INVALID', message: 'Refresh response was incomplete.' },
+    return NextResponse.json(
+      { code: 'AUTH_RESPONSE_INVALID', message: 'Refresh response was incomplete. Retry shortly.' },
       { status: 502 },
     )
-    clearAuthCookies(response)
-    return response
   }
 
   const response = NextResponse.json(sanitizeAuthEnvelope(payload))

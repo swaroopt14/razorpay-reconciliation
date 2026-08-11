@@ -1,19 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { BACKEND_SERVICES } from '@/config/api.endpoints'
+import { assertCookieMutationProtection } from '@/services/auth/assertSameOrigin.server'
 import {
   ACCESS_COOKIE_NAME,
   REFRESH_COOKIE_NAME,
   applyAuthCookies,
+  authServiceUnavailableResponse,
   buildForwardHeaders,
   clearAuthCookies,
   edgeAuthUrl,
   parseJSONSafe,
+  refreshFailureResponse,
   BackendAuthEnvelope,
+  BackendErrorEnvelope,
 } from '@/services/auth/server'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(request: NextRequest) {
+  const csrf = assertCookieMutationProtection(request)
+  if (!csrf.ok) return csrf.response
+
   const refreshToken = request.cookies.get(REFRESH_COOKIE_NAME)?.value
   if (!refreshToken) {
     const response = NextResponse.json({ code: 'INVALID_SESSION', message: 'Session expired' }, { status: 401 })
@@ -34,29 +41,21 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify({ refresh_token: refreshToken }),
     })
   } catch {
-    return NextResponse.json(
-      { code: 'AUTH_SERVICE_UNAVAILABLE', message: 'Authentication service is unavailable right now.' },
-      { status: 503 }
-    )
+    // CON-P1-03: outage ≠ logout.
+    return authServiceUnavailableResponse()
   }
 
   if (!refreshResponse.ok) {
-    const response = NextResponse.json(
-      { code: 'INVALID_SESSION', message: 'Session expired' },
-      { status: 401 }
-    )
-    clearAuthCookies(response)
-    return response
+    const errorBody = await parseJSONSafe<BackendErrorEnvelope>(refreshResponse)
+    return refreshFailureResponse(refreshResponse.status, errorBody)
   }
 
   const payload = await parseJSONSafe<BackendAuthEnvelope>(refreshResponse)
   if (!payload?.access_token || !payload.refresh_token) {
-    const response = NextResponse.json(
-      { code: 'AUTH_RESPONSE_INVALID', message: 'Refresh response was incomplete.' },
-      { status: 502 }
+    return NextResponse.json(
+      { code: 'AUTH_RESPONSE_INVALID', message: 'Refresh response was incomplete. Retry shortly.' },
+      { status: 502 },
     )
-    clearAuthCookies(response)
-    return response
   }
 
   const response = NextResponse.json({
