@@ -38,6 +38,7 @@ export const intentJournalCopy = {
     awaitingBankConfirmation: 'Awaiting Bank Confirmation',
     readyForDispatch: 'Ready for Dispatch',
     needsReview: 'Needs Review',
+    decisionUnavailable: 'Decision unavailable',
     failedValidation: 'Failed Validation',
     confirmedByBank: 'Confirmed by Bank',
   },

@@ -34,7 +34,7 @@ export type LiveJournalDrawerRowInput = {
   paymentPartner: string
   bank: string
   /** Table row status label */
-  uiStatus: 'Ready to Process' | 'Confirmed' | 'Pending' | 'Needs Review' | 'In Progress'
+  uiStatus: 'Ready to Process' | 'Confirmed' | 'Pending' | 'Needs Review' | 'In Progress' | 'Decision unavailable'
 }
 
 function hashToLast4(seed: string): string {
@@ -51,6 +51,7 @@ function uiStatusToLifecycle(ui: LiveJournalDrawerRowInput['uiStatus']): IntentL
   if (ui === 'Needs Review') return 'ambiguous'
   if (ui === 'In Progress') return 'processing'
   if (ui === 'Ready to Process') return 'created'
+  if (ui === 'Decision unavailable') return 'ambiguous'
   return 'pending'
 }
 

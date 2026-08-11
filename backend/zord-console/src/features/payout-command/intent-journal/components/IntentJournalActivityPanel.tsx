@@ -28,7 +28,13 @@ const JOURNAL_FILTER_LABEL =
   'mb-1 block text-[11px] font-semibold uppercase tracking-[0.08em] text-[#888888]'
 
 type TabKey = 'transactions' | 'failures'
-type IntentStatus = 'Ready to Process' | 'Confirmed' | 'Pending' | 'Needs Review' | 'In Progress'
+type IntentStatus =
+  | 'Ready to Process'
+  | 'Confirmed'
+  | 'Pending'
+  | 'Needs Review'
+  | 'In Progress'
+  | 'Decision unavailable'
 type DateRangePreset = 'all' | '7d' | '30d' | '90d' | 'ytd'
 
 const DATE_RANGE_OPTIONS: { value: DateRangePreset; label: string }[] = [
@@ -65,12 +71,14 @@ function intentStatusClass(status: IntentStatus) {
   if (status === 'Pending') return 'text-amber-600'
   if (status === 'Needs Review') return 'text-orange-600'
   if (status === 'In Progress') return 'text-sky-700'
+  if (status === 'Decision unavailable') return 'text-slate-500'
   return 'text-slate-700'
 }
 
 function intentStatusLabel(status: IntentStatus) {
   if (status === 'Pending') return intentJournalCopy.status.awaitingBankConfirmation
   if (status === 'Ready to Process') return intentJournalCopy.status.readyForDispatch
+  if (status === 'Decision unavailable') return intentJournalCopy.status.decisionUnavailable
   return intentRowCustomerStatus(status)
 }
 
@@ -306,6 +314,11 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                     <select value={intentStatusFilter} onChange={(e) => setIntentStatusFilter(e.target.value as 'All' | IntentStatus)} className={filterSelectClass}>
                       <option value="All">All statuses</option>
                       <option value="Ready to Process">Ready to process</option>
+                      <option value="Needs Review">Needs review</option>
+                      <option value="Decision unavailable">Decision unavailable</option>
+                      <option value="Confirmed">Confirmed</option>
+                      <option value="Pending">Pending</option>
+                      <option value="In Progress">In progress</option>
                     </select>
                   ) : (
                     <select
