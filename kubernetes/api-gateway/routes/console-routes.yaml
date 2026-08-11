@@ -26,6 +26,10 @@
 # Plugins applied:
 #   - Global CORS
 #   - Global rate limiting (300/min)
-#   - Global security headers
+#   - Global security headers (CON-P1-02: CSP, nosniff, frame DENY, Referrer-Policy,
+#     Permissions-Policy, HSTS at Kong ingress)
 #   - Global request-id correlation
+#
+# Console also sets matching CSP/baseline headers via next.config.js
+# (backend/zord-console/security-headers.js). HSTS is ingress-only.
 # ─────────────────────────────────────────────────────────────────────────────

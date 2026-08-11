@@ -1,4 +1,5 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
+import { assertCookieMutationProtection } from '@/services/auth/assertSameOrigin.server'
 
 // Always proxy at request time (no caching), since this depends on runtime env + backend state.
 export const dynamic = 'force-dynamic'
@@ -24,7 +25,11 @@ function upstreamCandidates() {
   )
 }
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
+  // Cookie-authenticated Ask Zord calls must be same-origin (+ CSRF when session present).
+  const csrf = assertCookieMutationProtection(req)
+  if (!csrf.ok) return csrf.response
+
   const candidateUrls = upstreamCandidates().map((base) => `${normalizePromptLayerBase(base)}/query`)
 
   let body: unknown

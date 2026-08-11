@@ -43,6 +43,11 @@ func (r *OutboxPullRepo) LeaseOutboxBatch(ctx context.Context, limit int, leaseT
 	leaseUUID := uuid.New()
 	leaseID := leaseUUID.String()
 
+	// INT-09: the RETURNING clause and the outer SELECT below both derive
+	// from outboxLeaseColumns (outbox_lease_contract.go) — previously these
+	// were two independently hand-typed 56-column lists in this same query
+	// that had to stay in the same order by eye, with no automated check
+	// tying them together.
 	query := `
 WITH picked AS (
 	SELECT event_id
@@ -63,127 +68,10 @@ leased AS (
 	FROM picked p
 	WHERE o.event_id = p.event_id
 	RETURNING
-		o.event_id::text as event_id,
-		COALESCE(o.envelope_id::text, '') as envelope_id,
-		COALESCE(o.trace_id::text, '') as trace_id,
-		COALESCE(o.tenant_id::text, '') as tenant_id,
-		COALESCE(o.contract_id::text, '') as contract_id,
-		o.aggregate_type,
-		o.aggregate_id,
-		o.event_type,
-		o.amount,
-		o.currency,
-		NULL as corridor_id,
-		o.retry_count,
-		o.next_attempt_at,
-		o.payload,
-		o.status,
-		o.created_at,
-		COALESCE(o.lease_id::text, '') as lease_id,
-		COALESCE(o.leased_by, '') as leased_by,
-		o.lease_until,
-		o.batchid,
-		o.source_row_num,
-		o.canonical_hash,
-		o.governance_state,
-		o.governance_hash,
-		o.mapping_profile_id,
-		o.required_fields_status,
-		o.tokenization_status,
-		o.governance_decision,
-		o.payment_instruction_received,
-		o.canonical_intent_created,
-		COALESCE(o.client_payout_ref, '') as client_payout_ref,
-		COALESCE(o.intent_lifecycle_state, '') as intent_lifecycle_state,
-		COALESCE(o.mapping_profile_hash, '') as mapping_profile_hash,
-		COALESCE(o.policy_source, '') as policy_source,
-		COALESCE(o.policy_version, '') as policy_version,
-		COALESCE(o.policy_hash, '') as policy_hash,
-		COALESCE(o.raw_row_evidence_leaf_hash, '') as raw_row_evidence_leaf_hash,
-		COALESCE(o.canonical_row_evidence_leaf_hash, '') as canonical_row_evidence_leaf_hash,
-		COALESCE(o.business_idempotency_key, '') as business_idempotency_key,
-		COALESCE(o.tokenized_data_hash, '') as tokenized_data_hash,
-		COALESCE(o.artifact_id, '') as artifact_id,
-		COALESCE(o.artifact_version_id, '') as artifact_version_id,
-		-- INT-10: decision/quality reason codes and score fields are computed
-		-- by IntentService (see intent_service.go computeScores/
-		-- aggregateGovernanceReasons) and persisted on every outbox row, but
-		-- were never selected here — Relay/Intelligence could only recover
-		-- them by parsing the embedded payload JSON blob, not from the lease
-		-- row itself, which is what "lease path does not consistently
-		-- transmit them" means in practice.
-		COALESCE(o.governance_reason_codes_json, '{}'::jsonb) as governance_reason_codes_json,
-		COALESCE(o.score_version, '') as score_version,
-		COALESCE(o.score_validity_status, '') as score_validity_status,
-		COALESCE(o.score_breakdown_json, '{}'::jsonb) as score_breakdown_json,
-		COALESCE(o.score_reason_codes_json, '[]'::jsonb) as score_reason_codes_json,
-		o.scored_at,
-		COALESCE(o.reference_quality_score, 0) as reference_quality_score,
-		COALESCE(o.duplicate_risk_score, 0) as duplicate_risk_score,
-		COALESCE(o.proof_readiness_score, 0) as proof_readiness_score,
-		COALESCE(o.matchability_score, 0) as matchability_score,
-		COALESCE(o.intent_quality_score, 0) as intent_quality_score,
-		COALESCE(o.mapping_confidence_score, 0) as mapping_confidence_score,
-		COALESCE(o.schema_completeness_score, 0) as schema_completeness_score,
-		COALESCE(o.duplicate_reason_code, '') as duplicate_reason_code
+		` + buildOutboxLeaseReturningSQL() + `
 )
 SELECT
-	event_id,
-	envelope_id,
-	trace_id,
-	tenant_id,
-	contract_id,
-	aggregate_type,
-	aggregate_id,
-	event_type,
-	amount,
-	currency,
-	corridor_id,
-	retry_count,
-	next_attempt_at,
-	payload,
-	status,
-	created_at,
-	lease_id,
-	leased_by,
-	lease_until,
-	batchid,
-	source_row_num,
-	canonical_hash,
-	governance_state,
-	governance_hash,
-	mapping_profile_id,
-	required_fields_status,
-	tokenization_status,
-	governance_decision,
-	payment_instruction_received,
-	canonical_intent_created,
-	client_payout_ref,
-	intent_lifecycle_state,
-	mapping_profile_hash,
-	policy_source,
-	policy_version,
-	policy_hash,
-	raw_row_evidence_leaf_hash,
-	canonical_row_evidence_leaf_hash,
-	business_idempotency_key,
-	tokenized_data_hash,
-	artifact_id,
-	artifact_version_id,
-	governance_reason_codes_json,
-	score_version,
-	score_validity_status,
-	score_breakdown_json,
-	score_reason_codes_json,
-	scored_at,
-	reference_quality_score,
-	duplicate_risk_score,
-	proof_readiness_score,
-	matchability_score,
-	intent_quality_score,
-	mapping_confidence_score,
-	schema_completeness_score,
-	duplicate_reason_code
+	` + buildOutboxLeaseSelectSQL() + `
 FROM leased
 ORDER BY created_at ASC;
 `

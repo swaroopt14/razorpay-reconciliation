@@ -84,6 +84,7 @@ func NewRouter(
 	dashRCAH *DashboardRCAHandler,
 	dashBubbleMapH *DashboardBubbleMapHandler,
 	dashBatchContractH *DashboardBatchContractHandler,
+	traceH *TraceHandler,
 ) http.Handler {
 
 	r := chi.NewRouter()
@@ -181,6 +182,11 @@ func NewRouter(
 		// ── PHASE 7: Explanation endpoints ────────────────────────────────
 		r.Get("/explanations/{snapshot_id}", explanationH.GetExplanation)
 		r.Post("/explain-batch", explanationH.ExplainBatch)
+
+		// ── INTEL-04: trace drilldown endpoint ─────────────────────────────
+		// GET /v1/intelligence/trace/{trace_id}?tenant_id=X
+		// Every event_receipts row sharing this trace_id, chronological order.
+		r.Get("/trace/{trace_id}", traceH.GetTrace)
 
 		// ── Dashboard KPI endpoints (frontend-facing) ─────────────────────
 		//

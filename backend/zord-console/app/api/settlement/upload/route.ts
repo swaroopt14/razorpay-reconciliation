@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { assertCookieMutationProtection } from '@/services/auth/assertSameOrigin.server'
 import { applyAuthCookies } from '@/services/auth/server'
 import {
   applyRefreshedSessionCookies,
@@ -21,15 +22,17 @@ function settlementBase() {
  */
 
 export async function POST(req: NextRequest) {
+  // Cookie browser path: same-origin + CSRF. Explicit Authorization (API key) bypasses.
+  const csrf = assertCookieMutationProtection(req, { allowBearerBypass: true })
+  if (!csrf.ok) return csrf.response
+
   const contentType = req.headers.get('content-type')
   if (!contentType?.toLowerCase().includes('multipart/form-data')) {
     return NextResponse.json({ error: 'Expected multipart/form-data with file.' }, { status: 400 })
   }
 
-  const ctx = await resolveSettlementUploadContext(
-    req,
-    process.env.ZORD_SETTLEMENT_API_KEY ?? process.env.ZORD_BULK_INGEST_API_KEY,
-  )
+  // CON-P0-02: session and/or explicit Authorization only — no ZORD_*_API_KEY fallback.
+  const ctx = await resolveSettlementUploadContext(req)
   if (!ctx.ok) return ctx.response
 
   const psp = req.nextUrl.searchParams.get('psp')

@@ -4,6 +4,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 
 import { SANDBOX_DOCS_LINKS } from '@/services/payout-command/sandbox-data'
+import {
+  clearLegacyTenantApiSecrets,
+  formatSecretKeyPrefix,
+} from '@/services/auth/readStoredTenantApiKey'
 import { Glyph } from '../shared'
 
 type WorkspaceKeysPayload = {
@@ -20,7 +24,6 @@ export function ApiKeysPopoverButton({ label = 'API keys' }: { label?: string })
   const [keys, setKeys] = useState<WorkspaceKeysPayload | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const [storedSecret, setStoredSecret] = useState<string | null>(null)
 
   const loadKeys = useCallback(async () => {
     setLoading(true)
@@ -34,13 +37,8 @@ export function ApiKeysPopoverButton({ label = 'API keys' }: { label?: string })
         return
       }
       const body = (await res.json()) as WorkspaceKeysPayload
+      clearLegacyTenantApiSecrets(body.tenant_id)
       setKeys(body)
-      try {
-        const stored = window.localStorage.getItem(`zord_tenant_api_key:${body.tenant_id}`)
-        setStoredSecret(stored?.trim() || null)
-      } catch {
-        setStoredSecret(null)
-      }
     } catch {
       setLoadError('Network error loading keys.')
       setKeys(null)
@@ -71,10 +69,7 @@ export function ApiKeysPopoverButton({ label = 'API keys' }: { label?: string })
   }, [open])
 
   const publishableDisplay = keys?.publishable_key ?? keys?.workspace_code ?? '—'
-  const secretFull = storedSecret
-  const secretDisplay =
-    secretFull ??
-    (keys?.secret_key_prefix ? `${keys.secret_key_prefix.slice(0, 16)}…` : '—')
+  const secretDisplay = formatSecretKeyPrefix(keys?.secret_key_prefix ?? keys?.workspace_code)
 
   const docsBase =
     typeof process.env.NEXT_PUBLIC_ZORD_DOCS_URL === 'string' && process.env.NEXT_PUBLIC_ZORD_DOCS_URL.trim()
@@ -173,15 +168,10 @@ export function ApiKeysPopoverButton({ label = 'API keys' }: { label?: string })
                 <>
                   <CompactKeyRow label="Publishable key" value={publishableDisplay} />
                   <CompactKeyRow
-                    label="Secret key"
-                    value={secretFull ?? secretDisplay}
-                    masked={!secretFull}
-                    copyValue={secretFull ?? undefined}
-                    helper={
-                      !secretFull
-                        ? 'Full secret is only shown once at signup; it is saved in this browser if you copied it then. Rotate from settings when supported.'
-                        : undefined
-                    }
+                    label="Secret key prefix"
+                    value={secretDisplay}
+                    masked
+                    helper="Full secret is shown once at signup and is never stored in this browser. Rotate server-side from Settings when supported."
                   />
                 </>
               )}
@@ -213,7 +203,7 @@ export function CompactKeyRow({
   label: string
   value: string
   masked?: boolean
-  /** When masked preview differs from clipboard (full key in localStorage). */
+  /** Optional clipboard override (must never be a full tenant API secret). */
   copyValue?: string
   helper?: string
   /** `imperial` — bold white on blue glass. `sky` — soft blue tint on light cards. */

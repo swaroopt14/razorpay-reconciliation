@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import ExcelJS from 'exceljs'
+import { assertCookieMutationProtection } from '@/services/auth/assertSameOrigin.server'
 import {
   applyEvidenceGateCookies,
   gateEvidenceTenant,
@@ -182,6 +183,9 @@ async function resolvePack(tenantId: string, paymentReference: string): Promise<
 }
 
 export async function POST(request: NextRequest) {
+  const csrf = assertCookieMutationProtection(request)
+  if (!csrf.ok) return csrf.response
+
   const gate = await gateEvidenceTenant(request)
   if (!gate.ok) return gate.response
 

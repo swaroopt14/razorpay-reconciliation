@@ -7,6 +7,7 @@ import {
   BackendErrorEnvelope,
   REFRESH_COOKIE_NAME,
   applyAuthCookies,
+  applyCsrfCookie,
   applySessionMarkerCookies,
   authServiceUnavailableResponse,
   buildForwardHeaders,
@@ -65,6 +66,8 @@ export async function GET(request: NextRequest) {
       if (payload) {
         const response = jsonNoStore(payload)
         applySessionMarkerCookies(response, payload.user.role)
+        // CON-P1-01: ensure CSRF cookie exists for cookie-authenticated mutations.
+        applyCsrfCookie(response, accessToken)
         return response
       }
     }

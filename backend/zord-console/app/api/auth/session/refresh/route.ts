@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { BACKEND_SERVICES } from '@/config/api.endpoints'
+import { assertCookieMutationProtection } from '@/services/auth/assertSameOrigin.server'
 import {
   ACCESS_COOKIE_NAME,
   REFRESH_COOKIE_NAME,
@@ -17,6 +18,9 @@ import {
 export const dynamic = 'force-dynamic'
 
 export async function POST(request: NextRequest) {
+  const csrf = assertCookieMutationProtection(request)
+  if (!csrf.ok) return csrf.response
+
   const refreshToken = request.cookies.get(REFRESH_COOKIE_NAME)?.value
   if (!refreshToken) {
     const response = NextResponse.json({ code: 'INVALID_SESSION', message: 'Session expired' }, { status: 401 })

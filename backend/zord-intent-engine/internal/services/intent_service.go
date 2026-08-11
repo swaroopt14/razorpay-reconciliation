@@ -247,7 +247,7 @@ func (s *IntentService) emitVectorIndexRequest(
 
 	event := kafka.VectorIndexRequestEvent{
 		EventID:         uuid.NewString(),
-		SchemaVersion:   "v1",
+		SchemaVersion:   SchemaVersionV1,
 		EventType:       kafka.VectorIndexEventRequested,
 		SourceService:   "zord-intent-engine",
 		SourceEventType: sourceEventType,
@@ -1607,7 +1607,7 @@ func (s *IntentService) processIncomingIntentInternal(
 		}
 		return
 	}
-	parsed.SchemaVersion = "v1"
+	parsed.SchemaVersion = SchemaVersionV1
 	if sourceRowRef != "" {
 		parsed.SourceRowRef = sourceRowRef
 	}
@@ -3571,7 +3571,7 @@ func (s *IntentService) processWebhook(
 		IdempotencyKey: in.IdempotencyKey,
 		SalientHash:    in.IdempotencyKey,
 		IntentType:     "WEBHOOK",
-		SchemaVersion:  "v1",
+		SchemaVersion:  SchemaVersionV1,
 		Amount:         decimal.Zero,
 		Currency:       "XXX",
 		Status:         "CREATED",

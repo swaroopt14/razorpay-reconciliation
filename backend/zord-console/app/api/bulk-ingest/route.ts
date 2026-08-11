@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { assertCookieMutationProtection } from '@/services/auth/assertSameOrigin.server'
 import {
   applyRefreshedSessionCookies,
   resolveBulkIngestForwardAuthorization,
 } from '@/services/auth/resolvePayoutTenant.server'
 
 /** Proxies multipart bulk file to zord-edge `POST /v1/bulk-ingest` only (never zord-intelligence).
- * Enforces session vs API-key tenant match when both are present; never trusts client tenant_id. */
+ * Requires signed-in session JWT and/or explicit Authorization (CON-P0-02).
+ * Never falls back to ZORD_BULK_INGEST_API_KEY. Enforces session vs API-key tenant match. */
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
@@ -15,12 +17,16 @@ function candidateEdgeBases(): string[] {
 }
 
 export async function POST(req: NextRequest) {
+  // Cookie browser path: same-origin + CSRF. Explicit Authorization (API key) bypasses.
+  const csrf = assertCookieMutationProtection(req, { allowBearerBypass: true })
+  if (!csrf.ok) return csrf.response
+
   const contentType = req.headers.get('content-type')
   if (!contentType?.toLowerCase().includes('multipart/form-data')) {
     return NextResponse.json({ error: 'Expected multipart/form-data with a file field.' }, { status: 400 })
   }
 
-  const authResolution = await resolveBulkIngestForwardAuthorization(req, process.env.ZORD_BULK_INGEST_API_KEY)
+  const authResolution = await resolveBulkIngestForwardAuthorization(req)
   if (!authResolution.ok) return authResolution.response
 
   const bodyBuffer = Buffer.from(await req.arrayBuffer())

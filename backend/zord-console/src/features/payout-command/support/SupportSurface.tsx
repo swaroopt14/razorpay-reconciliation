@@ -19,7 +19,8 @@ import {
   postSupportChatReply,
   postSupportEmailMessage,
 } from '@/services/payout-command/support/supportTicketsApi'
-import { SANDBOX_API_KEYS, SANDBOX_RECENT_REQUESTS } from '@/services/payout-command/sandbox-data'
+import { SANDBOX_RECENT_REQUESTS } from '@/services/payout-command/sandbox-data'
+import { clearLegacyTenantApiSecrets } from '@/services/auth/readStoredTenantApiKey'
 import { getAmbiguityHeatmap, getPatternsKpis } from '@/services/payout-command/prod-api/getIntelligenceKpis'
 import { isDataAvailable, type AmbiguityHeatmapBatchRow } from '@/services/payout-command/prod-api/intelligenceTypes'
 import { getProdIntentEngineBatchesForSession } from '@/services/payout-command/prod-api/getProdIntentEngineBatches'
@@ -297,14 +298,28 @@ function FieldCard({ title, subtitle, children }: { title: string; subtitle?: st
   )
 }
 
-function ProfileTab({ profile, tenantApiKey }: { profile: ProfileInfo | null; tenantApiKey: string | null }) {
-  const [showSecret, setShowSecret] = useState(false)
-  const [copied, setCopied] = useState<'key' | 'secret' | null>(null)
+function ProfileTab({
+  profile,
+  secretKeyPrefix,
+}: {
+  profile: ProfileInfo | null
+  secretKeyPrefix: string | null
+}) {
+  const [copied, setCopied] = useState<'key' | 'prefix' | null>(null)
 
-  const publishable = SANDBOX_API_KEYS.find((k) => k.type === 'publishable' && k.mode === 'sandbox')?.value ?? 'pk_test_unavailable'
-  const secret = tenantApiKey || SANDBOX_API_KEYS.find((k) => k.type === 'secret' && k.mode === 'sandbox')?.value || 'sk_test_unavailable'
+  const publishable =
+    profile?.workspaceCode?.trim() ||
+    secretKeyPrefix?.trim() ||
+    '—'
+  const prefixDisplay =
+    secretKeyPrefix?.trim()
+      ? secretKeyPrefix.trim().endsWith('…')
+        ? secretKeyPrefix.trim()
+        : `${secretKeyPrefix.trim()}…`
+      : '—'
 
-  const copy = async (v: string, kind: 'key' | 'secret') => {
+  const copy = async (v: string, kind: 'key' | 'prefix') => {
+    if (!v || v === '—') return
     try {
       await navigator.clipboard.writeText(v)
       setCopied(kind)
@@ -347,24 +362,37 @@ function ProfileTab({ profile, tenantApiKey }: { profile: ProfileInfo | null; te
         </div>
       </FieldCard>
 
-      <FieldCard title="Zord Access Credentials" subtitle="From API keys state + local tenant key cache">
+      <FieldCard
+        title="Zord Access Credentials"
+        subtitle="Session key prefix only — full secret is never stored in the browser"
+      >
         <div className="space-y-3 text-[13px]">
           <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Publishable key</p>
               <code className="text-[13px] text-slate-800">{publishable}</code>
             </div>
-            <button type="button" onClick={() => void copy(publishable, 'key')} className="rounded-md border border-slate-200 px-2 py-1 text-[12px] font-semibold">{copyLabel(copied === 'key','Copy')}</button>
+            <button
+              type="button"
+              onClick={() => void copy(publishable, 'key')}
+              className="rounded-md border border-slate-200 px-2 py-1 text-[12px] font-semibold"
+            >
+              {copyLabel(copied === 'key', 'Copy')}
+            </button>
           </div>
           <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2">
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">API secret</p>
-              <code className="text-[13px] text-slate-800">{showSecret ? secret : `${secret.slice(0, 8)}••••••••••••${secret.slice(-4)}`}</code>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Secret key prefix</p>
+              <code className="text-[13px] text-slate-800">{prefixDisplay}</code>
             </div>
-            <div className="flex gap-2">
-              <button type="button" onClick={() => setShowSecret((v) => !v)} className="rounded-md border border-slate-200 px-2 py-1 text-[12px] font-semibold">{showSecret ? 'Hide' : 'Reveal'}</button>
-              <button type="button" onClick={() => void copy(secret, 'secret')} className="rounded-md border border-slate-200 px-2 py-1 text-[12px] font-semibold">{copyLabel(copied === 'secret','Copy')}</button>
-            </div>
+            <button
+              type="button"
+              onClick={() => void copy(prefixDisplay.replace(/…$/, ''), 'prefix')}
+              disabled={prefixDisplay === '—'}
+              className="rounded-md border border-slate-200 px-2 py-1 text-[12px] font-semibold disabled:opacity-50"
+            >
+              {copyLabel(copied === 'prefix', 'Copy')}
+            </button>
           </div>
         </div>
       </FieldCard>
@@ -798,7 +826,7 @@ export function SupportSurface({ initialAccountTab }: SupportSurfaceProps) {
   const [ticketsError, setTicketsError] = useState<string | null>(null)
   const [ticketActionPending, setTicketActionPending] = useState(false)
 
-  const [tenantApiKey, setTenantApiKey] = useState<string | null>(null)
+  const [secretKeyPrefix, setSecretKeyPrefix] = useState<string | null>(null)
   const [processingLoading, setProcessingLoading] = useState(false)
   const [processingOverview, setProcessingOverview] = useState<ProcessingOverview | null>(null)
 
@@ -840,11 +868,27 @@ export function SupportSurface({ initialAccountTab }: SupportSurfaceProps) {
 
   useEffect(() => {
     if (!tenantId) return
-    try {
-      const stored = window.localStorage.getItem(`zord_tenant_api_key:${tenantId}`)
-      if (stored) setTenantApiKey(stored)
-    } catch {
-      // ignore
+    clearLegacyTenantApiSecrets(tenantId)
+    let cancelled = false
+    void (async () => {
+      try {
+        const res = await fetch('/api/sandbox/workspace-api-keys', {
+          credentials: 'include',
+          cache: 'no-store',
+        })
+        if (!res.ok || cancelled) return
+        const body = (await res.json()) as {
+          secret_key_prefix?: string | null
+          workspace_code?: string | null
+        }
+        if (cancelled) return
+        setSecretKeyPrefix(body.secret_key_prefix?.trim() || body.workspace_code?.trim() || null)
+      } catch {
+        if (!cancelled) setSecretKeyPrefix(null)
+      }
+    })()
+    return () => {
+      cancelled = true
     }
   }, [tenantId])
 
@@ -1076,7 +1120,9 @@ export function SupportSurface({ initialAccountTab }: SupportSurfaceProps) {
         </div>
 
         <div className="p-4 sm:p-5">
-          {accountTab === 'Profile' ? <ProfileTab profile={profile} tenantApiKey={tenantApiKey} /> : null}
+          {accountTab === 'Profile' ? (
+            <ProfileTab profile={profile} secretKeyPrefix={secretKeyPrefix} />
+          ) : null}
           {accountTab === 'Credits' ? <CreditsTab tickets={tickets} /> : null}
           {accountTab === 'Processing Overview' ? (
             <ProcessingOverviewTab overview={processingOverview} loading={processingLoading} />

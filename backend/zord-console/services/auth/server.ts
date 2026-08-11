@@ -1,5 +1,7 @@
+import { createHash, randomBytes } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { BACKEND_SERVICES } from '@/config/api.endpoints'
+import { CSRF_COOKIE_NAME } from '@/services/auth/csrfConstants'
 
 export const ACCESS_COOKIE_NAME = 'zord_access_token'
 export const REFRESH_COOKIE_NAME = 'zord_refresh_token'
@@ -75,6 +77,21 @@ function cookieBaseOptions() {
   }
 }
 
+/** CON-P1-01: readable double-submit CSRF cookie for browser mutations. */
+export function applyCsrfCookie(response: NextResponse, accessToken?: string) {
+  const baseOptions = cookieBaseOptions()
+  const value = accessToken
+    ? createHash('sha256').update(`zord-csrf:${accessToken}`).digest('hex')
+    : randomBytes(32).toString('hex')
+  response.cookies.set({
+    name: CSRF_COOKIE_NAME,
+    value,
+    httpOnly: false,
+    maxAge: DEFAULT_REFRESH_COOKIE_MAX_AGE_SECONDS,
+    ...baseOptions,
+  })
+}
+
 export function applyAuthCookies(response: NextResponse, payload: BackendAuthEnvelope) {
   // Access/refresh tokens stay HttpOnly so browser JavaScript never sees them.
   // We keep a separate non-sensitive hint cookie for route guards and fast client checks.
@@ -102,6 +119,7 @@ export function applyAuthCookies(response: NextResponse, payload: BackendAuthEnv
   }
 
   applySessionMarkerCookies(response, payload.user.role)
+  applyCsrfCookie(response, payload.access_token)
 }
 
 export function applySessionMarkerCookies(response: NextResponse, role: string) {
@@ -127,7 +145,13 @@ export function applySessionMarkerCookies(response: NextResponse, role: string) 
 export function clearAuthCookies(response: NextResponse) {
   const baseOptions = cookieBaseOptions()
 
-  for (const cookieName of [ACCESS_COOKIE_NAME, REFRESH_COOKIE_NAME, SESSION_HINT_COOKIE_NAME, ROLE_COOKIE_NAME]) {
+  for (const cookieName of [
+    ACCESS_COOKIE_NAME,
+    REFRESH_COOKIE_NAME,
+    SESSION_HINT_COOKIE_NAME,
+    ROLE_COOKIE_NAME,
+    CSRF_COOKIE_NAME,
+  ]) {
     response.cookies.set({
       name: cookieName,
       value: '',

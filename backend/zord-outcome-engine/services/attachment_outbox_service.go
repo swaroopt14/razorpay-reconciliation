@@ -787,13 +787,13 @@ func (s *AttachmentOutboxService) buildLeafBundleRows(
 				Type:          "CANONICAL_SETTLEMENT_OBSERVATION",
 				Ref:           obs.SettlementObservationID.String(),
 				Hash:          obs.CanonicalHash,
-				SchemaVersion: "v1",
+				SchemaVersion: models.SchemaVersionV1,
 			},
 			{
 				Type:          "ATTACHMENT_DECISION",
 				Ref:           d.AttachmentDecisionID.String(),
 				Hash:          computeAttachmentDecisionLeafHash(d),
-				SchemaVersion: "v1",
+				SchemaVersion: models.SchemaVersionV1,
 			},
 		}
 
@@ -803,7 +803,7 @@ func (s *AttachmentOutboxService) buildLeafBundleRows(
 				Type:          "RAW_SETTLEMENT_LINE",
 				Ref:           pr.ParsedRowID.String(),
 				Hash:          *pr.RawLineHash,
-				SchemaVersion: "v1",
+				SchemaVersion: models.SchemaVersionV1,
 			})
 		}
 
@@ -812,7 +812,7 @@ func (s *AttachmentOutboxService) buildLeafBundleRows(
 				Type:          "VARIANCE_DECISION",
 				Ref:           vr.VarianceRecordID.String(),
 				Hash:          computeVarianceLeafHash(vr),
-				SchemaVersion: "v1",
+				SchemaVersion: models.SchemaVersionV1,
 			})
 		}
 
@@ -821,7 +821,7 @@ func (s *AttachmentOutboxService) buildLeafBundleRows(
 				Type:          "RAW_SETTLEMENT_FILE",
 				Ref:           obs.IngestRunID,
 				Hash:          sha,
-				SchemaVersion: "v1",
+				SchemaVersion: models.SchemaVersionV1,
 			})
 		}
 

@@ -174,7 +174,7 @@ func main() {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(otelgin.Middleware("zord-evidence"))
-	routes.Register(r, h, outboxHandler)
+	routes.Register(r, h, outboxHandler, cfg.InternalServiceKey)
 	routes.RegisterProofRoutes(r, proofHandler)
 
 	// Readiness endpoint — checks DB connectivity

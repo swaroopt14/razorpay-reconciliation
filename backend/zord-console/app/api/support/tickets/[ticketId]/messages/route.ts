@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { assertCookieMutationProtection } from '@/services/auth/assertSameOrigin.server'
 import {
   applyRefreshedSessionCookies,
   requireSessionTenantForProdProxy,
@@ -28,6 +29,9 @@ export async function POST(
   request: NextRequest,
   context: { params: Promise<{ ticketId: string }> },
 ) {
+  const csrf = assertCookieMutationProtection(request)
+  if (!csrf.ok) return csrf.response
+
   const gate = await requireSessionTenantForProdProxy(request)
   if (!gate.ok) return gate.response
 

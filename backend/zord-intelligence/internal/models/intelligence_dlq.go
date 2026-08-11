@@ -34,4 +34,5 @@ const (
 	DLQErrorClassUnmarshal          = "UNMARSHAL_ERROR"
 	DLQErrorClassHandler            = "HANDLER_ERROR"
 	DLQErrorClassUnsupportedVersion = "UNSUPPORTED_SCHEMA_VERSION" // corrective-action-report P1-01
+	DLQErrorClassMissingField       = "MISSING_REQUIRED_FIELD"     // INTEL-04: schema_version or trace_id absent on a supported-event topic
 )
