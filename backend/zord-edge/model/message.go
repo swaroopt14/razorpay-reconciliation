@@ -35,4 +35,6 @@ type RawIntentMessage struct {
 	FileUploadChannel    *string
 	SourceRowRef         *string
 	BatchID              *string
+	PrincipalID          string
+	AuthMethod           string
 }

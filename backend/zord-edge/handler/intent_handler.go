@@ -11,6 +11,7 @@ import (
 
 	"zord-edge/db"
 	"zord-edge/logger"
+	"zord-edge/middleware"
 	"zord-edge/model"
 	"zord-edge/services"
 	"zord-edge/vault"
@@ -107,6 +108,19 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 	}
 	tenantName := context.GetString("tenant_name")
 
+	principalType, _ := middleware.GetPrincipalType(context)
+	authMethod := string(principalType)
+
+	var principalID string
+	if uid, exists := context.Get("user_id"); exists {
+		if id, ok := uid.(uuid.UUID); ok {
+			principalID = id.String()
+		}
+	}
+	if principalID == "" {
+		principalID = tenantID.String()
+	}
+
 	envelopeID := uuid.Must(uuid.NewV7()).String()
 	receivedAt := time.Now().UTC()
 	// A single-intent submission has no separate "file" artifact — it is its
@@ -138,6 +152,8 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 	rawIntent.TenantName = tenantName
 	rawIntent.RequestHeadersHash = headersHash
 	rawIntent.SchemaHint = nil
+	rawIntent.PrincipalID = principalID
+	rawIntent.AuthMethod = authMethod
 
 	// Hardcoded values
 	rawIntent.ObjectEncryptionAlg = "AES256"
