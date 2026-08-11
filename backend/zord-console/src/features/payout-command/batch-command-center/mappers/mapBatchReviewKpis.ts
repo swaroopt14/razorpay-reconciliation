@@ -62,11 +62,9 @@ export function mapBatchReviewKpis(args: {
   const pending = summary.pending
 
   const intendedMinor = health ? coerceMinor(health.total_intended_amount_minor) : null
-  const confirmedMinor = health
-    ? coerceMinor(health.total_confirmed_amount_minor)
-    : args.leakageKpi && isDataAvailable(args.leakageKpi)
-      ? coerceMinor(args.leakageKpi.total_observed_settled_amount_minor)
-      : null
+  // CON-P0-24: bank-confirmed uses batch_health.total_confirmed_amount_minor only.
+  // Do not stand in leakage total_observed_settled_amount_minor (different measure).
+  const confirmedMinor = health ? coerceMinor(health.total_confirmed_amount_minor) : null
 
   const valueNeedingReviewMinor =
     args.leakageKpi && isDataAvailable(args.leakageKpi)

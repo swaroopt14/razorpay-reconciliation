@@ -12,6 +12,7 @@ import { useSettlementBatchSelection } from '../context/SettlementBatchSelection
 import { useSettlementBatchIntelligence } from '../hooks/useSettlementBatchIntelligence'
 import { useSettlementParseErrorTotal } from '../hooks/useSettlementParseErrorTotal'
 import { settlementJournalCopy } from '../copy/settlementJournalCopy'
+import { LIVE_KPI_UNAVAILABLE } from '../selectors/resolveSettlementIntelligenceKpis'
 
 function MetricCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
@@ -25,14 +26,14 @@ function MetricCard({ label, value, sub }: { label: string; value: string; sub?:
 }
 
 function formatMoneyKpi(value: number | null, loading: boolean): string {
-  if (loading && value == null) return '—'
-  if (value == null) return '—'
+  if (loading && value == null) return '…'
+  if (value == null) return LIVE_KPI_UNAVAILABLE
   return formatJournalMoney(value)
 }
 
 function formatCoverageKpi(value: string | null, loading: boolean): string {
-  if (loading && !value) return '—'
-  return value ?? '—'
+  if (loading && !value) return '…'
+  return value ?? LIVE_KPI_UNAVAILABLE
 }
 
 export function SettlementJournalDataHealthPanel() {
@@ -73,12 +74,19 @@ export function SettlementJournalDataHealthPanel() {
         <MetricCard
           label={copy.matchConfidence}
           value={
-            kpis.matchConfidence != null ? `${(kpis.matchConfidence * 100).toFixed(0)}%` : '—'
+            kpis.matchConfidence != null
+              ? `${(kpis.matchConfidence * 100).toFixed(0)}%`
+              : intelligenceLoading
+                ? '…'
+                : LIVE_KPI_UNAVAILABLE
           }
         />
         <MetricCard
           label={copy.missingRefRate}
-          value={kpis.missingReferenceRate ?? '—'}
+          value={
+            kpis.missingReferenceRate ??
+            (intelligenceLoading ? '…' : LIVE_KPI_UNAVAILABLE)
+          }
         />
       </div>
     </section>

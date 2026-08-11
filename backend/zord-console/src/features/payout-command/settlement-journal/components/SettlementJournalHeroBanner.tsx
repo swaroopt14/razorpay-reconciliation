@@ -8,6 +8,7 @@ import { useSettlementBatchIntelligence } from '../hooks/useSettlementBatchIntel
 import { settlementJournalCopy } from '../copy/settlementJournalCopy'
 import { derivePaymentPartnerLabel } from '../selectors/derivePaymentPartnerLabel'
 import { outcomeFromMatchConfidence } from '../settlementJournalSidebarUtils'
+import { LIVE_KPI_UNAVAILABLE } from '../selectors/resolveSettlementIntelligenceKpis'
 
 type SettlementJournalHeroBannerProps = {
   onExport: () => void
@@ -53,18 +54,19 @@ export function SettlementJournalHeroBanner({
     loading && recordsTotal == null ? '—' : recordsTotal != null ? recordsTotal.toLocaleString('en-IN') : '—'
   const settlementMatchedDisplay =
     intelligenceLoading && kpis.settlementValueMatched == null
-      ? '—'
+      ? '…'
       : kpis.settlementValueMatched != null
         ? formatJournalMoney(kpis.settlementValueMatched)
-        : '—'
+        : LIVE_KPI_UNAVAILABLE
   const varianceAmount = parseBatchContractAmount(batchContract?.variance_amount)
   const varianceDisplay =
     intelligenceLoading && varianceAmount == null
-      ? '—'
+      ? '…'
       : varianceAmount != null
         ? formatJournalMoney(varianceAmount)
-        : '—'
-  const varianceSub = varianceAmount != null ? copy.amountVariance : '—'
+        : LIVE_KPI_UNAVAILABLE
+  const varianceSub =
+    varianceAmount != null ? copy.amountVariance : 'Unavailable — authoritative variance not returned'
 
   const matchOutcome = outcomeFromMatchConfidence(kpis.matchConfidence)
   const deltaPill =
@@ -89,7 +91,10 @@ export function SettlementJournalHeroBanner({
     {
       label: copy.settlementValueMatched,
       value: settlementMatchedDisplay,
-      sub: copy.settlementValueMatchedSub,
+      sub:
+        kpis.settlementValueMatched != null
+          ? copy.settlementValueMatchedSub
+          : 'Unavailable — authoritative matched value not returned',
     },
     { label: copy.amountVariance, value: varianceDisplay, sub: varianceSub },
   ] as const
