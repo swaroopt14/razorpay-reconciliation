@@ -156,7 +156,15 @@ func resolveBatchContractID(ctx context.Context, q DBTX, tenantID, externalBatch
 	// regardless of what order each transaction's own statements run in.
 	// Different batches are completely unaffected — this never serializes
 	// unrelated work, only concurrent writers to the same one batch.
-	if _, err := q.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1 || ':' || $2))`, tenantID, externalBatchID); err != nil {
+	//
+	// P1-09 (corrective-action-report): hashtextextended (64-bit) instead of
+	// hashtext (32-bit) — a 32-bit hash has a real birthday-bound collision
+	// risk across the full tenant/batch keyspace this lock covers; two
+	// UNRELATED batches colliding onto the same 32-bit bucket would
+	// needlessly serialize each other (a correctness-neutral but real
+	// throughput bug, distinct from the deadlock this lock itself fixes).
+	// The `0` second argument is hashtextextended's seed — unused here.
+	if _, err := q.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1 || ':' || $2, 0))`, tenantID, externalBatchID); err != nil {
 		return "", fmt.Errorf("persistence.resolveBatchContractID advisory lock tenant=%s batch=%s: %w", tenantID, externalBatchID, err)
 	}
 

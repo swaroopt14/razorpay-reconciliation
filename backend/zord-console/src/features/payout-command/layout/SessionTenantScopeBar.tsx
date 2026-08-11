@@ -20,7 +20,8 @@ export function SessionTenantScopeBar({
   const { tenantId, tenantReady, tenantStatus, tenantFetching, refreshTenant } = useSessionTenant()
 
   const handleFetch = async () => {
-    const result = await refreshTenant({ batchId: batchId.trim() || undefined })
+    // CON-P0-09: never resolve tenant from batch id — session (/api/auth/me) only in live.
+    const result = await refreshTenant()
     if (result.ok) onAfterFetch?.()
   }
 
@@ -49,7 +50,7 @@ export function SessionTenantScopeBar({
           ) : null}
           {showWarning ? (
             <p className="text-[12px] leading-relaxed text-amber-900">
-              Sign in with a workspace, or enter a Batch-Id and click Resolve workspace.
+              Sign in with a workspace. Live tenant comes only from your verified session.
             </p>
           ) : null}
         </div>
@@ -61,7 +62,7 @@ export function SessionTenantScopeBar({
               <input
                 value={batchId}
                 onChange={(e) => onBatchIdChange(e.target.value)}
-                placeholder="Used to resolve workspace from intelligence"
+                placeholder="Optional — scopes API health checks only"
                 className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 font-mono text-[13px] text-slate-900 outline-none focus:border-sky-400/55 focus:ring-2 focus:ring-sky-400/15"
               />
             </label>

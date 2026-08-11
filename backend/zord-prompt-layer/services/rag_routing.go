@@ -109,7 +109,49 @@ func buildOutOfScopeResponse() dto.QueryResponse {
 		NextActions:   []string{},
 	}
 }
+func buildClarificationResponse(question string) dto.QueryResponse {
+	question = strings.TrimSpace(question)
+	if question == "" {
+		question = "Can you clarify whether you want tenant-wide status, a specific batch, a payment reference, settlement status, or proof/evidence status?"
+	}
 
+	return dto.QueryResponse{
+		Answer:        question,
+		Confidence:    "medium",
+		EntitiesFound: dto.EntitiesFound{},
+		Citations:     []dto.Citation{},
+		NextActions:   []string{},
+	}
+}
+
+func shouldAskPlannerClarification(plan QueryPlanDecision, req dto.QueryRequest, memorySummary string, historyContext string, history []ChatTurn) bool {
+	if !plan.NeedsClarification {
+		return false
+	}
+
+	if req.UIContext != nil {
+		if strings.TrimSpace(req.UIContext.SelectedTitle) != "" ||
+			strings.TrimSpace(req.UIContext.SelectedDescription) != "" ||
+			strings.TrimSpace(req.UIContext.BatchID) != "" ||
+			len(req.UIContext.SelectedMetrics) > 0 {
+			return false
+		}
+	}
+
+	if isConversationFollowupQuery(req.Query) && hasBusinessRelevantMemory(memorySummary, historyContext, history) {
+		return false
+	}
+
+	if len(plan.ReferenceCandidates) > 0 && len(plan.RetrievalTargets) > 0 {
+		return false
+	}
+
+	if plan.NeedsAuditSummary {
+		return false
+	}
+
+	return true
+}
 func shouldReturnCitations(class queryClass, chunks []model.RetrievedChunk, confidence string) bool {
 	if class != classOperational {
 		return false

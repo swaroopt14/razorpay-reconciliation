@@ -63,7 +63,7 @@ pipeline {
           k6 run --summary-export="${RESULTS_DIR}/01-health-check-summary.json" \
             --env BASE_URL="${params.BASE_URL}" \
             "${SCRIPTS_DIR}/01-health-check.js" \
-            2>&1 | tee "${RESULTS_DIR}/01-health-check-output.txt" || true
+            2>&1 | tee "${RESULTS_DIR}/01-health-check-output.txt"
         """
       }
     }
@@ -74,7 +74,7 @@ pipeline {
           k6 run --summary-export="${RESULTS_DIR}/02-tenant-reg-summary.json" \
             --env BASE_URL="${params.BASE_URL}" --env ADMIN_KEY="${params.ADMIN_KEY}" \
             "${SCRIPTS_DIR}/02-tenant-registration.js" \
-            2>&1 | tee "${RESULTS_DIR}/02-tenant-reg-output.txt" || true
+            2>&1 | tee "${RESULTS_DIR}/02-tenant-reg-output.txt"
         """
       }
     }
@@ -85,7 +85,7 @@ pipeline {
           k6 run --summary-export="${RESULTS_DIR}/03-bulk-ingest-summary.json" \
             --env BASE_URL="${params.BASE_URL}" --env ADMIN_KEY="${params.ADMIN_KEY}" \
             "${SCRIPTS_DIR}/03-bulk-ingest.js" \
-            2>&1 | tee "${RESULTS_DIR}/03-bulk-ingest-output.txt" || true
+            2>&1 | tee "${RESULTS_DIR}/03-bulk-ingest-output.txt"
         """
       }
     }
@@ -96,7 +96,7 @@ pipeline {
           k6 run --summary-export="${RESULTS_DIR}/04-full-flow-summary.json" \
             --env BASE_URL="${params.BASE_URL}" --env ADMIN_KEY="${params.ADMIN_KEY}" \
             "${SCRIPTS_DIR}/04-full-flow.js" \
-            2>&1 | tee "${RESULTS_DIR}/04-full-flow-output.txt" || true
+            2>&1 | tee "${RESULTS_DIR}/04-full-flow-output.txt"
         """
       }
     }
@@ -107,7 +107,7 @@ pipeline {
           k6 run --summary-export="${RESULTS_DIR}/05-rate-limit-summary.json" \
             --env BASE_URL="${params.BASE_URL}" \
             "${SCRIPTS_DIR}/05-rate-limit.js" \
-            2>&1 | tee "${RESULTS_DIR}/05-rate-limit-output.txt" || true
+            2>&1 | tee "${RESULTS_DIR}/05-rate-limit-output.txt"
         """
       }
     }
@@ -119,7 +119,7 @@ pipeline {
           k6 run --summary-export="${RESULTS_DIR}/06-spike-test-summary.json" \
             --env BASE_URL="${params.BASE_URL}" \
             "${SCRIPTS_DIR}/06-spike-test.js" \
-            2>&1 | tee "${RESULTS_DIR}/06-spike-test-output.txt" || true
+            2>&1 | tee "${RESULTS_DIR}/06-spike-test-output.txt"
         """
       }
     }
@@ -130,7 +130,7 @@ pipeline {
           k6 run --summary-export="${RESULTS_DIR}/07-intelligence-summary.json" \
             --env BASE_URL="${params.BASE_URL}" \
             "${SCRIPTS_DIR}/07-intelligence-surface.js" \
-            2>&1 | tee "${RESULTS_DIR}/07-intelligence-output.txt" || true
+            2>&1 | tee "${RESULTS_DIR}/07-intelligence-output.txt"
         """
       }
     }
@@ -142,7 +142,7 @@ pipeline {
           k6 run --summary-export="${RESULTS_DIR}/08-ai-copilot-summary.json" \
             --env BASE_URL="${params.BASE_URL}" --env ADMIN_KEY="${params.ADMIN_KEY}" \
             "${SCRIPTS_DIR}/08-ai-copilot.js" \
-            2>&1 | tee "${RESULTS_DIR}/08-ai-copilot-output.txt" || true
+            2>&1 | tee "${RESULTS_DIR}/08-ai-copilot-output.txt"
         """
       }
     }
@@ -153,7 +153,7 @@ pipeline {
           k6 run --summary-export="${RESULTS_DIR}/09-security-summary.json" \
             --env BASE_URL="${params.BASE_URL}" \
             "${SCRIPTS_DIR}/09-security-headers.js" \
-            2>&1 | tee "${RESULTS_DIR}/09-security-output.txt" || true
+            2>&1 | tee "${RESULTS_DIR}/09-security-output.txt"
         """
       }
     }

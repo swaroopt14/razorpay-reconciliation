@@ -2,10 +2,12 @@ package tracing
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"os"
 	"strconv"
 	"time"
+
+	"zord-edge/logger"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
@@ -40,7 +42,9 @@ func InitTracing(serviceName string) func() {
 
 	exp, err := otlptracegrpc.New(ctx, opts...)
 	if err != nil {
-		log.Printf("Failed to create OTLP exporter: %v", err)
+		logger.Log.Error("failed to create OTLP trace exporter",
+			slog.String("endpoint", endpoint),
+			slog.String("error", err.Error()))
 		return func() {}
 	}
 
@@ -51,7 +55,8 @@ func InitTracing(serviceName string) func() {
 		),
 	)
 	if err != nil {
-		log.Printf("Failed to create resource: %v", err)
+		logger.Log.Error("failed to create otel resource",
+			slog.String("error", err.Error()))
 		return func() {}
 	}
 
@@ -67,7 +72,9 @@ func InitTracing(serviceName string) func() {
 	// Create metric provider
 	metricExp, err := otlpmetricgrpc.New(ctx, metricOpts(endpoint, insecure)...)
 	if err != nil {
-		log.Printf("Failed to create OTLP metric exporter: %v", err)
+		logger.Log.Error("failed to create OTLP metric exporter",
+			slog.String("endpoint", endpoint),
+			slog.String("error", err.Error()))
 	}
 
 	var mp *metric.MeterProvider
@@ -83,17 +90,22 @@ func InitTracing(serviceName string) func() {
 	// Set global propagator for trace context
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 
-	log.Printf("OpenTelemetry tracing initialized for service: %s (endpoint=%s)", serviceName, endpoint)
+	logger.Log.Info("opentelemetry tracing initialized",
+		slog.String("service", serviceName),
+		slog.String("endpoint", endpoint),
+		slog.Bool("insecure", insecure))
 
 	// Return cleanup function
 	return func() {
 		if mp != nil {
 			if err := mp.Shutdown(context.Background()); err != nil {
-				log.Printf("Error shutting down meter provider: %v", err)
+				logger.Log.Error("meter provider shutdown failed",
+					slog.String("error", err.Error()))
 			}
 		}
 		if err := tp.Shutdown(context.Background()); err != nil {
-			log.Printf("Error shutting down tracer provider: %v", err)
+			logger.Log.Error("tracer provider shutdown failed",
+				slog.String("error", err.Error()))
 		}
 	}
 }

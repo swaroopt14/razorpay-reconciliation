@@ -153,12 +153,24 @@ func (w *OutboxWorker) runOnce(ctx context.Context) {
 }
 
 // deliver sends one outbox entry to the correct Kafka topic.
+//
+// P1-07: an entry fetched with status already FAILED means a prior tick
+// exhausted all 5 delivery attempts but the DLQ hand-off itself hadn't
+// succeeded yet (dead_lettered_at still null, otherwise FetchPending would
+// have excluded it). Retrying the real destination topic at that point is
+// pointless — attempts are already exhausted — so this only retries the DLQ
+// publish, not the original delivery.
 func (w *OutboxWorker) deliver(ctx context.Context, entry models.ActuationOutbox) {
+	if entry.Status == models.OutboxStatusFailed {
+		w.deadLetter(ctx, entry, entry.LastError, models.OutboxDLQErrorClassExhausted)
+		return
+	}
+
 	topic, err := w.topicForEventType(entry.EventType)
 	if err != nil {
 		logger.Error(fmt.Sprintf("outbox_worker: unknown event_type=%s for event=%s — marking failed",
 			entry.EventType, entry.EventID))
-		_ = w.outboxRepo.MarkFailed(ctx, entry.EventID, err.Error())
+		w.failAndMaybeDeadLetter(ctx, entry, err.Error(), models.OutboxDLQErrorClassUnknownEventType)
 		return
 	}
 
@@ -170,9 +182,7 @@ func (w *OutboxWorker) deliver(ctx context.Context, entry models.ActuationOutbox
 			entry.EventID, topic, entry.Attempts+1, publishErr))
 		// PHASE 5 (refactor): persist the actual error into last_error, not
 		// just the container log — see outbox_repo.MarkFailed.
-		if err := w.outboxRepo.MarkFailed(ctx, entry.EventID, publishErr.Error()); err != nil {
-			logger.Error(fmt.Sprintf("outbox_worker: mark_failed error event=%s: %v", entry.EventID, err))
-		}
+		w.failAndMaybeDeadLetter(ctx, entry, publishErr.Error(), models.OutboxDLQErrorClassPublish)
 		return
 	}
 
@@ -184,6 +194,54 @@ func (w *OutboxWorker) deliver(ctx context.Context, entry models.ActuationOutbox
 
 	logger.Info(fmt.Sprintf("outbox_worker: delivered event=%s action=%s topic=%s",
 		entry.EventID, entry.ActionID, topic))
+}
+
+// failAndMaybeDeadLetter records a delivery failure and, if that failure
+// just exhausted all 5 attempts, immediately attempts the P1-07 DLQ hand-off
+// (buildup-free: the first terminal tick tries the DLQ publish right away
+// instead of waiting for the next 5s tick to notice status=FAILED).
+func (w *OutboxWorker) failAndMaybeDeadLetter(ctx context.Context, entry models.ActuationOutbox, errMsg, errorClass string) {
+	terminal, err := w.outboxRepo.MarkFailed(ctx, entry.EventID, errMsg)
+	if err != nil {
+		logger.Error(fmt.Sprintf("outbox_worker: mark_failed error event=%s: %v", entry.EventID, err))
+		return
+	}
+	if !terminal {
+		return
+	}
+	w.deadLetter(ctx, entry, errMsg, errorClass)
+}
+
+// deadLetter publishes the durable, replayable DLQ record for a terminally
+// failed outbox entry BEFORE marking dead_lettered_at — same "don't finalize
+// until the DLQ publish succeeds" discipline as the inbound DLQ (P0-02). If
+// the publish itself fails, dead_lettered_at stays null and the entry is
+// picked up again by FetchPending next tick, retrying only this hand-off
+// (see deliver()'s early-return branch above).
+func (w *OutboxWorker) deadLetter(ctx context.Context, entry models.ActuationOutbox, errMsg, errorClass string) {
+	rec := models.OutboxDLQRecord{
+		TenantID:       entry.TenantID,
+		ActionID:       entry.ActionID,
+		EventID:        entry.EventID,
+		EventType:      entry.EventType,
+		Payload:        entry.Payload,
+		PayloadHash:    entry.PayloadHash,
+		Attempts:       entry.Attempts + 1,
+		ErrorClass:     errorClass,
+		ErrorMessage:   errMsg,
+		DeadLetteredAt: time.Now().UTC(),
+	}
+	if perr := w.producer.Publish(ctx, w.cfg.TopicOutboxDLQ, entry.TenantID, rec); perr != nil {
+		logger.Error(fmt.Sprintf("outbox_worker: CRITICAL outbox dlq publish failed event=%s: %v — will retry next tick",
+			entry.EventID, perr))
+		return
+	}
+	if err := w.outboxRepo.MarkDeadLettered(ctx, entry.EventID); err != nil {
+		logger.Error(fmt.Sprintf("outbox_worker: mark_dead_lettered error event=%s: %v", entry.EventID, err))
+		return
+	}
+	logger.Info(fmt.Sprintf("outbox_worker: dead-lettered event=%s action=%s error_class=%s",
+		entry.EventID, entry.ActionID, errorClass))
 }
 
 // topicForEventType maps an event type to the correct Kafka output topic.

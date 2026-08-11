@@ -135,6 +135,15 @@ spec:
                 secretKeyRef:
                   name: zord-app-secrets
                   key: ZORD_VAULT_KEY
+            # Master secret for deriving per-tenant tokenized_data_hash HMAC
+            # keys. Service now fails closed at startup if this is unset
+            # (see services.InitTokenizedDataHashMasterSecret) — ops must add
+            # this key to zord-app-secrets before this rolls out.
+            - name: TOKENIZED_DATA_HASH_MASTER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: zord-app-secrets
+                  key: TOKENIZED_DATA_HASH_MASTER_SECRET
             - name: RELAY_AUTH_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -168,7 +177,7 @@ spec:
               value: zord-intent-engine
           readinessProbe:
             httpGet:
-              path: /health
+              path: /ready
               port: 8083
             initialDelaySeconds: 10
             periodSeconds: 10

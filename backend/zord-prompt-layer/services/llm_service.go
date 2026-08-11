@@ -105,7 +105,22 @@ type QueryClassDecision struct {
 	NeedsVisualization bool    `json:"needs_visualization"`
 	Reason             string  `json:"reason"`
 }
-
+type QueryPlanDecision struct {
+	QueryType                string   `json:"query_type"`
+	BusinessIntent           string   `json:"business_intent"`
+	Confidence               float64  `json:"confidence"`
+	NeedsData                bool     `json:"needs_data"`
+	NeedsClarification       bool     `json:"needs_clarification"`
+	ClarificationQuestion    string   `json:"clarification_question"`
+	ReferenceCandidates      []string `json:"reference_candidates"`
+	RetrievalTargets         []string `json:"retrieval_targets"`
+	NeedsVectorContext       bool     `json:"needs_vector_context"`
+	NeedsLikelihoodReasoning bool     `json:"needs_likelihood_reasoning"`
+	NeedsAuditSummary        bool     `json:"needs_audit_summary"`
+	NeedsVisualization       bool     `json:"needs_visualization"`
+	TimeScope                string   `json:"time_scope"`
+	Reason                   string   `json:"reason"`
+}
 type OperationalPromptResult struct {
 	Answer            string   `json:"answer"`
 	Status            string   `json:"status"`
@@ -143,6 +158,85 @@ type EvidencePromptResult struct {
 	SafeDisplayRefs     []string `json:"safe_display_refs"`
 }
 
+func (s *LLMService) PlanQuery(userQuery string, memoryContext string, uiContext string) (QueryPlanDecision, error) {
+	prompt := "You are Zord's production query planner for a tenant-scoped payment-operations assistant.\n" +
+		"Return strict JSON only.\n" +
+		"Do not include markdown.\n" +
+		"Do not include extra keys.\n\n" +
+
+		"Your job:\n" +
+		"Understand what the user is actually asking in business language, decide what retrieval is needed, and decide whether clarification is required before answering.\n\n" +
+
+		"Allowed query_type values:\n" +
+		"1. operational_data_query\n" +
+		"2. product_explanation\n" +
+		"3. navigation_or_how_to\n" +
+		"4. evidence_or_dispute_query\n" +
+		"5. out_of_scope\n\n" +
+
+		"Important behavior:\n" +
+		"- The user does not need to use database/table/column words.\n" +
+		"- Treat words like payment, payout, transaction, reference, settlement, bank confirmation, PSP, proof, evidence, audit, status, failure, pending, stuck, delayed, safe, risk, and review as Zord business context.\n" +
+		"- If the user asks for all data, audit, overall health, end-to-end review, or complete status, set needs_audit_summary=true.\n" +
+		"- If the user asks what could happen, what could fail, why something may fail, when settlement may arrive, whether something is safe, or probability/likelihood of success/failure, set needs_likelihood_reasoning=true.\n" +
+		"- If the user provides a reference number, batch reference, PSP reference, payment reference, invoice-like value, or UTR-like value, include it in reference_candidates.\n" +
+		"- If the query is vague but conversation memory or selected UI context clearly tells what the user means, do not ask clarification.\n" +
+		"- If the query is vague and cannot be resolved from memory or UI context, set needs_clarification=true and ask one short business clarification question.\n" +
+		"- Clarification must be specific to the missing business scope, not generic.\n" +
+		"- If the user asks about status but the object is unclear, ask whether they mean payment instruction status, settlement confirmation status, proof readiness, batch status, or review status.\n" +
+		"- If the user asks about amount/value but the value type is unclear, ask whether they mean intended value, settled value, unmatched value, short-settled value, unlinked settlement value, reversal exposure, or value needing review.\n" +
+		"- If the user asks about failure, delay, stuck, or blocked items but the area is unclear, ask whether they mean payment instruction processing, settlement matching, upload processing, proof/evidence readiness, or review workflow.\n" +
+		"- If the user asks when something will arrive or complete but the object is unclear, ask whether they mean settlement file arrival, bank/PSP confirmation, batch completion, proof pack readiness, or review completion.\n" +
+		"- If the user asks about safety, risk, or likelihood but the object is unclear, ask whether they mean settlement success, payment matching confidence, proof readiness, duplicate risk, or unresolved value risk.\n" +
+		"- If the user asks about a specific reference, batch reference, PSP reference, payment reference, invoice reference, or UTR-like value, do not ask clarification unless multiple possible matches exist.\n" +
+		"- If the user asks a follow-up like 'is this good?', 'why?', 'what next?', or 'what about this?' and memory or UI context explains what 'this' means, do not ask clarification.\n" +
+		"- needs_vector_context=true when semantic/RCA/historical/similar-case context may improve the answer.\n" +
+		"- needs_data=true for operational_data_query and evidence_or_dispute_query.\n" +
+		"- needs_visualization=true only if user explicitly asks for chart, graph, trend, visualization, visual breakdown, comparison, day-wise, week-wise, or month-wise.\n" +
+		"- Do not expose or request internal IDs. Ask for safe business references like batch reference, payment reference, PSP reference, UTR, invoice reference, or time period.\n\n" +
+
+		"Clarification examples:\n" +
+		"- User asks 'show status' with no memory/UI context: ask whether they mean tenant-wide, a batch, a payment reference, settlement, or evidence status.\n" +
+		"- User asks 'is this good?' and memory contains previous payment status: no clarification; use memory to answer.\n" +
+		"- User asks 'audit everything': no clarification; tenant-wide audit summary is intended.\n\n" +
+
+		"Retrieval target guidance:\n" +
+		"- payment instruction/status/count questions: include intent.\n" +
+		"- settlement, matched, unmatched, short-settled, unlinked, safe/failure probability questions: include outcome and intelligence.\n" +
+		"- RCA/failure/likely cause questions: include intelligence, outcome, vector.\n" +
+		"- proof/evidence/dispute/audit export questions: include evidence and intelligence.\n" +
+		"- upload/CSV/duplicate/idempotency questions: include edge and intent.\n" +
+		"- audit questions: include intent, outcome, intelligence, evidence, edge.\n\n" +
+
+		"Return JSON schema:\n" +
+		"{\"query_type\":\"operational_data_query | product_explanation | navigation_or_how_to | evidence_or_dispute_query | out_of_scope\",\"business_intent\":\"short business meaning\",\"confidence\":0.0,\"needs_data\":true,\"needs_clarification\":false,\"clarification_question\":\"\",\"reference_candidates\":[],\"retrieval_targets\":[],\"needs_vector_context\":false,\"needs_likelihood_reasoning\":false,\"needs_audit_summary\":false,\"needs_visualization\":false,\"time_scope\":\"\",\"reason\":\"short plain reason\"}\n\n" +
+
+		"CONVERSATION MEMORY:\n" + strings.TrimSpace(memoryContext) + "\n\n" +
+		"SELECTED UI CONTEXT:\n" + strings.TrimSpace(uiContext) + "\n\n" +
+		"USER QUERY:\n" + userQuery
+
+	raw, err := s.gemini.Generate(prompt)
+	if err != nil {
+		return QueryPlanDecision{}, err
+	}
+
+	clean := strings.TrimSpace(raw)
+	clean = strings.TrimPrefix(clean, "```json")
+	clean = strings.TrimPrefix(clean, "```")
+	clean = strings.TrimSuffix(clean, "```")
+	clean = strings.TrimSpace(clean)
+
+	var out QueryPlanDecision
+	if err := json.Unmarshal([]byte(clean), &out); err != nil {
+		return QueryPlanDecision{}, err
+	}
+
+	out.Confidence = clamp01(out.Confidence)
+	if strings.TrimSpace(out.QueryType) == "" {
+		out.QueryType = "product_explanation"
+	}
+	return out, nil
+}
 func (s *LLMService) ClassifyQueryIntent(userQuery string, memoryContext string) (QueryClassDecision, error) {
 	prompt := "You are the strict intent classifier for the Zord payment-operations assistant.\n" +
 		"Return strict JSON only.\n" +
@@ -217,6 +311,10 @@ func (s *LLMService) GenerateOperationalJSON(userQuery, context, visRule string)
 			"- Do not use backend metric names.\n" +
 			"- Copy numeric and money values exactly as shown in CONTEXT. Do not divide, multiply, round, add commas, remove decimals, add decimals, or change the numeric representation.\n" +
 			"- If CONTEXT says INR 13146, answer INR 13146 exactly. Do not write INR 131.46 or INR 13,146.\n" +
+			"- Vendor, payee, beneficiary, provider/PSP, source system, and safe business references may be shown when they are present in CONTEXT as plain display values.\n" +
+			"- Do not show vendor/payee/provider fields if they look like tokens, hashes, fingerprints, UUIDs, encrypted values, account identifiers, or internal references.\n" +
+			"- Use calculated business metrics exactly as shown in CONTEXT. Do not recalculate, reinterpret, or rename their numeric values.\n" +
+			"- Answer like you are helping an accountant, CA, finance operator, or client-facing reviewer understand what the data means and what needs attention.\n" +
 			"- Be explainable enough for business users: give the direct answer, then briefly explain what it means operationally.\n" +
 			"- If the user asks a broad status/count/question, summarize the most important business takeaway instead of only repeating one record.\n" +
 			"- Do not say \"leakage\" unless context clearly says money is actually lost. Prefer \"payment gap\", \"value needing review\", or \"unclear value\".\n" +
@@ -230,6 +328,7 @@ func (s *LLMService) GenerateOperationalJSON(userQuery, context, visRule string)
 			"- If data_available=false for any section, explain missing data in plain language.\n" +
 			"- If denominator is zero/unavailable, do not present 0% as real performance; say not available yet.\n\n" +
 			"Business context rules:\n" +
+			"- For vendor, payee, provider, PSP, or source-system questions, answer from safe CONTEXT fields only and explain how that party relates to the payment operation.\n" +
 			"- For payment count questions, explain whether the number refers to received payment instructions, processed instructions, failed instructions, or records needing review.\n" +
 			"- For settlement arrival questions, use the latest relevant timestamp and settlement policy from CONTEXT when available. Present it as an estimate, not a guarantee.\n" +
 			"- For duplicate processing questions, rely on duplicate-control evidence from CONTEXT and explain whether there is no indication, possible conflict, or needs review.\n" +

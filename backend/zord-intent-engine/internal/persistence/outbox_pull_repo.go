@@ -43,6 +43,11 @@ func (r *OutboxPullRepo) LeaseOutboxBatch(ctx context.Context, limit int, leaseT
 	leaseUUID := uuid.New()
 	leaseID := leaseUUID.String()
 
+	// INT-09: the RETURNING clause and the outer SELECT below both derive
+	// from outboxLeaseColumns (outbox_lease_contract.go) — previously these
+	// were two independently hand-typed 56-column lists in this same query
+	// that had to stay in the same order by eye, with no automated check
+	// tying them together.
 	query := `
 WITH picked AS (
 	SELECT event_id
@@ -63,92 +68,10 @@ leased AS (
 	FROM picked p
 	WHERE o.event_id = p.event_id
 	RETURNING
-		o.event_id::text as event_id,
-		COALESCE(o.envelope_id::text, '') as envelope_id,
-		COALESCE(o.trace_id::text, '') as trace_id,
-		COALESCE(o.tenant_id::text, '') as tenant_id,
-		COALESCE(o.contract_id::text, '') as contract_id,
-		o.aggregate_type,
-		o.aggregate_id,
-		o.event_type,
-		o.amount,
-		o.currency,
-		NULL as corridor_id,
-		o.retry_count,
-		o.next_attempt_at,
-		o.payload,
-		o.status,
-		o.created_at,
-		COALESCE(o.lease_id::text, '') as lease_id,
-		COALESCE(o.leased_by, '') as leased_by,
-		o.lease_until,
-		o.batchid,
-		o.source_row_num,
-		o.canonical_hash,
-		o.governance_state,
-		o.governance_hash,
-		o.mapping_profile_id,
-		o.required_fields_status,
-		o.tokenization_status,
-		o.governance_decision,
-		o.payment_instruction_received,
-		o.canonical_intent_created,
-		COALESCE(o.client_payout_ref, '') as client_payout_ref,
-		COALESCE(o.intent_lifecycle_state, '') as intent_lifecycle_state,
-		COALESCE(o.mapping_profile_hash, '') as mapping_profile_hash,
-		COALESCE(o.policy_source, '') as policy_source,
-		COALESCE(o.policy_version, '') as policy_version,
-		COALESCE(o.policy_hash, '') as policy_hash,
-		COALESCE(o.raw_row_evidence_leaf_hash, '') as raw_row_evidence_leaf_hash,
-		COALESCE(o.canonical_row_evidence_leaf_hash, '') as canonical_row_evidence_leaf_hash,
-		COALESCE(o.business_idempotency_key, '') as business_idempotency_key,
-		COALESCE(o.tokenized_data_hash, '') as tokenized_data_hash,
-		COALESCE(o.artifact_id, '') as artifact_id,
-		COALESCE(o.artifact_version_id, '') as artifact_version_id
+		` + buildOutboxLeaseReturningSQL() + `
 )
 SELECT
-	event_id,
-	envelope_id,
-	trace_id,
-	tenant_id,
-	contract_id,
-	aggregate_type,
-	aggregate_id,
-	event_type,
-	amount,
-	currency,
-	corridor_id,
-	retry_count,
-	next_attempt_at,
-	payload,
-	status,
-	created_at,
-	lease_id,
-	leased_by,
-	lease_until,
-	batchid,
-	source_row_num,
-	canonical_hash,
-	governance_state,
-	governance_hash,
-	mapping_profile_id,
-	required_fields_status,
-	tokenization_status,
-	governance_decision,
-	payment_instruction_received,
-	canonical_intent_created,
-	client_payout_ref,
-	intent_lifecycle_state,
-	mapping_profile_hash,
-	policy_source,
-	policy_version,
-	policy_hash,
-	raw_row_evidence_leaf_hash,
-	canonical_row_evidence_leaf_hash,
-	business_idempotency_key,
-	tokenized_data_hash,
-	artifact_id,
-	artifact_version_id
+	` + buildOutboxLeaseSelectSQL() + `
 FROM leased
 ORDER BY created_at ASC;
 `
@@ -214,6 +137,20 @@ ORDER BY created_at ASC;
 			&evt.TokenizedDataHash,
 			&evt.ArtifactID,
 			&evt.ArtifactVersionID,
+			&evt.GovernanceReasonCodesJSON,
+			&evt.ScoreVersion,
+			&evt.ScoreValidityStatus,
+			&evt.ScoreBreakdownJSON,
+			&evt.ScoreReasonCodesJSON,
+			&evt.ScoredAt,
+			&evt.ReferenceQualityScore,
+			&evt.DuplicateRiskScore,
+			&evt.ProofReadinessScore,
+			&evt.MatchabilityScore,
+			&evt.IntentQualityScore,
+			&evt.MappingConfidenceScore,
+			&evt.SchemaCompletenessScore,
+			&evt.DuplicateReasonCode,
 		); err != nil {
 			return "", nil, nil, err
 		}

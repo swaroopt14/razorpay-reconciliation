@@ -35,7 +35,37 @@ func safeOptional(v string) string {
 	}
 	return v
 }
+func safeBusinessContextValue(raw string) string {
+	v := safeOptional(raw)
+	if v == "Not available" {
+		return ""
+	}
 
+	if uuidRegex.MatchString(v) {
+		return ""
+	}
+
+	lower := strings.ToLower(v)
+	blocked := []string{
+		"token",
+		"hash",
+		"secret",
+		"fingerprint",
+		"signature",
+		"encrypted",
+		"bearer ",
+		"api_key",
+		"apikey",
+	}
+
+	for _, marker := range blocked {
+		if strings.Contains(lower, marker) {
+			return ""
+		}
+	}
+
+	return v
+}
 func moneyFromMinor(raw string) string {
 	return exactDBMoneyValue(raw)
 }

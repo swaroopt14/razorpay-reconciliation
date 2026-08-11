@@ -100,51 +100,120 @@ func (h *consumerGroupHandler) Cleanup(sarama.ConsumerGroupSession) error {
 	return nil
 }
 
+// claimEvent flows on a single channel owned exclusively by commitInOrder,
+// carrying both "submitted to a worker" (completed=false) and "worker
+// finished, safe to commit" (completed=true) notifications for one message.
+type claimEvent struct {
+	offset    int64
+	completed bool
+}
+
+// ConsumeClaim fans a partition's messages out to a worker pool for
+// concurrent processing, but commits (marks) Kafka offsets strictly in the
+// order Kafka delivered them via commitInOrder — never ahead of an
+// earlier, still-in-flight message.
+//
+// This matters because sarama's offset manager tracks a single monotonic
+// offset per partition, not a bitmap of individually-acked messages: if a
+// later offset is marked before an earlier one finishes, and the process
+// crashes before the earlier one completes, that earlier message is never
+// redelivered — it is silently skipped forever, not just duplicated
+// (P1 6.1.4 — restart after publish but before ack).
 func (h *consumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	workerCount := h.c.cfg.WorkerCount
 	if workerCount <= 0 {
 		workerCount = 4
 	}
 
-	type workItem struct {
-		session sarama.ConsumerGroupSession
-		msg     *sarama.ConsumerMessage
-	}
-
-	workCh := make(chan workItem, workerCount*2)
+	workCh := make(chan *sarama.ConsumerMessage, workerCount*2)
+	events := make(chan claimEvent, workerCount*4)
 
 	var workerWg sync.WaitGroup
 	for i := 0; i < workerCount; i++ {
 		workerWg.Add(1)
 		go func(workerID int) {
 			defer workerWg.Done()
-			for w := range workCh {
-				h.c.handleMessage(h.ctx, w.session, w.msg, h.log.With(zap.Int("worker_id", workerID)))
+			workerLog := h.log.With(zap.Int("worker_id", workerID))
+			for msg := range workCh {
+				ownershipTaken := h.c.processMessage(h.ctx, msg, workerLog)
+				if ownershipTaken {
+					events <- claimEvent{offset: msg.Offset, completed: true}
+				}
+				// ownershipTaken == false: deliberately send no completion
+				// event. commitInOrder will then never mark this offset —
+				// or anything submitted after it — so a crash redelivers
+				// it on restart instead of silently skipping past it.
 			}
 		}(i)
 	}
+
+	commitDone := make(chan struct{})
+	go h.commitInOrder(session, claim, events, commitDone)
 
 	for msg := range claim.Messages() {
 		select {
 		case <-h.ctx.Done():
 			close(workCh)
 			workerWg.Wait()
+			close(events)
+			<-commitDone
 			return nil
-		case workCh <- workItem{session: session, msg: msg}:
+		case workCh <- msg:
+			events <- claimEvent{offset: msg.Offset, completed: false}
 		}
 	}
 
 	close(workCh)
 	workerWg.Wait()
+	close(events)
+	<-commitDone
 	return nil
 }
 
-func (c *DispatchConsumer) handleMessage(
-	ctx context.Context,
+// commitInOrder is the sole owner of commit-ordering state for one
+// partition claim — no other goroutine touches `order`/`finished`, so no
+// locking is needed. It buffers out-of-order completions and only marks the
+// longest contiguous prefix of submitted offsets that has finished.
+func (h *consumerGroupHandler) commitInOrder(
 	session sarama.ConsumerGroupSession,
+	claim sarama.ConsumerGroupClaim,
+	events <-chan claimEvent,
+	done chan<- struct{},
+) {
+	defer close(done)
+
+	var order []int64
+	finished := make(map[int64]bool)
+
+	for ev := range events {
+		if !ev.completed {
+			order = append(order, ev.offset)
+			continue
+		}
+		finished[ev.offset] = true
+
+		for len(order) > 0 && finished[order[0]] {
+			offset := order[0]
+			order = order[1:]
+			delete(finished, offset)
+			session.MarkMessage(&sarama.ConsumerMessage{
+				Topic:     claim.Topic(),
+				Partition: claim.Partition(),
+				Offset:    offset,
+			}, "")
+		}
+	}
+}
+
+// processMessage decodes and processes one message. It returns true iff it
+// is safe to commit this offset — either the message was durably handed off
+// (poison, or DispatchLoop took ownership), or false if a transient failure
+// means the offset must be withheld so the message is redelivered on restart.
+func (c *DispatchConsumer) processMessage(
+	ctx context.Context,
 	msg *sarama.ConsumerMessage,
 	log *zap.Logger,
-) {
+) bool {
 	msgLog := log.With(
 		zap.Int32("partition", msg.Partition),
 		zap.Int64("offset", msg.Offset),
@@ -157,8 +226,7 @@ func (c *DispatchConsumer) handleMessage(
 		msgLog.Error("dispatch_consumer: totally unparseable message — committing as poison",
 			zap.Error(jsonErr),
 		)
-		c.commitOffset(session, msg)
-		return
+		return true
 	}
 
 	msgLog = msgLog.With(zap.String("event_id", peek.EventID))
@@ -168,20 +236,14 @@ func (c *DispatchConsumer) handleMessage(
 		msgLog.Error("dispatch_consumer: cannot unmarshal OutboxEvent — committing as poison",
 			zap.Error(err),
 		)
-		c.commitOffset(session, msg)
-		return
+		return true
 	}
 
 	ownershipTaken := c.loop.processEvent(ctx, int(msg.Partition), event)
-	if ownershipTaken {
-		c.commitOffset(session, msg)
-	} else {
+	if !ownershipTaken {
 		msgLog.Warn("dispatch_consumer: step1 failed — withholding offset commit (will retry on restart)")
 	}
-}
-
-func (c *DispatchConsumer) commitOffset(session sarama.ConsumerGroupSession, msg *sarama.ConsumerMessage) {
-	session.MarkMessage(msg, "")
+	return ownershipTaken
 }
 
 func stringsToSlice(s string) []string {

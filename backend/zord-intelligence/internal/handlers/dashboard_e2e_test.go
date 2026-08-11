@@ -124,7 +124,7 @@ func seedAction(t *testing.T, pool *pgxpool.Pool, actionID, tenantID, status str
 		INSERT INTO action_contracts
 			(action_id, tenant_id, policy_id, policy_version,
 			 scope_refs, input_refs_json, decision, confidence,
-			 payload_json, signature, idempotency_key,
+			 payload_json, integrity_digest, idempotency_key,
 			 contract_status, created_at)
 		VALUES
 			($1,$2,'P_DASH_TEST',1,

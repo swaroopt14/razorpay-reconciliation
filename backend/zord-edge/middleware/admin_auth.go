@@ -1,9 +1,11 @@
 package middleware
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
+
+	"zord-edge/logger"
 
 	"github.com/gin-gonic/gin"
 )
@@ -17,22 +19,28 @@ func AdminAuthMiddleware() gin.HandlerFunc {
 
 		// Security Constraint: Ensure the environment variable is actually set.
 		if expectedKey == "" {
-			log.Print("[CRITICAL] INTERNAL_ADMIN_KEY is not set in environment. Blocking all admin access.")
+			logger.Log.Error("INTERNAL_ADMIN_KEY is not set in environment, blocking all admin access")
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"code":  "ADMIN_AUTH_NOT_CONFIGURED",
 				"error": "Admin authentication is not configured",
 			})
 			return
 		}
 
 		if adminKey == "" || adminKey != expectedKey {
-			log.Printf("[SECURITY] Unauthorized admin access attempt from IP: %s", c.ClientIP())
+			logger.Log.Warn("unauthorized admin access attempt",
+				slog.String("ip", c.ClientIP()),
+				slog.String("path", c.Request.URL.Path))
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"code":  "INVALID_ADMIN_KEY",
 				"error": "Invalid or missing admin key",
 			})
 			return
 		}
 
-		log.Printf("[SECURITY] Authorized admin access to %s from IP: %s", c.Request.URL.Path, c.ClientIP())
+		logger.Log.Info("authorized admin access",
+			slog.String("path", c.Request.URL.Path),
+			slog.String("ip", c.ClientIP()))
 		c.Next()
 	}
 }

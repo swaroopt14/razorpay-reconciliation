@@ -44,4 +44,17 @@ test.describe('console BFF smoke', () => {
     // 502 when prompt-layer service is not running locally — still not a console crash
     expect(res.status()).toBeLessThan(503)
   })
+
+  // CON-P0-05: generic intelligence catch-all must not proxy; always 404.
+  test('GET /api/intelligence/* is removed (404, no tunnel)', async ({ request }) => {
+    const res = await request.get('/api/intelligence/leakage', {
+      headers: {
+        authorization: 'Bearer forged-token',
+        'x-tenant-id': 'forged-tenant',
+      },
+    })
+    expect(res.status()).toBe(404)
+    const body = await res.json()
+    expect(body.code).toBe('NOT_FOUND')
+  })
 })

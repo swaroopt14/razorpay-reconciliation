@@ -97,6 +97,19 @@ var (
 		Help:      "Current number of in-flight Kafka publish goroutines.",
 	}, []string{"service"})
 
+	// LeaseAckNackMismatchTotal counts ack/nack calls where fewer rows were
+	// updated than requested (P1 6.1.4 — lease owner validation). This means
+	// the lease had already expired and been reclaimed by another relay
+	// instance before the ack/nack landed. Not itself data loss — the
+	// reclaiming instance will re-lease and reprocess those events — but a
+	// sustained non-zero rate indicates lease TTLs are too tight for the
+	// actual processing time.
+	LeaseAckNackMismatchTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "relay",
+		Name:      "lease_ack_nack_mismatch_total",
+		Help:      "Ack/nack calls where updated rows < requested rows — lease likely reclaimed by another instance.",
+	}, []string{"service", "op"}) // op: ack | nack
+
 	// ── Dispatch loop metrics ────────────────────────────────────────────────
 
 	// DispatchTotal counts dispatch lifecycle outcomes.
@@ -157,4 +170,54 @@ var (
 		Name:      "relay_outbox_pending",
 		Help:      "Current count of PENDING rows in relay_outbox.",
 	})
+
+	// ── Payload hash verification metrics (P0 6.1.2) ────────────────────────
+
+	// PayloadHashConflictTotal counts every payload_hash mismatch event.
+	// This counter feeds the high-severity operational alert:
+	//   increase(relay_payload_hash_conflict_total[5m]) > 0 → SEV1 / PagerDuty.
+	// The "decision" label says whether we NACKed (re-queue) or ACKed as
+	// permanent conflict (gave up after MaxConflictRetries).
+	PayloadHashConflictTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "relay",
+		Name:      "payload_hash_conflict_total",
+		Help:      "Payload hash verification mismatches. Alert on this (SEV1): any non-zero increase in 5m window.",
+	}, []string{"service", "decision"}) // decision: nack | ack_permanent
+
+	// PayloadHashVerifiedTotal counts happy-path hash verifications so the
+	// conflict ratio can be computed (conflicts / total_verified).
+	PayloadHashVerifiedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "relay",
+		Name:      "payload_hash_verified_total",
+		Help:      "Events whose payload hash was verified successfully. Denominator for conflict-rate calculation.",
+	}, []string{"service"})
+
+	// PayloadHashSkippedTotal counts events whose payload_hash was empty and
+	// therefore skipped (strict=false). Flip strict=true once all upstreams
+	// guarantee the field to make this counter go to zero.
+	PayloadHashSkippedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "relay",
+		Name:      "payload_hash_skipped_total",
+		Help:      "Events with empty payload_hash that were skipped (strict=false). Trend should go to 0 over time.",
+	}, []string{"service"})
+
+	// ── Durable publish-failure persistence (P0 6.1.3) ───────────────────────
+
+	// PublishFailureRecordedTotal counts exhausted publish attempts (poison or
+	// retries-exhausted) durably persisted to relay_publish_failures.
+	PublishFailureRecordedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "relay",
+		Name:      "publish_failure_recorded_total",
+		Help:      "Exhausted publish attempts durably recorded to relay_publish_failures.",
+	}, []string{"service", "failure_class"})
+
+	// PublishFailurePersistErrorTotal counts failures to durably persist a
+	// publish-failure record. When this fires for a poison event, the
+	// upstream lease is deliberately withheld (nacked instead of acked) —
+	// alert on any non-zero rate.
+	PublishFailurePersistErrorTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "relay",
+		Name:      "publish_failure_persist_error_total",
+		Help:      "Failed attempts to durably persist a publish-failure record. Alert on this (SEV1): any non-zero increase.",
+	}, []string{"service"})
 )

@@ -2,6 +2,7 @@
 CREATE TABLE canonical_intents (
 	intent_id UUID PRIMARY KEY,
 	tenant_id UUID NOT NULL,
+	trace_id UUID,
 	contract_id UUID,
 	client_payout_ref TEXT,
 	client_batch_ref TEXT,

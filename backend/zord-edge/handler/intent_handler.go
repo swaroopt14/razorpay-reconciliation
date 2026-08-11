@@ -5,11 +5,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"zord-edge/db"
+	"zord-edge/logger"
 	"zord-edge/model"
 	"zord-edge/services"
 	"zord-edge/vault"
@@ -63,7 +64,10 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 			})
 			return
 		}
-		log.Printf("Error persisting idempotency key: %v", err)
+		logger.Log.Error("idempotency key persist failed",
+			slog.String("tenant_id", rawIntent.TenantID),
+			slog.String("idempotency_key", idempotencyKey),
+			slog.String("error", err.Error()))
 		context.JSON(http.StatusInternalServerError, gin.H{
 			"ErrorCode":  "INTERNAL_SERVER_ERROR",
 			"ErrorMsg":   "Failed to persist idempotency key.",
@@ -72,7 +76,10 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 		return
 	}
 	if id != uuid.Nil {
-		log.Printf("Duplicate idempotency key detected for tenant_id=%s, idempotency_key=%s, Envelope_Id=%s", rawIntent.TenantID, rawIntent.IdempotencyKey, id)
+		logger.Log.Info("duplicate idempotency key detected",
+			slog.String("tenant_id", rawIntent.TenantID),
+			slog.String("idempotency_key", rawIntent.IdempotencyKey),
+			slog.String("envelope_id", id.String()))
 		context.JSON(http.StatusConflict, gin.H{
 			"ErrorCode":  "DUPLICATE_IDEMPOTENCY_KEY",
 			"ErrorMsg":   "request already processed",
@@ -113,6 +120,10 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 
 	encryptedPayload, err := vault.Encrypt(rawPayload)
 	if err != nil {
+		logger.Log.Error("payload encryption failed",
+			slog.String("trace_id", traceID),
+			slog.String("tenant_id", rawIntent.TenantID),
+			slog.String("error", err.Error()))
 		context.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encrypt payload"})
 		return
 	}
@@ -138,7 +149,10 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 
 	storageAck, err := services.ProcessRawIntent(reqCtx, rawIntent, h.S3store, envelopeID, receivedAt)
 	if err != nil {
-		log.Printf("Error processing intent: %v", err)
+		logger.Log.Error("raw intent processing failed",
+			slog.String("trace_id", rawIntent.TraceID),
+			slog.String("tenant_id", rawIntent.TenantID),
+			slog.String("error", err.Error()))
 		context.JSON(http.StatusInternalServerError, gin.H{
 			"TraceID":   rawIntent.TraceID,
 			"ErrorCode": "INTERNAL_ERROR",
@@ -148,7 +162,9 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 	}
 
 	if storageAck == nil {
-		log.Printf("S3 Data is nil for trace_id=%s", rawIntent.TraceID)
+		logger.Log.Error("S3 storage returned nil ack",
+			slog.String("trace_id", rawIntent.TraceID),
+			slog.String("tenant_id", rawIntent.TenantID))
 		context.JSON(http.StatusInternalServerError, gin.H{
 			"TraceID":   rawIntent.TraceID,
 			"ErrorCode": "INTERNAL_ERROR",
@@ -167,7 +183,10 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 
 	rawRowHash, err := services.ComputeRawRowHash(rawPayload)
 	if err != nil {
-		log.Printf("Error computing raw_row_hash for trace_id=%s: %v", rawIntent.TraceID, err)
+		logger.Log.Error("raw_row_hash computation failed",
+			slog.String("trace_id", rawIntent.TraceID),
+			slog.String("tenant_id", rawIntent.TenantID),
+			slog.String("error", err.Error()))
 		context.JSON(http.StatusInternalServerError, gin.H{
 			"TraceID":    rawIntent.TraceID,
 			"ErrorCode":  "INTERNAL_SERVER_ERROR",
@@ -179,7 +198,11 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 	rawIntent.RawRowHash = rawRowHash
 
 	if err := services.RawIntent(reqCtx, rawIntent, storageAck); err != nil {
-		log.Printf("Error persisting raw intent: %v", err)
+		logger.Log.Error("raw intent persist failed",
+			slog.String("trace_id", rawIntent.TraceID),
+			slog.String("tenant_id", rawIntent.TenantID),
+			slog.String("envelope_id", envelopeID),
+			slog.String("error", err.Error()))
 		context.JSON(http.StatusInternalServerError, gin.H{
 			"TraceID":    rawIntent.TraceID,
 			"ErrorCode":  "INTERNAL_SERVER_ERROR",

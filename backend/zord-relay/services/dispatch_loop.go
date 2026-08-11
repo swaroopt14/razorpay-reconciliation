@@ -57,6 +57,7 @@ type DispatchLoop struct {
 	dispatchRepo *DispatchRepo
 	pspClient    psp.Client
 	tokenClient  TokenClient
+	hashVerifier PayloadHashVerifier
 	cfg          *DispatchLoopConfig
 
 	// Circuit breaker — tracks consecutive PSP failures.
@@ -71,6 +72,7 @@ func NewDispatchLoop(
 	dispatchRepo *DispatchRepo,
 	pspClient psp.Client,
 	tokenClient TokenClient,
+	hashVerifier PayloadHashVerifier,
 	cfg *DispatchLoopConfig,
 ) *DispatchLoop {
 	return &DispatchLoop{
@@ -79,6 +81,7 @@ func NewDispatchLoop(
 		dispatchRepo: dispatchRepo,
 		pspClient:    pspClient,
 		tokenClient:  tokenClient,
+		hashVerifier: hashVerifier,
 		cfg:          cfg,
 	}
 }
@@ -109,6 +112,34 @@ func (l *DispatchLoop) processEvent(ctx context.Context, workerID int, e model.O
 	}
 	contractID := e.ContractID
 
+	// ── Validate envelope metadata — trace_id and schema_version ─────────────
+	// Both fields are required for cross-service traceability and schema
+	// compatibility. An event missing either cannot be safely dispatched:
+	// - trace_id absent → downstream services lose distributed trace context.
+	// - schema_version absent → consumers cannot detect format mismatches.
+	// Commit the offset (return true) so the partition is not blocked; the
+	// missing-metadata event is permanently unusable and is discarded with a
+	// structured error log.
+	if e.TraceID == "" {
+		logger.Logger.Error("dispatch_loop: poison event — trace_id is empty, skipping",
+			zap.String("event_id", e.EventID),
+			zap.String("contract_id", contractID),
+			zap.String("tenant_id", e.TenantID),
+		)
+		metrics.DispatchTotal.WithLabelValues("poison_no_trace_id").Inc()
+		return true
+	}
+	if e.SchemaVersion == "" {
+		logger.Logger.Error("dispatch_loop: poison event — schema_version is empty, skipping",
+			zap.String("event_id", e.EventID),
+			zap.String("contract_id", contractID),
+			zap.String("tenant_id", e.TenantID),
+			zap.String("trace_id", e.TraceID),
+		)
+		metrics.DispatchTotal.WithLabelValues("poison_no_schema_version").Inc()
+		return true
+	}
+
 	log := logger.Logger.With(
 		zap.Int("worker_id", workerID),
 		zap.String("event_id", e.EventID),
@@ -117,6 +148,17 @@ func (l *DispatchLoop) processEvent(ctx context.Context, workerID int, e model.O
 		zap.String("tenant_id", e.TenantID),
 		zap.String("trace_id", e.TraceID),
 	)
+
+	// ── Step 0.5: P0 6.1.2 — verify payload_hash BEFORE touching PSP.
+	// This is the ONLY place payload_hash integrity is verified: on the
+	// trust-boundary crossing from zord-intent-engine into the external PSP.
+	// Kafka consumer group semantics do not support single-message NACK, so
+	// mismatches always commit the offset (return true) to avoid replaying
+	// all healthy messages in the partition. The conflict record in
+	// relay_payload_conflicts serves as the audit trail + alerting trigger.
+	if !l.verifyDispatchPayloadHash(ctx, e, log) {
+		return true
+	}
 
 	// ── Parse payload ─────────────────────────────────────────────────────────
 	var payload model.OutboxPayload
@@ -207,7 +249,7 @@ func (l *DispatchLoop) processEvent(ctx context.Context, workerID int, e model.O
 			ContractID:    contractID,
 			DispatchID:    dispatchID,
 			TraceID:       traceID,
-			SchemaVersion: "v1",
+			SchemaVersion: model.SchemaVersionV1,
 			CreatedAt:     time.Now().UTC(),
 			Payload: model.DispatchCreatedPayload{
 				DispatchID:          dispatchID,
@@ -282,7 +324,7 @@ func (l *DispatchLoop) runSteps2to5(ctx context.Context, workerID int, d *model.
 		ContractID:    contractID,
 		DispatchID:    dispatchID,
 		TraceID:       traceID,
-		SchemaVersion: "v1",
+		SchemaVersion: model.SchemaVersionV1,
 		CreatedAt:     time.Now().UTC(),
 		Payload: model.DispatchGovernanceEvaluatedPayload{
 			DispatchID:  dispatchID,
@@ -361,7 +403,7 @@ func (l *DispatchLoop) runSteps2to5(ctx context.Context, workerID int, d *model.
 		ContractID:    contractID,
 		DispatchID:    dispatchID,
 		TraceID:       traceID,
-		SchemaVersion: "v1",
+		SchemaVersion: model.SchemaVersionV1,
 		CreatedAt:     asSentAt,
 		Payload: model.AttemptSentPayload{
 			DispatchID:   dispatchID,
@@ -458,7 +500,7 @@ func (l *DispatchLoop) runSteps2to5(ctx context.Context, workerID int, d *model.
 		ContractID:    contractID,
 		DispatchID:    dispatchID,
 		TraceID:       traceID,
-		SchemaVersion: "v1",
+		SchemaVersion: model.SchemaVersionV1,
 		CreatedAt:     ackedAt,
 		Payload: model.ProviderAckedPayload{
 			DispatchID:        dispatchID,
@@ -606,7 +648,7 @@ func (l *DispatchLoop) markFailedRetryable(
 	dfEvent := model.DispatchFailedEvent{
 		EventID: uuid.New().String(), EventType: "DispatchFailed",
 		TenantID: tenantID, IntentID: intentID, ContractID: contractID,
-		DispatchID: dispatchID, TraceID: traceID, SchemaVersion: "v1",
+		DispatchID: dispatchID, TraceID: traceID, SchemaVersion: model.SchemaVersionV1,
 		CreatedAt: failedAt,
 		Payload: model.DispatchFailedPayload{
 			DispatchID: dispatchID, AttemptCount: attemptCount,
@@ -644,7 +686,7 @@ func (l *DispatchLoop) markFailedTerminal(
 	dfEvent := model.DispatchFailedEvent{
 		EventID: uuid.New().String(), EventType: "DispatchFailed",
 		TenantID: tenantID, IntentID: intentID, ContractID: contractID,
-		DispatchID: dispatchID, TraceID: traceID, SchemaVersion: "v1",
+		DispatchID: dispatchID, TraceID: traceID, SchemaVersion: model.SchemaVersionV1,
 		CreatedAt: failedAt,
 		Payload: model.DispatchFailedPayload{
 			DispatchID: dispatchID, AttemptCount: 1,
@@ -679,7 +721,7 @@ func (l *DispatchLoop) markAwaitingProviderSignal(
 	awaitEvent := model.DispatchAwaitingProviderSignalEvent{
 		EventID: uuid.New().String(), EventType: "DispatchAwaitingProviderSignal",
 		TenantID: tenantID, IntentID: intentID, ContractID: contractID,
-		DispatchID: dispatchID, TraceID: traceID, SchemaVersion: "v1",
+		DispatchID: dispatchID, TraceID: traceID, SchemaVersion: model.SchemaVersionV1,
 		CreatedAt: time.Now().UTC(),
 		Payload: model.DispatchAwaitingProviderSignalPayload{
 			DispatchID:             dispatchID,
@@ -799,4 +841,69 @@ func (l *DispatchLoop) circuitOpen() bool {
 		return false
 	}
 	return true
+}
+
+const dispatchHashServiceName = "zord-relay-psp-dispatch"
+
+// verifyDispatchPayloadHash runs the P0 6.1.2 integrity check on the
+// zord-intent-engine → external PSP trust boundary.
+//
+// Returns true  → hash OK (or verifier nil / skipped); caller proceeds.
+// Returns false → hash MISMATCH (or verifier error); caller MUST return
+// from processEvent immediately and commit the Kafka offset. The
+// mismatch has already been persisted to relay_payload_conflicts.
+func (l *DispatchLoop) verifyDispatchPayloadHash(
+	ctx context.Context,
+	e model.OutboxEvent,
+	log *zap.Logger,
+) bool {
+	if l.hashVerifier == nil {
+		return true
+	}
+
+	vr, err := l.hashVerifier.VerifyPayload(ctx,
+		dispatchHashServiceName,
+		e.EventID, e.EventType, e.LeaseID,
+		e.Payload, e.PayloadHash,
+	)
+
+	if err != nil {
+		log.Error("dispatch_loop: payload_hash verification: verifier error — " +
+			"SKIPPING PSP dispatch (integrity layer failure, do not publish externally)",
+			zap.Error(err),
+			zap.String("expected_hash", e.PayloadHash),
+			zap.String("computed_hash", vr.ComputedHash),
+		)
+		metrics.DispatchTotal.WithLabelValues("hash_verifier_error").Inc()
+		return false
+	}
+
+	if vr.OK {
+		if e.PayloadHash == "" {
+			metrics.PayloadHashSkippedTotal.WithLabelValues(dispatchHashServiceName).Inc()
+			log.Warn("dispatch_loop: payload_hash empty — verification skipped (strict=false). " +
+				"Enable strict=true once zord-intent-engine guarantees payload_hash on every dispatch event.")
+		} else {
+			metrics.PayloadHashVerifiedTotal.WithLabelValues(dispatchHashServiceName).Inc()
+		}
+		return true
+	}
+
+	// --- Mismatch path ---
+	permanent := vr.Decision == DecisionAckPermanent
+	decisionLabel := "nack"
+	if permanent {
+		decisionLabel = "ack_permanent"
+	}
+	metrics.PayloadHashConflictTotal.WithLabelValues(dispatchHashServiceName, decisionLabel).Inc()
+	metrics.DispatchTotal.WithLabelValues("payload_hash_conflict").Inc()
+
+	log.Error("dispatch_loop: payload_hash MISMATCH — SKIPPING PSP dispatch. "+
+		"Conflict persisted to relay_payload_conflicts. This event will NOT reach the PSP.",
+		zap.String("expected_hash", vr.ExpectedHash),
+		zap.String("computed_hash", vr.ComputedHash),
+		zap.Int("conflict_count", vr.ConflictCount),
+		zap.Bool("is_permanent", permanent),
+	)
+	return false
 }

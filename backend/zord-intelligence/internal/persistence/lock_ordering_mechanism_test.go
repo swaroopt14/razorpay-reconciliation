@@ -87,7 +87,7 @@ func TestLockOrdering_InconsistentOrder_Deadlocks(t *testing.T) {
 			return
 		}
 		time.Sleep(300 * time.Millisecond) // hold the row lock open so B can queue behind it
-		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1 || ':' || $2))`, tenantID, batchID); err != nil {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1 || ':' || $2, 0))`, tenantID, batchID); err != nil {
 			errs[0] = err
 			return
 		}
@@ -106,7 +106,7 @@ func TestLockOrdering_InconsistentOrder_Deadlocks(t *testing.T) {
 			return
 		}
 		defer tx.Rollback(ctx)
-		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1 || ':' || $2))`, tenantID, batchID); err != nil {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1 || ':' || $2, 0))`, tenantID, batchID); err != nil {
 			errs[1] = err
 			return
 		}
@@ -165,7 +165,7 @@ func TestLockOrdering_ConsistentOrder_NoDeadlock(t *testing.T) {
 			return
 		}
 		defer tx.Rollback(ctx)
-		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1 || ':' || $2))`, tenantID, batchID); err != nil {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1 || ':' || $2, 0))`, tenantID, batchID); err != nil {
 			errs[idx] = err
 			return
 		}

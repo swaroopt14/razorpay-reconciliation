@@ -81,7 +81,7 @@ export default function (data) {
         if (res.status === 200) aiSuccesses.add(1);
 
         check(res, {
-            'ai query reachable': (r) => r.status < 500,
+            'ai query reachable': (r) => r.status === 200 || r.status === 201,
             'response time < 30s': (r) => r.timings.duration < 30000,
         });
     });
@@ -99,7 +99,7 @@ export default function (data) {
         if (res.status === 200) aiSuccesses.add(1);
 
         check(res, {
-            'ai chat reachable': (r) => r.status < 500,
+            'ai chat reachable': (r) => r.status === 200 || r.status === 201,
             'response time < 30s': (r) => r.timings.duration < 30000,
         });
     });

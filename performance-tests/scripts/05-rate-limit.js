@@ -65,7 +65,7 @@ export function burstBulkIngest() {
     }
 
     check(res, {
-        'gateway responded (not 5xx)': (r) => r.status < 500,
+        'gateway responded 2xx or 429': (r) => r.status >= 200 && r.status < 300 || r.status === 429,
     });
 }
 
@@ -83,7 +83,7 @@ export function burstSettlement() {
     }
 
     check(res, {
-        'gateway responded (not 5xx)': (r) => r.status < 500,
+        'gateway responded 2xx or 429': (r) => r.status >= 200 && r.status < 300 || r.status === 429,
     });
 }
 
@@ -105,6 +105,6 @@ export function burstAIQuery() {
     }
 
     check(res, {
-        'gateway responded (not 5xx)': (r) => r.status < 500,
+        'gateway responded 2xx or 429': (r) => r.status >= 200 && r.status < 300 || r.status === 429,
     });
 }

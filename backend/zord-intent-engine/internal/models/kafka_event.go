@@ -18,6 +18,7 @@ type Event struct {
 	ReceivedAt       time.Time `json:"created_at"`
 	Source           string    `json:"source"`
 	SourceSystem     string    `json:"source_system"`
+	EventType        string    `json:"event_type"`
 	IdempotencyKey   string    `json:"idempotency_key"`
 	Payload          []byte    `json:"payload"`
 	PayloadHash      string    `json:"payload_hash"`

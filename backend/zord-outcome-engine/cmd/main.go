@@ -12,8 +12,10 @@ import (
 	"zord-outcome-engine/config"
 	"zord-outcome-engine/db"
 	"zord-outcome-engine/handlers"
+	"zord-outcome-engine/internal/health"
 	"zord-outcome-engine/kafka"
 	"zord-outcome-engine/routes"
+	"zord-outcome-engine/services"
 	"zord-outcome-engine/storage"
 	"zord-outcome-engine/tracing"
 
@@ -54,6 +56,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Kafka producer creation failure: %v", err)
 	}
+	services.SetVectorIndexPublisher(producer)
 	defer producer.Close()
 
 	dispatchTopic := os.Getenv("KAFKA_TOPIC")
@@ -115,6 +118,12 @@ func main() {
 	outboxRepo := storage.NewOutboxPullRepo(db.DB)
 	outboxHandler := handlers.NewOutboxHandler(outboxRepo)
 	routes.OutboxRoutes(server, outboxHandler)
+
+	// Readiness endpoint — checks DB connectivity
+	readinessHandler := health.NewReadinessHandler([]health.DependencyCheck{
+		health.DBCheck("postgres", db.DB),
+	})
+	server.GET("/ready", readinessHandler.Ready)
 
 	log.Println("Starting Zord Outcome Engine service on port 8081 with observability enabled")
 

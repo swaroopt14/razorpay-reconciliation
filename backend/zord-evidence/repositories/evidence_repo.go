@@ -36,6 +36,16 @@ func nullStr(s string) sql.NullString {
 	return sql.NullString{String: s, Valid: true}
 }
 
+// nullableJSONB marshals a non-nil, non-empty map to JSON bytes for JSONB columns.
+// Returns nil when the map is nil or empty so the column is stored as NULL.
+func nullableJSONB(v map[string]string) any {
+	if len(v) == 0 {
+		return nil
+	}
+	b, _ := json.Marshal(v)
+	return b
+}
+
 // AcquireIntentAdvisoryLock attempts to acquire a Postgres session-level advisory
 // lock scoped to the given (tenantID, intentID) pair within an existing transaction.
 // The lock is automatically released when the transaction commits or rolls back,
@@ -263,8 +273,9 @@ INSERT INTO evidence_packs(
 	value_date_check, amount_match, zord_signature,
 	merkle_scheme_version,
 	artifact_id, artifact_version_id,
+	revision_reason, based_on_versions,
 	created_at, updated_at
-) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42)
+) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44)
 ON CONFLICT DO NOTHING`,
 		pack.EvidencePackID,
 		pack.TenantID,
@@ -306,6 +317,8 @@ ON CONFLICT DO NOTHING`,
 		utils.MerkleSchemeV2, // FIX P1-08: all new packs use domain-separated V2
 		nullStr(pack.ArtifactID),
 		nullStr(pack.ArtifactVersionID),
+		nullStr(pack.RevisionReason),
+		nullableJSONB(pack.BasedOnVersions),
 		pack.CreatedAt,
 		pack.CreatedAt,
 	)
@@ -563,6 +576,8 @@ func (r *EvidenceRepository) GetPackByID(ctx context.Context, packID string) (*m
 	             value_date_check, amount_match, zord_signature,
 	             COALESCE(merkle_scheme_version, 'merkle_v1'),
 	             artifact_id, artifact_version_id,
+	             COALESCE(revision_reason, ''),
+	             COALESCE(superseded_by_pack_id, ''),
 	             created_at
 	      FROM evidence_packs WHERE evidence_pack_id=$1`
 	err := r.db.QueryRowContext(ctx, q, packID).Scan(
@@ -576,6 +591,8 @@ func (r *EvidenceRepository) GetPackByID(ctx context.Context, packID string) (*m
 		&srr, &csc, &br, &cr, &ad, &mc, &vdc, &am, &pack.ZordSignature,
 		&pack.MerkleSchemeVersion,
 		&artifactID, &artifactVersionID,
+		&pack.RevisionReason,
+		&pack.SupersedesByPackID,
 		&createdAt,
 	)
 	if err != nil {
@@ -678,6 +695,8 @@ func (r *EvidenceRepository) ListByIntentID(ctx context.Context, tenantID, inten
 		       client_reference, attachment_decision, match_confidence,
 		       value_date_check, amount_match,
 		       artifact_id, artifact_version_id,
+		       COALESCE(revision_reason, ''),
+		       COALESCE(superseded_by_pack_id, ''),
 		       created_at
 		FROM evidence_packs
 		WHERE tenant_id=$1 AND intent_id=$2
@@ -708,6 +727,7 @@ func (r *EvidenceRepository) ListByIntentID(ctx context.Context, tenantID, inten
 			&s.RequiredFieldsStatus, &s.TokenizationStatus, &s.GovernanceDecision,
 			&srr, &csc, &br, &cr, &ad, &mc, &vdc, &am,
 			&aid, &avid,
+			&s.RevisionReason, &s.SupersedesByPackID,
 			&s.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -780,6 +800,8 @@ func (r *EvidenceRepository) ListByBatchID(ctx context.Context, tenantID, batchI
 		       client_reference, attachment_decision, match_confidence,
 		       value_date_check, amount_match,
 		       artifact_id, artifact_version_id,
+		       COALESCE(revision_reason, ''),
+		       COALESCE(superseded_by_pack_id, ''),
 		       created_at
 		FROM evidence_packs
 		WHERE tenant_id=$1 AND batch_id=$2
@@ -810,6 +832,7 @@ func (r *EvidenceRepository) ListByBatchID(ctx context.Context, tenantID, batchI
 			&s.RequiredFieldsStatus, &s.TokenizationStatus, &s.GovernanceDecision,
 			&srr, &csc, &br, &cr, &ad, &mc, &vdc, &am,
 			&aid, &avid,
+			&s.RevisionReason, &s.SupersedesByPackID,
 			&s.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -882,6 +905,8 @@ func (r *EvidenceRepository) ListIntentPacksByBatchID(ctx context.Context, tenan
 		       client_reference, attachment_decision, match_confidence,
 		       value_date_check, amount_match,
 		       artifact_id, artifact_version_id,
+		       COALESCE(revision_reason, ''),
+		       COALESCE(superseded_by_pack_id, ''),
 		       created_at
 		FROM evidence_packs
 		WHERE tenant_id=$1 AND batch_id=$2 AND intent_id IS NOT NULL
@@ -912,6 +937,7 @@ func (r *EvidenceRepository) ListIntentPacksByBatchID(ctx context.Context, tenan
 			&s.RequiredFieldsStatus, &s.TokenizationStatus, &s.GovernanceDecision,
 			&srr, &csc, &br, &cr, &ad, &mc, &vdc, &am,
 			&aid, &avid,
+			&s.RevisionReason, &s.SupersedesByPackID,
 			&s.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -983,11 +1009,16 @@ func (r *EvidenceRepository) GetPackByBatchID(ctx context.Context, tenantID, bat
 	return pack, err
 }
 
-// MarkPackSuperseded updates old pack's status to SUPERSEDED (spec §23 Phase 5).
+// MarkPackSuperseded updates old pack's status to SUPERSEDED and writes the
+// superseded_by_pack_id back-pointer (spec §23 Phase 5 / P0-1.4).
+// The WHERE guard prevents double-supersession: if the pack is already
+// SUPERSEDED the UPDATE is a no-op and no error is returned.
 func (r *EvidenceRepository) MarkPackSuperseded(ctx context.Context, oldPackID, newPackID string) error {
 	_, err := r.db.ExecContext(ctx, `
-		UPDATE evidence_packs SET pack_status='SUPERSEDED', updated_at=NOW()
-		WHERE evidence_pack_id=$1`, oldPackID)
+		UPDATE evidence_packs
+		SET pack_status='SUPERSEDED', superseded_by_pack_id=$2, updated_at=NOW()
+		WHERE evidence_pack_id=$1 AND pack_status != 'SUPERSEDED'`,
+		oldPackID, newPackID)
 	if err != nil {
 		return fmt.Errorf("mark superseded: %w", err)
 	}
@@ -997,10 +1028,12 @@ func (r *EvidenceRepository) MarkPackSuperseded(ctx context.Context, oldPackID, 
 // MarkPackSupersededInTx is the transaction-scoped variant of MarkPackSuperseded.
 func (r *EvidenceRepository) MarkPackSupersededInTx(ctx context.Context, tx *sql.Tx, oldPackID, newPackID string) error {
 	_, err := tx.ExecContext(ctx, `
-		UPDATE evidence_packs SET pack_status='SUPERSEDED', updated_at=NOW()
-		WHERE evidence_pack_id=$1`, oldPackID)
+		UPDATE evidence_packs
+		SET pack_status='SUPERSEDED', superseded_by_pack_id=$2, updated_at=NOW()
+		WHERE evidence_pack_id=$1 AND pack_status != 'SUPERSEDED'`,
+		oldPackID, newPackID)
 	if err != nil {
-		return fmt.Errorf("mark superseded: %w", err)
+		return fmt.Errorf("mark superseded in tx: %w", err)
 	}
 	return nil
 }

@@ -188,6 +188,10 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 
 		payload := map[string]interface{}{
 			"event_id":                     uuid.New().String(),
+			"event_type":                   "attachment.decision.created",
+			"event_version":                "1",
+			"schema_version":               "v1",
+			"source_service":               "zord-outcome-engine",
 			"attachment_decision_id":       d.AttachmentDecisionID,
 			"attachment_job_id":            d.AttachmentJobID,
 			"tenant_id":                    d.TenantID,
@@ -375,6 +379,10 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 
 		vPayload := map[string]interface{}{
 			"event_id":              uuid.New().String(),
+			"event_type":            "variance.record.created",
+			"event_version":         "1.0",
+			"schema_version":        "v1",
+			"source_service":        "zord-outcome-engine",
 			"tenant_id":             v.TenantID.String(),
 			"trace_id":              vTraceID.String(),
 			"occurred_at":           time.Now().UTC().Format(time.RFC3339),
@@ -510,6 +518,10 @@ func (s *AttachmentOutboxService) buildBatchUpdatedRow(
 
 	batchPayload := map[string]interface{}{
 		"event_id":                           uuid.New().String(),
+		"event_type":                         "attachment.batch.updated",
+		"event_version":                      "1.0",
+		"schema_version":                     "v1",
+		"source_service":                     "zord-outcome-engine",
 		"tenant_id":                          job.TenantID.String(),
 		"trace_id":                           uuid.Nil.String(),
 		"occurred_at":                        time.Now().UTC().Format(time.RFC3339),
@@ -775,13 +787,13 @@ func (s *AttachmentOutboxService) buildLeafBundleRows(
 				Type:          "CANONICAL_SETTLEMENT_OBSERVATION",
 				Ref:           obs.SettlementObservationID.String(),
 				Hash:          obs.CanonicalHash,
-				SchemaVersion: "v1",
+				SchemaVersion: models.SchemaVersionV1,
 			},
 			{
 				Type:          "ATTACHMENT_DECISION",
 				Ref:           d.AttachmentDecisionID.String(),
 				Hash:          computeAttachmentDecisionLeafHash(d),
-				SchemaVersion: "v1",
+				SchemaVersion: models.SchemaVersionV1,
 			},
 		}
 
@@ -791,7 +803,7 @@ func (s *AttachmentOutboxService) buildLeafBundleRows(
 				Type:          "RAW_SETTLEMENT_LINE",
 				Ref:           pr.ParsedRowID.String(),
 				Hash:          *pr.RawLineHash,
-				SchemaVersion: "v1",
+				SchemaVersion: models.SchemaVersionV1,
 			})
 		}
 
@@ -800,7 +812,7 @@ func (s *AttachmentOutboxService) buildLeafBundleRows(
 				Type:          "VARIANCE_DECISION",
 				Ref:           vr.VarianceRecordID.String(),
 				Hash:          computeVarianceLeafHash(vr),
-				SchemaVersion: "v1",
+				SchemaVersion: models.SchemaVersionV1,
 			})
 		}
 
@@ -809,7 +821,7 @@ func (s *AttachmentOutboxService) buildLeafBundleRows(
 				Type:          "RAW_SETTLEMENT_FILE",
 				Ref:           obs.IngestRunID,
 				Hash:          sha,
-				SchemaVersion: "v1",
+				SchemaVersion: models.SchemaVersionV1,
 			})
 		}
 

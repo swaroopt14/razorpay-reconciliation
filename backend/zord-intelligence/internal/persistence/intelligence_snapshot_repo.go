@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -100,7 +101,59 @@ func (r *IntelligenceSnapshotRepo) Create(
 		return fmt.Errorf("intelligence_snapshot_repo.Create snap_id=%s type=%s: %w",
 			snap.SnapshotID, snap.SnapshotType, err)
 	}
+	if strings.EqualFold(strings.TrimSpace(snap.SnapshotType), "RCA_CLUSTER") &&
+		strings.EqualFold(strings.TrimSpace(snap.ScopeType), "BATCH") &&
+		snap.ScopeRef != nil &&
+		strings.TrimSpace(*snap.ScopeRef) != "" {
+		batchID := strings.TrimSpace(*snap.ScopeRef)
+
+		emitVectorIndexRequest(
+			"intelligence_rca_cluster.created.v1",
+			snap.TenantID,
+			"intelligence_batch_contract",
+			batchID,
+			batchID,
+			map[string]string{
+				"snapshot_type":        snap.SnapshotType,
+				"scope_type":           snap.ScopeType,
+				"scope_ref":            batchID,
+				"vector_summary_scope": "batch_with_rca",
+			},
+		)
+	}
+
 	return nil
+}
+func snapshotScopeRef(scopeRef *string) string {
+	if scopeRef == nil {
+		return ""
+	}
+	return strings.TrimSpace(*scopeRef)
+}
+func intelligenceSnapshotVectorEntityID(snap IntelligenceSnapshot) string {
+	scopeType := strings.TrimSpace(snap.ScopeType)
+	scopeRef := ""
+	if snap.ScopeRef != nil {
+		scopeRef = strings.TrimSpace(*snap.ScopeRef)
+	}
+	snapshotType := strings.TrimSpace(snap.SnapshotType)
+
+	if scopeRef == "" {
+		scopeRef = "tenant"
+	}
+	if scopeType == "" {
+		scopeType = "TENANT"
+	}
+	if snapshotType == "" {
+		snapshotType = "UNKNOWN"
+	}
+
+	return strings.ToLower(strings.Join([]string{
+		"intelligence_snapshot",
+		scopeType,
+		scopeRef,
+		snapshotType,
+	}, ":"))
 }
 
 // GetByID returns one snapshot by its primary key.

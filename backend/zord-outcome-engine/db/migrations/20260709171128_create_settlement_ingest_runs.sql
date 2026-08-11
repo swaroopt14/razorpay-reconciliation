@@ -1,4 +1,6 @@
 -- +goose Up
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
 CREATE TABLE settlement_ingest_runs (
 	ingest_run_id TEXT PRIMARY KEY,
 	settlement_batch_id TEXT NOT NULL REFERENCES settlement_batches(settlement_batch_id),
@@ -24,14 +26,20 @@ CREATE TABLE settlement_ingest_runs (
 	started_at TIMESTAMPTZ,
 	completed_at TIMESTAMPTZ,
 	failure_reason_code TEXT,
-	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	outcome_artifact_id UUID NOT NULL,
+	outcome_artifact_version_id UUID NOT NULL
 );
 CREATE INDEX settlement_ingest_runs_batch_idx ON settlement_ingest_runs(settlement_batch_id);
 CREATE INDEX settlement_ingest_runs_tenant_idx ON settlement_ingest_runs(tenant_id);
 CREATE INDEX settlement_ingest_runs_status_idx ON settlement_ingest_runs(run_status);
 CREATE INDEX settlement_ingest_runs_envelope_idx ON settlement_ingest_runs(settlement_envelope_id);
+CREATE INDEX idx_settlement_ingest_runs_outcome_artifact_id ON settlement_ingest_runs(outcome_artifact_id);
+CREATE INDEX idx_settlement_ingest_runs_outcome_artifact_version_id ON settlement_ingest_runs(outcome_artifact_version_id);
 
 -- +goose Down
+DROP INDEX idx_settlement_ingest_runs_outcome_artifact_version_id;
+DROP INDEX idx_settlement_ingest_runs_outcome_artifact_id;
 DROP INDEX settlement_ingest_runs_envelope_idx;
 DROP INDEX settlement_ingest_runs_status_idx;
 DROP INDEX settlement_ingest_runs_tenant_idx;

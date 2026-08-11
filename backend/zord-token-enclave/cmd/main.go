@@ -16,6 +16,7 @@ import (
 	"zord-token-enclave/internal/config"
 	"zord-token-enclave/internal/db"
 	"zord-token-enclave/internal/handlers"
+	"zord-token-enclave/internal/health"
 	"zord-token-enclave/internal/keymanager"
 	"zord-token-enclave/internal/models"
 	"zord-token-enclave/internal/repository"
@@ -29,7 +30,7 @@ import (
 // If the env var is not set, the service refuses to start (see main).
 func internalAuthMiddleware(token string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if c.Request.URL.Path == "/v1/health" {
+		if c.Request.URL.Path == "/v1/health" || c.Request.URL.Path == "/ready" {
 			c.Next()
 			return
 		}
@@ -231,6 +232,12 @@ func main() {
 	r.GET("/v1/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
+
+	// Readiness endpoint — checks DB connectivity
+	readinessHandler := health.NewReadinessHandler([]health.DependencyCheck{
+		health.DBCheck("postgres", database),
+	})
+	r.GET("/ready", readinessHandler.Ready)
 
 	// APIs
 	r.POST("/v1/tokenize", tokenHandler.Tokenize)

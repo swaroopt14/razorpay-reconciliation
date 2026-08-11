@@ -12,6 +12,7 @@ import (
 	"zord-relay/client"
 	"zord-relay/config"
 	"zord-relay/db"
+	"zord-relay/internal/health"
 	"zord-relay/kafka"
 	"zord-relay/logger"
 	"zord-relay/psp"
@@ -110,20 +111,56 @@ func run() error {
 	)
 
 	// ── Token Client ────────────────────────────────────────────────────────
-	// StubTokenClient is used when TOKEN_ENCLAVE_BASE_URL is not configured.
-	// This is intentional for local development. In production, set RELAY_TOKEN_ENCLAVE_BASE_URL.
-	var tokenClient services.TokenClient
-	if cfg.TokenEnclave.BaseURL != "" {
-		tokenClient = services.NewHTTPTokenClient(cfg.TokenEnclave.BaseURL, cfg.TokenEnclave.TimeoutSeconds)
-		log.Info("token enclave client initialised", zap.String("base_url", cfg.TokenEnclave.BaseURL))
-	} else {
-		tokenClient = services.NewStubTokenClient()
-		log.Warn("token enclave URL not configured — using StubTokenClient (NOT for production)")
+	// RELAY_TOKEN_ENCLAVE_BASE_URL is required in all environments.
+	// Startup fails hard if the URL is absent or if the enclave is unreachable.
+	if cfg.TokenEnclave.BaseURL == "" {
+		// config.validate() should have caught this already, but guard defensively.
+		return fmt.Errorf(
+			"RELAY_TOKEN_ENCLAVE_BASE_URL is not set; " +
+				"the relay service cannot start without a real token enclave. " ,
+		)
 	}
+	tokenClient, tokenClientErr := services.NewHTTPTokenClientWithConnectivityCheck(
+		cfg.TokenEnclave.BaseURL,
+		cfg.TokenEnclave.TimeoutSeconds,
+	)
+	if tokenClientErr != nil {
+		log.Error("startup: token enclave connectivity check failed — cannot start",
+			zap.String("base_url", cfg.TokenEnclave.BaseURL),
+			zap.Error(tokenClientErr),
+		)
+		return fmt.Errorf("token enclave unreachable at startup: %w", tokenClientErr)
+	}
+	log.Info("token enclave client initialised and reachable",
+		zap.String("base_url", cfg.TokenEnclave.BaseURL),
+	)
 
 	// ── Repos ────────────────────────────────────────────────────────────────
 	dispatchRepo := services.NewDispatchRepo(database)
 	relayOutboxRepo := services.NewRelayOutboxRepo(database)
+
+	// Durable publish-failure persistence (P0 6.1.3) — used by the Kafka
+	// relay path (worker.Scheduler) so an exhausted publish attempt is never
+	// reduced to a log line, and the upstream lease is only acknowledged
+	// after success or a durable replayable failure record.
+	publishFailureRepo := services.NewPublishFailureRepo(database)
+
+	// ── Payload hash verifier (P0 6.1.2) ─────────────────────────────────────
+	// Verifies SHA-256(payload bytes) == upstream payload_hash before publish.
+	// On mismatch: persist conflict, do not publish, do not ACK lease.
+	hashVerifierCfg := services.ConflictRepoConfig{
+		Strict:             cfg.Relay.StrictPayloadHash,
+		MaxConflictRetries: cfg.Relay.MaxConflictRetries,
+	}
+	hashVerifier := services.NewConflictRepo(database, hashVerifierCfg)
+	effectiveMaxRetries := cfg.Relay.MaxConflictRetries
+	if effectiveMaxRetries <= 0 {
+		effectiveMaxRetries = services.DefaultMaxConflictRetries
+	}
+	log.Info("payload hash verifier initialised",
+		zap.Bool("strict", cfg.Relay.StrictPayloadHash),
+		zap.Int("max_conflict_retries", effectiveMaxRetries),
+	)
 
 	// ── Dispatch Loop ────────────────────────────────────────────────────────
 	dispatchLoopCfg := &services.DispatchLoopConfig{
@@ -138,6 +175,7 @@ func run() error {
 		dispatchRepo,
 		pspClient,
 		tokenClient,
+		hashVerifier,
 		dispatchLoopCfg,
 	)
 
@@ -198,7 +236,7 @@ func run() error {
 	)
 
 	// ── Existing Kafka Relay Scheduler (unchanged — Kafka relay path) ─────────
-	sched, err := worker.NewScheduler(cfg, kafkaPublisher, log)
+	sched, err := worker.NewScheduler(cfg, kafkaPublisher, log, publishFailureRepo, hashVerifier)
 	if err != nil {
 		return fmt.Errorf("creating scheduler: %w", err)
 	}
@@ -214,9 +252,22 @@ func run() error {
 		r.GET("/health", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"status": "ok"})
 		})
-		r.GET("/ready", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"status": "ready"})
+
+		// REL-08 + PLAT-11: Readiness endpoint — checks DB, Kafka, and upstream auth
+		readinessHandler := health.NewReadinessHandler([]health.DependencyCheck{
+			health.DBCheck("postgres", database),
+			{
+				Name: "kafka-producer",
+				Check: func(ctx context.Context) error {
+					if kafkaPublisher == nil {
+						return fmt.Errorf("producer not initialized")
+					}
+					return nil
+				},
+			},
+			health.HTTPCheck("token-enclave", cfg.TokenEnclave.BaseURL+"/health"),
 		})
+		r.GET("/ready", readinessHandler.Ready)
 
 		metricsSrv = &http.Server{
 			Addr:         cfg.Metrics.Addr,

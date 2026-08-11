@@ -45,7 +45,7 @@ func (c otelHeaderCarrier) Keys() []string {
 type KafkaPublisher struct {
 	producer          sarama.SyncProducer
 	dlqPublishFailure string
-	dlqPoison          string
+	dlqPoison         string
 	log               *zap.Logger
 	tracer            trace.Tracer
 }
@@ -145,6 +145,104 @@ func (p *KafkaPublisher) Publish(ctx context.Context, event *model.OutboxEvent, 
 	return nil
 }
 
+func (p *KafkaPublisher) PublishEdgeEvent(ctx context.Context, event *model.EdgeOutboxEvent, topic string) error {
+	ctx, span := p.tracer.Start(ctx, "kafka.publish_edge_event",
+		trace.WithSpanKind(trace.SpanKindProducer),
+		trace.WithAttributes(
+			attribute.String("messaging.system", "kafka"),
+			attribute.String("messaging.destination", topic),
+			attribute.String("event.id", event.EventID),
+			attribute.String("tenant.id", event.TenantID),
+		),
+	)
+	defer span.End()
+
+	payload, err := json.Marshal(event)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "event marshal failed")
+		return poisonError(fmt.Errorf("marshalling event: %w", err))
+	}
+
+	if len(payload) > 1*1024*1024 {
+		err := poisonError(fmt.Errorf("event size %d bytes exceeds 1MiB limit", len(payload)))
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "message too large")
+		return err
+	}
+
+	headers := p.buildEdgeHeaders(ctx, event)
+
+	msg := &sarama.ProducerMessage{
+		Topic:   topic,
+		Key:     sarama.StringEncoder(event.EventID),
+		Value:   sarama.ByteEncoder(payload),
+		Headers: headers,
+	}
+
+	partition, offset, err := p.producer.SendMessage(msg)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "produce failed")
+		return fmt.Errorf("kafka delivery failed: %w", err)
+	}
+
+	span.SetAttributes(
+		attribute.Int64("messaging.kafka.partition", int64(partition)),
+		attribute.Int64("messaging.kafka.offset", int64(offset)),
+	)
+	return nil
+}
+
+func (p *KafkaPublisher) PublishIntentEvent(ctx context.Context, event *model.IntentOutboxEvent, topic string) error {
+	ctx, span := p.tracer.Start(ctx, "kafka.publish_intent_event",
+		trace.WithSpanKind(trace.SpanKindProducer),
+		trace.WithAttributes(
+			attribute.String("messaging.system", "kafka"),
+			attribute.String("messaging.destination", topic),
+			attribute.String("event.id", event.EventID),
+			attribute.String("tenant.id", event.TenantID),
+		),
+	)
+	defer span.End()
+
+	payload, err := json.Marshal(event)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "event marshal failed")
+		return poisonError(fmt.Errorf("marshalling event: %w", err))
+	}
+
+	if len(payload) > 1*1024*1024 {
+		err := poisonError(fmt.Errorf("event size %d bytes exceeds 1MiB limit", len(payload)))
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "message too large")
+		return err
+	}
+
+	headers := p.buildIntentHeaders(ctx, event)
+
+	msg := &sarama.ProducerMessage{
+		Topic:   topic,
+		Key:     sarama.StringEncoder(event.EventID),
+		Value:   sarama.ByteEncoder(payload),
+		Headers: headers,
+	}
+
+	partition, offset, err := p.producer.SendMessage(msg)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "produce failed")
+		return fmt.Errorf("kafka delivery failed: %w", err)
+	}
+
+	span.SetAttributes(
+		attribute.Int64("messaging.kafka.partition", int64(partition)),
+		attribute.Int64("messaging.kafka.offset", int64(offset)),
+	)
+	return nil
+}
+
 func (p *KafkaPublisher) PublishDLQItem(ctx context.Context, event *model.DLQItemEvent, topic string) error {
 	ctx, span := p.tracer.Start(ctx, "kafka.publish_dlq_item",
 		trace.WithSpanKind(trace.SpanKindProducer),
@@ -186,15 +284,19 @@ func (p *KafkaPublisher) PublishDLQItem(ctx context.Context, event *model.DLQIte
 	}
 
 	mappedEvent := map[string]interface{}{
-		"event_id":      event.DLQID,
-		"tenant_id":     event.TenantID,
-		"trace_id":      event.TraceID,
-		"occurred_at":   event.CreatedAt,
-		"intent_id":     intentID,
-		"batch_id":      event.BatchID,
-		"source_system": sourceSystem,
-		"amount":        amount,
-		"reason_code":   event.ReasonCode,
+		"event_id":       event.DLQID,
+		"event_type":     event.EventType,
+		"event_version":  event.EventVersion,
+		"schema_version": event.SchemaVersion,
+		"tenant_id":      event.TenantID,
+		"trace_id":       event.TraceID,
+		"source_service": event.SourceService,
+		"occurred_at":    event.CreatedAt,
+		"intent_id":      intentID,
+		"batch_id":       event.BatchID,
+		"source_system":  sourceSystem,
+		"amount":         amount,
+		"reason_code":    event.ReasonCode,
 	}
 
 	payload, err := json.Marshal(mappedEvent)
@@ -288,7 +390,69 @@ func (p *KafkaPublisher) PublishBatchCompleted(ctx context.Context, event *model
 	)
 	return nil
 }
+func (p *KafkaPublisher) PublishVectorIndexRequest(ctx context.Context, event *model.VectorIndexRequestEvent, topic string) error {
+	ctx, span := p.tracer.Start(ctx, "kafka.publish_vector_index_request",
+		trace.WithSpanKind(trace.SpanKindProducer),
+		trace.WithAttributes(
+			attribute.String("messaging.system", "kafka"),
+			attribute.String("messaging.destination", topic),
+			attribute.String("event.id", event.EventID),
+			attribute.String("tenant.id", event.TenantID),
+			attribute.String("entity.type", event.EntityType),
+			attribute.String("entity.id", event.EntityID),
+		),
+	)
+	defer span.End()
 
+	payload, err := json.Marshal(event)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "vector index request marshal failed")
+		return poisonError(fmt.Errorf("marshalling vector index request: %w", err))
+	}
+
+	if len(payload) > 1*1024*1024 {
+		err := poisonError(fmt.Errorf("vector index request size %d bytes exceeds 1MiB limit", len(payload)))
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "message too large")
+		return err
+	}
+
+	headers := []sarama.RecordHeader{
+		{Key: []byte("tenant_id"), Value: []byte(event.TenantID)},
+		{Key: []byte("event_id"), Value: []byte(event.EventID)},
+		{Key: []byte("event_type"), Value: []byte(event.EventType)},
+		{Key: []byte("schema_version"), Value: []byte(event.SchemaVersion)},
+		{Key: []byte("entity_type"), Value: []byte(event.EntityType)},
+		{Key: []byte("operation"), Value: []byte(event.Operation)},
+	}
+
+	if event.BatchID != "" {
+		headers = append(headers, sarama.RecordHeader{Key: []byte("batch_id"), Value: []byte(event.BatchID)})
+	}
+
+	otel.GetTextMapPropagator().Inject(ctx, otelHeaderCarrier{headers: &headers})
+
+	msg := &sarama.ProducerMessage{
+		Topic:   topic,
+		Key:     sarama.StringEncoder(event.TenantID),
+		Value:   sarama.ByteEncoder(payload),
+		Headers: headers,
+	}
+
+	partition, offset, err := p.producer.SendMessage(msg)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "produce failed")
+		return fmt.Errorf("kafka delivery failed: %w", err)
+	}
+
+	span.SetAttributes(
+		attribute.Int64("messaging.kafka.partition", int64(partition)),
+		attribute.Int64("messaging.kafka.offset", int64(offset)),
+	)
+	return nil
+}
 func (p *KafkaPublisher) PublishDLQ(ctx context.Context, msg *model.DLQMessage, dlqType DLQType) error {
 	topic := p.dlqPublishFailure
 	if dlqType == DLQTypePoison {
@@ -305,8 +469,8 @@ func (p *KafkaPublisher) PublishDLQ(ctx context.Context, msg *model.DLQMessage, 
 	}
 
 	var key sarama.Encoder
-	if msg.Event != nil {
-		key = sarama.StringEncoder(msg.Event.EventID)
+	if msg.EventID != "" {
+		key = sarama.StringEncoder(msg.EventID)
 	}
 
 	producerMsg := &sarama.ProducerMessage{
@@ -332,6 +496,37 @@ func (p *KafkaPublisher) Close() error {
 }
 
 func (p *KafkaPublisher) buildHeaders(ctx context.Context, event *model.OutboxEvent) []sarama.RecordHeader {
+	headers := []sarama.RecordHeader{
+		{Key: []byte("trace_id"), Value: []byte(event.TraceID)},
+		{Key: []byte("tenant_id"), Value: []byte(event.TenantID)},
+		{Key: []byte("event_id"), Value: []byte(event.EventID)},
+		{Key: []byte("event_type"), Value: []byte(event.EventType)},
+		{Key: []byte("envelope_id"), Value: []byte(event.EnvelopeID)},
+	}
+	if event.SchemaVersion != "" {
+		headers = append(headers, sarama.RecordHeader{Key: []byte("schema_version"), Value: []byte(event.SchemaVersion)})
+	}
+
+	otel.GetTextMapPropagator().Inject(ctx, otelHeaderCarrier{headers: &headers})
+
+	return headers
+}
+
+func (p *KafkaPublisher) buildEdgeHeaders(ctx context.Context, event *model.EdgeOutboxEvent) []sarama.RecordHeader {
+	headers := []sarama.RecordHeader{
+		{Key: []byte("trace_id"), Value: []byte(event.TraceID)},
+		{Key: []byte("tenant_id"), Value: []byte(event.TenantID)},
+		{Key: []byte("event_id"), Value: []byte(event.EventID)},
+		{Key: []byte("event_type"), Value: []byte(event.EventType)},
+		{Key: []byte("envelope_id"), Value: []byte(event.EnvelopeID)},
+	}
+
+	otel.GetTextMapPropagator().Inject(ctx, otelHeaderCarrier{headers: &headers})
+
+	return headers
+}
+
+func (p *KafkaPublisher) buildIntentHeaders(ctx context.Context, event *model.IntentOutboxEvent) []sarama.RecordHeader {
 	headers := []sarama.RecordHeader{
 		{Key: []byte("trace_id"), Value: []byte(event.TraceID)},
 		{Key: []byte("tenant_id"), Value: []byte(event.TenantID)},

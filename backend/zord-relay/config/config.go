@@ -46,6 +46,19 @@ type RelayConfig struct {
 
 	// ShutdownTimeout is how long we wait for in-flight work to finish on SIGTERM.
 	ShutdownTimeout time.Duration `mapstructure:"shutdown_timeout"`
+
+	// StrictPayloadHash controls how empty payload_hash is handled.
+	//   false (default): empty payload_hash → skip verification, warn log,
+	//                    counter bump. Allows upstreams to ship without hashing.
+	//   true:            empty payload_hash → treat as mismatch + conflict record.
+	// Flip to true once all upstreams guarantee payload_hash is populated.
+	StrictPayloadHash bool `mapstructure:"strict_payload_hash"`
+
+	// MaxConflictRetries is how many times we NACK a mismatching event before
+	// giving up and ACKing it out of the upstream outbox (with a permanent
+	// conflict record in relay_payload_conflicts). Guards against infinite
+	// NACK loops on genuinely corrupt upstream rows. Default 3.
+	MaxConflictRetries int `mapstructure:"max_conflict_retries"`
 }
 
 // KafkaConfig holds all Kafka connection and auth settings.
@@ -95,16 +108,39 @@ type ServiceConfig struct {
 	// Key: event_type, Value: Kafka topic name.
 	TopicMap map[string]string `mapstructure:"topic_map"`
 
+	// RouteAllowList is the explicit allow-list for event routing.
+	// Any event NOT matching an entry in this list goes to the poison DLQ (fail-closed).
+	// When empty, routing falls back to TopicMap + DefaultTopic (legacy mode).
+	RouteAllowList []RouteAllowListEntry `mapstructure:"route_allow_list"`
+
 	// IsDLQ tells relay to use DLQClient/DLQWorker instead of OutboxClient/OutboxWorker
 	IsDLQ bool `mapstructure:"is_dlq"`
 
 	// IsBatch tells relay to use BatchClient/BatchWorker instead of OutboxClient/OutboxWorker
 	IsBatch bool `mapstructure:"is_batch"`
 
+	// IsEdge tells the worker to lease/publish using zord-edge's own event
+	// shape (model.EdgeOutboxEvent) instead of the shared generic OutboxEvent.
+	IsEdge bool `mapstructure:"is_edge"`
+
+	// IsIntent tells the worker to lease/publish using zord-intent-engine's
+	// own event shape (model.IntentOutboxEvent) instead of the shared
+	// generic OutboxEvent.
+	IsIntent bool `mapstructure:"is_intent"`
+
 	// Retry settings (Kafka-side) — override global if set.
 	MaxRetryAttempts int           `mapstructure:"max_retry_attempts"`
 	RetryBaseDelay   time.Duration `mapstructure:"retry_base_delay"`
 	RetryMaxDelay    time.Duration `mapstructure:"retry_max_delay"`
+}
+
+// RouteAllowListEntry defines an exact match rule for routing.
+type RouteAllowListEntry struct {
+	SourceService string `mapstructure:"source_service"`
+	EventType     string `mapstructure:"event_type"`
+	EventVersion  string `mapstructure:"event_version"`
+	SchemaVersion string `mapstructure:"schema_version"`
+	Topic         string `mapstructure:"topic"`
 }
 
 // DBConfig holds connection settings for Service 4's own Postgres database.
@@ -334,6 +370,13 @@ func (c *Config) validate() error {
 	}
 	if c.Tracing.Enabled && c.Tracing.OTLPEndpoint == "" {
 		return fmt.Errorf("tracing.otlp_endpoint is required when tracing is enabled")
+	}
+	// Token enclave is required whenever dispatch is active.
+	if c.TokenEnclave.BaseURL == "" {
+		return fmt.Errorf(
+			"RELAY_TOKEN_ENCLAVE_BASE_URL is required: " +
+				"dispatch flows must not proceed without a real token enclave. " ,
+		)
 	}
 	return nil
 }

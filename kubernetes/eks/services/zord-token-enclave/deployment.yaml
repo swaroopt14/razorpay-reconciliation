@@ -122,7 +122,7 @@ spec:
               value: zord-token-enclave
           readinessProbe:
             httpGet:
-              path: /v1/health
+              path: /ready
               port: 8087
             initialDelaySeconds: 10
             periodSeconds: 10

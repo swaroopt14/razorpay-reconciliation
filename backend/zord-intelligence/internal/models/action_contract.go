@@ -53,10 +53,13 @@ type ActionContract struct {
 	// Example for ESCALATE: {"severity": "HIGH", "notify": ["OPS"], "message": "..."}
 	// MUST NOT contain PII.
 
-	Signature string `json:"signature" db:"signature"`
-	// Cryptographic proof this record was not tampered with.
-	// Development: SHA-256 hash of the key fields.
-	// Production: ed25519 signature via KMS.
+	// Corrective-action-report P0-07: named integrity_digest, not "signature"
+	// — today this is always a plain SHA-256 digest (DevSigner, see
+	// SignatureAlgorithm below == "DEV_SHA256"), which has no authenticity
+	// property and must never be presented as a cryptographic signature.
+	// Rename this back to something signature-shaped only once a real
+	// KMS/Vault-backed Signer produces the value.
+	IntegrityDigest string `json:"integrity_digest" db:"integrity_digest"`
 
 	IdempotencyKey string `json:"idempotency_key" db:"idempotency_key"`
 	// Prevents duplicate actions for the same event.
@@ -116,6 +119,15 @@ type ActionContract struct {
 	// BATCH > CORRIDOR > INTENT > CONTRACT > TENANT (see action_service.go's
 	// deriveScope) — additive alongside ScopeRefs, never replaces it.
 
+	ScopeRefsHash string `json:"scope_refs_hash,omitempty" db:"scope_refs_hash"`
+	// corrective-action-report P1-06: canonical-JSON SHA-256 of the FULL
+	// ScopeRefs object (all populated dimensions — batch/intent/contract/
+	// corridor/tenant), not just the single precedence-selected ScopeType/
+	// ScopeRef pair above. Bound into IdempotencyKey and SignaturePayloadHash
+	// (P1-05) so two actions that share a primary scope but differ in a
+	// secondary scope ref (e.g. same batch, different corridor) never
+	// collide into the same idempotency key or signed payload.
+
 	TriggerEventSource  string `json:"trigger_event_source,omitempty" db:"trigger_event_source"`
 	TriggerEventType    string `json:"trigger_event_type,omitempty" db:"trigger_event_type"`
 	TriggerEventVersion string `json:"trigger_event_version,omitempty" db:"trigger_event_version"`
@@ -144,9 +156,10 @@ type ActionContract struct {
 	SignedAt                    *time.Time `json:"signed_at,omitempty" db:"signed_at"`
 	SignatureVerificationStatus string     `json:"signature_verification_status,omitempty" db:"signature_verification_status"`
 	// Real signature metadata (clarification §5), replacing the old plain
-	// Signature field's implicit "just trust the hash" semantics. Signature
-	// itself (above) still holds the actual signature value — these columns
-	// describe HOW it was produced and whether it's been checked.
+	// signature field's implicit "just trust the hash" semantics.
+	// IntegrityDigest itself (above) still holds the actual digest/signature
+	// value — these columns describe HOW it was produced and whether it's
+	// been checked.
 }
 
 // ContractStatus is the approval lifecycle of an ActionContract.

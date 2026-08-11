@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -14,6 +16,7 @@ import (
 	"zord-prompt-layer/client"
 	"zord-prompt-layer/config"
 	"zord-prompt-layer/handler"
+	"zord-prompt-layer/internal/health"
 	"zord-prompt-layer/repositories"
 	"zord-prompt-layer/routes"
 	"zord-prompt-layer/services"
@@ -58,11 +61,112 @@ func main() {
 	intelligenceDB := mustOpenReadOnlyDB("intelligence", cfg.IntelligenceReadDSN)
 	evidenceDB := mustOpenReadOnlyDB("evidence", cfg.EvidenceReadDSN)
 	outcomeDB := mustOpenReadOnlyDB("outcome", cfg.OutcomeReadDSN)
-	retriever := repositories.NewLiveSQLRetriever(edgeDB, intentDB, relayDB, intelligenceDB, evidenceDB, outcomeDB)
+	liveRetriever := repositories.NewLiveSQLRetriever(edgeDB, intentDB, relayDB, intelligenceDB, evidenceDB, outcomeDB)
+	vectorStateDB := mustOpenDB("vector-index-state", cfg.VectorIndexStateDSN)
+
+	var vectorStateRepo repositories.VectorIndexStateRepository
+	if vectorStateDB != nil {
+		vectorStateRepo = repositories.NewPostgresVectorIndexStateRepository(vectorStateDB)
+		if err := vectorStateRepo.EnsureSchema(context.Background()); err != nil {
+			log.Printf("[prompt-layer][vector-index] state schema setup failed err=%v", err)
+			vectorStateRepo = nil
+		} else {
+			log.Printf("[prompt-layer][vector-index] state db ready")
+		}
+	}
+	var vectorRetriever services.VectorRetriever
+	if strings.TrimSpace(cfg.PineconeAPIKey) != "" && strings.TrimSpace(cfg.PineconeHost) != "" {
+		pineconeClient := client.NewPineconeClient(
+			cfg.PineconeAPIKey,
+			cfg.PineconeHost,
+			cfg.PineconeNamespace,
+			cfg.VectorRequestTimeoutSeconds,
+		)
+
+		vectorRetriever = repositories.NewPineconeVectorRetriever(
+			geminiClient,
+			pineconeClient,
+			cfg.GeminiEmbeddingModel,
+			cfg.GeminiEmbeddingDimension,
+			cfg.VectorQueryTopK,
+			cfg.VectorRequestTimeoutSeconds,
+		)
+
+		vectorIndexer := repositories.NewVectorIndexer(
+			liveRetriever,
+			geminiClient,
+			pineconeClient,
+			vectorStateRepo,
+			cfg.PineconeNamespace,
+			cfg.GeminiEmbeddingModel,
+			cfg.GeminiEmbeddingDimension,
+			cfg.VectorIndexIntervalSeconds,
+			cfg.VectorIndexBatchSize,
+			cfg.VectorIndexTimeoutSeconds,
+		)
+
+		vectorConsumer := repositories.NewVectorIndexConsumer(
+			repositories.VectorIndexConsumerConfig{
+				Brokers:    cfg.VectorIndexKafkaBrokers,
+				Topic:      cfg.VectorIndexKafkaTopic,
+				GroupID:    cfg.VectorIndexKafkaGroupID,
+				MaxRetries: cfg.VectorIndexKafkaMaxRetries,
+			},
+			vectorIndexer,
+		)
+		vectorConsumer.Start(context.Background())
+		go func() {
+			interval := time.Duration(cfg.VectorIndexIntervalSeconds) * time.Second
+			if interval <= 0 {
+				interval = 5 * time.Minute
+			}
+
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+
+			log.Printf(
+				"[prompt-layer][vector-index] deferred retry scheduler started interval_seconds=%d batch_size=%d timeout_seconds=%d",
+				cfg.VectorIndexIntervalSeconds,
+				cfg.VectorIndexBatchSize,
+				cfg.VectorIndexTimeoutSeconds,
+			)
+
+			for range ticker.C {
+				timeout := time.Duration(cfg.VectorIndexTimeoutSeconds) * time.Second
+				if timeout <= 0 {
+					timeout = 60 * time.Second
+				}
+
+				runCtx, cancel := context.WithTimeout(context.Background(), timeout)
+				vectorIndexer.RetryDueRateLimited(runCtx, cfg.VectorIndexBatchSize)
+				cancel()
+			}
+		}()
+
+		log.Printf("[prompt-layer][vector] pinecone query retriever enabled host=%s namespace=%s top_k=%d timeout_seconds=%d", cfg.PineconeHost, cfg.PineconeNamespace, cfg.VectorQueryTopK, cfg.VectorRequestTimeoutSeconds)
+	} else {
+		log.Printf("[prompt-layer][vector] pinecone query retriever not configured; using sql-only retrieval")
+	}
+
+	retriever := services.NewHybridEvidenceRetriever(liveRetriever, vectorRetriever)
 	ragService := services.NewDefaultRAGService(cfg.GeminiModel, cfg.DefaultTopK, retriever, llmService, intelligenceClient, memoryStore)
 	queryHandler := handler.NewQueryHandler(ragService)
 
 	routes.Register(router, healthHandler, queryHandler)
+
+	// Readiness endpoint — checks read-only DB connectivity
+	var readinessChecks []health.DependencyCheck
+	if edgeDB != nil {
+		readinessChecks = append(readinessChecks, health.DBCheck("edge-db", edgeDB))
+	}
+	if intentDB != nil {
+		readinessChecks = append(readinessChecks, health.DBCheck("intent-db", intentDB))
+	}
+	if relayDB != nil {
+		readinessChecks = append(readinessChecks, health.DBCheck("relay-db", relayDB))
+	}
+	readinessH := health.NewReadinessHandler(readinessChecks)
+	router.GET("/ready", readinessH.Ready)
 
 	addr := ":" + cfg.HTTPPort
 	log.Printf("starting %s on %s", cfg.ServiceName, addr)
@@ -113,5 +217,23 @@ func mustOpenReadOnlyDB(name, dsn string) *sql.DB {
 		log.Fatalf("failed pinging %s db: %v", name, err)
 	}
 	log.Printf("%s read-only db connected", name)
+	return db
+}
+func mustOpenDB(name, dsn string) *sql.DB {
+	if strings.TrimSpace(dsn) == "" {
+		log.Printf("%s DSN not configured; vector index state dedupe disabled", name)
+		return nil
+	}
+
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		log.Fatalf("failed opening %s db: %v", name, err)
+	}
+
+	if err := db.Ping(); err != nil {
+		log.Fatalf("failed pinging %s db: %v", name, err)
+	}
+
+	log.Printf("%s db connected", name)
 	return db
 }

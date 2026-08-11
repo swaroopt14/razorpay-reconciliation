@@ -49,7 +49,7 @@ export function useJournalSidebarBatches(options: {
         fetchRes.status === 401
           ? ' Sign in required.'
           : fetchRes.status === 403
-            ? ' Tenant mismatch — clear NEXT_PUBLIC_ZORD_TENANT_ID if it differs from your signed-in workspace.'
+            ? ' Tenant mismatch — sign out and sign in again so the session workspace matches the BFF.'
             : fetchRes.status === 502
               ? ' Intent-engine unreachable.'
               : ''
