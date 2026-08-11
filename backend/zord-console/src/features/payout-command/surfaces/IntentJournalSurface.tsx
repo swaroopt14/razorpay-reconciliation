@@ -24,6 +24,7 @@ import {
   type BatchFilter,
   type BatchRecord,
 } from '../intent-journal/intentJournalSidebarUtils'
+import { JOURNAL_HIGH_VALUE_MINOR } from '@/services/payout-command/prod-api/money/journalMoney'
 import { useJournalSidebarBatches } from '../intent-journal/hooks/useJournalSidebarBatches'
 import { useJournalIntentRows } from '../intent-journal/hooks/useJournalIntentRows'
 import { useJournalFailureRows } from '../intent-journal/hooks/useJournalFailureRows'
@@ -496,7 +497,9 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
         return health === 'At Risk' || health === 'Critical'
       })
     }
-    if (batchFilter === 'High Value') return sidebarBatchList.filter((b) => b.totalValue >= 1_500_000)
+    if (batchFilter === 'High Value') {
+      return sidebarBatchList.filter((b) => b.amountMinor >= JOURNAL_HIGH_VALUE_MINOR)
+    }
     return sidebarBatchList.filter((b) => resolveBatchHealthStatus(b) === 'Stable')
   }, [batchFilter, sidebarBatchList, selectedBatchId, selectedMetricsBatch])
 

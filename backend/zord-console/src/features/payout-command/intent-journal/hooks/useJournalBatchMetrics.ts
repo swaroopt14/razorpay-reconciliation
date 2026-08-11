@@ -39,7 +39,8 @@ export function useJournalBatchMetrics(batchId: string, enabled: boolean, pollMs
       setMetrics(
         deriveIntentBatchMetrics(paymentItems, dlqItems, {
           paymentIntentTotal: bundle.paymentIntents?.pagination?.total,
-          batchTotalAmount: found?.totalValue,
+          batchTotalAmountMinor: found?.amountMinor,
+          currency: found?.currency,
         }),
       )
     } catch {
@@ -66,7 +67,7 @@ export function useJournalBatchMetrics(batchId: string, enabled: boolean, pollMs
     if (!baseBatch || !metrics) return baseBatch
     return enrichBatchRecordWithMetrics(baseBatch, {
       instructionCount: metrics.instructionCount,
-      intendedValue: metrics.intendedValue,
+      intendedAmountMinor: metrics.intendedAmountMinor,
       batchAggregateConfidenceScore: metrics.batchAggregateConfidenceScore,
       reviewCount: metrics.needsReviewCount,
     })
