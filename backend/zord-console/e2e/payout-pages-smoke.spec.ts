@@ -333,11 +333,13 @@ function emptyProdBody(path: string): unknown {
       variance_amount: -388.32,
       orphan_amount: 22_381.29,
       unmatch_amount: 0,
-      // CON-P0-24: authoritative matched value (total_confirmed_amount is not a substitute)
+      // CON-P0-24 / CON-P1-22: authoritative matched value + as-of (total_confirmed_amount is not a substitute)
       confirmed_matched_value_minor: 52_653.42,
+      original_settled_amount: 52_653.42,
       total_confirmed_amount: 52_653.42,
       match_confidence: 0.75,
       missing_reference_rate: '0.00%',
+      computed_at: '2026-06-02T07:00:00Z',
     }
   }
   if (path.endsWith('/intents/payment-intents') || path.endsWith('/intents/dlq-items')) {

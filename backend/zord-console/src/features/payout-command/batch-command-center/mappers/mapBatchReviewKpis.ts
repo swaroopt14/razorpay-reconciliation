@@ -24,6 +24,22 @@ export type BatchKpiCardModel = {
   empty?: boolean
   actionLabel?: string
   actionHref?: string
+  /** CON-P1-22: authoritative source field path when applicable. */
+  source?: string
+  /** CON-P1-22: as-of timestamp when known. */
+  asOf?: string | null
+}
+
+/** Authoritative sources for batch-review live money KPIs (CON-P1-22). */
+export const BATCH_REVIEW_LIVE_KPI_SOURCES = {
+  intendedValue: 'batch_health.total_intended_amount_minor',
+  bankConfirmed: 'batch_health.total_confirmed_amount_minor',
+  valueNeedingReview: 'leakage.unmatched_amount_minor',
+} as const
+
+function withProvenanceSub(base: string, source: string, asOf: string | null | undefined): string {
+  const provenance = asOf ? `Source: ${source} · as-of ${asOf}` : `Source: ${source}`
+  return `${base} · ${provenance}`
 }
 
 export type BatchHealthState = 'clean' | 'waiting' | 'review'
@@ -62,13 +78,18 @@ export function mapBatchReviewKpis(args: {
   const pending = summary.pending
 
   const intendedMinor = health ? coerceMinor(health.total_intended_amount_minor) : null
-  // CON-P0-24: bank-confirmed uses batch_health.total_confirmed_amount_minor only.
+  // CON-P0-24 / CON-P1-22: bank-confirmed uses batch_health.total_confirmed_amount_minor only.
   // Do not stand in leakage total_observed_settled_amount_minor (different measure).
   const confirmedMinor = health ? coerceMinor(health.total_confirmed_amount_minor) : null
+  const asOf = health?.updated_at?.trim() || null
 
   const valueNeedingReviewMinor =
     args.leakageKpi && isDataAvailable(args.leakageKpi)
       ? coerceMinor(args.leakageKpi.unmatched_amount_minor)
+      : null
+  const leakageAsOf =
+    args.leakageKpi && isDataAvailable(args.leakageKpi) && typeof args.leakageKpi.computed_at === 'string'
+      ? args.leakageKpi.computed_at
       : null
 
   const processedPct = formatBatchMetricPercent(processed, total)
@@ -87,8 +108,14 @@ export function mapBatchReviewKpis(args: {
       id: 'intended-value',
       title: BATCH_REVIEW_COPY.kpis.intendedValue.title,
       value: formatMinorDisplay(intendedMinor),
-      subtitle: total > 0 ? 'Total value from payment instructions' : BATCH_REVIEW_COPY.kpis.uploadToCalculate,
+      subtitle: withProvenanceSub(
+        total > 0 ? 'Total value from payment instructions' : BATCH_REVIEW_COPY.kpis.uploadToCalculate,
+        BATCH_REVIEW_LIVE_KPI_SOURCES.intendedValue,
+        asOf,
+      ),
       empty: !intendedMinor,
+      source: BATCH_REVIEW_LIVE_KPI_SOURCES.intendedValue,
+      asOf,
     },
     {
       id: 'bank-confirmed',
@@ -97,11 +124,16 @@ export function mapBatchReviewKpis(args: {
         confirmedMinor != null && confirmedMinor > 0
           ? formatMinorDisplay(confirmedMinor)
           : BATCH_REVIEW_COPY.kpis.bankConfirmed.empty,
-      subtitle:
+      subtitle: withProvenanceSub(
         confirmedMinor != null && confirmedMinor > 0
           ? BATCH_REVIEW_COPY.kpis.bankConfirmed.subtitle
           : BATCH_REVIEW_COPY.kpis.bankConfirmed.emptyHelper,
+        BATCH_REVIEW_LIVE_KPI_SOURCES.bankConfirmed,
+        asOf,
+      ),
       empty: !confirmedMinor,
+      source: BATCH_REVIEW_LIVE_KPI_SOURCES.bankConfirmed,
+      asOf,
     },
     {
       id: 'pending',
@@ -125,8 +157,14 @@ export function mapBatchReviewKpis(args: {
       id: 'value-needing-review',
       title: BATCH_REVIEW_COPY.kpis.valueNeedingReview.title,
       value: formatMinorDisplay(valueNeedingReviewMinor),
-      subtitle: 'Unmatched payment value from leakage dashboard',
+      subtitle: withProvenanceSub(
+        'Unmatched payment value from leakage dashboard',
+        BATCH_REVIEW_LIVE_KPI_SOURCES.valueNeedingReview,
+        leakageAsOf,
+      ),
       empty: valueNeedingReviewMinor == null,
+      source: BATCH_REVIEW_LIVE_KPI_SOURCES.valueNeedingReview,
+      asOf: leakageAsOf,
     },
   ]
 

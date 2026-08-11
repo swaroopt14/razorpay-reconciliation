@@ -1,11 +1,13 @@
 /**
- * CON-P0-24 contract tests — run: npx tsx src/features/payout-command/settlement-journal/selectors/resolveSettlementIntelligenceKpis.contract.test.ts
+ * CON-P0-24 / CON-P1-22 contract tests
+ * Run: npx tsx --tsconfig tsconfig.json src/features/payout-command/settlement-journal/selectors/resolveSettlementIntelligenceKpis.contract.test.ts
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { BatchContractKpiResponse, BatchDetailResponse } from '@/services/payout-command/prod-api/intelligenceTypes'
 import {
+  formatLiveKpiProvenanceSub,
   LIVE_KPI_UNAVAILABLE,
   resolveAuthoritativeMatchedValue,
   resolveSettlementIntelligenceKpis,
@@ -28,7 +30,7 @@ assert.equal(LIVE_KPI_UNAVAILABLE, 'Unavailable')
   } as unknown as BatchContractKpiResponse
   const detail = {
     batch: { total_confirmed_amount_minor: 99_999 },
-    batch_health: { total_confirmed_amount_minor: 88_888 },
+    batch_health: { total_confirmed_amount_minor: 88_888, total_variance_minor: 12 },
   } as unknown as BatchDetailResponse
 
   const standIn = resolveAuthoritativeMatchedValue(contract)
@@ -41,18 +43,45 @@ assert.equal(LIVE_KPI_UNAVAILABLE, 'Unavailable')
     null,
     'Acceptance: only total_confirmed_amount / health confirmed must NOT populate settlementValueMatched',
   )
+  assert.equal(kpis.varianceAmount, null, 'must not fall back variance to batch/health total_variance_minor')
   assert.equal(kpis.settlementValueMatchedIsStandIn, false)
+  assert.equal(kpis.sources.settlementValueMatched, 'batch_contract.confirmed_matched_value_minor')
 }
 
-// --- Authoritative field present ⇒ use it (ignore stand-ins) ---
+// --- Authoritative field present ⇒ use it (ignore stand-ins) + expose source/as-of ---
 {
   const contract = {
     confirmed_matched_value_minor: 42_000_000,
     total_confirmed_amount: 52_653.42,
+    variance_amount: -100,
+    original_settled_amount: 50_000_000,
+    computed_at: '2026-08-11T10:00:00Z',
   } as unknown as BatchContractKpiResponse
   const kpis = resolveSettlementIntelligenceKpis(contract, null)
   assert.equal(kpis.settlementValueMatched, 42_000_000)
+  assert.equal(kpis.varianceAmount, -100)
+  assert.equal(kpis.observedSettlementValue, 50_000_000)
   assert.equal(resolveAuthoritativeMatchedValue(contract).usedStandIn, false)
+  assert.equal(kpis.asOf, '2026-08-11T10:00:00Z')
+  assert.equal(kpis.asOfField, 'computed_at')
+  assert.equal(kpis.sources.varianceAmount, 'batch_contract.variance_amount')
+  assert.match(
+    formatLiveKpiProvenanceSub('Matched', kpis.sources.settlementValueMatched, kpis.asOf),
+    /Source: batch_contract\.confirmed_matched_value_minor · as-of 2026-08-11T10:00:00Z/,
+  )
+}
+
+// --- as-of falls back to batch_health.updated_at (timestamp only, not metric) ---
+{
+  const contract = {
+    confirmed_matched_value_minor: 1,
+  } as unknown as BatchContractKpiResponse
+  const detail = {
+    batch_health: { updated_at: '2026-08-01T00:00:00Z' },
+  } as unknown as BatchDetailResponse
+  const kpis = resolveSettlementIntelligenceKpis(contract, detail)
+  assert.equal(kpis.asOf, '2026-08-01T00:00:00Z')
+  assert.equal(kpis.asOfField, 'batch_health.updated_at')
 }
 
 // --- missing_reference_rate: no derivation from counts ---
@@ -67,6 +96,7 @@ assert.equal(LIVE_KPI_UNAVAILABLE, 'Unavailable')
     null,
     'must not derive missing_reference_rate from count fields',
   )
+  assert.equal(kpis.observedSettlementValue, null, 'observed value must not invent from other fields')
 }
 
 // --- Source guard: resolver must not reintroduce total_confirmed_amount as matched-value fallback ---
@@ -76,10 +106,8 @@ assert.equal(LIVE_KPI_UNAVAILABLE, 'Unavailable')
   if (/settlementValueMatched:\s*parseApiAmount\(\s*batchContract\?\.total_confirmed_amount/.test(src)) {
     fail('resolver reintroduced total_confirmed_amount as settlementValueMatched source')
   }
-  if (/confirmedMatchedValueMinorFromBatchContract[\s\S]*total_confirmed_amount/.test(src)) {
-    // allowed only in comments / ignore lists — ensure parse of authoritative field is primary
-  }
   assert.match(src, /confirmed_matched_value_minor/, 'authoritative field must remain in resolver')
+  assert.match(src, /sources:/, 'CON-P1-22 source contract must remain')
   assert.doesNotMatch(
     src,
     /settlementValueMatched:\s*parseApiAmount\(batchContract\?\.total_confirmed_amount/,
