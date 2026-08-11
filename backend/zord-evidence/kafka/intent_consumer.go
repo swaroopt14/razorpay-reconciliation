@@ -32,6 +32,18 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			return nil
 		}
 
+		// Map schema_version/event_version from the upstream envelope rather
+		// than hardcoding them here; "v1" is only a defensive fallback for
+		// events published before this field existed on the wire.
+		sv := relayEvt.SchemaVersion
+		if sv == "" {
+			sv = "v1"
+		}
+		ev := relayEvt.EventVersion
+		if ev == "" {
+			ev = "v1"
+		}
+
 		// Carry the originating client_batch_id onto every buffered intent leaf so the
 		// generated pack can later be looked up via GET /v1/evidence/packs?client_batch_id=
 		// without joining intent-engine. Empty values stay NULL in DB.
@@ -66,7 +78,8 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			LeafType:          models.LeafTypeCanonicalIntentHash,
 			ItemRef:           relayEvt.AggregateID,
 			Hash:              relayEvt.CanonicalHash,
-			SchemaVersion:     "v1",
+			SchemaVersion:     sv,
+			EventVersion:      ev,
 			SourceTopic:       "payments.intent.events.v1",
 			SourceEventID:     relayEvt.EventID,
 
@@ -95,7 +108,8 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			LeafType:          models.LeafTypeGovernanceDecision,
 			ItemRef:           relayEvt.AggregateID,
 			Hash:              relayEvt.GovernanceHash,
-			SchemaVersion:     "v1",
+			SchemaVersion:     sv,
+			EventVersion:      ev,
 			SourceTopic:       "payments.intent.events.v1",
 			SourceEventID:     relayEvt.EventID,
 
@@ -124,7 +138,8 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			LeafType:          models.LeafTypeRawRowEvidenceLeafHash,
 			ItemRef:           relayEvt.AggregateID,
 			Hash:              relayEvt.RawRowEvidenceLeafHash,
-			SchemaVersion:     "v1",
+			SchemaVersion:     sv,
+			EventVersion:      ev,
 			SourceTopic:       "payments.intent.events.v1",
 			SourceEventID:     relayEvt.EventID,
 
@@ -153,7 +168,8 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			LeafType:          models.LeafTypeCanonicalRowEvidenceLeafHash,
 			ItemRef:           relayEvt.AggregateID,
 			Hash:              relayEvt.CanonicalRowEvidenceLeafHash,
-			SchemaVersion:     "v1",
+			SchemaVersion:     sv,
+			EventVersion:      ev,
 			SourceTopic:       "payments.intent.events.v1",
 			SourceEventID:     relayEvt.EventID,
 
@@ -182,7 +198,8 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			LeafType:          models.LeafTypeMappingProfileHash,
 			ItemRef:           relayEvt.AggregateID,
 			Hash:              relayEvt.MappingProfileHash,
-			SchemaVersion:     "v1",
+			SchemaVersion:     sv,
+			EventVersion:      ev,
 			SourceTopic:       "payments.intent.events.v1",
 			SourceEventID:     relayEvt.EventID,
 
@@ -211,7 +228,8 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			LeafType:          models.LeafTypeBusinessIdempotencyHash,
 			ItemRef:           relayEvt.AggregateID,
 			Hash:              relayEvt.BusinessIdempotencyKey,
-			SchemaVersion:     "v1",
+			SchemaVersion:     sv,
+			EventVersion:      ev,
 			SourceTopic:       "payments.intent.events.v1",
 			SourceEventID:     relayEvt.EventID,
 
@@ -240,7 +258,8 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			LeafType:          models.LeafTypeTokenizedDataHash,
 			ItemRef:           relayEvt.AggregateID,
 			Hash:              relayEvt.TokenizedDataHash,
-			SchemaVersion:     "v1",
+			SchemaVersion:     sv,
+			EventVersion:      ev,
 			SourceTopic:       "payments.intent.events.v1",
 			SourceEventID:     relayEvt.EventID,
 

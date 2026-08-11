@@ -508,6 +508,7 @@ func (s *EvidenceService) processIntentJob(ctx context.Context, job IntentJob, l
 				Ref:           l.ItemRef,
 				Hash:          l.Hash,
 				SchemaVersion: l.SchemaVersion,
+				EventVersion:  l.EventVersion,
 			})
 		}
 	}
@@ -654,6 +655,18 @@ func (s *EvidenceService) processIntentJob(ctx context.Context, job IntentJob, l
 // otherwise the first non-empty contract_id stored on buffered pending leaves.
 // Readiness is often triggered by the outcome consumer, whose relay envelope may omit
 // contract_id even though intent/edge leaves already captured it in Postgres.
+// packEnvelopeVersions maps the evidence.pack.* event's schema_version/
+// event_version from the pack's own upstream-sourced items rather than
+// hardcoding them here — items[0] is the first leaf actually received from
+// an upstream service, before the synthetic FINAL_EVIDENCE_VIEW leaf (which
+// zord-evidence generates itself, so it has no upstream version to map).
+func packEnvelopeVersions(items []models.EvidenceItem) (schemaVersion, eventVersion string) {
+	if len(items) == 0 {
+		return "", ""
+	}
+	return items[0].SchemaVersion, items[0].EventVersion
+}
+
 func resolveContractIDFromLeaves(leaves []models.PendingLeafCandidate, fromHandler string) string {
 	if strings.TrimSpace(fromHandler) != "" {
 		return strings.TrimSpace(fromHandler)
@@ -681,6 +694,7 @@ func (s *EvidenceService) processBatchJob(ctx context.Context, job BatchJob) err
 				Ref:           l.ItemRef,
 				Hash:          l.Hash,
 				SchemaVersion: l.SchemaVersion,
+				EventVersion:  l.EventVersion,
 			})
 		}
 	}
@@ -988,8 +1002,12 @@ func (s *EvidenceService) GeneratePackInTx(ctx context.Context, packTx *sql.Tx, 
 		eventType = kafka.EventPackReversalSupersed
 	}
 
+	packSchemaVersion, packEventVersion := packEnvelopeVersions(items)
+
 	packEvent := kafka.PackEvent{
 		EventType:                         eventType,
+		EventVersion:                      packEventVersion,
+		SchemaVersion:                     packSchemaVersion,
 		EvidencePackID:                    packID,
 		TenantID:                          req.TenantID,
 		BatchID:                           req.ClientBatchID,
@@ -1211,8 +1229,12 @@ func (s *EvidenceService) GenerateBatchPackInTx(ctx context.Context, packTx *sql
 
 	objectKey := fmt.Sprintf("%s/%s/batch/%s/%s.json.enc", s.archivePrefix, req.TenantID, req.ClientBatchID, packID)
 
+	batchSchemaVersion, batchEventVersion := packEnvelopeVersions(items)
+
 	packEvent := kafka.PackEvent{
 		EventType:      kafka.EventPackCreated,
+		EventVersion:   batchEventVersion,
+		SchemaVersion:  batchSchemaVersion,
 		EvidencePackID: packID,
 		TenantID:       req.TenantID,
 		BatchID:        req.ClientBatchID,
@@ -1416,8 +1438,11 @@ func (s *EvidenceService) ReplayPack(ctx context.Context, req models.ReplayReque
 	}
 
 	// --- Publish evidence.pack.replayed event ---
+	replaySchemaVersion, replayEventVersion := packEnvelopeVersions(newPack.Items)
 	if pubErr := s.publisher.Publish(ctx, kafka.PackEvent{
 		EventType:      kafka.EventPackReplayed,
+		EventVersion:   replayEventVersion,
+		SchemaVersion:  replaySchemaVersion,
 		EvidencePackID: newPack.EvidencePackID,
 		TenantID:       req.TenantID,
 		IntentID:       req.IntentID,

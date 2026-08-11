@@ -28,7 +28,7 @@ func NewPendingLeafRepository(db *sql.DB) *PostgresPendingLeafRepo {
 func (r *PostgresPendingLeafRepo) UpsertLeaf(ctx context.Context, leaf *models.PendingLeafCandidate) error {
 	query := `
 INSERT INTO pending_leaf_candidates (
-	tenant_id, intent_id, envelope_id, contract_id, batch_id, leaf_type, item_ref, hash, schema_version, source_topic,
+	tenant_id, intent_id, envelope_id, contract_id, batch_id, leaf_type, item_ref, hash, schema_version, event_version, source_topic,
 	source_event_id,
 	payment_instruction_received, canonical_intent_created, mapping_profile_used,
 	required_fields_status, tokenization_status, governance_decision,
@@ -37,7 +37,7 @@ INSERT INTO pending_leaf_candidates (
 	value_date_check, amount_match, client_payout_ref, amount, currency,
 	artifact_id, artifact_version_id,
 	created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, NOW(), NOW())
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, NOW(), NOW())
 ON CONFLICT (tenant_id, intent_id, leaf_type) WHERE intent_id IS NOT NULL 
 DO UPDATE SET 
 	item_ref = EXCLUDED.item_ref,
@@ -74,7 +74,7 @@ DO UPDATE SET
 	if leaf.IntentID == nil && leaf.ClientBatchID != nil {
 		query = `
 INSERT INTO pending_leaf_candidates (
-	tenant_id, intent_id, envelope_id, contract_id, batch_id, leaf_type, item_ref, hash, schema_version, source_topic,
+	tenant_id, intent_id, envelope_id, contract_id, batch_id, leaf_type, item_ref, hash, schema_version, event_version, source_topic,
 	source_event_id,
 	payment_instruction_received, canonical_intent_created, mapping_profile_used,
 	required_fields_status, tokenization_status, governance_decision,
@@ -83,7 +83,7 @@ INSERT INTO pending_leaf_candidates (
 	value_date_check, amount_match, client_payout_ref, amount, currency,
 	artifact_id, artifact_version_id,
 	created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, NOW(), NOW())
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, NOW(), NOW())
 ON CONFLICT (tenant_id, batch_id, leaf_type) WHERE batch_id IS NOT NULL AND intent_id IS NULL
 DO UPDATE SET 
 	item_ref = EXCLUDED.item_ref,
@@ -116,7 +116,7 @@ DO UPDATE SET
 	} else if leaf.IntentID == nil && leaf.EnvelopeID != nil {
 		query = `
 INSERT INTO pending_leaf_candidates (
-	tenant_id, intent_id, envelope_id, contract_id, batch_id, leaf_type, item_ref, hash, schema_version, source_topic,
+	tenant_id, intent_id, envelope_id, contract_id, batch_id, leaf_type, item_ref, hash, schema_version, event_version, source_topic,
 	source_event_id,
 	payment_instruction_received, canonical_intent_created, mapping_profile_used,
 	required_fields_status, tokenization_status, governance_decision,
@@ -125,7 +125,7 @@ INSERT INTO pending_leaf_candidates (
 	value_date_check, amount_match, client_payout_ref, amount, currency,
 	artifact_id, artifact_version_id,
 	created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, NOW(), NOW())
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, NOW(), NOW())
 ON CONFLICT (tenant_id, envelope_id, leaf_type) WHERE intent_id IS NULL AND batch_id IS NULL
 DO UPDATE SET 
 	item_ref = EXCLUDED.item_ref,
@@ -167,6 +167,7 @@ DO UPDATE SET
 		leaf.ItemRef,
 		leaf.Hash,
 		leaf.SchemaVersion,
+		leaf.EventVersion,
 		leaf.SourceTopic,
 		leaf.SourceEventID,
 		leaf.PaymentInstructionReceived,
@@ -211,7 +212,7 @@ WHERE tenant_id = $1 AND envelope_id = $2 AND intent_id IS NULL
 
 func (r *PostgresPendingLeafRepo) GetLeavesForIntent(ctx context.Context, tenantID, intentID string) ([]models.PendingLeafCandidate, error) {
 	query := `
-SELECT id, tenant_id, intent_id, envelope_id, contract_id, batch_id, leaf_type, item_ref, hash, schema_version, source_topic, 
+SELECT id, tenant_id, intent_id, envelope_id, contract_id, batch_id, leaf_type, item_ref, hash, schema_version, event_version, source_topic,
        payment_instruction_received, canonical_intent_created, mapping_profile_used,
        required_fields_status, tokenization_status, governance_decision,
        settlement_record_received, canonical_settlement_created, bank_reference,
@@ -232,7 +233,7 @@ WHERE tenant_id = $1 AND intent_id = $2
 	for rows.Next() {
 		var l models.PendingLeafCandidate
 		if err := rows.Scan(
-			&l.ID, &l.TenantID, &l.IntentID, &l.EnvelopeID, &l.ContractID, &l.ClientBatchID, &l.LeafType, &l.ItemRef, &l.Hash, &l.SchemaVersion, &l.SourceTopic,
+			&l.ID, &l.TenantID, &l.IntentID, &l.EnvelopeID, &l.ContractID, &l.ClientBatchID, &l.LeafType, &l.ItemRef, &l.Hash, &l.SchemaVersion, &l.EventVersion, &l.SourceTopic,
 			&l.PaymentInstructionReceived, &l.CanonicalIntentCreated, &l.MappingProfileUsed,
 			&l.RequiredFieldsStatus, &l.TokenizationStatus, &l.GovernanceDecision,
 			&l.SettlementRecordReceived, &l.CanonicalSettlementCreated, &l.BankReference,
@@ -251,7 +252,7 @@ WHERE tenant_id = $1 AND intent_id = $2
 
 func (r *PostgresPendingLeafRepo) GetLeavesForBatch(ctx context.Context, tenantID, batchID string) ([]models.PendingLeafCandidate, error) {
 	query := `
-SELECT id, tenant_id, intent_id, envelope_id, contract_id, batch_id, leaf_type, item_ref, hash, schema_version, source_topic,
+SELECT id, tenant_id, intent_id, envelope_id, contract_id, batch_id, leaf_type, item_ref, hash, schema_version, event_version, source_topic,
        payment_instruction_received, canonical_intent_created, mapping_profile_used,
        required_fields_status, tokenization_status, governance_decision,
        settlement_record_received, canonical_settlement_created, bank_reference,
@@ -272,7 +273,7 @@ WHERE tenant_id = $1 AND batch_id = $2 AND intent_id IS NULL
 	for rows.Next() {
 		var l models.PendingLeafCandidate
 		if err := rows.Scan(
-			&l.ID, &l.TenantID, &l.IntentID, &l.EnvelopeID, &l.ContractID, &l.ClientBatchID, &l.LeafType, &l.ItemRef, &l.Hash, &l.SchemaVersion, &l.SourceTopic,
+			&l.ID, &l.TenantID, &l.IntentID, &l.EnvelopeID, &l.ContractID, &l.ClientBatchID, &l.LeafType, &l.ItemRef, &l.Hash, &l.SchemaVersion, &l.EventVersion, &l.SourceTopic,
 			&l.PaymentInstructionReceived, &l.CanonicalIntentCreated, &l.MappingProfileUsed,
 			&l.RequiredFieldsStatus, &l.TokenizationStatus, &l.GovernanceDecision,
 			&l.SettlementRecordReceived, &l.CanonicalSettlementCreated, &l.BankReference,

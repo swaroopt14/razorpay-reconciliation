@@ -20,6 +20,8 @@ type EdgeOutboxEvent struct {
 	ObjectRef         string          `json:"object_ref"`
 	Source            string          `json:"source"`
 	SourceSystem      string          `json:"source_system,omitempty"`
+	EventVersion      string          `json:"event_version,omitempty"`
+	SchemaVersion     string          `json:"schema_version,omitempty"`
 	Topic             string          `json:"topic"`
 	EventType         string          `json:"event_type"`
 	IdempotencyKey    string          `json:"idempotency_key"`

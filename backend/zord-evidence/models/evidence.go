@@ -87,6 +87,7 @@ type PendingLeafCandidate struct {
 	ItemRef           string  `json:"item_ref" db:"item_ref"`
 	Hash              string  `json:"hash" db:"hash"`
 	SchemaVersion     string  `json:"schema_version" db:"schema_version"`
+	EventVersion      string  `json:"event_version" db:"event_version"`
 	SourceTopic       string  `json:"source_topic" db:"source_topic"`
 
 	// SourceEventID is the event_id from the upstream RelayEvent that produced
@@ -135,6 +136,8 @@ type RelayEvent struct {
 	ArtifactID        string          `json:"artifact_id,omitempty"`
 	ArtifactVersionID string          `json:"artifact_version_id,omitempty"`
 	EventType         string          `json:"event_type"`
+	EventVersion      string          `json:"event_version,omitempty"`
+	SchemaVersion     string          `json:"schema_version,omitempty"`
 	Payload           json.RawMessage `json:"payload"`
 	EnvelopeHash      string          `json:"envelope_hash,omitempty"`
 	CanonicalHash     string          `json:"canonical_hash,omitempty"`
@@ -175,12 +178,15 @@ type RelayEvent struct {
 }
 
 // EvidenceItem is one proof artifact that becomes a typed leaf in the Merkle tree.
-// leaf_hash = SHA256(type || ref || hash || schema_version)
+// leaf_hash = SHA256(type || ref || hash || schema_version) — EventVersion is
+// informational metadata only and must never be folded into this formula,
+// since that would break Merkle-proof recomputation for already-sealed packs.
 type EvidenceItem struct {
 	Type          string `json:"type"`
 	Ref           string `json:"ref"`
 	Hash          string `json:"hash,omitempty"`
 	SchemaVersion string `json:"schema_version"`
+	EventVersion  string `json:"event_version,omitempty"`
 	LeafHash      string `json:"leaf_hash,omitempty"`
 }
 
