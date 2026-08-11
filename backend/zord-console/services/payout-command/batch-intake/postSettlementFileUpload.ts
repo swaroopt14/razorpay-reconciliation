@@ -13,6 +13,7 @@
  *
  * `tenant_id` is never sent from the browser — the BFF injects it from the signed-in session.
  */
+import { csrfMutationHeaders } from '@/services/auth/csrfBrowser'
 import { errorMessageFromProxyResponse, normalizeAuthorizationHeader } from './intakeHttpShared'
 
 export const SETTLEMENT_UPLOAD_PROXY_PATH = '/api/settlement/upload'
@@ -57,10 +58,10 @@ export async function postSettlementFileUpload(params: PostSettlementFileUploadP
   const formData = new FormData()
   formData.append('file', params.file, params.file.name)
 
-  const uploadHeaders: Record<string, string> = {
+  const uploadHeaders: Record<string, string> = csrfMutationHeaders({
     'X-Zord-Force-Reprocess': 'true',
     'X-Zord-Force-Reprocess-Reason': 'CLIENT_CORRECTED_FILE',
-  }
+  })
   if (batchId) uploadHeaders['Batch-Id'] = batchId
   if (auth) uploadHeaders.authorization = auth
 

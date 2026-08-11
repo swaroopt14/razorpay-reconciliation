@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { BACKEND_SERVICES } from '@/config/api.endpoints'
+import { assertCookieMutationProtection } from '@/services/auth/assertSameOrigin.server'
 import {
   applyRefreshedSessionCookies,
   requireSessionTenantForProdProxy,
@@ -11,6 +12,9 @@ export async function POST(
   request: NextRequest,
   context: { params: Promise<{ packId: string }> },
 ) {
+  const csrf = assertCookieMutationProtection(request)
+  if (!csrf.ok) return csrf.response
+
   const gate = await requireSessionTenantForProdProxy(request)
   if (!gate.ok) return gate.response
   const tenantId = gate.tenantId

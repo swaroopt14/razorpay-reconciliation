@@ -10,7 +10,13 @@ export function useSessionManager() {
 
   const forceLogout = useCallback(async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' })
+      const { csrfMutationHeaders } = await import('@/services/auth/csrfBrowser')
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+        headers: csrfMutationHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({}),
+      })
     } finally {
       clearAuth()
       if (typeof window !== 'undefined') {
@@ -21,7 +27,12 @@ export function useSessionManager() {
 
   const extendSession = useCallback(async () => {
     try {
-      const response = await fetch('/api/auth/session/refresh', { method: 'POST' })
+      const { csrfMutationHeaders } = await import('@/services/auth/csrfBrowser')
+      const response = await fetch('/api/auth/session/refresh', {
+        method: 'POST',
+        credentials: 'include',
+        headers: csrfMutationHeaders(),
+      })
       if (response.ok) {
         lastActivityRef.current = Date.now()
         setShowWarning(false)
