@@ -799,9 +799,116 @@ func (s *EvidenceService) processBatchJob(ctx context.Context, job BatchJob) err
 	return s.pendingLeafRepo.DeleteForBatch(ctx, job.TenantID, job.BatchID)
 }
 
-// GeneratePack is the core of Service 6 (spec §13 steps 1–11).
-// It delegates to GeneratePackInTx with a nil transaction.
-func (s *EvidenceService) GeneratePack(ctx context.Context, req models.GenerateEvidenceRequest) (*models.EvidencePack, error) {
+// GeneratePackFromTrustedLeaves generates a pack from the trusted pending-leaf
+// set already committed to the DB. It does not accept arbitrary caller-supplied
+// leaves. It is used by the admin recovery endpoint.
+func (s *EvidenceService) GeneratePackFromTrustedLeaves(ctx context.Context, tenantID, intentID string) (*models.EvidencePack, error) {
+	leaves, err := s.pendingLeafRepo.GetLeavesForIntent(ctx, tenantID, intentID)
+	if err != nil {
+		return nil, fmt.Errorf("fetch trusted leaves: %w", err)
+	}
+	if len(leaves) == 0 {
+		return nil, fmt.Errorf("no trusted leaves found for intent %s", intentID)
+	}
+
+	// We format the req using the exact same logic processIntentJob does
+	var items []models.EvidenceItem
+	for _, l := range leaves {
+		items = append(items, models.EvidenceItem{
+			Type:          l.LeafType,
+			Ref:           l.ItemRef,
+			Hash:          l.Hash,
+			SchemaVersion: l.SchemaVersion,
+		})
+	}
+
+	var batchID, artifactID, artifactVersionID string
+	var clientPayoutRef *string
+	var amount decimal.Decimal
+	var currency string
+
+	var pir, cic *time.Time
+	var mpu, gd *string
+	var rfs, ts *bool
+	var srr, csc *time.Time
+	var br, cr, ad *string
+	var mc *float64
+	var vdc, am *bool
+
+	// Use contractID from the first leaf that has it
+	var contractID string
+	for _, l := range leaves {
+		if l.ContractID != nil && *l.ContractID != "" && contractID == "" {
+			contractID = *l.ContractID
+		}
+		if l.ClientBatchID != nil && *l.ClientBatchID != "" {
+			batchID = *l.ClientBatchID
+		}
+		if l.ArtifactID != nil && *l.ArtifactID != "" {
+			artifactID = *l.ArtifactID
+		}
+		if l.ArtifactVersionID != nil && *l.ArtifactVersionID != "" {
+			artifactVersionID = *l.ArtifactVersionID
+		}
+		if l.ClientPayoutRef != nil {
+			clientPayoutRef = l.ClientPayoutRef
+			amount = l.Amount
+			currency = l.Currency
+		}
+		if l.PaymentInstructionReceived != nil {
+			pir = l.PaymentInstructionReceived
+			cic = l.CanonicalIntentCreated
+			mpu = l.MappingProfileUsed
+			rfs = l.RequiredFieldsStatus
+			ts = l.TokenizationStatus
+			gd = l.GovernanceDecision
+		}
+		if l.SettlementRecordReceived != nil {
+			srr = l.SettlementRecordReceived
+			csc = l.CanonicalSettlementCreated
+			br = l.BankReference
+			cr = l.ClientReference
+			ad = l.AttachmentDecision
+			mc = l.MatchConfidence
+			vdc = l.ValueDateCheck
+			am = l.AmountMatch
+		}
+	}
+
+	// It's possible EnvelopeID is not in the leaves, so we resolve it from traceID/etc if possible?
+	// The DB just needs a GenerateEvidenceRequest.
+	// Actually, envelopeID usually comes from the job, but we'll leave it empty here if not present.
+	// It's just metadata in the pack.
+	req := models.GenerateEvidenceRequest{
+		TenantID:                   tenantID,
+		IntentID:                   intentID,
+		ClientBatchID:              batchID,
+		ContractID:                 contractID,
+		ArtifactID:                 artifactID,
+		ArtifactVersionID:          artifactVersionID,
+		Mode:                       "INTELLIGENCE_ATTACH",
+		RulesetVersion:             "v1",
+		SchemaVersions:             map[string]string{"intent_schema": "v1", "outcome_schema": "v1", "contract_schema": "v1", "attachment_schema": "v1"},
+		Items:                      items,
+		PaymentInstructionReceived: pir,
+		CanonicalIntentCreated:     cic,
+		MappingProfileUsed:         mpu,
+		RequiredFieldsStatus:       rfs,
+		TokenizationStatus:         ts,
+		GovernanceDecision:         gd,
+		SettlementRecordReceived:   srr,
+		CanonicalSettlementCreated: csc,
+		BankReference:              br,
+		ClientReference:            cr,
+		AttachmentDecision:         ad,
+		MatchConfidence:            mc,
+		ValueDateCheck:             vdc,
+		AmountMatch:                am,
+		ClientPayoutRef:            clientPayoutRef,
+		Amount:                     amount,
+		Currency:                   currency,
+	}
+
 	return s.GeneratePackInTx(ctx, nil, req)
 }
 
@@ -1353,7 +1460,7 @@ func (s *EvidenceService) ReplayPack(ctx context.Context, req models.ReplayReque
 		return nil, fmt.Errorf("fetch original pack: %w", err)
 	}
 
-	newPack, err := s.GeneratePack(ctx, models.GenerateEvidenceRequest{
+	newPack, err := s.GeneratePackInTx(ctx, nil, models.GenerateEvidenceRequest{
 		TenantID:   req.TenantID,
 		IntentID:   req.IntentID,
 		ContractID: req.ContractID,
