@@ -977,7 +977,7 @@ func loadMasterIntentsByBatchRefs(
 
 	rows, err := db.DB.QueryContext(ctx, `
 		SELECT
-			intent_id, tenant_id,
+			intent_id, tenant_id, trace_id,
 			client_payout_ref, client_batch_ref, business_idempotency_key,
 			amount, currency_code,
 			intended_execution_at, payout_type, provider_hint, corridor,
@@ -998,7 +998,7 @@ func loadMasterIntentsByBatchRefs(
 	for rows.Next() {
 		var intent models.CanonicalIntent
 		if err := rows.Scan(
-			&intent.IntentID, &intent.TenantID,
+			&intent.IntentID, &intent.TenantID, &intent.TraceID,
 			&intent.ClientPayoutRef, &intent.ClientBatchRef, &intent.BusinessIdempotencyKey,
 			&intent.Amount, &intent.CurrencyCode,
 			&intent.IntendedExecutionAt, &intent.PayoutType, &intent.ProviderHint, &intent.Corridor,
@@ -1027,7 +1027,7 @@ func loadIntentsByClientPayoutRefs(
 
 	rows, err := db.DB.QueryContext(ctx, `
 		SELECT
-			intent_id, tenant_id,
+			intent_id, tenant_id, trace_id,
 			client_payout_ref, client_batch_ref, business_idempotency_key,
 			amount, currency_code,
 			intended_execution_at, payout_type, provider_hint, corridor,
@@ -1048,7 +1048,7 @@ func loadIntentsByClientPayoutRefs(
 	for rows.Next() {
 		var intent models.CanonicalIntent
 		if err := rows.Scan(
-			&intent.IntentID, &intent.TenantID,
+			&intent.IntentID, &intent.TenantID, &intent.TraceID,
 			&intent.ClientPayoutRef, &intent.ClientBatchRef, &intent.BusinessIdempotencyKey,
 			&intent.Amount, &intent.CurrencyCode,
 			&intent.IntendedExecutionAt, &intent.PayoutType, &intent.ProviderHint, &intent.Corridor,
@@ -1084,7 +1084,7 @@ func loadMasterObservationsByBatchRef(
 func loadIntentByID(ctx context.Context, tenantID uuid.UUID, intentID uuid.UUID) (*models.CanonicalIntent, error) {
 	rows, err := db.DB.QueryContext(ctx, `
 		SELECT
-			intent_id, tenant_id,
+			intent_id, tenant_id, trace_id,
 			client_payout_ref, client_batch_ref, business_idempotency_key,
 			amount, currency_code,
 			intended_execution_at, payout_type, provider_hint, corridor,
@@ -1104,7 +1104,7 @@ func loadIntentByID(ctx context.Context, tenantID uuid.UUID, intentID uuid.UUID)
 	if rows.Next() {
 		var intent models.CanonicalIntent
 		if err := rows.Scan(
-			&intent.IntentID, &intent.TenantID,
+			&intent.IntentID, &intent.TenantID, &intent.TraceID,
 			&intent.ClientPayoutRef, &intent.ClientBatchRef, &intent.BusinessIdempotencyKey,
 			&intent.Amount, &intent.CurrencyCode,
 			&intent.IntendedExecutionAt, &intent.PayoutType, &intent.ProviderHint, &intent.Corridor,

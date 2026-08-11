@@ -11,7 +11,6 @@ import (
 	"zord-outcome-engine/models"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 )
 
 // SettlementOutboxService manages the emission of durable events for settlement lifecycle.
@@ -43,55 +42,19 @@ func (s *SettlementOutboxService) EmitForJob(
 		return fmt.Errorf("outbox batch lookup failed: %w", err)
 	}
 
-	// 1. Fetch intent details for enrichment if TraceID is present
-	intentLookup := make(map[uuid.UUID]struct {
-		TenantID uuid.UUID
-		TraceID  uuid.UUID
-	})
-
-	var intentIDs []uuid.UUID
-	for _, obs := range observations {
-		if obs.TraceID != nil {
-			intentIDs = append(intentIDs, *obs.TraceID)
-		}
-	}
-
-	if len(intentIDs) > 0 {
-		rows, err := db.DB.QueryContext(ctx, `
-			SELECT intent_id, tenant_id, trace_id 
-			FROM canonical_intents 
-			WHERE intent_id = ANY($1)`,
-			pq.Array(intentIDs),
-		)
-		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var iid, tid, trid uuid.UUID
-				if err := rows.Scan(&iid, &tid, &trid); err == nil {
-					intentLookup[iid] = struct {
-						TenantID uuid.UUID
-						TraceID  uuid.UUID
-					}{TenantID: tid, TraceID: trid}
-				}
-			}
-		} else {
-			log.Printf("settlement.outbox.intent_lookup_failed err=%v", err)
-		}
-	}
-
 	// ── EVENT TYPE 1: Observation Created ──────────────────────────────────
 	// These events are used to notify systems that a new settled item is available.
+	//
+	// trace_id is intent-centric and only known once the attachment engine
+	// matches this observation to an intent — which has not happened yet at
+	// settlement-canonicalization time (this runs before attachment). So
+	// eventTraceID is always uuid.Nil here; the real trace_id first appears
+	// on the attachment.decision.created / variance.record.created events
+	// emitted later by AttachmentOutboxService once matching has occurred.
 	for _, obs := range observations {
 		eventID := uuid.New()
 		eventTenantID := tenantID
 		eventTraceID := uuid.Nil
-
-		if obs.TraceID != nil {
-			if info, ok := intentLookup[*obs.TraceID]; ok {
-				eventTenantID = info.TenantID
-				eventTraceID = info.TraceID
-			}
-		}
 
 		payload := map[string]interface{}{
 			"event_id":             eventID.String(),
