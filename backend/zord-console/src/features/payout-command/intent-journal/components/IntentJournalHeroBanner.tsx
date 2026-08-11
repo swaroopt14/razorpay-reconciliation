@@ -4,12 +4,12 @@ import { JournalIntelligenceKpiHero } from '../../command-center/JournalIntellig
 import { useJournalBatchSelection } from '../context/JournalBatchSelectionContext'
 import { useJournalBatchMetrics } from '../hooks/useJournalBatchMetrics'
 import { intentJournalCopy } from '../copy/intentJournalCopy'
-import { fmtInrFromMinorExact } from '../../command-center/commandCenterFormat'
 import { formatConfidencePct } from '../intentJournalSidebarUtils'
 import { useDlqManualReviewCount } from '../hooks/useDlqManualReviewCount'
 import { IntentJournalExportMenu } from './IntentJournalExportMenu'
+import { formatMoney } from '@/services/payout-command/money/money'
 
-const INTENDED_VALUE_SUB = 'Sum of payment instruction amounts'
+const INTENDED_VALUE_SUB = 'Sum of payment instruction amounts (per currency)'
 
 type IntentJournalHeroBannerProps = {
   onExportIntents: () => void
@@ -32,8 +32,7 @@ export function IntentJournalHeroBanner({
   reviewExportCount = 0,
 }: IntentJournalHeroBannerProps) {
   const { selectedBatchId, journalEnabled } = useJournalBatchSelection()
-  const { batch, metrics, loading } = useJournalBatchMetrics(selectedBatchId, journalEnabled)
-  const totalAmount = batch?.totalValue ?? metrics?.intendedValue ?? null
+  const { metrics, loading } = useJournalBatchMetrics(selectedBatchId, journalEnabled)
   const { displayCount: manualReviewCount, loading: manualReviewLoading } = useDlqManualReviewCount(
     journalEnabled,
     selectedBatchId,
@@ -42,12 +41,19 @@ export function IntentJournalHeroBanner({
   const instructionCount = metrics?.instructionCount ?? null
   const instructionCountDisplay = formatApiCount(instructionCount, loading)
   const valueLabel =
-    loading && totalAmount == null
+    loading && !metrics
       ? '—'
-      : totalAmount != null
-        ? fmtInrFromMinorExact(totalAmount)
+      : metrics?.intendedValueDisplay && metrics.intendedValueDisplay !== '—'
+        ? metrics.intendedValueDisplay
+        : metrics?.intendedValue != null && metrics.intendedCurrency
+          ? formatMoney(metrics.intendedValue, metrics.intendedCurrency)
+          : '—'
+  const intendedValueSub =
+    metrics?.aggregation.ok === false && Object.keys(metrics.intendedByCurrency).length > 0
+      ? 'Multi-currency batch — totals shown per currency (not summed)'
+      : valueLabel !== '—'
+        ? INTENDED_VALUE_SUB
         : '—'
-  const intendedValueSub = totalAmount != null ? INTENDED_VALUE_SUB : '—'
   const qualityPct = formatConfidencePct(metrics?.batchAggregateConfidenceScore ?? null)
   const needsReviewDisplay =
     manualReviewCount != null ? manualReviewCount.toLocaleString('en-IN') : manualReviewLoading ? '…' : '—'

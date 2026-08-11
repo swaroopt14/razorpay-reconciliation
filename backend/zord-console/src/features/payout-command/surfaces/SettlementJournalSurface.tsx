@@ -18,7 +18,7 @@ import { settlementObservationPageRange } from '../settlement-journal/settlement
 import { downloadCsv, observationsToCsv } from '../settlement-journal/settlementExport'
 import {
   observationInDateRange,
-  matchesAmountRange,
+  matchesAmountRangeForRow,
   outcomeFromMatchConfidence,
   type AmountRangeFilter,
   type DateRangePreset,
@@ -298,7 +298,7 @@ function SettlementJournalSurfaceContent({
       const bySettlementBatch =
         !settlementBatchQ || row.settlementBatchId.toLowerCase().includes(settlementBatchQ)
       const bySource = sourceSystemFilter === 'All' || row.sourceSystem === sourceSystemFilter
-      const byAmount = matchesAmountRange(row.amount, amountRangeFilter)
+      const byAmount = matchesAmountRangeForRow(row.amount, row.currency, amountRangeFilter)
       return (
         bySearch &&
         byStatus &&

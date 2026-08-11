@@ -1,4 +1,12 @@
 import type { SettlementObservationTableRow } from '@/services/payout-command/prod-api/settlementObservations'
+import {
+  CURRENCY_NEUTRAL_AMOUNT_RANGES,
+  aggregateMoney,
+  formatMoneyBuckets,
+  groupAmountsByCurrency,
+  matchesCurrencyAwareAmountRange,
+  type CurrencyNeutralAmountRange,
+} from '@/services/payout-command/money/money'
 
 export type DateRangePreset = 'all' | '7d' | '30d' | '90d' | 'ytd'
 
@@ -22,14 +30,10 @@ export const DATE_RANGE_OPTIONS: { value: DateRangePreset; label: string }[] = [
   { value: 'ytd', label: 'Year to date' },
 ]
 
-export const AMOUNT_RANGE_OPTIONS = [
-  'All',
-  'Under ₹10,000',
-  '₹10,000 – ₹1,00,000',
-  'Over ₹1,00,000',
-] as const
+/** Currency-neutral amount ranges (CON-P0-23 — no ₹ / INR assumption). */
+export const AMOUNT_RANGE_OPTIONS = CURRENCY_NEUTRAL_AMOUNT_RANGES
 
-export type AmountRangeFilter = (typeof AMOUNT_RANGE_OPTIONS)[number]
+export type AmountRangeFilter = CurrencyNeutralAmountRange
 
 export function observationInDateRange(observationTime: string, preset: DateRangePreset): boolean {
   if (preset === 'all') return true
@@ -46,11 +50,17 @@ export function observationInDateRange(observationTime: string, preset: DateRang
   return observed >= start
 }
 
+/** @deprecated Prefer matchesAmountRangeForRow — amount alone is not currency-safe. */
 export function matchesAmountRange(amount: number, range: AmountRangeFilter): boolean {
-  if (range === 'All') return true
-  if (range === 'Under ₹10,000') return amount < 10_000
-  if (range === '₹10,000 – ₹1,00,000') return amount >= 10_000 && amount <= 100_000
-  return amount > 100_000
+  return matchesCurrencyAwareAmountRange(amount, 'UNKNOWN', range === 'All' ? 'All' : range)
+}
+
+export function matchesAmountRangeForRow(
+  amount: number,
+  currency: string | null | undefined,
+  range: AmountRangeFilter,
+): boolean {
+  return matchesCurrencyAwareAmountRange(amount, currency, range)
 }
 
 export function isSettledObservationStatus(statusRaw: string): boolean {
@@ -175,9 +185,21 @@ export function settlementStatusBadgeClass(statusRaw: string) {
 }
 
 export function computeSettlementBatchSummary(rows: SettlementObservationTableRow[]) {
-  const totalAmount = rows.reduce((sum, r) => sum + r.amount, 0)
-  const totalSettled = rows.reduce((sum, r) => sum + r.settledAmount, 0)
-  const totalFees = rows.reduce((sum, r) => sum + r.feeAmount, 0)
+  const amountAgg = aggregateMoney(rows.map((r) => ({ amount: r.amount, currency: r.currency })))
+  const settledAgg = aggregateMoney(rows.map((r) => ({ amount: r.settledAmount, currency: r.currency })))
+  const feesAgg = aggregateMoney(rows.map((r) => ({ amount: r.feeAmount, currency: r.currency })))
   const outcome = outcomeFromObservationRows(rows)
-  return { totalAmount, totalSettled, totalFees, outcome }
+  return {
+    /** Null when mixed/UNKNOWN currencies block a single portfolio total (CON-P0-23). */
+    totalAmount: amountAgg.ok ? amountAgg.total.amount : null,
+    totalSettled: settledAgg.ok ? settledAgg.total.amount : null,
+    totalFees: feesAgg.ok ? feesAgg.total.amount : null,
+    totalAmountDisplay: formatMoneyBuckets(groupAmountsByCurrency(rows.map((r) => ({ amount: r.amount, currency: r.currency })))),
+    totalSettledDisplay: formatMoneyBuckets(
+      groupAmountsByCurrency(rows.map((r) => ({ amount: r.settledAmount, currency: r.currency }))),
+    ),
+    totalFeesDisplay: formatMoneyBuckets(groupAmountsByCurrency(rows.map((r) => ({ amount: r.feeAmount, currency: r.currency })))),
+    currency: amountAgg.ok ? amountAgg.total.currency : null,
+    outcome,
+  }
 }

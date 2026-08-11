@@ -2,6 +2,7 @@ import type { IntentJournalPaymentIntentItem } from '@/services/payout-command/p
 import type { JournalIntentRow, JournalIntentStatus } from '@/services/payout-command/prod-api/mapIntentEngineBatch'
 import { apiTrimmedString } from '@/services/payout-command/prod-api/coerceApiField'
 import { readIntentQualityScore } from '@/services/payout-command/prod-api/resolveIntentQualityScore'
+import { normalizeCurrency } from '@/services/payout-command/money/money'
 
 export const READINESS_REVIEW_THRESHOLD = 0.7
 
@@ -116,7 +117,7 @@ export function mapPaymentIntentListItemToRow(
     bank: provider,
     paymentMethodDetail: rail !== '—' ? rail : provider,
     engineStatus: undefined,
-    currency: apiTrimmedString(item.currency ?? 'INR') || 'INR',
+    currency: normalizeCurrency(item.currency),
     tenantId: apiTrimmedString(item.tenant_id) || apiTrimmedString(sessionTenantId) || '—',
     intendedExecutionAt: formatJournalExecutionAt(item.intended_execution_at),
     provider,

@@ -4,6 +4,7 @@ import type { IntelligenceBatchRow } from './intelligenceTypes'
 import { apiTrimmedString } from './coerceApiField'
 import { readIntentQualityScore } from '@/services/payout-command/prod-api/resolveIntentQualityScore'
 import { formatDlqStatusLabel, parseDlqIntentContext, normalizePspDisplayName } from './mapDlqContext'
+import { normalizeCurrency } from '@/services/payout-command/money/money'
 
 export type JournalBatchType = 'Disbursement' | 'Settlement'
 export type JournalIntentStatus = 'Ready to Process' | 'Confirmed' | 'Pending' | 'Needs Review' | 'In Progress'
@@ -299,7 +300,7 @@ export function mapPaymentIntentToIntentRow(
     bank: instrument || '—',
     paymentMethodDetail,
     engineStatus: [stRaw, gov, biz].filter(Boolean).join(' · ') || undefined,
-    currency: apiTrimmedString(intent.currency ?? 'INR') || 'INR',
+    currency: normalizeCurrency(intent.currency),
     tenantId: apiTrimmedString(intent.tenant_id) || apiTrimmedString(sessionTenantId) || '—',
     intendedExecutionAt: formatJournalExecutionAt(intent.intended_execution_at),
     clientBatchRef: apiTrimmedString(intent.client_batch_ref) || apiTrimmedString(intent.batchid) || batchId,
@@ -335,7 +336,7 @@ export function mapDlqToFailureRow(row: ApiDlqRow, opts?: { inManualReviewQueue?
     reference: row.dlq_id,
     amount: ctx.amount,
     method: resolveDlqPaymentMethod(ctx),
-    currency: ctx.currency ?? 'INR',
+    currency: normalizeCurrency(ctx.currency),
     paymentPartner: connector,
     connectorSubtitle,
     failureReason: apiTrimmedString(row.error_detail) || apiTrimmedString(row.reason_code) || '—',

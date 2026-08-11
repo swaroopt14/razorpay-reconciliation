@@ -31,7 +31,7 @@ export function enrichBatchRecordWithMetrics(
   base: JournalBatchRecord,
   metrics: {
     instructionCount: number | null
-    intendedValue: number
+    intendedValue: number | null
     batchAggregateConfidenceScore: number | null
     reviewCount: number
   },
@@ -39,7 +39,7 @@ export function enrichBatchRecordWithMetrics(
   const totalValue =
     base.totalValue > 0
       ? base.totalValue
-      : metrics.intendedValue > 0
+      : metrics.intendedValue != null && metrics.intendedValue > 0
         ? metrics.intendedValue
         : base.totalValue
   return {

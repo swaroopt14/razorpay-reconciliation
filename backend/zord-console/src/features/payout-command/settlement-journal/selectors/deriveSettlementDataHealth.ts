@@ -1,13 +1,22 @@
 import type { SettlementObservationTableRow } from '@/services/payout-command/prod-api/settlementObservations'
 import { mapMatchStatus, settlementMappingConfidence } from '../mappers/mapMatchStatus'
-import { formatJournalMoney } from '../../intent-journal/formatJournalMoney'
+import {
+  aggregateMoney,
+  formatMoneyBuckets,
+  groupAmountsByCurrency,
+} from '@/services/payout-command/money/money'
 
 export type SettlementDataHealthMetrics = {
   recordsReceived: number
   withBankRefPct: number
   withClientRefPct: number
   matchedCount: number
-  unmatchedOrphanValue: number
+  /**
+   * Single-currency orphan total when aggregation is safe; null when mixed/UNKNOWN.
+   * CON-P0-23 — never sum USD+INR into one portfolio number.
+   */
+  unmatchedOrphanValue: number | null
+  unmatchedOrphanValueDisplay: string
   avgMatchConfidence: number | null
   missingRefRatePct: number
 }
@@ -20,7 +29,8 @@ export function deriveSettlementDataHealth(rows: SettlementObservationTableRow[]
       withBankRefPct: 0,
       withClientRefPct: 0,
       matchedCount: 0,
-      unmatchedOrphanValue: 0,
+      unmatchedOrphanValue: null,
+      unmatchedOrphanValueDisplay: '—',
       avgMatchConfidence: null,
       missingRefRatePct: 0,
     }
@@ -37,9 +47,12 @@ export function deriveSettlementDataHealth(rows: SettlementObservationTableRow[]
     if (linkedIntentId && linkedIntentId !== '—') return true
     return mapMatchStatus(r) === 'Matched'
   }).length
-  const unmatchedOrphanValue = rows
+  const orphanItems = rows
     .filter((r) => !hasRef(r.clientRef))
-    .reduce((sum, r) => sum + r.amount, 0)
+    .map((r) => ({ amount: r.amount, currency: r.currency }))
+  const orphanAgg = aggregateMoney(orphanItems)
+  const unmatchedOrphanValue = orphanAgg.ok ? orphanAgg.total.amount : null
+  const unmatchedOrphanValueDisplay = formatMoneyBuckets(groupAmountsByCurrency(orphanItems))
 
   const scores = rows
     .map((r) => settlementMappingConfidence(r))
@@ -53,12 +66,13 @@ export function deriveSettlementDataHealth(rows: SettlementObservationTableRow[]
     withClientRefPct: Math.round((withClientRef / recordsReceived) * 100),
     matchedCount,
     unmatchedOrphanValue,
+    unmatchedOrphanValueDisplay,
     avgMatchConfidence,
     missingRefRatePct: Math.round(((recordsReceived - withClientRef) / recordsReceived) * 100),
   }
 }
 
-export function formatOrphanValue(value: number): string {
-  if (value <= 0) return formatJournalMoney(0)
-  return formatJournalMoney(value)
+export function formatOrphanValue(value: number | null | undefined, currency?: string | null): string {
+  if (value == null) return '—'
+  return formatMoneyBuckets(groupAmountsByCurrency([{ amount: value, currency }]))
 }

@@ -1,11 +1,29 @@
 import type { IntentJournalPaymentIntentItem, IntentJournalDlqItem } from '@/services/payout-command/prod-api/intentJournalTypes'
 import { readIntentQualityScore } from '@/services/payout-command/prod-api/resolveIntentQualityScore'
+import {
+  aggregateMoney,
+  formatMoneyBuckets,
+  groupAmountsByCurrency,
+  normalizeCurrency,
+  type MoneyAggregateResult,
+} from '@/services/payout-command/money/money'
 import { READINESS_REVIEW_THRESHOLD } from '../mappers/mapIntentTableRow'
+
 export type IntentBatchMetrics = {
   /** Authoritative count from payment-intents `pagination.total`; null when API total missing. */
   instructionCount: number | null
-  /** Batch total from batch-ids `total_amount`, else sum of loaded payment-intent amounts. */
-  intendedValue: number
+  /**
+   * Single-currency batch total when aggregation is safe.
+   * Null when mixed/UNKNOWN currencies block a portfolio total (CON-P0-23).
+   */
+  intendedValue: number | null
+  /** Currency for `intendedValue` when aggregation succeeded. */
+  intendedCurrency: string | null
+  /** Per-currency major totals — always populated from loaded intents. */
+  intendedByCurrency: Record<string, number>
+  /** Display string for multi-currency buckets (never a mixed sum). */
+  intendedValueDisplay: string
+  aggregation: MoneyAggregateResult
   avgReadinessPct: number | null
   /** Batch aggregate from intent-engine `aggregate_confidence_score` (0–1). */
   batchAggregateConfidenceScore: number | null
@@ -24,8 +42,12 @@ function parseAmount(raw: string | number | undefined): number {
 export type DeriveIntentBatchMetricsOptions = {
   /** Authoritative batch intent count from payment-intents `pagination.total`. */
   paymentIntentTotal?: number | null
-  /** Authoritative batch value from batch-ids `total_amount` (major INR units). */
+  /**
+   * Authoritative batch value from batch-ids `total_amount` (major units).
+   * Only applied when `batchTotalCurrency` is known and matches a single-currency batch.
+   */
   batchTotalAmount?: number | null
+  batchTotalCurrency?: string | null
 }
 
 export function deriveIntentBatchMetrics(
@@ -36,18 +58,37 @@ export function deriveIntentBatchMetrics(
   const apiTotal = options?.paymentIntentTotal
   const instructionCount =
     apiTotal != null && Number.isFinite(apiTotal) && apiTotal >= 0 ? apiTotal : null
-  // Sum via integer milli-rupees (3 dp) to eliminate float-drift over large batches.
-  // JS floating-point accumulation across 1000s of additions can drift by ~₹1+;
-  // rounding each amount to the nearest 0.001 before summing keeps the result
-  // consistent with a spreadsheet sum of the same values.
-  const summedValueMillis = paymentIntents.reduce(
-    (sum, item) => sum + Math.round(parseAmount(item.amount) * 1000),
-    0,
-  )
-  const summedValue = summedValueMillis / 1000
+
+  const moneyItems = paymentIntents.map((item) => ({
+    amount: parseAmount(item.amount),
+    currency: item.currency,
+  }))
+  const intendedByCurrency = groupAmountsByCurrency(moneyItems)
+  const aggregation = aggregateMoney(moneyItems)
+
+  let intendedValue: number | null = null
+  let intendedCurrency: string | null = null
   const batchTotal = options?.batchTotalAmount
-  const intendedValue =
-    batchTotal != null && Number.isFinite(batchTotal) && batchTotal >= 0 ? batchTotal : summedValue
+  const batchCurrency = normalizeCurrency(options?.batchTotalCurrency)
+  if (
+    batchTotal != null &&
+    Number.isFinite(batchTotal) &&
+    batchTotal >= 0 &&
+    batchCurrency !== 'UNKNOWN' &&
+    aggregation.ok &&
+    aggregation.total.currency === batchCurrency
+  ) {
+    intendedValue = batchTotal
+    intendedCurrency = batchCurrency
+  } else if (aggregation.ok) {
+    intendedValue = aggregation.total.amount
+    intendedCurrency = aggregation.total.currency
+  }
+
+  const intendedValueDisplay =
+    intendedValue != null && intendedCurrency
+      ? formatMoneyBuckets({ [intendedCurrency]: intendedValue })
+      : formatMoneyBuckets(intendedByCurrency)
 
   const readScore = (raw: unknown): number | null => {
     if (typeof raw === 'number' && Number.isFinite(raw)) return raw
@@ -85,6 +126,10 @@ export function deriveIntentBatchMetrics(
   return {
     instructionCount,
     intendedValue,
+    intendedCurrency,
+    intendedByCurrency,
+    intendedValueDisplay,
+    aggregation,
     avgReadinessPct,
     batchAggregateConfidenceScore,
     lowReadinessCount,
