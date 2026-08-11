@@ -149,10 +149,11 @@ func handleLeafBundle(ctx context.Context, raw []byte, pg PackGenerator) error {
 	// Map wire leaves → pending leaf models. Each leaf carries its own
 	// per-leaf schema_version already (mapped from upstream); event_version
 	// is envelope-level (individual leaves don't carry their own), so it
-	// comes from relayEvt instead.
+	// comes from relayEvt instead. No fallback — log if missing so gaps in
+	// upstream instrumentation are visible instead of silently masked.
 	envelopeEventVersion := relayEvt.EventVersion
 	if envelopeEventVersion == "" {
-		envelopeEventVersion = "v1"
+		log.Printf("outcome.consumer.missing_event_version tenant=%s intent=%s event_id=%s", tenantID, intentID, relayEvt.EventID)
 	}
 	contractID := relayEvt.ContractID
 	batchID := relayEvt.ClientBatchID
@@ -160,7 +161,7 @@ func handleLeafBundle(ctx context.Context, raw []byte, pg PackGenerator) error {
 	for _, l := range evt.Leaves {
 		sv := l.SchemaVersion
 		if sv == "" {
-			sv = "v1"
+			log.Printf("outcome.consumer.missing_schema_version tenant=%s intent=%s leaf_type=%s event_id=%s", tenantID, intentID, l.Type, relayEvt.EventID)
 		}
 		pendingLeaves = append(pendingLeaves, models.PendingLeafCandidate{
 			TenantID:      tenantID,
@@ -284,14 +285,15 @@ func handleBatchUpdated(ctx context.Context, raw []byte, pg PackGenerator) error
 
 	// These leaves are computed locally from the batch summary payload, so
 	// they map schema_version/event_version from the upstream envelope
-	// rather than hardcoding them; "v1" is only a defensive fallback.
+	// rather than hardcoding them. No fallback — log if missing so gaps in
+	// upstream instrumentation are visible instead of silently masked.
 	sv := relayEvt.SchemaVersion
 	if sv == "" {
-		sv = "v1"
+		log.Printf("evidence.kafka.handle_batch_updated missing_schema_version batch=%s event_id=%s", batchID, relayEvt.EventID)
 	}
 	ev := relayEvt.EventVersion
 	if ev == "" {
-		ev = "v1"
+		log.Printf("evidence.kafka.handle_batch_updated missing_event_version batch=%s event_id=%s", batchID, relayEvt.EventID)
 	}
 
 	leaves := []models.PendingLeafCandidate{
@@ -382,11 +384,11 @@ func handleFileUploaded(ctx context.Context, raw []byte, pg PackGenerator) error
 
 	sv := relayEvt.SchemaVersion
 	if sv == "" {
-		sv = "v1"
+		log.Printf("outcome.consumer.handle_file_uploaded missing_schema_version batch=%s event_id=%s", batchID, relayEvt.EventID)
 	}
 	ev := relayEvt.EventVersion
 	if ev == "" {
-		ev = "v1"
+		log.Printf("outcome.consumer.handle_file_uploaded missing_event_version batch=%s event_id=%s", batchID, relayEvt.EventID)
 	}
 
 	leaves := []models.PendingLeafCandidate{{
@@ -428,11 +430,11 @@ func handleBatchCanonical(ctx context.Context, raw []byte, pg PackGenerator) err
 
 	sv := relayEvt.SchemaVersion
 	if sv == "" {
-		sv = "v1"
+		log.Printf("outcome.consumer.handle_batch_canonical missing_schema_version batch=%s event_id=%s", batchID, relayEvt.EventID)
 	}
 	ev := relayEvt.EventVersion
 	if ev == "" {
-		ev = "v1"
+		log.Printf("outcome.consumer.handle_batch_canonical missing_event_version batch=%s event_id=%s", batchID, relayEvt.EventID)
 	}
 
 	leaves := []models.PendingLeafCandidate{{

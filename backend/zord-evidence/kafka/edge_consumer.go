@@ -33,15 +33,15 @@ func buildEdgeHandler(pg PackGenerator) MessageHandler {
 		}
 
 		// Map schema_version/event_version from the upstream envelope rather
-		// than hardcoding them here; "v1" is only a defensive fallback for
-		// events published before this field existed on the wire.
+		// than hardcoding them — no fallback, just log if missing so gaps in
+		// upstream instrumentation are visible instead of silently masked.
 		sv := relayEvt.SchemaVersion
 		if sv == "" {
-			sv = "v1"
+			log.Printf("edge.consumer.missing_schema_version key=%s envelope=%s event_id=%s", key, relayEvt.EnvelopeID, relayEvt.EventID)
 		}
 		ev := relayEvt.EventVersion
 		if ev == "" {
-			ev = "v1"
+			log.Printf("edge.consumer.missing_event_version key=%s envelope=%s event_id=%s", key, relayEvt.EnvelopeID, relayEvt.EventID)
 		}
 
 		pendingLeaves := []models.PendingLeafCandidate{
