@@ -37,7 +37,7 @@ func CanonicalIntentToOutboxEvent(
 		IntentID:          intent.IntentID,
 		EventType:         eventType,
 
-		SchemaVersion: "v1",
+		SchemaVersion: SchemaVersionV1,
 		Amount:        intent.Amount,
 		Currency:      intent.Currency,
 		Payload:       payload,
