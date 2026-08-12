@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
   // If the token was silently refreshed during this poll, forward the new cookies
   // to the browser so it doesn't send a revoked refresh token on the next request.
   if (result.refreshedPayload) {
-    applyAuthCookies(response, result.refreshedPayload)
+    applyAuthCookies(response, result.refreshedPayload, request)
   }
 
   return response

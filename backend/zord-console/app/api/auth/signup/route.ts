@@ -66,6 +66,6 @@ export async function POST(request: NextRequest) {
   }
 
   const response = NextResponse.json(sanitizeAuthEnvelope(payload), { status: 201 })
-  applyAuthCookies(response, payload)
+  applyAuthCookies(response, payload, request)
   return response
 }

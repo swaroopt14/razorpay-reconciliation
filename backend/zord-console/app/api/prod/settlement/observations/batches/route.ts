@@ -58,9 +58,9 @@ export async function GET(request: NextRequest) {
       },
     })
     if (ctx.refreshedPayload) {
-      applyAuthCookies(res, ctx.refreshedPayload)
+      applyAuthCookies(res, ctx.refreshedPayload, request)
     }
-    applyRefreshedSessionCookies(res, ctx.refreshedPayload)
+    applyRefreshedSessionCookies(res, ctx.refreshedPayload, request)
     return res
   } catch (error) {
     const res = NextResponse.json(

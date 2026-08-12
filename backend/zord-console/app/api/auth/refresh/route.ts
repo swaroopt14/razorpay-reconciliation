@@ -3,14 +3,16 @@ import { BACKEND_SERVICES } from '@/config/api.endpoints'
 import {
   BackendAuthEnvelope,
   BackendErrorEnvelope,
-  REFRESH_COOKIE_NAME,
   applyAuthCookies,
   authServiceUnavailableResponse,
   buildForwardHeaders,
   clearAuthCookies,
   edgeAuthUrl,
+  getRefreshTokenFromRequest,
   parseJSONSafe,
+  readSessionTenantRegistry,
   refreshFailureResponse,
+  resolveRequestedSessionTenantId,
   sanitizeAuthEnvelope,
 } from '@/services/auth/server'
 
@@ -18,11 +20,14 @@ export const dynamic = 'force-dynamic'
 
 export async function POST(request: NextRequest) {
   const body = (await parseJSONSafe<{ refresh_token?: string }>(request)) ?? {}
-  const refreshToken = body.refresh_token || request.cookies.get(REFRESH_COOKIE_NAME)?.value
+  const refreshToken = body.refresh_token || getRefreshTokenFromRequest(request)
 
   if (!refreshToken) {
     const response = NextResponse.json({ code: 'INVALID_SESSION', message: 'Session expired' }, { status: 401 })
-    clearAuthCookies(response)
+    clearAuthCookies(response, {
+      tenantId: resolveRequestedSessionTenantId(request),
+      registry: readSessionTenantRegistry(request),
+    })
     return response
   }
 
@@ -53,6 +58,6 @@ export async function POST(request: NextRequest) {
   }
 
   const response = NextResponse.json(sanitizeAuthEnvelope(payload))
-  applyAuthCookies(response, payload)
+  applyAuthCookies(response, payload, request)
   return response
 }
