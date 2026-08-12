@@ -1369,14 +1369,59 @@ func (h *Handler) processBulkIntentRow(
 	return storageAck, uuid.Nil, nil
 }
 
-// ── Sanitization Helpers ────────────────────────────────────────────────────────
+// ── Spreadsheet safety (import only) ───────────────────────────────────────────
+//
+// Edge quarantines actual formula/macro injection — not every signed value.
+// Legitimate negatives (+/- amounts), phone numbers (+91…), and signed identifiers
+// pass through; field-kind validation is handled downstream in intent-engine.
+// Export sanitization is out of scope for this service.
 
 func isCsvFormula(val string) bool {
-	trimmer := strings.TrimSpace(val)
-	if len(trimmer) == 0 {
+	trimmed := strings.TrimSpace(val)
+	if len(trimmed) == 0 {
 		return false
 	}
-	return trimmer[0] == '=' || trimmer[0] == '+' || trimmer[0] == '-' || trimmer[0] == '@'
+	if trimmed[0] == '=' || trimmed[0] == '@' || trimmed[0] == '\t' || trimmed[0] == '\r' {
+		return true
+	}
+
+	lower := strings.ToLower(trimmed)
+	if strings.Contains(lower, "cmd|") || strings.Contains(lower, "dde|") ||
+		strings.Contains(lower, "hyperlink(") {
+		return true
+	}
+
+	if trimmed[0] == '+' || trimmed[0] == '-' {
+		return isSpreadsheetFormulaExpression(trimmed)
+	}
+	return false
+}
+
+func isSpreadsheetFormulaExpression(val string) bool {
+	rest := strings.TrimLeft(val, "+-")
+	if rest == "" {
+		return false
+	}
+	for i := 1; i < len(rest); i++ {
+		if rest[i] == '(' {
+			start := i - 1
+			for start >= 0 && ((rest[start] >= 'A' && rest[start] <= 'Z') || (rest[start] >= 'a' && rest[start] <= 'z')) {
+				start--
+			}
+			if i-1-start >= 2 {
+				return true
+			}
+		}
+	}
+	if len(rest) >= 3 && rest[0] >= '0' && rest[0] <= '9' {
+		for i := 1; i < len(rest)-1; i++ {
+			if (rest[i] == '+' || rest[i] == '-' || rest[i] == '*' || rest[i] == '/') &&
+				rest[i+1] >= '0' && rest[i+1] <= '9' {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func CheckRowForFormulas(headers, row []string, rowNum int) *BulkResult {
@@ -1390,9 +1435,7 @@ func CheckRowForFormulas(headers, row []string, rowNum int) *BulkResult {
 				Row:    rowNum,
 				Status: "REJECTED",
 				Error:  fmt.Sprintf("formula injection detected in column %q", header),
-				// structured code for 3.1.4
 			}
-
 		}
 	}
 	return nil
