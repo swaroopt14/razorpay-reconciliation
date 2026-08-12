@@ -4,6 +4,7 @@ import {
   applyRefreshedSessionCookies,
   requireSessionTenantForProdProxy,
 } from '@/services/auth/resolvePayoutTenant.server'
+import { publicBffError } from '@/services/bff/publicBffError'
 
 /**
  * Forward `/api/prod/evidence/*` → zord-evidence (:8088).
@@ -40,13 +41,16 @@ export async function forwardEvidence(request: NextRequest, upstreamPath: string
     applyRefreshedSessionCookies(res, gate.refreshedPayload)
     return res
   } catch (error) {
-    const res = NextResponse.json(
-      {
-        error: 'evidence service unreachable',
-        details: error instanceof Error ? error.message : 'unknown',
+    const res = publicBffError({
+      code: 'UPSTREAM_UNAVAILABLE',
+      message: 'Evidence service is temporarily unavailable. Retry shortly.',
+      status: 502,
+      log: {
+        route: '/api/prod/evidence',
+        upstream: url,
+        error,
       },
-      { status: 502 },
-    )
+    })
     applyRefreshedSessionCookies(res, gate.refreshedPayload)
     return res
   }

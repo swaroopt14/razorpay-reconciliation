@@ -137,6 +137,74 @@ export async function requireSessionTenantForProdProxy(
   return { ok: true, tenantId: tenantId.trim(), refreshedPayload }
 }
 
+export type SessionIdentityResult =
+  | {
+      ok: true
+      tenantId: string
+      userId: string
+      sessionId: string
+      accessToken?: string
+      refreshedPayload?: BackendAuthEnvelope
+    }
+  | { ok: false; response: NextResponse }
+
+/**
+ * CON-P0-04 — full session identity from Edge `/v1/auth/me`.
+ * Used by Prompt Layer BFF so tenant/user/session are never taken from client headers.
+ * Do not remove when merging error-normalization / CSRF changes into this helper's callers.
+ */
+export async function requireSessionIdentityForProdProxy(
+  request: NextRequest,
+): Promise<SessionIdentityResult> {
+  const { edgeResponse, errorResponse, refreshedPayload } = await authorizedEdgeFetch(
+    request,
+    BACKEND_SERVICES.EDGE.ENDPOINTS.AUTH_ME,
+    { method: 'GET' },
+  )
+  if (errorResponse) return { ok: false, response: errorResponse }
+  if (!edgeResponse?.ok) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { code: 'UNAUTHORIZED', message: 'Session required for this resource.' },
+        { status: 401 },
+      ),
+    }
+  }
+
+  const payload = await parseJSONSafe<{
+    user?: { id?: string; tenant_id?: string }
+    session?: { tenant_id?: string; session_id?: string }
+  }>(edgeResponse)
+
+  const tenantId =
+    payload?.session?.tenant_id?.trim() || payload?.user?.tenant_id?.trim() || ''
+  const userId = payload?.user?.id?.trim() || ''
+  const sessionId = payload?.session?.session_id?.trim() || ''
+
+  if (!tenantId || !userId) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { code: 'UNAUTHORIZED', message: 'Session identity incomplete. Sign in again.' },
+        { status: 401 },
+      ),
+    }
+  }
+
+  const accessToken =
+    refreshedPayload?.access_token?.trim() || getAccessTokenFromRequest(request)?.trim() || undefined
+
+  return {
+    ok: true,
+    tenantId,
+    userId,
+    sessionId,
+    accessToken,
+    refreshedPayload,
+  }
+}
+
 /** Apply rotated access/refresh cookies when authorizedEdgeFetch refreshed the session. */
 export function applyRefreshedSessionCookies(
   response: NextResponse,
