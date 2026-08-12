@@ -46,7 +46,12 @@ type VectorIndexRequestEvent struct {
 
 // PackEvent is the envelope published to evidence.packs topic.
 type PackEvent struct {
-	EventType      string    `json:"event_type"`
+	EventType string `json:"event_type"`
+	// EventVersion / SchemaVersion are mapped from the pack's own upstream-
+	// sourced items (see packEnvelopeVersions in services/evidence_service.go)
+	// rather than hardcoded here.
+	EventVersion   string    `json:"event_version,omitempty"`
+	SchemaVersion  string    `json:"schema_version,omitempty"`
 	EvidencePackID string    `json:"evidence_pack_id"`
 	TenantID       string    `json:"tenant_id"`
 	BatchID        string    `json:"batch_id,omitempty"`

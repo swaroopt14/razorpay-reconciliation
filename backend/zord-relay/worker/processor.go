@@ -147,7 +147,7 @@ func (p *processor) process(ctx context.Context, event *model.OutboxEvent) proce
 		key := RouteKey{
 			SourceService: event.Source,
 			EventType:     event.EventType,
-			EventVersion:  "", // generic OutboxEvent has no event_version
+			EventVersion:  event.EventVersion,
 			SchemaVersion: event.SchemaVersion,
 		}
 		t, err := p.guard.Route(key)
@@ -264,8 +264,8 @@ func (p *processor) processEdge(ctx context.Context, event *model.EdgeOutboxEven
 		key := RouteKey{
 			SourceService: event.SourceSystem,
 			EventType:     event.EventType,
-			EventVersion:  "", // EdgeOutboxEvent has no event_version
-			SchemaVersion: "", // EdgeOutboxEvent has no schema_version
+			EventVersion:  event.EventVersion,
+			SchemaVersion: event.SchemaVersion,
 		}
 		t, err := p.guard.Route(key)
 		if err != nil {

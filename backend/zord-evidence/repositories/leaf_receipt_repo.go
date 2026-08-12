@@ -110,6 +110,14 @@ func (r *PostgresLeafReceiptRepo) WriteReceipt(ctx context.Context, leaf *models
 		sourceEventID = &leaf.SourceEventID
 	}
 
+	// TraceID preserves the causation/source trace from the upstream event
+	// that produced this leaf delivery — nullable, since not every leaf path
+	// is guaranteed to carry one (logged upstream when missing).
+	var traceID *string
+	if leaf.TraceID != "" {
+		traceID = &leaf.TraceID
+	}
+
 	// --- Step 2: write the immutable receipt row ---
 	_, insertErr := r.db.ExecContext(ctx, `
 INSERT INTO evidence_leaf_receipts (
@@ -120,6 +128,9 @@ INSERT INTO evidence_leaf_receipts (
 	leaf_hash,
 	source_topic,
 	source_event_id,
+	trace_id,
+	schema_version,
+	event_version,
 	amount_minor,
 	currency,
 	client_reference,
@@ -128,7 +139,7 @@ INSERT INTO evidence_leaf_receipts (
 	discard_reason,
 	received_at
 ) VALUES (
-	$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW()
+	$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW()
 )
 ON CONFLICT (source_event_id, tenant_id, leaf_type, scope_type, scope_ref)
 DO NOTHING`,
@@ -139,6 +150,9 @@ DO NOTHING`,
 		leaf.Hash,
 		leaf.SourceTopic,
 		sourceEventID,
+		traceID,
+		leaf.SchemaVersion,
+		leaf.EventVersion,
 		amountMinor,
 		currency,
 		leaf.ClientPayoutRef,
@@ -225,6 +239,7 @@ func (r *PostgresLeafReceiptRepo) GetReceiptsForIntent(ctx context.Context, tena
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT receipt_id, tenant_id, scope_type, scope_ref,
 		       leaf_type, leaf_hash, source_topic, source_event_id,
+		       trace_id, schema_version, event_version,
 		       amount_minor, currency, client_reference, bank_reference,
 		       receipt_status, discard_reason, received_at
 		FROM evidence_leaf_receipts
@@ -245,6 +260,7 @@ func (r *PostgresLeafReceiptRepo) GetConflictsForIntent(ctx context.Context, ten
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT receipt_id, tenant_id, scope_type, scope_ref,
 		       leaf_type, leaf_hash, source_topic, source_event_id,
+		       trace_id, schema_version, event_version,
 		       amount_minor, currency, client_reference, bank_reference,
 		       receipt_status, discard_reason, received_at
 		FROM evidence_leaf_receipts
@@ -267,6 +283,7 @@ func scanReceipts(rows *sql.Rows) ([]models.LeafReceipt, error) {
 		if err := rows.Scan(
 			&r.ReceiptID, &r.TenantID, &r.ScopeType, &r.ScopeRef,
 			&r.LeafType, &r.LeafHash, &r.SourceTopic, &r.SourceEventID,
+			&r.TraceID, &r.SchemaVersion, &r.EventVersion,
 			&r.AmountMinor, &r.Currency, &r.ClientReference, &r.BankReference,
 			&r.ReceiptStatus, &r.DiscardReason, &receivedAt,
 		); err != nil {

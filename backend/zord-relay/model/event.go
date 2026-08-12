@@ -31,6 +31,7 @@ type OutboxEvent struct {
 	ContractID    string `json:"contract_id,omitempty"`
 
 	// --- Schema / versioning ---
+	EventVersion  string `json:"event_version,omitempty"`
 	SchemaVersion string `json:"schema_version,omitempty"`
 
 	// --- Payload ---

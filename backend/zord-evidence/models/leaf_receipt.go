@@ -40,6 +40,13 @@ type LeafReceipt struct {
 	LeafHash        string           `json:"leaf_hash" db:"leaf_hash"`
 	SourceTopic     string           `json:"source_topic" db:"source_topic"`
 	SourceEventID   *string          `json:"source_event_id" db:"source_event_id"`
+	// TraceID / SchemaVersion / EventVersion preserve the causation/source
+	// metadata from the upstream event that produced this leaf delivery, so
+	// RCA/audit can trace a receipt back to the exact originating operation
+	// and version — not just the leaf hash.
+	TraceID       *string          `json:"trace_id,omitempty" db:"trace_id"`
+	SchemaVersion string           `json:"schema_version,omitempty" db:"schema_version"`
+	EventVersion  string           `json:"event_version,omitempty" db:"event_version"`
 	AmountMinor     *decimal.Decimal `json:"amount_minor" db:"amount_minor"`
 	Currency        *string          `json:"currency" db:"currency"`
 	ClientReference *string          `json:"client_reference" db:"client_reference"`

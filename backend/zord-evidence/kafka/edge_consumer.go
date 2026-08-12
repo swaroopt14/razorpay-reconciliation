@@ -32,6 +32,21 @@ func buildEdgeHandler(pg PackGenerator) MessageHandler {
 			return nil
 		}
 
+		// Map schema_version/event_version from the upstream envelope rather
+		// than hardcoding them — no fallback, just log if missing so gaps in
+		// upstream instrumentation are visible instead of silently masked.
+		sv := relayEvt.SchemaVersion
+		if sv == "" {
+			log.Printf("edge.consumer.missing_schema_version key=%s envelope=%s event_id=%s", key, relayEvt.EnvelopeID, relayEvt.EventID)
+		}
+		ev := relayEvt.EventVersion
+		if ev == "" {
+			log.Printf("edge.consumer.missing_event_version key=%s envelope=%s event_id=%s", key, relayEvt.EnvelopeID, relayEvt.EventID)
+		}
+		if relayEvt.TraceID == "" {
+			log.Printf("edge.consumer.missing_trace_id key=%s envelope=%s event_id=%s", key, relayEvt.EnvelopeID, relayEvt.EventID)
+		}
+
 		pendingLeaves := []models.PendingLeafCandidate{
 			{
 				TenantID:      relayEvt.TenantID,
@@ -39,9 +54,11 @@ func buildEdgeHandler(pg PackGenerator) MessageHandler {
 				LeafType:      models.LeafTypeEnvelopeHash,
 				ItemRef:       relayEvt.EnvelopeID,
 				Hash:          relayEvt.EnvelopeHash,
-				SchemaVersion: "v1",
+				SchemaVersion: sv,
+				EventVersion:  ev,
 				SourceTopic:   "payments.ledger.events.v1",
 				SourceEventID: relayEvt.EventID,
+				TraceID:       relayEvt.TraceID,
 			},
 		}
 
@@ -53,9 +70,11 @@ func buildEdgeHandler(pg PackGenerator) MessageHandler {
 				LeafType:      models.LeafTypeFileContentHash,
 				ItemRef:       relayEvt.ClientBatchID,
 				Hash:          relayEvt.FileContentHash,
-				SchemaVersion: "v1",
+				SchemaVersion: sv,
+				EventVersion:  ev,
 				SourceTopic:   "payments.ledger.events.v1",
 				SourceEventID: relayEvt.EventID,
+				TraceID:       relayEvt.TraceID,
 			})
 		}
 
