@@ -80,9 +80,9 @@ export async function POST(req: NextRequest) {
       },
     })
     if (ctx.refreshedPayload) {
-      applyAuthCookies(res, ctx.refreshedPayload)
+      applyAuthCookies(res, ctx.refreshedPayload, req)
     }
-    applyRefreshedSessionCookies(res, ctx.refreshedPayload)
+    applyRefreshedSessionCookies(res, ctx.refreshedPayload, req)
     return res
   } catch (error) {
     lastError = error
@@ -96,7 +96,7 @@ export async function POST(req: NextRequest) {
     },
     { status: 502 },
   )
-  if (ctx.refreshedPayload) applyAuthCookies(res, ctx.refreshedPayload)
-  applyRefreshedSessionCookies(res, ctx.refreshedPayload)
+  if (ctx.refreshedPayload) applyAuthCookies(res, ctx.refreshedPayload, req)
+  applyRefreshedSessionCookies(res, ctx.refreshedPayload, req)
   return res
 }

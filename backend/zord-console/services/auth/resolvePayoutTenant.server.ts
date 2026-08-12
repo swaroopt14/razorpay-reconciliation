@@ -12,9 +12,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { BACKEND_SERVICES } from '@/config/api.endpoints'
 import { normalizeAuthorizationHeader } from '@/services/payout-command/batch-intake/intakeHttpShared'
 import {
-  ACCESS_COOKIE_NAME,
   applyAuthCookies,
   authorizedEdgeFetch,
+  getAccessTokenFromRequest,
   parseJSONSafe,
   type BackendAuthEnvelope,
 } from '@/services/auth/server'
@@ -141,8 +141,9 @@ export async function requireSessionTenantForProdProxy(
 export function applyRefreshedSessionCookies(
   response: NextResponse,
   refreshedPayload?: BackendAuthEnvelope,
+  request?: NextRequest,
 ): void {
-  if (refreshedPayload) applyAuthCookies(response, refreshedPayload)
+  if (refreshedPayload) applyAuthCookies(response, refreshedPayload, request)
 }
 
 export type ProxyForwardAuthResolution =
@@ -165,7 +166,7 @@ export async function resolveProxyForwardAuthorization(
 ): Promise<ProxyForwardAuthResolution> {
   const { tenantId: sessionTenant, refreshedPayload } = await getSessionTenantIdFromRequest(request)
   const incoming = normalizeAuthorizationHeader(request.headers.get('authorization') ?? '')
-  const accessCookie = request.cookies.get(ACCESS_COOKIE_NAME)?.value
+  const accessCookie = getAccessTokenFromRequest(request)
   const cookieBearer = accessCookie?.trim() ? `Bearer ${accessCookie.trim()}` : null
 
   if (incoming) {

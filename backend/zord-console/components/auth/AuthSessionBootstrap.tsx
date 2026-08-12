@@ -1,8 +1,18 @@
 'use client'
 
 import { useEffect } from 'react'
-import { usePathname, useRouter } from 'next/navigation'
-import { clearAuth, getCurrentUser, hasSessionHint, hydrateSession } from '@/services/auth'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
+import {
+  clearAuth,
+  getCurrentUser,
+  hasSessionHint,
+  hydrateSession,
+  readTabSessionTenantId,
+  withSessionTenantQuery,
+  writeTabSessionTenantId,
+} from '@/services/auth'
+import { installSessionTenantFetchPatch } from '@/services/auth/tenantSessionBrowser'
+import { SESSION_TENANT_QUERY } from '@/services/auth/tenantSessionConstants'
 import { UserRole } from '@/types/auth'
 
 function getLoginRoute(pathname: string) {
@@ -30,15 +40,21 @@ function roleMatchesPath(pathname: string, role: UserRole) {
 export function AuthSessionBootstrap() {
   const pathname = usePathname()
   const router = useRouter()
+  const searchParams = useSearchParams()
 
   useEffect(() => {
+    installSessionTenantFetchPatch()
+
+    // Bind this tab to ?tenant= before hydrate so /api/auth/me uses the right cookies.
+    const fromUrl = searchParams?.get(SESSION_TENANT_QUERY)?.trim() || ''
+    if (fromUrl) {
+      writeTabSessionTenantId(fromUrl)
+    }
+
     if (!pathname || isLoginPath(pathname) || !isProtectedPath(pathname)) {
       return
     }
 
-    // Middleware already verified HttpOnly session cookies before this page loaded.
-    // Always revalidate through /api/auth/me — do not redirect based on hint/localStorage
-    // alone, or hard refresh drops users back to /signin while cookies are still valid.
     let cancelled = false
 
     void hydrateSession()
@@ -46,7 +62,6 @@ export function AuthSessionBootstrap() {
         if (cancelled) return
 
         if (!user) {
-          // hydrateSession clears client auth only on 401/403; transient failures keep hints.
           if (!hasSessionHint() && !getCurrentUser()) {
             router.replace(getLoginRoute(pathname))
           }
@@ -56,6 +71,20 @@ export function AuthSessionBootstrap() {
         if (!roleMatchesPath(pathname, user.role)) {
           clearAuth()
           router.replace(getLoginRoute(pathname))
+          return
+        }
+
+        const tenantId = user.tenantId || user.tenant || ''
+        writeTabSessionTenantId(tenantId)
+        // Keep tenant in the URL so reload always restores this tab's workspace.
+        const urlTenant = searchParams?.get(SESSION_TENANT_QUERY)?.trim() || ''
+        if (tenantId && urlTenant !== tenantId && pathname) {
+          const qs = searchParams?.toString() || ''
+          const next = withSessionTenantQuery(
+            qs ? `${pathname}?${qs}` : pathname,
+            tenantId,
+          )
+          router.replace(next)
         }
       })
       .catch(() => {
@@ -65,7 +94,15 @@ export function AuthSessionBootstrap() {
     return () => {
       cancelled = true
     }
-  }, [pathname, router])
+  }, [pathname, router, searchParams])
+
+  // Keep tab binding if URL changes without remount.
+  useEffect(() => {
+    const fromUrl = searchParams?.get(SESSION_TENANT_QUERY)?.trim() || ''
+    if (fromUrl && fromUrl !== readTabSessionTenantId()) {
+      writeTabSessionTenantId(fromUrl)
+    }
+  }, [searchParams])
 
   return null
 }

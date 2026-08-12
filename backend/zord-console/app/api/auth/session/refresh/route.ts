@@ -2,15 +2,17 @@ import { NextRequest, NextResponse } from 'next/server'
 import { BACKEND_SERVICES } from '@/config/api.endpoints'
 import { assertCookieMutationProtection } from '@/services/auth/assertSameOrigin.server'
 import {
-  ACCESS_COOKIE_NAME,
-  REFRESH_COOKIE_NAME,
   applyAuthCookies,
   authServiceUnavailableResponse,
   buildForwardHeaders,
   clearAuthCookies,
   edgeAuthUrl,
+  getAccessTokenFromRequest,
+  getRefreshTokenFromRequest,
   parseJSONSafe,
+  readSessionTenantRegistry,
   refreshFailureResponse,
+  resolveRequestedSessionTenantId,
   BackendAuthEnvelope,
   BackendErrorEnvelope,
 } from '@/services/auth/server'
@@ -21,16 +23,19 @@ export async function POST(request: NextRequest) {
   const csrf = assertCookieMutationProtection(request)
   if (!csrf.ok) return csrf.response
 
-  const refreshToken = request.cookies.get(REFRESH_COOKIE_NAME)?.value
+  const refreshToken = getRefreshTokenFromRequest(request)
   if (!refreshToken) {
     const response = NextResponse.json({ code: 'INVALID_SESSION', message: 'Session expired' }, { status: 401 })
-    clearAuthCookies(response)
+    clearAuthCookies(response, {
+      tenantId: resolveRequestedSessionTenantId(request),
+      registry: readSessionTenantRegistry(request),
+    })
     return response
   }
 
   // The backend /v1/session/refresh endpoint is JWT-protected. We must include
   // the current access token in the Authorization header so JWTAuthenticate passes.
-  const accessToken = request.cookies.get(ACCESS_COOKIE_NAME)?.value
+  const accessToken = getAccessTokenFromRequest(request)
 
   let refreshResponse: Response
   try {
@@ -62,6 +67,6 @@ export async function POST(request: NextRequest) {
     user: payload.user,
     session: payload.session,
   })
-  applyAuthCookies(response, payload)
+  applyAuthCookies(response, payload, request)
   return response
 }
