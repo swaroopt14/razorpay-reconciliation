@@ -16,10 +16,7 @@ function settlementBase() {
 
 /** Proxy: GET /api/prod/settlement/errors → outcome-engine settlement parse errors. */
 export async function GET(request: NextRequest) {
-  const ctx = await resolveSettlementUploadContext(
-    request,
-    process.env.ZORD_SETTLEMENT_API_KEY ?? process.env.ZORD_BULK_INGEST_API_KEY,
-  )
+  const ctx = await resolveSettlementUploadContext(request)
   if (!ctx.ok) return ctx.response
   const tenantId = ctx.tenantId
 

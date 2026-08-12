@@ -1,95 +1,48 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { publicBffError } from '@/services/bff/publicBffError'
+import { NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
-function intelligenceBases() {
-  if (process.env.ZORD_INTELLIGENCE_URL) return [process.env.ZORD_INTELLIGENCE_URL]
-  return ['http://localhost:8080', 'http://zord-intelligence:8080']
-}
-
-function normalizePath(path: string[] | undefined) {
-  if (!path || path.length === 0) return ''
-  return path.map((segment) => encodeURIComponent(segment)).join('/')
-}
-
-function buildTargetUrl(base: string, path: string, search: string) {
-  const normalizedBase = base.replace(/\/$/, '')
-  const suffix = path ? `/${path}` : ''
-  return `${normalizedBase}/v1/intelligence${suffix}${search}`
-}
-
-function passthroughHeaders(req: NextRequest) {
-  const headers: Record<string, string> = {}
-  const contentType = req.headers.get('content-type')
-  const authorization = req.headers.get('authorization')
-  const sourceType = req.headers.get('x-zord-source-type')
-  const sourceClass = req.headers.get('x-zord-source-class')
-
-  if (contentType) headers['content-type'] = contentType
-  if (authorization) headers.authorization = authorization
-  if (sourceType) headers['x-zord-source-type'] = sourceType
-  if (sourceClass) headers['x-zord-source-class'] = sourceClass
-
-  return headers
-}
-
-async function proxyRequest(req: NextRequest, path: string[] | undefined) {
-  const encodedPath = normalizePath(path)
-  const search = req.nextUrl.search
-  const candidateUrls = intelligenceBases().map((base) => buildTargetUrl(base, encodedPath, search))
-  const bodyBuffer = req.method === 'GET' || req.method === 'HEAD' ? undefined : Buffer.from(await req.arrayBuffer())
-  const headers = passthroughHeaders(req)
-
-  let lastError: unknown = null
-  let lastResponse: Response | null = null
-  let lastUrl = candidateUrls[candidateUrls.length - 1]
-
-  for (const url of candidateUrls) {
-    lastUrl = url
-    try {
-      const upstream = await fetch(url, {
-        method: req.method,
-        headers,
-        body: bodyBuffer,
-        cache: 'no-store',
-      })
-
-      lastResponse = upstream
-      if (upstream.ok || upstream.status < 500) break
-    } catch (error) {
-      lastError = error
-    }
-  }
-
-  if (!lastResponse) {
-    return publicBffError({
-      code: 'UPSTREAM_UNAVAILABLE',
-      message: 'Intelligence service is temporarily unavailable. Retry shortly.',
-      status: 502,
-      log: {
-        route: '/api/intelligence',
-        upstream: lastUrl,
-        error: lastError,
-      },
-    })
-  }
-
-  const payload = await lastResponse.text()
-  return new NextResponse(payload, {
-    status: lastResponse.status,
-    headers: {
-      'content-type': lastResponse.headers.get('content-type') || 'application/json; charset=utf-8',
-      'cache-control': 'no-store, max-age=0',
+/**
+ * CON-P0-05: The former catch-all intelligence proxy forwarded arbitrary
+ * upstream paths and client Authorization headers. That tunnel is removed.
+ *
+ * Live console traffic must use session-bound `/api/prod/intelligence/*`
+ * (see `app/api/prod/intelligence/_shared.ts`), which injects tenant from
+ * the signed-in session and never trusts client identity headers.
+ *
+ * CON-P1-06: no upstream proxy here, so no publicBffError path — always 404.
+ */
+function gone() {
+  return NextResponse.json(
+    {
+      code: 'NOT_FOUND',
+      message:
+        'Generic /api/intelligence proxy removed. Use session-bound /api/prod/intelligence/* routes.',
     },
-  })
+    {
+      status: 404,
+      headers: { 'cache-control': 'no-store' },
+    },
+  )
 }
 
-export async function GET(req: NextRequest, { params }: { params: { path?: string[] } }) {
-  return proxyRequest(req, params.path)
+export async function GET() {
+  return gone()
 }
 
-export async function POST(req: NextRequest, { params }: { params: { path?: string[] } }) {
-  return proxyRequest(req, params.path)
+export async function POST() {
+  return gone()
+}
+
+export async function PUT() {
+  return gone()
+}
+
+export async function PATCH() {
+  return gone()
+}
+
+export async function DELETE() {
+  return gone()
 }

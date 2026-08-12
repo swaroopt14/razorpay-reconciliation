@@ -249,7 +249,7 @@ func (l *DispatchLoop) processEvent(ctx context.Context, workerID int, e model.O
 			ContractID:    contractID,
 			DispatchID:    dispatchID,
 			TraceID:       traceID,
-			SchemaVersion: "v1",
+			SchemaVersion: model.SchemaVersionV1,
 			CreatedAt:     time.Now().UTC(),
 			Payload: model.DispatchCreatedPayload{
 				DispatchID:          dispatchID,
@@ -324,7 +324,7 @@ func (l *DispatchLoop) runSteps2to5(ctx context.Context, workerID int, d *model.
 		ContractID:    contractID,
 		DispatchID:    dispatchID,
 		TraceID:       traceID,
-		SchemaVersion: "v1",
+		SchemaVersion: model.SchemaVersionV1,
 		CreatedAt:     time.Now().UTC(),
 		Payload: model.DispatchGovernanceEvaluatedPayload{
 			DispatchID:  dispatchID,
@@ -403,7 +403,7 @@ func (l *DispatchLoop) runSteps2to5(ctx context.Context, workerID int, d *model.
 		ContractID:    contractID,
 		DispatchID:    dispatchID,
 		TraceID:       traceID,
-		SchemaVersion: "v1",
+		SchemaVersion: model.SchemaVersionV1,
 		CreatedAt:     asSentAt,
 		Payload: model.AttemptSentPayload{
 			DispatchID:   dispatchID,
@@ -500,7 +500,7 @@ func (l *DispatchLoop) runSteps2to5(ctx context.Context, workerID int, d *model.
 		ContractID:    contractID,
 		DispatchID:    dispatchID,
 		TraceID:       traceID,
-		SchemaVersion: "v1",
+		SchemaVersion: model.SchemaVersionV1,
 		CreatedAt:     ackedAt,
 		Payload: model.ProviderAckedPayload{
 			DispatchID:        dispatchID,
@@ -648,7 +648,7 @@ func (l *DispatchLoop) markFailedRetryable(
 	dfEvent := model.DispatchFailedEvent{
 		EventID: uuid.New().String(), EventType: "DispatchFailed",
 		TenantID: tenantID, IntentID: intentID, ContractID: contractID,
-		DispatchID: dispatchID, TraceID: traceID, SchemaVersion: "v1",
+		DispatchID: dispatchID, TraceID: traceID, SchemaVersion: model.SchemaVersionV1,
 		CreatedAt: failedAt,
 		Payload: model.DispatchFailedPayload{
 			DispatchID: dispatchID, AttemptCount: attemptCount,
@@ -686,7 +686,7 @@ func (l *DispatchLoop) markFailedTerminal(
 	dfEvent := model.DispatchFailedEvent{
 		EventID: uuid.New().String(), EventType: "DispatchFailed",
 		TenantID: tenantID, IntentID: intentID, ContractID: contractID,
-		DispatchID: dispatchID, TraceID: traceID, SchemaVersion: "v1",
+		DispatchID: dispatchID, TraceID: traceID, SchemaVersion: model.SchemaVersionV1,
 		CreatedAt: failedAt,
 		Payload: model.DispatchFailedPayload{
 			DispatchID: dispatchID, AttemptCount: 1,
@@ -721,7 +721,7 @@ func (l *DispatchLoop) markAwaitingProviderSignal(
 	awaitEvent := model.DispatchAwaitingProviderSignalEvent{
 		EventID: uuid.New().String(), EventType: "DispatchAwaitingProviderSignal",
 		TenantID: tenantID, IntentID: intentID, ContractID: contractID,
-		DispatchID: dispatchID, TraceID: traceID, SchemaVersion: "v1",
+		DispatchID: dispatchID, TraceID: traceID, SchemaVersion: model.SchemaVersionV1,
 		CreatedAt: time.Now().UTC(),
 		Payload: model.DispatchAwaitingProviderSignalPayload{
 			DispatchID:             dispatchID,

@@ -1,17 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { BACKEND_SERVICES } from '@/config/api.endpoints'
 import {
-  ACCESS_COOKIE_NAME,
   BackendAuthEnvelope,
   BackendAuthUser,
   BackendErrorEnvelope,
-  REFRESH_COOKIE_NAME,
   applyAuthCookies,
+  applyCsrfCookie,
   applySessionMarkerCookies,
+  authServiceUnavailableResponse,
   buildForwardHeaders,
   clearAuthCookies,
   edgeAuthUrl,
+  getAccessTokenFromRequest,
+  getRefreshTokenFromRequest,
   parseJSONSafe,
+  readSessionTenantRegistry,
+  refreshFailureResponse,
+  resolveRequestedSessionTenantId,
 } from '@/services/auth/server'
 
 export const dynamic = 'force-dynamic'
@@ -20,7 +25,7 @@ export const dynamic = 'force-dynamic'
 function jsonNoStore<T>(body: T, init?: ResponseInit): NextResponse {
   const res = NextResponse.json(body, init)
   res.headers.set('Cache-Control', 'private, no-store, max-age=0, must-revalidate')
-  res.headers.set('Vary', 'Cookie')
+  res.headers.set('Vary', 'Cookie, X-Zord-Session-Tenant')
   return res
 }
 
@@ -36,12 +41,16 @@ interface BackendMeEnvelope {
 }
 
 export async function GET(request: NextRequest) {
-  const accessToken = request.cookies.get(ACCESS_COOKIE_NAME)?.value
-  const refreshToken = request.cookies.get(REFRESH_COOKIE_NAME)?.value
+  const accessToken = getAccessTokenFromRequest(request)
+  const refreshToken = getRefreshTokenFromRequest(request)
+  const sessionTenant = resolveRequestedSessionTenantId(request)
 
   if (!accessToken && !refreshToken) {
     const response = jsonNoStore({ code: 'INVALID_SESSION', message: 'Session expired' }, { status: 401 })
-    clearAuthCookies(response)
+    clearAuthCookies(response, {
+      tenantId: sessionTenant,
+      registry: readSessionTenantRegistry(request),
+    })
     return response
   }
 
@@ -54,10 +63,8 @@ export async function GET(request: NextRequest) {
         cache: 'no-store',
       })
     } catch {
-      return jsonNoStore(
-        { code: 'AUTH_SERVICE_UNAVAILABLE', message: 'Authentication service is unavailable right now.' },
-        { status: 503 },
-      )
+      // CON-P1-03: Edge unreachable — keep cookies.
+      return authServiceUnavailableResponse()
     }
 
     if (meResponse.ok) {
@@ -65,14 +72,23 @@ export async function GET(request: NextRequest) {
       if (payload) {
         const response = jsonNoStore(payload)
         applySessionMarkerCookies(response, payload.user.role)
+        applyCsrfCookie(response, accessToken)
         return response
       }
+    }
+
+    // 401/403 → try refresh. Other /me failures without a refresh cookie → keep cookies, 503.
+    if (meResponse.status !== 401 && meResponse.status !== 403 && !refreshToken) {
+      return authServiceUnavailableResponse()
     }
   }
 
   if (!refreshToken) {
     const response = jsonNoStore({ code: 'INVALID_SESSION', message: 'Session expired' }, { status: 401 })
-    clearAuthCookies(response)
+    clearAuthCookies(response, {
+      tenantId: sessionTenant,
+      registry: readSessionTenantRegistry(request),
+    })
     return response
   }
 
@@ -85,39 +101,26 @@ export async function GET(request: NextRequest) {
       body: JSON.stringify({ refresh_token: refreshToken }),
     })
   } catch {
-    return jsonNoStore(
-      { code: 'AUTH_SERVICE_UNAVAILABLE', message: 'Authentication service is unavailable right now.' },
-      { status: 503 },
-    )
+    return authServiceUnavailableResponse()
   }
 
   if (!refreshResponse.ok) {
     const errorBody = await parseJSONSafe<BackendErrorEnvelope>(refreshResponse)
-    const response = jsonNoStore(
-      {
-        code: errorBody?.code ?? 'INVALID_SESSION',
-        message: errorBody?.message ?? 'Session expired',
-      },
-      { status: refreshResponse.status },
-    )
-    clearAuthCookies(response)
-    return response
+    return refreshFailureResponse(refreshResponse.status, errorBody)
   }
 
   const payload = await parseJSONSafe<BackendAuthEnvelope>(refreshResponse)
   if (!payload?.access_token || !payload.refresh_token) {
-    const response = jsonNoStore(
-      { code: 'AUTH_RESPONSE_INVALID', message: 'Refresh response was incomplete.' },
+    return jsonNoStore(
+      { code: 'AUTH_RESPONSE_INVALID', message: 'Refresh response was incomplete. Retry shortly.' },
       { status: 502 },
     )
-    clearAuthCookies(response)
-    return response
   }
 
   const response = jsonNoStore({
     user: payload.user,
     session: payload.session,
   })
-  applyAuthCookies(response, payload)
+  applyAuthCookies(response, payload, request)
   return response
 }

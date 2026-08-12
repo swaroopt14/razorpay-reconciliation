@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import { clearLegacyTenantApiSecrets } from '@/services/auth/readStoredTenantApiKey'
 
 type ValidationError = { code: string; message: string; field?: string }
 
@@ -94,10 +95,13 @@ export function CreatePaymentRequestForm() {
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
-    const k = localStorage.getItem('cx_api_key') || ''
-    const t = localStorage.getItem('cx_tenant_name') || ''
-    setApiKey(k)
-    setTenantName(t)
+    // CON-P0-01: never hydrate API secrets from browser storage.
+    clearLegacyTenantApiSecrets()
+    try {
+      setTenantName(window.localStorage.getItem('cx_tenant_name') || '')
+    } catch {
+      setTenantName('')
+    }
   }, [])
 
   const payload: IntentRequestV1 = useMemo(
@@ -153,8 +157,8 @@ export function CreatePaymentRequestForm() {
     setError(null)
     setResp(null)
 
-    if (!apiKey) {
-      setError('Missing API key. Register a tenant first.')
+    if (!apiKey.trim()) {
+      setError('Paste your API key for this request (shown once at signup). It is not stored in the browser.')
       return
     }
 
@@ -232,9 +236,7 @@ export function CreatePaymentRequestForm() {
             <section>
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-semibold text-cx-text">Auth</h2>
-                <span className="text-[11px] text-cx-neutral">
-                  API key is read from <span className="font-mono">localStorage</span>
-                </span>
+                <span className="text-[11px] text-cx-neutral">In-memory only · never written to storage</span>
               </div>
               <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
@@ -242,11 +244,12 @@ export function CreatePaymentRequestForm() {
                   <input
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="(from tenant registration)"
+                    placeholder="Paste secret from signup (one-time)"
+                    autoComplete="off"
                     className="w-full px-3 py-2 text-sm bg-white border border-gray-200 rounded-lg text-cx-text placeholder-gray-400 focus:ring-1 focus:ring-cx-purple-500 focus:border-cx-purple-500 outline-none"
                   />
                   <p className="mt-2 text-[11px] text-cx-neutral">
-                    Stored as <span className="font-mono">cx_api_key</span>. Keep this secret.
+                    Paste for this request only. Prefer session-authenticated console actions when available.
                   </p>
                 </div>
                 <div>

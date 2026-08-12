@@ -10,7 +10,13 @@ export function useSessionManager() {
 
   const forceLogout = useCallback(async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' })
+      const { csrfMutationHeaders } = await import('@/services/auth/csrfBrowser')
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+        headers: csrfMutationHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({}),
+      })
     } finally {
       clearAuth()
       if (typeof window !== 'undefined') {
@@ -21,18 +27,26 @@ export function useSessionManager() {
 
   const extendSession = useCallback(async () => {
     try {
-      const response = await fetch('/api/auth/session/refresh', { method: 'POST' })
+      const { csrfMutationHeaders } = await import('@/services/auth/csrfBrowser')
+      const response = await fetch('/api/auth/session/refresh', {
+        method: 'POST',
+        credentials: 'include',
+        headers: csrfMutationHeaders(),
+      })
       if (response.ok) {
         lastActivityRef.current = Date.now()
         setShowWarning(false)
         broadcastChannelRef.current?.postMessage({ type: 'SESSION_EXTENDED' })
         // Poll status immediately to update local state
         await checkStatus()
-      } else {
+        return
+      }
+      // CON-P1-03: only definitive session rejection logs the operator out.
+      if (response.status === 401 || response.status === 403) {
         await forceLogout()
       }
     } catch {
-      await forceLogout()
+      // Transport failure — keep the session; idle timer will retry later.
     }
   }, [forceLogout])
 
@@ -59,7 +73,8 @@ export function useSessionManager() {
         } else {
           setShowWarning(false)
         }
-      } else {
+      } else if (response.status === 401 || response.status === 403) {
+        // CON-P1-03: definitive rejection only — not Edge outages (503).
         await forceLogout()
       }
     } catch {

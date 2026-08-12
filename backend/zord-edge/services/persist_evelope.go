@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -15,6 +14,19 @@ import (
 	"zord-edge/vault"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
+)
+
+const (
+	ArtifactStatusProcessing = "PROCESSING"
+	ArtifactStatusCompleted  = "COMPLETED"
+	ArtifactStatusFailed     = "FAILED"
+)
+
+var (
+	ErrBatchAlreadyProcessed = errors.New("batch already completed")
+	ErrBatchInProgress       = errors.New("batch currently processing")
+	ErrBatchFailedRetry      = errors.New("previous batch failed, retry allowed")
 )
 
 func RawIntent(ctx context.Context,
@@ -82,19 +94,26 @@ func RawIntent(ctx context.Context,
 		EncryptionKeyID:              os.Getenv("VAULT_KEY_ID"),
 		ObjectStoreVersion:           os.Getenv("OBJECT_STORE_VERSION"),
 		IdempotencyReservationStatus: "RESERVED",
-		PrincipalID:                  tenantID,
-		AuthMethod:                   "API_KEY",
-		ObjectRef:                    objectRef,
-		Status:                       "RECEIVED",
-		ReceivedAt:                   storageAck.ReceivedAt,
-		Payload:                      rawIntent.Payload,
-		FileName:                     rawIntent.FileName,
-		FileSizeBytes:                rawIntent.FileSizeBytes,
-		FileContentHash:              rawIntent.FileContentHash,
-		RowCountEstimate:             rawIntent.RowCountEstimate,
-		FileUploadChannel:            rawIntent.FileUploadChannel,
-		SourceRowRef:                 rawIntent.SourceRowRef,
-		BatchID:                      rawIntent.BatchID,
+		PrincipalID: func() uuid.UUID {
+			if rawIntent.PrincipalID != "" {
+				if pid, err := uuid.Parse(rawIntent.PrincipalID); err == nil {
+					return pid
+				}
+			}
+			return tenantID
+		}(),
+		AuthMethod:        rawIntent.AuthMethod,
+		ObjectRef:         objectRef,
+		Status:            "RECEIVED",
+		ReceivedAt:        storageAck.ReceivedAt,
+		Payload:           rawIntent.Payload,
+		FileName:          rawIntent.FileName,
+		FileSizeBytes:     rawIntent.FileSizeBytes,
+		FileContentHash:   rawIntent.FileContentHash,
+		RowCountEstimate:  rawIntent.RowCountEstimate,
+		FileUploadChannel: rawIntent.FileUploadChannel,
+		SourceRowRef:      rawIntent.SourceRowRef,
+		BatchID:           rawIntent.BatchID,
 	}
 
 	// Envolope.SaveRawIntent()
@@ -108,78 +127,135 @@ func RawIntent(ctx context.Context,
 	return nil
 }
 
-func CheckBatchIDExists(ctx context.Context, tenantID uuid.UUID, batchID *string) (bool, error) {
-	if batchID == nil {
-		return false, nil
-	}
-	var exists bool
-	query := `SELECT EXISTS(SELECT 1 FROM ingress_envelopes WHERE tenant_id = $1 AND batchid = $2)`
-	err := db.DB.QueryRowContext(ctx, query, tenantID, *batchID).Scan(&exists)
-	if err != nil {
-		return false, err
-	}
-	return exists, nil
-}
-func UpsertArtifact(ctx context.Context, forcereprocess bool, input model.Artifact) (bool, uuid.UUID, uuid.UUID, error) {
+func ReserveArtifact(ctx context.Context, forceReprocess bool, input model.Artifact) (uuid.UUID, uuid.UUID, error) {
 
-	var existingArtifactId, existingArtifactVerId, artifactID, artifactVersionId uuid.UUID
+	artifactVersionID := uuid.Must(uuid.NewV7())
+	artifactID := uuid.Must(uuid.NewV7())
 
-	if !forcereprocess {
-		query := `SELECT artifact_id,artifact_version_id FROM artifacts WHERE tenant_id=$1 AND file_hash=$2`
-		err := db.DB.QueryRowContext(ctx, query, input.TenantId, input.FileHash).Scan(&existingArtifactId, &existingArtifactVerId)
+	if forceReprocess {
+		// reprocess — keep same artifact_id, new version_id
+		var existingID uuid.UUID
+		err := db.DB.QueryRowContext(ctx,
+			`SELECT artifact_id FROM artifacts 
+             WHERE tenant_id = $1 AND file_hash = $2 
+             ORDER BY created_at DESC LIMIT 1`,
+			input.TenantId, input.FileHash,
+		).Scan(&existingID)
 		if err == nil {
-			logger.Log.Info("artifact already exist",
-				slog.String("artifactId", existingArtifactId.String()),
-				slog.String("tenant_id", input.TenantId.String()))
-			return true, existingArtifactId, existingArtifactVerId, nil
+			artifactID = existingID
 		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			logger.Log.Error("artifact lookup failed",
-				slog.String("tenant_id", input.TenantId.String()),
-				slog.String("error", err.Error()))
-			return false, uuid.Nil, uuid.Nil, err
-		}
-	}
-	artifactID = uuid.Must(uuid.NewV7())
-	artifactVersionId = uuid.Must(uuid.NewV7())
-	if forcereprocess {
-		query := `SELECT artifact_id FROM artifacts WHERE tenant_id=$1 AND file_hash=$2`
-		err := db.DB.QueryRowContext(ctx, query, input.TenantId, input.FileHash).Scan(&existingArtifactId)
+	} else {
+		// not reprocess — check if this exact file was already processed
+		var existingStatus string
+		err := db.DB.QueryRowContext(ctx,
+			`SELECT status FROM artifacts 
+             WHERE tenant_id = $1 AND file_hash = $2 
+             ORDER BY created_at DESC LIMIT 1`,
+			input.TenantId, input.FileHash,
+		).Scan(&existingStatus)
+
 		if err == nil {
-			logger.Log.Info("artifact already exist",
-				slog.String("artifactId", existingArtifactId.String()),
-				slog.String("tenant_id", input.TenantId.String()))
-			artifactID = existingArtifactId
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			logger.Log.Error("artifact lookup failed",
+			// file already exists — reject before touching S3
+			logger.Log.Warn("duplicate file rejected",
+				slog.String("file_hash", input.FileHash),
 				slog.String("tenant_id", input.TenantId.String()),
-				slog.String("error", err.Error()))
-			return false, uuid.Nil, uuid.Nil, err
+				slog.String("existing_status", existingStatus))
+
+			switch existingStatus {
+			case ArtifactStatusProcessing:
+				return uuid.Nil, uuid.Nil, ErrBatchInProgress
+			case ArtifactStatusCompleted:
+				return uuid.Nil, uuid.Nil, ErrBatchAlreadyProcessed
+			case ArtifactStatusFailed:
+				return uuid.Nil, uuid.Nil, ErrBatchFailedRetry
+			}
 		}
+		// err == sql.ErrNoRows → genuinely new file, proceed to INSERT
 	}
 
-	query := `INSERT INTO artifacts(artifact_id,artifact_version_id,file_envelope_id,tenant_id,file_hash,file_name,
-			file_size_bytes,row_count_estimate,object_ref,batch_id)VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`
-
-	_, err := db.DB.ExecContext(ctx, query,
-		artifactID.String(),
-		artifactVersionId.String(),
-		input.FileEnvelopeId,
+	_, err := db.DB.ExecContext(ctx, `
+        INSERT INTO artifacts(
+            artifact_id, artifact_version_id, tenant_id, file_hash,
+            file_name, file_size_bytes, row_count_estimate, batch_id, status
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'PROCESSING')`,
+		artifactID,
+		artifactVersionID,
 		input.TenantId,
 		input.FileHash,
 		input.FileName,
 		input.FileSizeByte,
 		input.RowCountEstimate,
-		input.ObjectRef,
-		input.BatchId,
+		input.BatchID,
+	)
+
+	if err != nil {
+		pqErr, ok := err.(*pq.Error)
+		if ok && pqErr.Code == "23505" {
+			// DB constraint fired — only happens for batch_id conflict now
+			var existingStatus string
+			_ = db.DB.QueryRowContext(ctx,
+				`SELECT status FROM artifacts WHERE tenant_id = $1 AND batch_id = $2`,
+				input.TenantId, input.BatchID,
+			).Scan(&existingStatus)
+
+			logger.Log.Warn("duplicate batch_id rejected",
+				slog.String("batch_id", input.BatchID),
+				slog.String("tenant_id", input.TenantId.String()),
+				slog.String("existing_status", existingStatus))
+
+			switch existingStatus {
+			case ArtifactStatusProcessing:
+				return uuid.Nil, uuid.Nil, ErrBatchInProgress
+			case ArtifactStatusCompleted:
+				return uuid.Nil, uuid.Nil, ErrBatchAlreadyProcessed
+			case ArtifactStatusFailed:
+				return uuid.Nil, uuid.Nil, ErrBatchFailedRetry
+			}
+		}
+		return uuid.Nil, uuid.Nil, err
+	}
+
+	logger.Log.Info("artifact reserved",
+		slog.String("artifact_id", artifactID.String()),
+		slog.String("artifact_version_id", artifactVersionID.String()),
+		slog.String("batch_id", input.BatchID))
+
+	return artifactID, artifactVersionID, nil
+}
+func MarkArtifactFailed(ctx context.Context, artifactVersionID uuid.UUID) {
+	_, err := db.DB.ExecContext(ctx, `
+        UPDATE artifacts SET status = 'FAILED', updated_at = now()
+        WHERE artifact_version_id = $1`,
+		artifactVersionID,
 	)
 	if err != nil {
-		logger.Log.Error("error in artifact persist",
-			slog.String("tenat_id", string(input.TenantId.String())),
-			slog.String("file_name", *input.FileName),
-			slog.String("Error", err.Error()),
-		)
-		return false, uuid.Nil, uuid.Nil, err
+		logger.Log.Error("artifact mark failed error",
+			slog.String("artifact_version_id", artifactVersionID.String()),
+			slog.String("error", err.Error()))
 	}
-	return false, artifactID, artifactVersionId, nil
+}
+func FinalizeArtifact(ctx context.Context, artifactVersionID uuid.UUID, objectRef string, fileEnvelopeID uuid.UUID) error {
+	_, err := db.DB.ExecContext(ctx, `
+        UPDATE artifacts
+        SET status          = 'COMPLETED',
+            object_ref      = $1,
+            file_envelope_id = $2,
+            updated_at      = now()
+        WHERE artifact_version_id = $3`,
+		objectRef,
+		fileEnvelopeID,
+		artifactVersionID,
+	)
+	if err != nil {
+		logger.Log.Error("artifact finalize failed",
+			slog.String("artifact_version_id", artifactVersionID.String()),
+			slog.String("error", err.Error()))
+		return err
+	}
+
+	logger.Log.Info("artifact finalized",
+		slog.String("artifact_version_id", artifactVersionID.String()),
+		slog.String("object_ref", objectRef))
+
+	return nil
 }

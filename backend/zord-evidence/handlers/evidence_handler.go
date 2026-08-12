@@ -17,17 +17,24 @@ func NewEvidenceHandler(svc *services.EvidenceService) *EvidenceHandler {
 	return &EvidenceHandler{svc: svc}
 }
 
-// POST /v1/evidence/packs — generate a new evidence pack (spec §13)
-func (h *EvidenceHandler) GenerateEvidencePack(c *gin.Context) {
-	var req models.GenerateEvidenceRequest
+// POST /internal/evidence/packs — admin-only recovery: regenerate a pack from
+// the trusted pending-leaf set already committed to the DB via the Kafka pipeline.
+// Caller supplies only tenant_id + intent_id — NO hashes or items accepted.
+// Protected by RequireInternalKey middleware; never reachable via public routes.
+func (h *EvidenceHandler) AdminRecoverEvidencePack(c *gin.Context) {
+	var req struct {
+		TenantID string `json:"tenant_id" binding:"required"`
+		IntentID string `json:"intent_id" binding:"required"`
+	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	pack, err := h.svc.GeneratePack(c.Request.Context(), req)
+	pack, err := h.svc.GeneratePackFromTrustedLeaves(c.Request.Context(), req.TenantID, req.IntentID)
 	if err != nil {
-		if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "must be one of") {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		if strings.Contains(err.Error(), "no trusted leaves") ||
+			strings.Contains(err.Error(), "not found") {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

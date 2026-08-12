@@ -17,10 +17,7 @@ function settlementBase() {
 
 /** Proxy: GET /api/prod/settlement/observations/batches → outcome-engine settlement observations. */
 export async function GET(request: NextRequest) {
-  const ctx = await resolveSettlementUploadContext(
-    request,
-    process.env.ZORD_SETTLEMENT_API_KEY ?? process.env.ZORD_BULK_INGEST_API_KEY,
-  )
+  const ctx = await resolveSettlementUploadContext(request)
   if (!ctx.ok) return ctx.response
   const tenantId = ctx.tenantId
 
@@ -62,9 +59,9 @@ export async function GET(request: NextRequest) {
       },
     })
     if (ctx.refreshedPayload) {
-      applyAuthCookies(res, ctx.refreshedPayload)
+      applyAuthCookies(res, ctx.refreshedPayload, request)
     }
-    applyRefreshedSessionCookies(res, ctx.refreshedPayload)
+    applyRefreshedSessionCookies(res, ctx.refreshedPayload, request)
     return res
   } catch (error) {
     const res = publicBffError({

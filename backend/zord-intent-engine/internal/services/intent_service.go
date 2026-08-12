@@ -247,7 +247,7 @@ func (s *IntentService) emitVectorIndexRequest(
 
 	event := kafka.VectorIndexRequestEvent{
 		EventID:         uuid.NewString(),
-		SchemaVersion:   "v1",
+		SchemaVersion:   SchemaVersionV1,
 		EventType:       kafka.VectorIndexEventRequested,
 		SourceService:   "zord-intent-engine",
 		SourceEventType: sourceEventType,
@@ -1607,7 +1607,7 @@ func (s *IntentService) processIncomingIntentInternal(
 		}
 		return
 	}
-	parsed.SchemaVersion = "v1"
+	parsed.SchemaVersion = SchemaVersionV1
 	if sourceRowRef != "" {
 		parsed.SourceRowRef = sourceRowRef
 	}
@@ -2749,16 +2749,9 @@ func (s *IntentService) ProcessIncomingIntent(
 	}
 
 	if batchID != "" {
-		s.emitVectorIndexRequest(
-			"intent_batch.updated.v1",
-			saved.TenantID,
-			"intent_batch",
-			batchID,
-			batchID,
-			map[string]string{
-				"vector_summary_scope": "batch",
-			},
-		)
+		// Batch-level vector indexing is emitted once from the batch completion path.
+		// Do not emit one vector event per row here, otherwise large uploads create noisy duplicate events.
+		log.Printf("[intent-engine][vector-index] defer batch vector emit tenant=%s batch_id=%s intent_id=%s", saved.TenantID, batchID, saved.IntentID)
 	} else {
 		s.emitVectorIndexRequest(
 			"payment_intent.saved.v1",
@@ -3571,7 +3564,7 @@ func (s *IntentService) processWebhook(
 		IdempotencyKey: in.IdempotencyKey,
 		SalientHash:    in.IdempotencyKey,
 		IntentType:     "WEBHOOK",
-		SchemaVersion:  "v1",
+		SchemaVersion:  SchemaVersionV1,
 		Amount:         decimal.Zero,
 		Currency:       "XXX",
 		Status:         "CREATED",

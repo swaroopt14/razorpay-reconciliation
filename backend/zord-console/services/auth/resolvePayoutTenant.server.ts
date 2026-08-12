@@ -2,14 +2,19 @@
  * Server-only helpers for strict tenant isolation (payout / BFF).
  * Session tenant comes from zord-edge GET /v1/auth/me via cookies (with refresh).
  * Bearer tenant comes from GET /v1/auth/principal (JWT or tenant API key).
+ *
+ * CON-P0-02: Browser-facing ingest/proxy routes must never silently fall back to
+ * ZORD_BULK_INGEST_API_KEY / ZORD_SETTLEMENT_API_KEY. Callers need a verified
+ * session cookie JWT and/or an explicit Authorization header bound to the same tenant.
+ * Server env keys are reserved for separate internal-only workloads.
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { BACKEND_SERVICES } from '@/config/api.endpoints'
 import { normalizeAuthorizationHeader } from '@/services/payout-command/batch-intake/intakeHttpShared'
 import {
-  ACCESS_COOKIE_NAME,
   applyAuthCookies,
   authorizedEdgeFetch,
+  getAccessTokenFromRequest,
   parseJSONSafe,
   type BackendAuthEnvelope,
 } from '@/services/auth/server'
@@ -17,6 +22,12 @@ import {
 export const TENANT_MISMATCH_BODY = {
   code: 'TENANT_MISMATCH',
   message: 'API key or ingest credential does not belong to your session tenant.',
+} as const
+
+const UNAUTHORIZED_NO_CREDENTIALS = {
+  code: 'UNAUTHORIZED',
+  message:
+    'Sign in or provide an Authorization Bearer credential. Server ingest env keys are not used for browser console routes.',
 } as const
 
 export type SessionTenantResult = {
@@ -71,16 +82,16 @@ export type SettlementUploadContext =
 
 /**
  * Settlement upload needs tenant_id on the upstream query (like Postman).
- * Resolves tenant from session cookies first, then from Bearer / env ingest key principal.
+ * Resolves tenant from session cookies and/or explicit Authorization only.
+ * Never uses server env ingest keys (CON-P0-02).
  */
 export async function resolveSettlementUploadContext(
   request: NextRequest,
-  envFallbackKey?: string,
 ): Promise<SettlementUploadContext> {
   const { tenantId: sessionTenant, refreshedPayload: sessionRefresh } =
     await getSessionTenantIdFromRequest(request)
 
-  const authResolution = await resolveProxyForwardAuthorization(request, envFallbackKey)
+  const authResolution = await resolveProxyForwardAuthorization(request)
   if (!authResolution.ok) return { ok: false, response: authResolution.response }
 
   const bearerTenant = await getTenantIdForBearerAuthorizationHeader(authResolution.authorization)
@@ -95,14 +106,7 @@ export async function resolveSettlementUploadContext(
   if (!tenantId) {
     return {
       ok: false,
-      response: NextResponse.json(
-        {
-          code: 'UNAUTHORIZED',
-          message:
-            'Could not resolve tenant_id. Sign in with a session tenant, send Authorization Bearer (same as Postman), or set ZORD_SETTLEMENT_API_KEY / ZORD_BULK_INGEST_API_KEY in the console env.',
-        },
-        { status: 401 },
-      ),
+      response: NextResponse.json(UNAUTHORIZED_NO_CREDENTIALS, { status: 401 }),
     }
   }
 
@@ -137,8 +141,9 @@ export async function requireSessionTenantForProdProxy(
 export function applyRefreshedSessionCookies(
   response: NextResponse,
   refreshedPayload?: BackendAuthEnvelope,
+  request?: NextRequest,
 ): void {
-  if (refreshedPayload) applyAuthCookies(response, refreshedPayload)
+  if (refreshedPayload) applyAuthCookies(response, refreshedPayload, request)
 }
 
 export type ProxyForwardAuthResolution =
@@ -146,42 +151,22 @@ export type ProxyForwardAuthResolution =
   | { ok: false; response: NextResponse }
 
 /**
- * Case 1: session JWT only → forward JWT.
- * Case 2: API key only (no session) → forward key.
+ * Browser-facing proxy auth (CON-P0-02):
+ * Case 1: session JWT (cookie) → forward JWT when principal matches session tenant.
+ * Case 2: explicit Authorization only → forward after principal resolve.
  * Case 3: session + explicit Authorization → tenants MUST match → forward explicit.
- * Case 4: none → 401.
- * When session exists and a server env fallback key is used, its tenant must match session.
+ * Case 4: none → 401 (even if ZORD_*_API_KEY env vars are set).
+ *
+ * Server env ingest keys are never used here.
  */
-/**
- * Bulk ingest should mirror Postman: when ZORD_BULK_INGEST_API_KEY is configured and
- * belongs to the signed-in session tenant, forward that API key instead of the session JWT.
- */
-export async function resolveBulkIngestForwardAuthorization(
-  request: NextRequest,
-  envFallbackKey: string | undefined,
-): Promise<ProxyForwardAuthResolution> {
-  const { tenantId: sessionTenant, refreshedPayload } = await getSessionTenantIdFromRequest(request)
-  const envBearer = normalizeAuthorizationHeader(envFallbackKey ?? '')
-  const sessionTid = sessionTenant?.trim() ?? ''
-
-  if (envBearer && sessionTid) {
-    const envTid = await getTenantIdForBearerAuthorizationHeader(envBearer)
-    if (envTid && envTid === sessionTid) {
-      return { ok: true, authorization: envBearer, refreshedPayload }
-    }
-  }
-
-  return resolveProxyForwardAuthorization(request, envFallbackKey)
-}
-
 export async function resolveProxyForwardAuthorization(
   request: NextRequest,
-  envFallbackKey: string | undefined,
+  /** @deprecated CON-P0-02 — ignored; env ingest keys are not used on browser routes. */
+  _envFallbackKey?: string,
 ): Promise<ProxyForwardAuthResolution> {
   const { tenantId: sessionTenant, refreshedPayload } = await getSessionTenantIdFromRequest(request)
   const incoming = normalizeAuthorizationHeader(request.headers.get('authorization') ?? '')
-  const envBearer = normalizeAuthorizationHeader(envFallbackKey ?? '')
-  const accessCookie = request.cookies.get(ACCESS_COOKIE_NAME)?.value
+  const accessCookie = getAccessTokenFromRequest(request)
   const cookieBearer = accessCookie?.trim() ? `Bearer ${accessCookie.trim()}` : null
 
   if (incoming) {
@@ -192,7 +177,7 @@ export async function resolveProxyForwardAuthorization(
       }
       return { ok: true, authorization: incoming, refreshedPayload }
     }
-    // Stale/wrong client Authorization — fall through to session cookie or server env key.
+    // Invalid/stale client Authorization — fall through to session cookie only (not env keys).
   }
 
   if (cookieBearer) {
@@ -211,28 +196,20 @@ export async function resolveProxyForwardAuthorization(
     return { ok: true, authorization: cookieBearer, refreshedPayload }
   }
 
-  if (envBearer) {
-    const envTid = await getTenantIdForBearerAuthorizationHeader(envBearer)
-    if (!envTid) {
-      return {
-        ok: false,
-        response: NextResponse.json(
-          { code: 'UNAUTHORIZED', message: 'Server ingest key is misconfigured or invalid.' },
-          { status: 401 },
-        ),
-      }
-    }
-    if (sessionTenant && envTid !== sessionTenant) {
-      return { ok: false, response: NextResponse.json(TENANT_MISMATCH_BODY, { status: 403 }) }
-    }
-    return { ok: true, authorization: envBearer, refreshedPayload }
-  }
-
   return {
     ok: false,
-    response: NextResponse.json(
-      { code: 'UNAUTHORIZED', message: 'Sign in or provide Authorization / server ingest key.' },
-      { status: 401 },
-    ),
+    response: NextResponse.json(UNAUTHORIZED_NO_CREDENTIALS, { status: 401 }),
   }
+}
+
+/**
+ * Bulk ingest browser route auth — same rules as resolveProxyForwardAuthorization.
+ * Does not use ZORD_BULK_INGEST_API_KEY (CON-P0-02).
+ */
+export async function resolveBulkIngestForwardAuthorization(
+  request: NextRequest,
+  /** @deprecated CON-P0-02 — ignored. */
+  _envFallbackKey?: string,
+): Promise<ProxyForwardAuthResolution> {
+  return resolveProxyForwardAuthorization(request)
 }

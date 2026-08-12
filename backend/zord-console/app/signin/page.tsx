@@ -3,7 +3,7 @@
 import { FormEvent, Suspense, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { login, hydrateSession } from '@/services/auth'
+import { login, hydrateSession, withSessionTenantQuery, writeTabSessionTenantId } from '@/services/auth'
 import { persistEnvMode } from '@/services/auth/persistEnvMode'
 import { AuthSplitLayout } from '@/components/auth/AuthSplitLayout'
 import {
@@ -57,12 +57,14 @@ function SignInForm() {
         return
       }
 
+      const tenantId = user.tenantId || user.tenant || ''
+      writeTabSessionTenantId(tenantId)
       if (openInSandbox) {
         persistEnvMode('sandbox')
-        router.push('/sandbox')
+        router.push(withSessionTenantQuery('/sandbox', tenantId))
       } else {
         persistEnvMode('live')
-        router.push(next)
+        router.push(withSessionTenantQuery(next, tenantId))
       }
       router.refresh()
     } catch (err) {

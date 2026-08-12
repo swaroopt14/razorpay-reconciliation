@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -92,9 +93,17 @@ func (h *QueryHandler) Query(c *gin.Context) {
 
 	resp, err := h.rag.Query(req)
 	if err != nil {
+		log.Printf(
+			"[prompt-layer][query] failed tenant=%s user=%s session=%s err=%v",
+			tenantID,
+			userID,
+			req.SessionID,
+			err,
+		)
+
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "query failed",
-			"details": err.Error(),
+			"details": "Prompt-layer could not complete the request safely. Please retry or contact support with server logs.",
 		})
 		return
 	}

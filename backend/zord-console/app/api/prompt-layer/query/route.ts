@@ -1,4 +1,8 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
+import {
+  applyRefreshedSessionCookies,
+  resolveProxyForwardAuthorization,
+} from '@/services/auth/resolvePayoutTenant.server'
 import { publicBffError } from '@/services/bff/publicBffError'
 
 // Always proxy at request time (no caching), since this depends on runtime env + backend state.
@@ -25,7 +29,7 @@ function upstreamCandidates() {
   )
 }
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   const candidateUrls = upstreamCandidates().map((base) => `${normalizePromptLayerBase(base)}/query`)
 
   let body: unknown
@@ -40,6 +44,11 @@ export async function POST(req: Request) {
     })
   }
 
+  const authResolution = await resolveProxyForwardAuthorization(req, undefined)
+  if (!authResolution.ok) {
+    return authResolution.response
+  }
+
   let res: Response | null = null
   let lastError: unknown = null
   let lastUrl = candidateUrls[candidateUrls.length - 1]
@@ -47,7 +56,6 @@ export async function POST(req: Request) {
   for (const url of candidateUrls) {
     lastUrl = url
     try {
-      const auth = req.headers.get('authorization') || ''
       const tenant = req.headers.get('x-tenant-id') || ''
       const userId = req.headers.get('x-user-id') || ''
       const sessionId = req.headers.get('x-session-id') || ''
@@ -56,7 +64,7 @@ export async function POST(req: Request) {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          ...(auth ? { authorization: auth } : {}),
+          authorization: authResolution.authorization,
           ...(tenant ? { 'x-tenant-id': tenant } : {}),
           ...(userId ? { 'x-user-id': userId } : {}),
           ...(sessionId ? { 'x-session-id': sessionId } : {}),
@@ -74,7 +82,7 @@ export async function POST(req: Request) {
   }
 
   if (!res) {
-    return publicBffError({
+    const response = publicBffError({
       code: 'UPSTREAM_UNAVAILABLE',
       message: 'Ask Zord is temporarily unavailable. Retry shortly.',
       status: 502,
@@ -84,16 +92,22 @@ export async function POST(req: Request) {
         error: lastError,
       },
     })
+    applyRefreshedSessionCookies(response, authResolution.refreshedPayload, req)
+    return response
   }
 
   const text = await res.text()
-  return new NextResponse(text, {
+  const response = new NextResponse(text, {
     status: res.status,
     headers: {
       'content-type': res.headers.get('content-type') || 'application/json; charset=utf-8',
       'cache-control': 'no-store',
     },
   })
+
+  applyRefreshedSessionCookies(response, authResolution.refreshedPayload, req)
+
+  return response
 }
 
 export async function OPTIONS() {

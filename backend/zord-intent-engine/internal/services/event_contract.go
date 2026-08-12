@@ -19,7 +19,7 @@ const EventTypeIntentManualReviewV1 = "intent.manual_review.v1"
 
 // EventVersionV1 / SchemaVersionV1 are the version strings stamped onto every
 // outbox and DLQ event this producer publishes today.
-const EventVersionV1 = "1"
+const EventVersionV1 = "v1"
 const SchemaVersionV1 = "v1"
 
 // SourceServiceName identifies this producer in the standard cross-service

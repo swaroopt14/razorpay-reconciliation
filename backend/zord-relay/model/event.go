@@ -174,6 +174,10 @@ const (
 	// match the upstream payload_hash on the Kafka relay path.
 	// Events carrying this code have NOT been forwarded to any consumer topic.
 	ReasonCodePayloadHashMismatch = "PAYLOAD_HASH_MISMATCH"
+
+	// ReasonCodeUnknownRoute is used when an event does not match the
+	// exact allow-list configuration for routing.
+	ReasonCodeUnknownRoute = "UNKNOWN_EVENT_ROUTE"
 )
 
 // PublishResult carries the outcome of a single Kafka publish attempt.

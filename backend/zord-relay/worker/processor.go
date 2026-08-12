@@ -30,8 +30,7 @@ type processorResult struct {
 type processor struct {
 	pub          publisher.Publisher
 	retryPolicy  retry.Policy
-	defaultTopic string
-	topicMap     map[string]string
+	guard        *RouteGuard
 	serviceName  string
 	instanceID   string
 	log          *zap.Logger
@@ -55,6 +54,7 @@ func newProcessor(
 	log *zap.Logger,
 	failureRepo *services.PublishFailureRepo,
 	hashVerifier services.PayloadHashVerifier,
+	guard *RouteGuard,
 ) *processor {
 	maxAttempts, baseDelay, maxDelay := svcCfg.RetryConfig()
 	return &processor{
@@ -65,8 +65,7 @@ func newProcessor(
 			MaxDelay:    maxDelay,
 			Multiplier:  2.0,
 		},
-		defaultTopic: svcCfg.DefaultTopic,
-		topicMap:     svcCfg.TopicMap,
+		guard:        guard,
 		serviceName:  svcCfg.Name,
 		instanceID:   instanceID,
 		log:          log.With(zap.String("component", "processor")),
@@ -145,11 +144,25 @@ func (p *processor) process(ctx context.Context, event *model.OutboxEvent) proce
 
 	topic := event.Topic
 	if topic == "" {
-		if t, ok := p.topicMap[event.EventType]; ok {
-			topic = t
-		} else {
-			topic = p.defaultTopic
+		key := RouteKey{
+			SourceService: event.Source,
+			EventType:     event.EventType,
+			EventVersion:  "", // generic OutboxEvent has no event_version
+			SchemaVersion: event.SchemaVersion,
 		}
+		t, err := p.guard.Route(key)
+		if err != nil {
+			p.log.Error("unknown event route — routing to poison DLQ",
+				zap.String("event_type", event.EventType),
+				zap.String("source_service", event.Source),
+				zap.Error(err),
+			)
+			if dlqErr := p.routeToPoisonDLQ(ctx, event, err, model.ReasonCodeUnknownRoute, 1, p.guard.DefaultTopic); dlqErr != nil {
+				return processorResult{eventID: event.EventID, success: false, isPoison: false, err: dlqErr}
+			}
+			return processorResult{eventID: event.EventID, isPoison: true, err: err}
+		}
+		topic = t
 	}
 
 	// Step 1 — validate the event before touching Kafka.
@@ -248,11 +261,25 @@ func (p *processor) processEdge(ctx context.Context, event *model.EdgeOutboxEven
 
 	topic := event.Topic
 	if topic == "" {
-		if t, ok := p.topicMap[event.EventType]; ok {
-			topic = t
-		} else {
-			topic = p.defaultTopic
+		key := RouteKey{
+			SourceService: event.SourceSystem,
+			EventType:     event.EventType,
+			EventVersion:  "", // EdgeOutboxEvent has no event_version
+			SchemaVersion: "", // EdgeOutboxEvent has no schema_version
 		}
+		t, err := p.guard.Route(key)
+		if err != nil {
+			p.log.Error("unknown event route — routing to poison DLQ",
+				zap.String("event_type", event.EventType),
+				zap.String("source_system", event.SourceSystem),
+				zap.Error(err),
+			)
+			if dlqErr := p.routeEdgeToPoisonDLQ(ctx, event, err, model.ReasonCodeUnknownRoute, 1, p.guard.DefaultTopic); dlqErr != nil {
+				return processorResult{eventID: event.EventID, success: false, isPoison: false, err: dlqErr}
+			}
+			return processorResult{eventID: event.EventID, isPoison: true, err: err}
+		}
+		topic = t
 	}
 
 	if err := validateEdgeEvent(event); err != nil {
@@ -444,11 +471,27 @@ func (p *processor) processIntent(ctx context.Context, event *model.IntentOutbox
 	)
 
 	topic := ""
-	if t, ok := p.topicMap[event.EventType]; ok {
-		topic = t
-	} else {
-		topic = p.defaultTopic
+	key := RouteKey{
+		SourceService: event.SourceService,
+		EventType:     event.EventType,
+		EventVersion:  event.EventVersion,
+		SchemaVersion: event.SchemaVersion,
 	}
+	t, err := p.guard.Route(key)
+	if err != nil {
+		p.log.Error("unknown event route — routing to poison DLQ",
+			zap.String("event_type", event.EventType),
+			zap.String("source_service", event.SourceService),
+			zap.String("event_version", event.EventVersion),
+			zap.String("schema_version", event.SchemaVersion),
+			zap.Error(err),
+		)
+		if dlqErr := p.routeIntentToPoisonDLQ(ctx, event, err, model.ReasonCodeUnknownRoute, 1, p.guard.DefaultTopic); dlqErr != nil {
+			return processorResult{eventID: event.EventID, success: false, isPoison: false, err: dlqErr}
+		}
+		return processorResult{eventID: event.EventID, isPoison: true, err: err}
+	}
+	topic = t
 
 	if err := validateIntentEvent(event); err != nil {
 		log.Warn("poison intent event detected during validation", zap.Error(err))
