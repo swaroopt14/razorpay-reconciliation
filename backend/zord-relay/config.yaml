@@ -9,6 +9,8 @@ relay:
   max_publish_concurrency: 10 # Semaphore: max in-flight Kafka publishes per worker
   shutdown_timeout: 30s       # SIGTERM drain window
 
+  operator_api_enabled: true
+  operator_auth_token: "test123"
 kafka:
   brokers: "kafka-broker-1:9092,kafka-broker-2:9092,kafka-broker-3:9092"
 

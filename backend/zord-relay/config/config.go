@@ -59,6 +59,12 @@ type RelayConfig struct {
 	// conflict record in relay_payload_conflicts). Guards against infinite
 	// NACK loops on genuinely corrupt upstream rows. Default 3.
 	MaxConflictRetries int `mapstructure:"max_conflict_retries"`
+
+	// OperatorAPIEnabled enables the controlled replay HTTP API.
+	OperatorAPIEnabled bool `mapstructure:"operator_api_enabled"`
+
+	// OperatorAuthToken is the secret required in X-Relay-Token header for operator API.
+	OperatorAuthToken string `mapstructure:"operator_auth_token"`
 }
 
 // KafkaConfig holds all Kafka connection and auth settings.

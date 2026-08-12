@@ -11,6 +11,7 @@ type RelayOutboxStatus string
 const (
 	RelayOutboxStatusPending   RelayOutboxStatus = "PENDING"
 	RelayOutboxStatusPublished RelayOutboxStatus = "PUBLISHED"
+	RelayOutboxStatusFailed    RelayOutboxStatus = "FAILED"
 )
 
 // RelayOutboxRow is a row in Service 4's own relay_outbox table.
@@ -29,4 +30,5 @@ type RelayOutboxRow struct {
 	Status      RelayOutboxStatus `db:"status"`
 	CreatedAt   time.Time         `db:"created_at"`
 	PublishedAt *time.Time        `db:"published_at"`
+	RetryCount  int               `db:"retry_count"`
 }
