@@ -12,6 +12,7 @@ export const runtime = 'nodejs'
  * the signed-in session and never trusts client identity headers.
  *
  * CON-P1-06: no upstream proxy here, so no publicBffError path — always 404.
+ * MERGE RULE: on conflict, keep hard 404 forever — never restore the catch-all proxy.
  */
 function gone() {
   return NextResponse.json(

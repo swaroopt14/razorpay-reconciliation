@@ -10,6 +10,12 @@ import { publicBffError } from '@/services/bff/publicBffError'
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
+/**
+ * Settlement upload BFF.
+ * MERGE RULE: keep assertCookieMutationProtection + session auth (no env API-key
+ * fallback) + publicBffError on upstream failure. Never restore leaky upstream JSON.
+ */
+
 /** Outcome-engine settlement ingest (default local: :8081). */
 function settlementBase() {
   if (process.env.ZORD_SETTLEMENT_URL) return process.env.ZORD_SETTLEMENT_URL.replace(/\/$/, '')
