@@ -103,3 +103,31 @@ func (r *RelayOutboxRepo) MarkPublished(ctx context.Context, eventIDs []string) 
 	}
 	return nil
 }
+
+// IncrementRetry increments the retry_count for a specific outbox event.
+func (r *RelayOutboxRepo) IncrementRetry(ctx context.Context, eventID string) (int, error) {
+	var newCount int
+	err := r.db.QueryRowContext(ctx, `
+		UPDATE relay_outbox
+		SET retry_count = retry_count + 1
+		WHERE event_id = $1
+		RETURNING retry_count
+	`, eventID).Scan(&newCount)
+	if err != nil {
+		return 0, fmt.Errorf("relay_outbox_repo: increment retry: %w", err)
+	}
+	return newCount, nil
+}
+
+// MarkFailed marks an event as terminal FAILED.
+func (r *RelayOutboxRepo) MarkFailed(ctx context.Context, eventID string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE relay_outbox
+		SET status = 'FAILED'
+		WHERE event_id = $1
+	`, eventID)
+	if err != nil {
+		return fmt.Errorf("relay_outbox_repo: mark failed: %w", err)
+	}
+	return nil
+}
