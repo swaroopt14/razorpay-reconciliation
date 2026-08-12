@@ -234,7 +234,7 @@ WHERE tenant_id = $1 AND intent_id = $2
 	for rows.Next() {
 		var l models.PendingLeafCandidate
 		if err := rows.Scan(
-			&l.ID, &l.TenantID, &l.IntentID, &l.EnvelopeID, &l.ContractID, &l.ClientBatchID, &l.LeafType, &l.ItemRef, &l.Hash, &l.SchemaVersion, &l.EventVersion, &l.SourceTopic,
+			&l.ID, &l.TenantID, &l.IntentID, &l.EnvelopeID, &l.ContractID, &l.ClientBatchID, &l.LeafType, &l.ItemRef, &l.Hash, &l.SchemaVersion, &l.EventVersion, &l.TraceID, &l.SourceTopic,
 			&l.PaymentInstructionReceived, &l.CanonicalIntentCreated, &l.MappingProfileUsed,
 			&l.RequiredFieldsStatus, &l.TokenizationStatus, &l.GovernanceDecision,
 			&l.SettlementRecordReceived, &l.CanonicalSettlementCreated, &l.BankReference,
@@ -274,7 +274,7 @@ WHERE tenant_id = $1 AND batch_id = $2 AND intent_id IS NULL
 	for rows.Next() {
 		var l models.PendingLeafCandidate
 		if err := rows.Scan(
-			&l.ID, &l.TenantID, &l.IntentID, &l.EnvelopeID, &l.ContractID, &l.ClientBatchID, &l.LeafType, &l.ItemRef, &l.Hash, &l.SchemaVersion, &l.EventVersion, &l.SourceTopic,
+			&l.ID, &l.TenantID, &l.IntentID, &l.EnvelopeID, &l.ContractID, &l.ClientBatchID, &l.LeafType, &l.ItemRef, &l.Hash, &l.SchemaVersion, &l.EventVersion, &l.TraceID, &l.SourceTopic,
 			&l.PaymentInstructionReceived, &l.CanonicalIntentCreated, &l.MappingProfileUsed,
 			&l.RequiredFieldsStatus, &l.TokenizationStatus, &l.GovernanceDecision,
 			&l.SettlementRecordReceived, &l.CanonicalSettlementCreated, &l.BankReference,
