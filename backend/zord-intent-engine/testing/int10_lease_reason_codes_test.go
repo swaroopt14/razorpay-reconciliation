@@ -66,16 +66,54 @@ func legacyOutboxColumns() []string {
 	}
 }
 
-// newOutboxColumns is the current, fixed column list: the 42 legacy columns
-// plus the 14 score/reason/governance columns INT-10 adds.
+// newOutboxColumns is the current, fixed column list: the 42 legacy columns,
+// the 14 score/reason/governance columns INT-10 adds, and the 30
+// schema_version/payload_hash/hash/lineage columns INT-02 adds.
 func newOutboxColumns() []string {
-	return append(legacyOutboxColumns(),
+	cols := append(legacyOutboxColumns(),
 		"governance_reason_codes_json", "score_version", "score_validity_status",
 		"score_breakdown_json", "score_reason_codes_json", "scored_at",
 		"reference_quality_score", "duplicate_risk_score", "proof_readiness_score",
 		"matchability_score", "intent_quality_score", "mapping_confidence_score",
 		"schema_completeness_score", "duplicate_reason_code",
 	)
+	return append(cols, int02OutboxColumns()...)
+}
+
+// int02OutboxColumns is the 30-column list INT-02 adds to the lease
+// projection ("Fix outbox lease projection to include schema_version,
+// payload_hash and commercial lineage fields") — same order as appended to
+// outboxLeaseColumns in internal/persistence/outbox_lease_contract.go.
+func int02OutboxColumns() []string {
+	return []string{
+		"schema_version", "payload_hash", "source_row_ref", "source_system",
+		"client_batch_ref", "salient_hash", "canonical_row_hash", "input_facts_hash",
+		"raw_row_hash", "idempotency_key", "intent_type", "canonical_version",
+		"intended_execution_at", "constraints", "beneficiary_type", "pii_tokens",
+		"beneficiary", "intent_status", "confidence_score", "canonical_snapshot_ref",
+		"nir_snapshot_ref", "governance_snapshot_ref", "provider_hint",
+		"request_fingerprint", "routing_hints_json", "business_state",
+		"duplicate_risk_flag", "mapping_profile_version", "beneficiary_fingerprint",
+		"aggregate_confidence_score",
+	}
+}
+
+// int02RowValues returns driver-compatible values for the 30 INT-02 columns,
+// in the same order as int02OutboxColumns, with distinct non-zero/non-empty
+// values for every field so a test can assert none of them silently comes
+// back blank.
+func int02RowValues(now time.Time) []driver.Value {
+	return []driver.Value{
+		"v1", "payloadhash-int02-abc123", "row-ref-42", "TALLY",
+		"batch-ref-99", "salienthash123", "canonrowhash123", "inputfactshash123",
+		"rawrowhash123", "idem-key-1", "FILE", "v1",
+		now, []byte(`{"max_amount":1000}`), "BANK_ACCOUNT", []byte(`{"account_number":"tok_123"}`),
+		[]byte(`{"name":"tok_name"}`), "ACCEPTED", "95.5", "snap-ref-1",
+		"nir-ref-1", "gov-ref-1", "RAZORPAY",
+		"fingerprint123", []byte(`{"preferred_provider":"razorpay"}`), "APPROVED",
+		false, "v2", "beneficiary-fp-1",
+		"90.0",
+	}
 }
 
 // baseRowValues returns driver-compatible values for the 42 legacy columns,
@@ -221,6 +259,7 @@ func TestINT10_FixedBehavior_ScoreAndReasonFieldsPopulated(t *testing.T) {
 		"STRICT_DUPLICATE_CLIENT_REF", // duplicate_reason_code
 	}
 	row := append(append([]driver.Value{}, base...), extra...)
+	row = append(row, int02RowValues(now)...)
 
 	mock.ExpectQuery("FROM leased").
 		WillReturnRows(sqlmock.NewRows(newOutboxColumns()).AddRow(row...))
