@@ -93,6 +93,14 @@ ORDER BY created_at ASC;
 		var canonicalHash sql.NullString
 		var governanceState sql.NullString
 		var governanceHash sql.NullString
+		// INT-02: intended_execution_at is genuinely nullable with no sensible
+		// COALESCE default (unlike the string/score columns below); confidence_score
+		// and aggregate_confidence_score are *float64 fields on models.OutboxEvent,
+		// so — even though COALESCE(...,0) guarantees a non-NULL SQL value — they
+		// need a plain-float64 scan destination before being taken by address.
+		var intendedExecutionAt sql.NullTime
+		var confidenceScore float64
+		var aggregateConfidenceScore float64
 
 		if err := rows.Scan(
 			&evt.EventID,
@@ -151,6 +159,36 @@ ORDER BY created_at ASC;
 			&evt.MappingConfidenceScore,
 			&evt.SchemaCompletenessScore,
 			&evt.DuplicateReasonCode,
+			&evt.SchemaVersion,
+			&evt.PayloadHash,
+			&evt.SourceRowRef,
+			&evt.SourceSystem,
+			&evt.ClientBatchRef,
+			&evt.SalientHash,
+			&evt.CanonicalRowHash,
+			&evt.GovernanceInputFactsHash,
+			&evt.RawRowHash,
+			&evt.IdempotencyKey,
+			&evt.IntentType,
+			&evt.CanonicalVersion,
+			&intendedExecutionAt,
+			&evt.Constraints,
+			&evt.BeneficiaryType,
+			&evt.PIITokens,
+			&evt.Beneficiary,
+			&evt.IntentStatus,
+			&confidenceScore,
+			&evt.CanonicalSnapshotRef,
+			&evt.NIRSnapshotRef,
+			&evt.GovernanceSnapshotRef,
+			&evt.ProviderHint,
+			&evt.RequestFingerprint,
+			&evt.RoutingHintsJSON,
+			&evt.BusinessState,
+			&evt.DuplicateRiskFlag,
+			&evt.MappingProfileVersion,
+			&evt.BeneficiaryFingerprint,
+			&aggregateConfidenceScore,
 		); err != nil {
 			return "", nil, nil, err
 		}
@@ -170,6 +208,12 @@ ORDER BY created_at ASC;
 		if governanceHash.Valid {
 			evt.GovernanceHash = governanceHash.String
 		}
+		if intendedExecutionAt.Valid {
+			t := intendedExecutionAt.Time
+			evt.IntendedExecutionAt = &t
+		}
+		evt.ConfidenceScore = &confidenceScore
+		evt.AggregateConfidenceScore = &aggregateConfidenceScore
 
 		if nextRetry.Valid {
 			t := nextRetry.Time
