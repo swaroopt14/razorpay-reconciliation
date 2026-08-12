@@ -24,7 +24,7 @@ export async function GET(
     return res
   }
 
-  const full = await getEvidencePackById(gate.tenantId, evidenceId)
+  const full = await getEvidencePackById(gate.tenantId, gate.accessToken, evidenceId)
   if (!full.ok) {
     const res = NextResponse.json(
       { error: 'Could not load evidence pack', detail: full.detail },

@@ -3,6 +3,7 @@ import { BACKEND_SERVICES } from '@/config/api.endpoints'
 import {
   applyRefreshedSessionCookies,
   requireSessionTenantForProdProxy,
+  sessionUpstreamHeaders,
 } from '@/services/auth/resolvePayoutTenant.server'
 
 /**
@@ -13,6 +14,7 @@ export async function forwardEvidence(request: NextRequest, upstreamPath: string
   const gate = await requireSessionTenantForProdProxy(request)
   if (!gate.ok) return gate.response
   const tenantId = gate.tenantId
+  const accessToken = gate.accessToken
 
   const params = new URLSearchParams(request.nextUrl.searchParams)
   params.delete('tenant_id')
@@ -23,10 +25,7 @@ export async function forwardEvidence(request: NextRequest, upstreamPath: string
   try {
     const upstream = await fetch(url, {
       method: 'GET',
-      headers: {
-        'content-type': 'application/json',
-        'x-tenant-id': tenantId,
-      },
+      headers: sessionUpstreamHeaders(tenantId, accessToken),
       cache: 'no-store',
     })
     const text = await upstream.text()

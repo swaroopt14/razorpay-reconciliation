@@ -32,7 +32,27 @@ const UNAUTHORIZED_NO_CREDENTIALS = {
 
 export type SessionTenantResult = {
   tenantId: string | null
+  /** Session JWT for upstream Kong/service auth (cookie or post-refresh). */
+  accessToken?: string
   refreshedPayload?: BackendAuthEnvelope
+}
+
+function accessTokenFromSession(
+  request: NextRequest,
+  refreshedPayload?: BackendAuthEnvelope,
+): string | undefined {
+  const fromRefresh = refreshedPayload?.access_token?.trim()
+  if (fromRefresh) return fromRefresh
+  return getAccessTokenFromRequest(request)?.trim() || undefined
+}
+
+/** Headers for BFF → upstream service calls (session JWT + tenant claim header). */
+export function sessionUpstreamHeaders(tenantId: string, accessToken: string): Record<string, string> {
+  return {
+    'content-type': 'application/json',
+    'x-tenant-id': tenantId,
+    Authorization: `Bearer ${accessToken}`,
+  }
 }
 
 export async function getSessionTenantIdFromRequest(request: NextRequest): Promise<SessionTenantResult> {
@@ -42,14 +62,24 @@ export async function getSessionTenantIdFromRequest(request: NextRequest): Promi
     { method: 'GET' },
   )
   if (errorResponse) return { tenantId: null }
-  if (!edgeResponse?.ok) return { tenantId: null, refreshedPayload }
+  if (!edgeResponse?.ok) {
+    return {
+      tenantId: null,
+      accessToken: accessTokenFromSession(request, refreshedPayload),
+      refreshedPayload,
+    }
+  }
   const payload = await parseJSONSafe<{
     user?: { tenant_id?: string }
     session?: { tenant_id?: string }
   }>(edgeResponse)
   const tid =
     payload?.session?.tenant_id?.trim() || payload?.user?.tenant_id?.trim() || null
-  return { tenantId: tid, refreshedPayload }
+  return {
+    tenantId: tid,
+    accessToken: accessTokenFromSession(request, refreshedPayload),
+    refreshedPayload,
+  }
 }
 
 /** Resolves tenant UUID string for a Bearer token (JWT or API key) via zord-edge. */
@@ -121,11 +151,11 @@ export async function resolveSettlementUploadContext(
 export async function requireSessionTenantForProdProxy(
   request: NextRequest,
 ): Promise<
-  | { ok: true; tenantId: string; refreshedPayload?: BackendAuthEnvelope }
+  | { ok: true; tenantId: string; accessToken: string; refreshedPayload?: BackendAuthEnvelope }
   | { ok: false; response: NextResponse }
 > {
-  const { tenantId, refreshedPayload } = await getSessionTenantIdFromRequest(request)
-  if (!tenantId?.trim()) {
+  const { tenantId, accessToken, refreshedPayload } = await getSessionTenantIdFromRequest(request)
+  if (!tenantId?.trim() || !accessToken) {
     return {
       ok: false,
       response: NextResponse.json(
@@ -134,7 +164,12 @@ export async function requireSessionTenantForProdProxy(
       ),
     }
   }
-  return { ok: true, tenantId: tenantId.trim(), refreshedPayload }
+  return {
+    ok: true,
+    tenantId: tenantId.trim(),
+    accessToken,
+    refreshedPayload,
+  }
 }
 
 /** Apply rotated access/refresh cookies when authorizedEdgeFetch refreshed the session. */

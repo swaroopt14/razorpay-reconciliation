@@ -83,6 +83,7 @@ export function buildLeakageTrendBucketSpecs(range: DisbursementTrendRange): Lea
 
 async function fetchLeakageWindow(
   tenantId: string,
+  accessToken: string,
   spec: LeakageTrendBucketSpec,
 ): Promise<DisbursementTrendBucket> {
   const base = `${BACKEND_SERVICES.INTELLIGENCE.BASE_URL}${BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.LEAKAGE}`
@@ -98,6 +99,7 @@ async function fetchLeakageWindow(
       headers: {
         'content-type': 'application/json',
         'x-tenant-id': tenantId,
+        Authorization: `Bearer ${accessToken}`,
       },
       cache: 'no-store',
     })
@@ -118,8 +120,9 @@ async function fetchLeakageWindow(
 export async function fetchLeakageTrendFromIntelligence(
   tenantId: string,
   range: DisbursementTrendRange,
+  accessToken: string,
 ): Promise<DisbursementTrendBucket[]> {
   const specs = buildLeakageTrendBucketSpecs(range)
   if (!specs.length) return []
-  return Promise.all(specs.map((spec) => fetchLeakageWindow(tenantId, spec)))
+  return Promise.all(specs.map((spec) => fetchLeakageWindow(tenantId, accessToken, spec)))
 }
