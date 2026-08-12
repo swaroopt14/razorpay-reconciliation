@@ -122,6 +122,7 @@ export async function GET(
       headers: {
         'content-type': 'application/json',
         'x-tenant-id': gate.tenantId,
+        Authorization: `Bearer ${gate.accessToken}`,
       },
       cache: 'no-store',
     })

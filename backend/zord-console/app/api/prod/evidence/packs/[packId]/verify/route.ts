@@ -4,6 +4,7 @@ import { assertCookieMutationProtection } from '@/services/auth/assertSameOrigin
 import {
   applyRefreshedSessionCookies,
   requireSessionTenantForProdProxy,
+  sessionUpstreamHeaders,
 } from '@/services/auth/resolvePayoutTenant.server'
 import { publicBffError } from '@/services/bff/publicBffError'
 
@@ -19,6 +20,7 @@ export async function POST(
   const gate = await requireSessionTenantForProdProxy(request)
   if (!gate.ok) return gate.response
   const tenantId = gate.tenantId
+  const accessToken = gate.accessToken
   const { packId } = await context.params
   const encoded = encodeURIComponent(packId)
 
@@ -27,10 +29,7 @@ export async function POST(
   try {
     const upstream = await fetch(url, {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-tenant-id': tenantId,
-      },
+      headers: sessionUpstreamHeaders(tenantId, accessToken),
       body: await request.text(),
       cache: 'no-store',
     })

@@ -38,6 +38,7 @@ export type EvidenceTenantGate =
   | {
       ok: true
       tenantId: string
+      accessToken: string
       refreshedPayload?: BackendAuthEnvelope
     }
   | { ok: false; response: NextResponse }
@@ -48,6 +49,7 @@ export async function gateEvidenceTenant(request: NextRequest): Promise<Evidence
   return {
     ok: true,
     tenantId: gate.tenantId,
+    accessToken: gate.accessToken,
     refreshedPayload: gate.refreshedPayload,
   }
 }
@@ -58,6 +60,7 @@ type UpstreamResult<T> =
 
 async function evidenceGet<T>(
   tenantId: string,
+  accessToken: string,
   path: string,
   query?: URLSearchParams,
 ): Promise<UpstreamResult<T>> {
@@ -69,6 +72,7 @@ async function evidenceGet<T>(
       headers: {
         'content-type': 'application/json',
         'x-tenant-id': tenantId,
+        Authorization: `Bearer ${accessToken}`,
       },
       cache: 'no-store',
     })
@@ -102,11 +106,13 @@ async function evidenceGet<T>(
 
 export async function getEvidencePackById(
   tenantId: string,
+  accessToken: string,
   evidencePackId: string,
 ): Promise<UpstreamResult<EvidencePackFull>> {
   const query = new URLSearchParams({ tenant_id: tenantId })
   return evidenceGet<EvidencePackFull>(
     tenantId,
+    accessToken,
     BACKEND_SERVICES.EVIDENCE.ENDPOINTS.PACK_BY_ID(evidencePackId),
     query,
   )
@@ -114,11 +120,13 @@ export async function getEvidencePackById(
 
 export async function listEvidencePacksByQuery(
   tenantId: string,
+  accessToken: string,
   query: URLSearchParams,
 ): Promise<UpstreamResult<{ packs: EvidencePackSummaryRow[]; total?: number }>> {
   query.set('tenant_id', tenantId)
   return evidenceGet<{ packs: EvidencePackSummaryRow[]; total?: number }>(
     tenantId,
+    accessToken,
     BACKEND_SERVICES.EVIDENCE.ENDPOINTS.PACKS,
     query,
   )
@@ -126,11 +134,13 @@ export async function listEvidencePacksByQuery(
 
 export async function getEvidenceTimelineById(
   tenantId: string,
+  accessToken: string,
   evidencePackId: string,
 ): Promise<UpstreamResult<EvidencePackTimelineResponse>> {
   const query = new URLSearchParams({ tenant_id: tenantId })
   return evidenceGet<EvidencePackTimelineResponse>(
     tenantId,
+    accessToken,
     BACKEND_SERVICES.EVIDENCE.ENDPOINTS.PACK_TIMELINE(evidencePackId),
     query,
   )
