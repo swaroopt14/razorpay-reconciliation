@@ -446,6 +446,64 @@ export async function parseJSONSafe<T>(target: { json(): Promise<unknown> }): Pr
   }
 }
 
+/**
+ * CON-P1-04 — validate a single IP literal for audit forwarding.
+ * Rejects empty values, spaces/commas (multi-hop injection), and obvious garbage.
+ */
+export function sanitizeSingleIp(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const value = raw.trim()
+  if (!value || value.includes(',') || /\s/.test(value)) return null
+  // Basic IPv4 / IPv6 (incl. compressed) guard — not a full parser.
+  const ipv4 = /^(?:\d{1,3}\.){3}\d{1,3}$/
+  const ipv6 = /^[0-9a-fA-F:]+$/
+  if (ipv4.test(value)) {
+    const parts = value.split('.').map((p) => Number(p))
+    if (parts.every((n) => n >= 0 && n <= 255)) return value
+    return null
+  }
+  if (ipv6.test(value) && value.includes(':')) return value
+  return null
+}
+
+function trustProxyHeadersEnabled(): boolean {
+  const explicit = process.env.TRUST_PROXY_HEADERS?.trim().toLowerCase()
+  if (explicit === 'true' || explicit === '1') return true
+  if (explicit === 'false' || explicit === '0') return false
+  // Production console sits behind Kong/ALB which append the real client hop.
+  return process.env.NODE_ENV === 'production'
+}
+
+/**
+ * CON-P1-04 — resolve the client IP that Edge may record for audit.
+ *
+ * Never forwards the browser's raw X-Forwarded-For chain (spoofable).
+ * Order:
+ * 1) Ingress-controlled single-IP headers (x-real-ip / true-client-ip / cf-connecting-ip)
+ * 2) When TRUST_PROXY_HEADERS / production: rightmost XFF hop only (proxy-appended)
+ * 3) Otherwise omit (Edge falls back to TCP peer = console→edge, not attacker-chosen)
+ */
+export function resolveTrustedClientIp(request: NextRequest): string | null {
+  for (const headerName of ['x-real-ip', 'true-client-ip', 'cf-connecting-ip'] as const) {
+    const trusted = sanitizeSingleIp(request.headers.get(headerName))
+    if (trusted) return trusted
+  }
+
+  if (!trustProxyHeadersEnabled()) {
+    return null
+  }
+
+  const xff = request.headers.get('x-forwarded-for')
+  if (!xff) return null
+  const hops = xff
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+  if (hops.length === 0) return null
+  // Rightmost hop is appended by the nearest reverse proxy; leftmost is client-controlled.
+  return sanitizeSingleIp(hops[hops.length - 1])
+}
+
 export function buildForwardHeaders(request: NextRequest, accessToken?: string): HeadersInit {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -456,9 +514,11 @@ export function buildForwardHeaders(request: NextRequest, accessToken?: string):
     headers['User-Agent'] = userAgent
   }
 
-  const forwardedFor = request.headers.get('x-forwarded-for')
-  if (forwardedFor) {
-    headers['X-Forwarded-For'] = forwardedFor
+  // CON-P1-04: never copy arbitrary browser X-Forwarded-For into Edge calls.
+  const clientIp = resolveTrustedClientIp(request)
+  if (clientIp) {
+    headers['X-Forwarded-For'] = clientIp
+    headers['X-Real-IP'] = clientIp
   }
 
   if (accessToken) {
