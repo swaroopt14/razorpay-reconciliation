@@ -18,6 +18,7 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/zord/zord-intelligence/config"
 	"github.com/zord/zord-intelligence/db"
+	"github.com/zord/zord-intelligence/internal/auth"
 	"github.com/zord/zord-intelligence/internal/handlers"
 	"github.com/zord/zord-intelligence/internal/mlclient"
 	"github.com/zord/zord-intelligence/internal/persistence"
@@ -49,6 +50,13 @@ func main() {
 	cfg := config.Load()
 	log.Printf("main: config loaded (env=%s port=%s mode=%s)",
 		cfg.Environment, cfg.HTTPPort, cfg.IntelligenceMode.String())
+
+	// INTEL-01: fail startup rather than run with authentication silently
+	// disabled — same convention zord-intent-engine uses for its own
+	// InitJWTSigningSecret call.
+	if err := auth.InitJWTSigningSecret(); err != nil {
+		log.Fatal("main: failed to initialize JWT signing secret: ", err)
+	}
 
 	requiredTopics := []string{
 		// ── Input topics (Grade B — original dispatch/finality mode) ──────────

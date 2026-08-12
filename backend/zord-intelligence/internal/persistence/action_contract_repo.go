@@ -188,6 +188,30 @@ func (r *ActionContractRepo) InsertIfNewTx(
 	return tag.RowsAffected() > 0, nil
 }
 
+// RecordDecisionTx inserts an audit row for one approve/dismiss decision,
+// inside an existing pgx.Tx so it commits atomically with the corresponding
+// UpdateStatus / outbox insert (INTEL-02).
+func (r *ActionContractRepo) RecordDecisionTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	d models.ActionContractDecision,
+) error {
+	sql := `
+		INSERT INTO action_contract_decisions (
+			action_id, tenant_id, decision, actor_subject_id, actor_roles,
+			reason, prior_contract_status, prior_integrity_digest
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`
+	_, err := tx.Exec(ctx, sql,
+		d.ActionID, d.TenantID, d.Decision, d.ActorSubjectID, d.ActorRoles,
+		d.Reason, d.PriorContractStatus, d.PriorIntegrityDigest,
+	)
+	if err != nil {
+		return fmt.Errorf("action_repo.RecordDecisionTx action=%s decision=%s: %w", d.ActionID, d.Decision, err)
+	}
+	return nil
+}
+
 // ── STATUS LIFECYCLE (PHASE 5) ────────────────────────────────────────────────
 
 // UpdateStatus transitions a PENDING_APPROVAL contract to APPROVED or DISMISSED.
@@ -213,6 +237,29 @@ func (r *ActionContractRepo) UpdateStatus(
 	tag, err := r.pool.Exec(ctx, sql, string(newStatus), actionID)
 	if err != nil {
 		return false, fmt.Errorf("action_repo.UpdateStatus action=%s status=%s: %w",
+			actionID, newStatus, err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// UpdateStatusTx is UpdateStatus run inside an existing pgx.Tx, so the
+// status transition commits atomically with an audit decision row
+// (INTEL-02's RecordDecisionTx) or an outbox insert in the same transaction.
+func (r *ActionContractRepo) UpdateStatusTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	actionID string,
+	newStatus models.ContractStatus,
+) (updated bool, err error) {
+	sql := `
+		UPDATE action_contracts
+		SET    contract_status = $1
+		WHERE  action_id       = $2
+		  AND  contract_status = 'PENDING_APPROVAL'
+	`
+	tag, err := tx.Exec(ctx, sql, string(newStatus), actionID)
+	if err != nil {
+		return false, fmt.Errorf("action_repo.UpdateStatusTx action=%s status=%s: %w",
 			actionID, newStatus, err)
 	}
 	return tag.RowsAffected() > 0, nil
@@ -267,6 +314,18 @@ const selectCols = `
 func (r *ActionContractRepo) GetByID(ctx context.Context, actionID string) (*models.ActionContract, error) {
 	sql := `SELECT ` + selectCols + ` FROM action_contracts WHERE action_id = $1`
 	row := r.pool.QueryRow(ctx, sql, actionID)
+	return scanActionContract(row.Scan)
+}
+
+// GetByIDForTenant returns a single ActionContract scoped to tenantID.
+// INTEL-02: a bare action_id is not secret, so an unscoped lookup lets any
+// caller who can guess/enumerate an ID read another tenant's action. Returns
+// (nil, nil) both when no such action exists AND when it exists but belongs
+// to a different tenant — deliberately indistinguishable, so this can't be
+// used as a tenant-existence oracle.
+func (r *ActionContractRepo) GetByIDForTenant(ctx context.Context, tenantID, actionID string) (*models.ActionContract, error) {
+	sql := `SELECT ` + selectCols + ` FROM action_contracts WHERE action_id = $1 AND tenant_id = $2`
+	row := r.pool.QueryRow(ctx, sql, actionID, tenantID)
 	return scanActionContract(row.Scan)
 }
 

@@ -88,6 +88,17 @@ spec:
                   key: OTEL_EXPORTER_OTLP_ENDPOINT
             - name: OTEL_SERVICE_NAME
               value: zord-intelligence
+            # INTEL-01: same shared secret zord-edge signs access tokens with
+            # and Kong verifies at the gateway — already exists in
+            # zord-app-secrets (see zord-intent-engine/deployment.yaml), just
+            # mounting it into one more deployment.
+            - name: JWT_SIGNING_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: zord-app-secrets
+                  key: JWT_SIGNING_SECRET
+            - name: JWT_ISSUER
+              value: zord-edge
           readinessProbe:
             httpGet:
               path: /readyz

@@ -9,8 +9,15 @@ services:
     ports:
       - "8089:8089"
 
+    # INTEL-01: JWT_SIGNING_SECRET lives in the gitignored .env file (same
+    # shared value zord-edge/zord-intent-engine already use locally), not
+    # committed here — matches those services' existing env_file pattern.
+    env_file:
+      - ./.env
+
     environment:
       - HTTP_PORT=8089
+      - JWT_ISSUER=zord-edge
 
       # Kafka
       - KAFKA_BROKERS=broker1:9092,broker2:9093,broker3:9094
