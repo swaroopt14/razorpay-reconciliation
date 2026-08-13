@@ -43,6 +43,10 @@ type Config struct {
 	// Must be a long random secret, never exposed publicly.
 	// Loaded from EVIDENCE_INTERNAL_KEY env var.
 	InternalServiceKey string
+
+	// JWTSigningSecret is the shared secret used to validate tokens from zord-edge.
+	// Loaded from JWT_SIGNING_SECRET env var.
+	JWTSigningSecret string
 }
 
 func Load() (*Config, error) {
@@ -121,6 +125,7 @@ func Load() (*Config, error) {
 		WriteTimeout:        20 * time.Second,
 		ShutdownTimeout:     time.Duration(shutdownSec) * time.Second,
 		InternalServiceKey:  os.Getenv("EVIDENCE_INTERNAL_KEY"),
+		JWTSigningSecret:    os.Getenv("JWT_SIGNING_SECRET"),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -153,6 +158,9 @@ func (c *Config) validate() error {
 	}
 	if strings.TrimSpace(c.InternalServiceKey) == "" {
 		errs = append(errs, "EVIDENCE_INTERNAL_KEY is required in production")
+	}
+	if strings.TrimSpace(c.JWTSigningSecret) == "" {
+		errs = append(errs, "JWT_SIGNING_SECRET is required in production")
 	}
 
 	if len(errs) > 0 {
