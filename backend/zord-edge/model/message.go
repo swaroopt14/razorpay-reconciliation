@@ -18,6 +18,7 @@ type RawIntentMessage struct {
 	MappingProfileHint   *string
 	ObjectEncryptionAlg  string
 	KMSKeyVersion        string
+	EncryptionKeyID      string
 	ParserClassification *string
 	TransportRequestID   *string
 	ClientReferenceHint  *string

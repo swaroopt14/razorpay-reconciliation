@@ -132,7 +132,12 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 	headersHashSum := sha256.Sum256(headersBytes)
 	headersHash := headersHashSum[:]
 
-	encryptedPayload, err := vault.Encrypt(rawPayload)
+	encResult, err := vault.Encrypt(vault.EncryptionContext{
+		TenantID:          rawIntent.TenantID,
+		ArtifactID:        artifactID,
+		ArtifactVersionID: artifactVersionID,
+		ContentType:       contentType,
+	}, rawPayload)
 	if err != nil {
 		logger.Log.Error("payload encryption failed",
 			slog.String("trace_id", traceID),
@@ -141,6 +146,7 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 		context.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encrypt payload"})
 		return
 	}
+	encryptedPayload := encResult.Ciphertext
 
 	rawIntent.TraceID = traceID
 	rawIntent.PayloadSize = payloadSize
@@ -157,7 +163,8 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 
 	// Hardcoded values
 	rawIntent.ObjectEncryptionAlg = "AES256"
-	rawIntent.KMSKeyVersion = "v1"
+	rawIntent.KMSKeyVersion = encResult.KeyVersion
+	rawIntent.EncryptionKeyID = encResult.KeyID
 	rawIntent.IngressAPIVersion = "v1"
 	rawIntent.RetentionPolicyClass = "STANDARD"
 	rawIntent.EventType = "Envelope.Created"

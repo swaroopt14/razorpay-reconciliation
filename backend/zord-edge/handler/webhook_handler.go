@@ -70,6 +70,8 @@ func (h *Handler) WebhookHandler(c *gin.Context) {
 	traceID := uuid.Must(uuid.NewV7()).String()
 	envelopeID := uuid.Must(uuid.NewV7()).String()
 	receivedAt := time.Now().UTC()
+	artifactID := uuid.Must(uuid.NewV7()).String()
+	artifactVersionID := uuid.Must(uuid.NewV7()).String()
 
 	// ── Metadata ──
 	contentType := c.GetHeader("Content-Type")
@@ -99,7 +101,12 @@ func (h *Handler) WebhookHandler(c *gin.Context) {
 	headersHash := headersHashSum[:]
 
 	// ── Encrypt payload ──
-	encryptedPayload, err := vault.Encrypt(rawPayload)
+	encResult, err := vault.Encrypt(vault.EncryptionContext{
+		TenantID:          tenantUUID.String(),
+		ArtifactID:        artifactID,
+		ArtifactVersionID: artifactVersionID,
+		ContentType:       contentType,
+	}, rawPayload)
 	if err != nil {
 		logger.Log.Error("webhook payload encryption failed",
 			slog.String("provider", provider),
@@ -109,6 +116,7 @@ func (h *Handler) WebhookHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encrypt payload"})
 		return
 	}
+	encryptedPayload := encResult.Ciphertext
 
 	// ── Fingerprint (strong idempotency) ──
 	fingerprintInput := append(rawPayload, []byte(idempotencyKey+tenantUUID.String())...)
@@ -125,9 +133,16 @@ func (h *Handler) WebhookHandler(c *gin.Context) {
 		ContentType:        contentType,
 		SourceType:         sourceType,
 		SourceSystem:       sourceSystem,
+		SourceClass:        c.GetString("source_class"),
 		RequestHeadersHash: headersHash,
 		RequestFingerprint: fingerprint,
 		SchemaHint:         nil,
+		ObjectEncryptionAlg: "AES256",
+		KMSKeyVersion:       encResult.KeyVersion,
+		EncryptionKeyID:     encResult.KeyID,
+		IngressAPIVersion:   "v1",
+		RetentionPolicyClass: "STANDARD",
+		EventType:            "Envelope.Created",
 	}
 
 	// ── Idempotency ──
@@ -220,6 +235,9 @@ func (h *Handler) WebhookHandler(c *gin.Context) {
 		})
 		return
 	}
+
+	data.ArtifactId = artifactID
+	data.ArtifactVersionId = artifactVersionID
 
 	// ── Payload hash ──
 	hash := sha256.Sum256(rawPayload)

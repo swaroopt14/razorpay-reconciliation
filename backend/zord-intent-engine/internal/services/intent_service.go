@@ -1252,6 +1252,9 @@ func (s *IntentService) processIncomingIntentInternal(
 		RawRowHash:        event.RawRowHash,
 		ArtifactID:        event.ArtifactID,
 		ArtifactVersionID: event.ArtifactVersionID,
+		ContentType:       event.ContentType,
+		KMSKeyVersion:     event.KMSKeyVersion,
+		EncryptionKeyID:   event.EncryptionKeyID,
 		ReceivedAt:        event.ReceivedAt,
 		BatchID:           event.BatchID,
 		SourceRowRef:      event.SourceRowRef,
@@ -1378,9 +1381,20 @@ func (s *IntentService) processIncomingIntentInternal(
 	}
 
 	// -------- STEP 5: Parse raw payload into domain model --------
-	decryptedPayload, err = vault.DecryptPayload(in.EncryptedPayload)
+	contentType := in.ContentType
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	encCtx := vault.EncryptionContext{
+		TenantID:          in.TenantID.String(),
+		ArtifactID:        in.ArtifactID.String(),
+		ArtifactVersionID: in.ArtifactVersionID,
+		ContentType:       contentType,
+	}
+	decryptedPayload, err = vault.DecryptPayload(encCtx, in.EncryptedPayload, in.KMSKeyVersion)
 	if err != nil {
-		log.Printf("⚠️ Payload decryption failed for EnvelopeID=%s: %v", in.EnvelopeID, err)
+		log.Printf("vault decrypt failed envelope_id=%s tenant_id=%s artifact_id=%s artifact_version_id=%s content_type=%s err=%v",
+			in.EnvelopeID, encCtx.TenantID, encCtx.ArtifactID, encCtx.ArtifactVersionID, encCtx.ContentType, err)
 		retIn = in
 		retProfile = resolvedProfile
 		retDecrypted = decryptedPayload
@@ -1398,6 +1412,8 @@ func (s *IntentService) processIncomingIntentInternal(
 		}
 		return
 	}
+	log.Printf("vault decrypt ok envelope_id=%s tenant_id=%s artifact_id=%s artifact_version_id=%s content_type=%s",
+		in.EnvelopeID, encCtx.TenantID, encCtx.ArtifactID, encCtx.ArtifactVersionID, encCtx.ContentType)
 
 	rawAuditPayload = append([]byte(nil), decryptedPayload...)
 	sourceRowRef := ""

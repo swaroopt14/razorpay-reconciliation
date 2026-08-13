@@ -6,9 +6,9 @@ import (
 	"errors"
 )
 
-// DecryptPayload opens context-bound ciphertext produced by zord-edge.
+// Decrypt opens context-bound ciphertext.
 // Legacy blobs without the bound marker are opened with nil AAD (pre-EDGE-06).
-func DecryptPayload(ctx EncryptionContext, ciphertext []byte, _ string) ([]byte, error) {
+func Decrypt(ctx EncryptionContext, ciphertext []byte, _ string) ([]byte, error) {
 	if len(encryptionKey) == 0 {
 		return nil, errors.New("vault is not initialized")
 	}

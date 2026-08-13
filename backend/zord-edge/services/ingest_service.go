@@ -108,8 +108,8 @@ func SaveRawIntent(
 	// --- Insert into ingress_outbox ---
 	outboxQuery := `
 		INSERT INTO ingress_outbox
-		(trace_id, envelope_id, tenant_id, artifact_id, artifact_version_id, object_ref, received_at, ingress_channel, source, idempotency_key, encrypted_payload, payload_hash, raw_row_hash, envelope_hash, envelope_signature, topic, status, lease_id, event_type, lease_until, created_at, updated_at, published_at, failure_reason_code, batchid, file_content_hash, source_row_ref, source_system)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
+		(trace_id, envelope_id, tenant_id, artifact_id, artifact_version_id, object_ref, received_at, ingress_channel, source, idempotency_key, encrypted_payload, payload_hash, raw_row_hash, envelope_hash, envelope_signature, content_type, kms_key_version, encryption_key_id, topic, status, lease_id, event_type, lease_until, created_at, updated_at, published_at, failure_reason_code, batchid, file_content_hash, source_row_ref, source_system)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
 	`
 	topic := "payments.ledger.events.v1"
 	_, err = tx.ExecContext(ctx, outboxQuery,
@@ -128,19 +128,22 @@ func SaveRawIntent(
 		envelope.RawRowHash,        // $13
 		envelope.EnvelopeHash,      // $14 (hex)
 		envelope.EnvelopeSignature, // $15 (string -> TEXT)
-		topic,                      // $16
-		"PENDING",                  // $17 (status)
-		envelope.LeaseID,           // $18
-		envelope.EventType,         // $19
-		envelope.LeaseUntil,        // $20
-		envelope.CreatedAt,         // $21
-		envelope.UpdatedAt,         // $22
-		envelope.PublishedAt,       // $23
-		envelope.FailureReasonCode, // $24
-		envelope.BatchID,           // $25
-		envelope.FileContentHash,   // $26
-		envelope.SourceRowRef,      // $27
-		envelope.SourceSystem,      // $28
+		envelope.ContentType,       // $16
+		envelope.KMSKeyVersion,     // $17
+		envelope.EncryptionKeyID,   // $18
+		topic,                      // $19
+		"PENDING",                  // $20 (status)
+		envelope.LeaseID,           // $21
+		envelope.EventType,         // $22
+		envelope.LeaseUntil,        // $23
+		envelope.CreatedAt,         // $24
+		envelope.UpdatedAt,         // $25
+		envelope.PublishedAt,       // $26
+		envelope.FailureReasonCode, // $27
+		envelope.BatchID,           // $28
+		envelope.FileContentHash,   // $29
+		envelope.SourceRowRef,      // $30
+		envelope.SourceSystem,      // $31
 	)
 	if err != nil {
 		logger.Log.Error("failed to insert into ingress_outbox in transaction",

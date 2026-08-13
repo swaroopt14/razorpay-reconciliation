@@ -4,40 +4,39 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"io"
 )
 
-var encryptionKey []byte
-
-func InitVaultKey(base64Key string) error {
-	key, err := base64.StdEncoding.DecodeString(base64Key)
-	if err != nil {
-		return err
+// Encrypt seals plaintext with AES-256-GCM, binding tenant/artifact context as AAD.
+func Encrypt(ctx EncryptionContext, plaintext []byte) (EncryptResult, error) {
+	if len(encryptionKey) == 0 {
+		return EncryptResult{}, errors.New("vault is not initialized")
 	}
-	if len(key) != 32 {
-		return errors.New("Vault Key must be 32 bytes")
-	}
-	encryptionKey = key
-	return nil
-}
 
-func Encrypt(plaintext []byte) ([]byte, error) {
 	block, err := aes.NewCipher(encryptionKey)
 	if err != nil {
-		return nil, err
+		return EncryptResult{}, err
 	}
 	aesGCM, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, err
+		return EncryptResult{}, err
 	}
+
 	nonce := make([]byte, aesGCM.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, err
+		return EncryptResult{}, err
 	}
 
-	ciphertext := aesGCM.Seal(nil, nonce, plaintext, nil)
+	sealed := aesGCM.Seal(nil, nonce, plaintext, ctx.AAD())
+	out := make([]byte, 0, 1+len(nonce)+len(sealed))
+	out = append(out, ciphertextBoundMarker)
+	out = append(out, nonce...)
+	out = append(out, sealed...)
 
-	return append(nonce, ciphertext...), nil
+	return EncryptResult{
+		Ciphertext: out,
+		KeyID:      activeKeyID,
+		KeyVersion: activeVersion,
+	}, nil
 }

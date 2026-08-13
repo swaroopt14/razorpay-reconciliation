@@ -17,8 +17,11 @@ type Event struct {
 	ObjectRef        string    `json:"object_ref"`
 	ReceivedAt       time.Time `json:"created_at"`
 	Source           string    `json:"source"`
-	SourceSystem     string    `json:"source_system"`
-	EventType        string    `json:"event_type"`
+	SourceSystem      string    `json:"source_system"`
+	ContentType       string    `json:"content_type,omitempty"`
+	KMSKeyVersion     string    `json:"kms_key_version,omitempty"`
+	EncryptionKeyID   string    `json:"encryption_key_id,omitempty"`
+	EventType         string    `json:"event_type"`
 	IdempotencyKey   string    `json:"idempotency_key"`
 	Payload          []byte    `json:"payload"`
 	PayloadHash      string    `json:"payload_hash"`
