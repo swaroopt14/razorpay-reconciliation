@@ -3030,6 +3030,7 @@ func (s *IntentService) ProcessIncomingIntentsBatch(
 	}
 
 	for batchID, tenantID := range emittedBatches {
+		log.Printf("[intent-engine][vector-index] final batch emit tenant=%s entity=intent_batch id=%s", tenantID, batchID)
 		s.emitVectorIndexRequest(
 			"intent_batch.updated.v1",
 			tenantID,
