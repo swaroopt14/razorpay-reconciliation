@@ -170,7 +170,7 @@ func (s *EvidenceService) emitVectorIndexRequest(pack *models.EvidencePack, sour
 		return
 	}
 
-	log.Printf("[evidence][vector-index] publish ok tenant=%s entity=%s id=%s", tenantID, entityType, entityID)
+	log.Printf("[evidence][vector-index] publish ok tenant=%s entity=%s id=%s batch_id=%s source_event=%s", tenantID, entityType, entityID, batchID, sourceEventType)
 }
 
 // HandleLeafUpdate persists incoming leaves on the Kafka fast path and delegates
@@ -721,7 +721,10 @@ func (s *EvidenceService) processBatchJob(ctx context.Context, job BatchJob) err
 
 	existing, existErr := s.repo.GetPackByBatchID(ctx, job.TenantID, job.BatchID)
 	if existErr == nil && existing != nil {
-		log.Printf("evidence.service.process_batch batch=%s pack already exists — skipping generation", job.BatchID)
+		log.Printf("evidence.service.process_batch batch=%s pack already exists — publishing batch vector summary and skipping generation", job.BatchID)
+
+		s.emitVectorIndexRequest(existing, "evidence_batch_pack.generated.v1")
+
 		if delErr := s.pendingLeafRepo.DeleteForBatch(ctx, job.TenantID, job.BatchID); delErr != nil {
 			log.Printf("evidence.service.process_batch batch=%s delete_pending_leaves_failed err=%v — leaves will accumulate until next cycle", job.BatchID, delErr)
 		}
@@ -820,7 +823,7 @@ func (s *EvidenceService) processBatchJob(ctx context.Context, job BatchJob) err
 	}
 
 	s.writeProofEnrichment(ctx, pack)
-
+	s.emitVectorIndexRequest(pack, "evidence_batch_pack.generated.v1")
 	return s.pendingLeafRepo.DeleteForBatch(ctx, job.TenantID, job.BatchID)
 }
 
