@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS relay_payload_conflicts (
     resolved_at          TIMESTAMPTZ               -- NULL until ACKed or eventually succeeds
 );
 
-CREATE INDEX IF NOT EXISTS idx_relay_payload_conflicts_event
+CREATE UNIQUE INDEX IF NOT EXISTS idx_relay_payload_conflicts_event
     ON relay_payload_conflicts (service_name, event_id);
 
 CREATE INDEX IF NOT EXISTS idx_relay_payload_conflicts_detected

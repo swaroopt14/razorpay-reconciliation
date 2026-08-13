@@ -1,8 +1,13 @@
 package persistence
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"zord-intent-engine/internal/models"
@@ -161,6 +166,7 @@ ORDER BY created_at ASC;
 			&evt.DuplicateReasonCode,
 			&evt.SchemaVersion,
 			&evt.PayloadHash,
+			&evt.CanonicalPayloadHash,
 			&evt.SourceRowRef,
 			&evt.SourceSystem,
 			&evt.ClientBatchRef,
@@ -229,6 +235,30 @@ ORDER BY created_at ASC;
 				leaseUntil = &t
 			}
 		}
+
+		// The DB's canonical_payload_hash (a GENERATED column computed
+		// from payload::text) hashes Postgres's OWN jsonb output
+		// formatting, which inserts a space after every ':' and ','.
+		// encoding/json, however, automatically COMPACTS any embedded
+		// json.RawMessage field (strips that insignificant whitespace)
+		// when this event is later marshaled for the HTTP lease response
+		// -- so the DB-generated hash never matches the bytes actually
+		// sent over the wire (confirmed via a real end-to-end HTTP round
+		// trip: Postgres returns `{"a": 1, "b": 2}`, encoding/json sends
+		// `{"a":1,"b":2}`). Fixed here, the one point guaranteed to run
+		// before the response is built: compact Payload in place --
+		// idempotent, since compacting already-compact JSON is a
+		// no-op, so this has no effect on what a caller who bypasses the
+		// HTTP layer (e.g. an in-process repo call) sees -- and recompute
+		// the hash from those exact final bytes, overriding whatever the
+		// DB's generated column produced.
+		var compacted bytes.Buffer
+		if err := json.Compact(&compacted, evt.Payload); err != nil {
+			return "", nil, nil, fmt.Errorf("compacting payload for event %s: %w", evt.EventID, err)
+		}
+		evt.Payload = append([]byte(nil), compacted.Bytes()...)
+		sum := sha256.Sum256(evt.Payload)
+		evt.CanonicalPayloadHash = hex.EncodeToString(sum[:])
 
 		events = append(events, evt)
 	}

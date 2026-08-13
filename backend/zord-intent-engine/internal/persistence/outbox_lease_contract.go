@@ -88,6 +88,7 @@ var outboxLeaseColumns = []outboxLeaseColumn{
 	// aggregate_type/event_type above).
 	{"o.schema_version", "schema_version"},
 	{"o.payload_hash", "payload_hash"},
+	{"o.canonical_payload_hash", "canonical_payload_hash"},
 	{"COALESCE(o.source_row_ref, '')", "source_row_ref"},
 	{"COALESCE(o.source_system, '')", "source_system"},
 	{"COALESCE(o.client_batch_ref, '')", "client_batch_ref"},
