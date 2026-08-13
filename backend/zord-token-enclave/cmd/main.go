@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -20,6 +21,7 @@ import (
 	"zord-token-enclave/internal/keymanager"
 	"zord-token-enclave/internal/models"
 	"zord-token-enclave/internal/repository"
+	"zord-token-enclave/internal/retryutil"
 	"zord-token-enclave/internal/services"
 	"zord-token-enclave/kafka"
 	"zord-token-enclave/tracing"
@@ -202,6 +204,27 @@ func main() {
 	}
 
 	handler := kafka.BuildTokenizeHandler(ctx, tokenizeLogic)
+
+	// TOK-01: bounded retry, then a durable failure receipt (Postgres) plus
+	// a best-effort poison-DLQ publish, before the Kafka offset is ever
+	// marked for a failed message. See kafka/retry_wrapper.go and
+	// kafka/consumer.go's ConsumeClaim (the actual mark-on-success-only fix).
+	tokenizeFailureRepo := repository.NewTokenizeFailureRepo(database)
+	tokenizeDLQTopic := os.Getenv("KAFKA_TOPIC_PII_TOKENIZE_REQUEST_DLQ")
+
+	handler = kafka.WithRetryAndPoisonDLQ(handler, retryutil.DefaultPolicy(),
+		func(ctx context.Context, rawMsg []byte, attempts int, lastErr error) error {
+			if err := tokenizeFailureRepo.Record(ctx, rawMsg, attempts, lastErr); err != nil {
+				return err
+			}
+			if tokenizeDLQTopic != "" {
+				if pubErr := producer.Publish(ctx, tokenizeDLQTopic, "", json.RawMessage(rawMsg)); pubErr != nil {
+					log.Printf("poison DLQ publish failed (non-fatal, durable receipt already recorded): %v", pubErr)
+				}
+			}
+			return nil
+		},
+	)
 
 	go func() {
 		err := kafka.StartConsumer(

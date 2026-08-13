@@ -81,6 +81,38 @@ func CreateTables(db *sql.DB) error {
 	ON token_encryption_keys(tenant_id)
 	WHERE status = 'ACTIVE';`
 
+	// tokenize_failures: durable receipt for a tokenize request that
+	// exhausted its bounded retry budget (TOK-01). The Kafka consumer only
+	// marks a failed message's offset once a row here has been committed --
+	// see kafka/retry_wrapper.go's WithRetryAndPoisonDLQ. raw_message keeps
+	// the exact original bytes so an operator/replay tool can re-publish it
+	// after the underlying issue (DB down, crypto error) is resolved.
+	//
+	// dedupe_key is envelope_id when the message parsed far enough to have
+	// one, otherwise a content hash of raw_message -- never blank. This is
+	// what the unique index and upsert key on, NOT envelope_id directly:
+	// two different unparseable poison messages both have envelope_id="",
+	// and upserting on that raw column would silently overwrite one
+	// poisoned message's raw_message with another's, losing it forever.
+	tokenizeFailures := `
+	CREATE TABLE IF NOT EXISTS tokenize_failures (
+		failure_id      BIGSERIAL   PRIMARY KEY,
+		dedupe_key      TEXT        NOT NULL,
+		envelope_id     TEXT        NOT NULL DEFAULT '',
+		tenant_id       TEXT        NOT NULL DEFAULT '',
+		trace_id        TEXT        NOT NULL DEFAULT '',
+		raw_message     BYTEA       NOT NULL,
+		attempt_count   INTEGER     NOT NULL,
+		last_error      TEXT        NOT NULL,
+		replay_status   TEXT        NOT NULL DEFAULT 'PENDING',
+		first_failed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		last_failed_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+	);`
+
+	tokenizeFailuresIndex := `
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_tokenize_failures_dedupe_key
+	ON tokenize_failures(dedupe_key);`
+
 	for _, stmt := range []string{
 		tokenMap,
 		tokenAudit,
@@ -88,6 +120,8 @@ func CreateTables(db *sql.DB) error {
 		tokenLookupIndex,
 		keyIndex,
 		uniqueActiveKey,
+		tokenizeFailures,
+		tokenizeFailuresIndex,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			return err
