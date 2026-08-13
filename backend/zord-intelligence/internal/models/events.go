@@ -37,7 +37,7 @@ type RelayEvent struct {
 	ProofReadinessScore    float64         `json:"proof_readiness_score"`
 	BeneficiaryFingerprint string          `json:"beneficiary_fingerprint"`
 	IntendedExecutionAt    *time.Time      `json:"intended_execution_at"`
-	ClientBatchID          string         `json:"batchid,omitempty"`
+	ClientBatchID          string          `json:"batchid,omitempty"`
 
 	// INT-10: decision/quality reason codes and the remaining score fields
 	// zord-intent-engine computes and zord-relay now carries on its outer
