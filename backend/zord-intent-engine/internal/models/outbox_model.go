@@ -51,16 +51,24 @@ type OutboxEvent struct {
 	LeasedBy    string          `json:"leased_by,omitempty" db:"leased_by"`
 	LeaseUntil  *time.Time      `json:"lease_until,omitempty" db:"lease_until"`
 	PayloadHash string          `json:"payload_hash" db:"payload_hash"`
-	// CanonicalPayloadHash is a Postgres GENERATED column: SHA-256 of the
-	// exact bytes Postgres stores/returns for Payload (the canonical,
-	// post-transformation intent JSON) -- distinct from PayloadHash, which
-	// is SHA-256 of the raw, pre-transformation ingest payload. Relay's
-	// payload-integrity check verifies against this field, not PayloadHash,
-	// since it only ever receives Payload's bytes. Computed by the database
-	// itself (not Go) because Payload's column type is JSONB, which
-	// reformats stored JSON -- a hash computed from the pre-insert Go bytes
-	// would not match what's read back. Read-only: never set this field on
-	// insert, Postgres rejects INSERTs that reference a generated column.
+	// CanonicalPayloadHash is SHA-256 of the exact bytes Payload will be
+	// serialized as in the outbox lease HTTP response -- distinct from
+	// PayloadHash, which is SHA-256 of the raw, pre-transformation ingest
+	// payload. Relay's payload-integrity check verifies against this
+	// field, not PayloadHash, since it only ever receives Payload's bytes.
+	//
+	// The DB column backing this (outbox.canonical_payload_hash) is a
+	// Postgres GENERATED column, SHA-256 of payload::text -- but that is
+	// NOT what ends up in this Go field. LeaseOutboxBatch overwrites it
+	// after Scan: encoding/json automatically COMPACTS any embedded
+	// json.RawMessage field (strips insignificant whitespace) when Payload
+	// is later marshaled into the lease response, and Postgres's own
+	// jsonb-to-text output includes a space after every ':' and ','  --
+	// so the DB-generated hash never matches what actually goes out over
+	// the wire. LeaseOutboxBatch compacts Payload in place (idempotent --
+	// a no-op for a caller that bypasses HTTP) and recomputes this field
+	// from those exact final bytes. Read-only from an INSERT's
+	// perspective either way: never set this field before insert.
 	CanonicalPayloadHash string  `json:"canonical_payload_hash" db:"canonical_payload_hash"`
 	BatchID              *string `json:"batchid,omitempty" db:"batchid"`
 	CorridorID           *string `json:"corridor_id"`
