@@ -51,8 +51,19 @@ type OutboxEvent struct {
 	LeasedBy    string          `json:"leased_by,omitempty" db:"leased_by"`
 	LeaseUntil  *time.Time      `json:"lease_until,omitempty" db:"lease_until"`
 	PayloadHash string          `json:"payload_hash" db:"payload_hash"`
-	BatchID     *string         `json:"batchid,omitempty" db:"batchid"`
-	CorridorID  *string         `json:"corridor_id"`
+	// CanonicalPayloadHash is a Postgres GENERATED column: SHA-256 of the
+	// exact bytes Postgres stores/returns for Payload (the canonical,
+	// post-transformation intent JSON) -- distinct from PayloadHash, which
+	// is SHA-256 of the raw, pre-transformation ingest payload. Relay's
+	// payload-integrity check verifies against this field, not PayloadHash,
+	// since it only ever receives Payload's bytes. Computed by the database
+	// itself (not Go) because Payload's column type is JSONB, which
+	// reformats stored JSON -- a hash computed from the pre-insert Go bytes
+	// would not match what's read back. Read-only: never set this field on
+	// insert, Postgres rejects INSERTs that reference a generated column.
+	CanonicalPayloadHash string  `json:"canonical_payload_hash" db:"canonical_payload_hash"`
+	BatchID              *string `json:"batchid,omitempty" db:"batchid"`
+	CorridorID           *string `json:"corridor_id"`
 
 	// Intent Metadata (Synchronized from payment_intents)
 	IdempotencyKey      string          `json:"idempotency_key,omitempty" db:"idempotency_key"`

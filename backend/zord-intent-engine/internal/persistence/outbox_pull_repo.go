@@ -161,6 +161,7 @@ ORDER BY created_at ASC;
 			&evt.DuplicateReasonCode,
 			&evt.SchemaVersion,
 			&evt.PayloadHash,
+			&evt.CanonicalPayloadHash,
 			&evt.SourceRowRef,
 			&evt.SourceSystem,
 			&evt.ClientBatchRef,
