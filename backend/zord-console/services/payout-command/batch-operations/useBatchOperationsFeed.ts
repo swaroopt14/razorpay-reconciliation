@@ -40,6 +40,7 @@ import { enrichSettlementRowsWithPaymentIntentMatches } from '@/services/payout-
 import { summaryFromIntelligenceBatchRow } from '@/services/payout-command/batch-model'
 import { apiTrimmedString } from '@/services/payout-command/prod-api/coerceApiField'
 import type { BatchSummary } from '@/services/payout-command/batch-model'
+import { isSettledObservationStatus } from '@/features/payout-command/settlement-journal/settlementObservationStatusMap'
 
 export const BATCH_OPERATIONS_POLL_MS = 8_000
 /** When no batch is selected, poll the sidebar list less aggressively. */
@@ -111,8 +112,8 @@ function summarizeSettlement(rows: SettlementObservationTableRow[]): SettlementB
     grossAmount += r.amount
     settledAmount += r.settledAmount
     feeAmount += r.feeAmount
-    const st = (r.statusRaw ?? r.status ?? '').toUpperCase()
-    if (st.includes('SETTL') || st.includes('SUCCESS') || st === 'CONFIRMED') settledCount += 1
+    // CON-P1-24: exact enum map — never substring (NOT_SETTLED_YET must not count as settled).
+    if (isSettledObservationStatus(r.statusRaw ?? r.status ?? '')) settledCount += 1
   }
   return {
     observationCount: rows.length,

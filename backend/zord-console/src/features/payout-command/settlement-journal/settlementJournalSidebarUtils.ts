@@ -1,4 +1,9 @@
 import type { SettlementObservationTableRow } from '@/services/payout-command/prod-api/settlementObservations'
+import {
+  isFailedObservationStatus,
+  isSettledObservationStatus,
+  mapSettlementObservationStatus,
+} from './settlementObservationStatusMap'
 
 export type DateRangePreset = 'all' | '7d' | '30d' | '90d' | 'ytd'
 
@@ -7,12 +12,18 @@ export type SettlementSidebarOutcome = {
   settled: number
   failed: number
   settledPct: number | null
-  label: 'Settled' | 'Partial' | 'Failed'
+  label: 'Settled' | 'Partial' | 'Failed' | 'Unknown'
   dotClass: string
   progressPct: number
   toneText: string
   barClass: string
 }
+
+export {
+  isFailedObservationStatus,
+  isSettledObservationStatus,
+  mapSettlementObservationStatus,
+} from './settlementObservationStatusMap'
 
 export const DATE_RANGE_OPTIONS: { value: DateRangePreset; label: string }[] = [
   { value: 'all', label: 'All time' },
@@ -51,16 +62,6 @@ export function matchesAmountRange(amount: number, range: AmountRangeFilter): bo
   if (range === 'Under ₹10,000') return amount < 10_000
   if (range === '₹10,000 – ₹1,00,000') return amount >= 10_000 && amount <= 100_000
   return amount > 100_000
-}
-
-export function isSettledObservationStatus(statusRaw: string): boolean {
-  const u = statusRaw.toUpperCase()
-  return u.includes('SETTLED') || u.includes('SUCCESS')
-}
-
-export function isFailedObservationStatus(statusRaw: string): boolean {
-  const u = statusRaw.toUpperCase()
-  return u.includes('FAIL') || u.includes('REJECT')
 }
 
 export function outcomeFromMatchConfidence(matchConfidence: number | null | undefined): SettlementSidebarOutcome {
@@ -127,9 +128,12 @@ export function outcomeFromObservationRows(rows: SettlementObservationTableRow[]
   }
   const settled = rows.filter((r) => isSettledObservationStatus(r.statusRaw)).length
   const failed = rows.filter((r) => isFailedObservationStatus(r.statusRaw)).length
-  const settledPct = Math.round((settled / total) * 100)
+  const known = rows.filter((r) => mapSettlementObservationStatus(r.statusRaw).known).length
+  const settledPct = total > 0 ? Math.round((settled / total) * 100) : null
   let label: SettlementSidebarOutcome['label'] = 'Partial'
-  if (failed > 0 && failed >= settled) label = 'Failed'
+  // CON-P1-24: unknown statuses never upgrade the batch to Settled.
+  if (known === 0) label = 'Unknown'
+  else if (failed > 0 && failed >= settled) label = 'Failed'
   else if (settled === total) label = 'Settled'
 
   const failedRatio = failed / total
@@ -137,7 +141,11 @@ export function outcomeFromObservationRows(rows: SettlementObservationTableRow[]
   let dotClass = 'bg-amber-500'
   let toneText = 'text-amber-700'
   let barClass = 'bg-amber-500'
-  if (failedRatio >= 0.5 || (failed > 0 && settled === 0)) {
+  if (label === 'Unknown') {
+    dotClass = 'bg-slate-400'
+    toneText = 'text-slate-600'
+    barClass = 'bg-slate-400'
+  } else if (failedRatio >= 0.5 || (failed > 0 && settled === 0)) {
     dotClass = 'bg-rose-500'
     toneText = 'text-rose-700'
     barClass = 'bg-rose-500'
@@ -154,25 +162,28 @@ export function outcomeFromObservationRows(rows: SettlementObservationTableRow[]
     settledPct,
     label,
     dotClass,
-    progressPct: settledPct,
+    progressPct: settledPct ?? 0,
     toneText,
     barClass,
   }
 }
 
 export function settlementStatusBadgeClass(statusRaw: string) {
-  const u = statusRaw.toUpperCase()
-  if (u.includes('SETTLED') || u.includes('SUCCESS')) {
+  const { bucket } = mapSettlementObservationStatus(statusRaw)
+  if (bucket === 'settled') {
     return 'inline-flex rounded-full border border-black/30 bg-black px-2.5 py-0.5 text-[12px] font-semibold text-white'
   }
-  if (u.includes('FAIL') || u.includes('REJECT')) {
+  if (bucket === 'failed') {
     return 'inline-flex rounded-full border border-rose-200 bg-rose-50 px-2.5 py-0.5 text-[12px] font-semibold text-rose-800'
   }
-  if (u.includes('PEND') || u.includes('PROCESS')) {
+  if (bucket === 'pending') {
     return 'inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[12px] font-semibold text-amber-900'
   }
-  return 'inline-flex rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-[12px] font-semibold text-slate-700'
+  // unknown / Needs mapping — never styled as settled success
+  return 'inline-flex rounded-full border border-slate-300 bg-slate-100 px-2.5 py-0.5 text-[12px] font-semibold text-slate-700'
 }
+
+export { settlementStatusDisplayLabel } from './settlementObservationStatusMap'
 
 export function computeSettlementBatchSummary(rows: SettlementObservationTableRow[]) {
   const totalAmount = rows.reduce((sum, r) => sum + r.amount, 0)
