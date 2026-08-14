@@ -20,15 +20,19 @@ func StartEdgeConsumer(
 }
 
 func buildEdgeHandler(pg PackGenerator) MessageHandler {
+	topic := "payments.ledger.events.v1"
 	return func(ctx context.Context, key string, raw []byte) error {
 		var relayEvt models.RelayEvent
 		if err := json.Unmarshal(raw, &relayEvt); err != nil {
 			log.Printf("edge.consumer.parse_failed key=%s err=%v", key, err)
+			pg.RecordMalformedEvent(ctx, "", topic, key, "", "JSON parse failed: "+err.Error())
 			return nil
 		}
 
 		if relayEvt.TenantID == "" || relayEvt.EnvelopeID == "" || len(relayEvt.EnvelopeHash) == 0 {
+			reason := "missing required fields"
 			log.Printf("edge.consumer.missing_data tenant=%s env=%s hash_len=%d", relayEvt.TenantID, relayEvt.EnvelopeID, len(relayEvt.EnvelopeHash))
+			pg.RecordMalformedEvent(ctx, relayEvt.TenantID, topic, relayEvt.EventID, relayEvt.TraceID, reason)
 			return nil
 		}
 

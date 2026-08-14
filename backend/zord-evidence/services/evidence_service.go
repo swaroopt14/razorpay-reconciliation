@@ -331,6 +331,13 @@ func (s *EvidenceService) HandleBatchLeafUpdate(ctx context.Context, tenantID, b
 	return nil
 }
 
+// RecordMalformedEvent records a malformed event as an immutable receipt
+// so auditors can see why a leaf never arrived. This is called when
+// Kafka consumers encounter parse failures or missing required fields.
+func (s *EvidenceService) RecordMalformedEvent(ctx context.Context, tenantID, topic, eventID, traceID, reason string) error {
+	return s.leafReceiptRepo.WriteMalformedReceipt(ctx, tenantID, topic, eventID, traceID, reason)
+}
+
 // StartWorkers spins up the async generation workers.
 // Workers run until ShutdownWorkers closes the job queues and in-flight jobs finish.
 func (s *EvidenceService) StartWorkers(workers int) {
