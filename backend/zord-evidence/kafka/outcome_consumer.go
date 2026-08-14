@@ -33,7 +33,7 @@ import (
 type PackGenerator interface {
 	HandleLeafUpdate(ctx context.Context, tenantID, envelopeID, intentID, contractID, traceID string, newLeaves []models.PendingLeafCandidate) error
 	HandleBatchLeafUpdate(ctx context.Context, tenantID, batchID string, newLeaves []models.PendingLeafCandidate, isFinal bool) error
-	RecordMalformedEvent(ctx context.Context, tenantID, topic, eventID, traceID, reason string)
+	RecordMalformedEvent(ctx context.Context, tenantID, topic, eventID, traceID, reason string) error
 }
 
 // OutcomeEventType constants understood by this consumer.
