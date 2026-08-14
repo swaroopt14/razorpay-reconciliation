@@ -1137,6 +1137,7 @@ func (s *EvidenceService) GeneratePackInTx(ctx context.Context, packTx *sql.Tx, 
 		EventType:                         eventType,
 		EventVersion:                      packEventVersion,
 		SchemaVersion:                     packSchemaVersion,
+		SourceService:                     "zord-evidence",
 		EvidencePackID:                    packID,
 		TenantID:                          req.TenantID,
 		BatchID:                           req.ClientBatchID,
@@ -1363,6 +1364,7 @@ func (s *EvidenceService) GenerateBatchPackInTx(ctx context.Context, packTx *sql
 
 	packEvent := kafka.PackEvent{
 		EventType:      kafka.EventPackCreated,
+		SourceService:  "zord-evidence",
 		EventVersion:   batchEventVersion,
 		SchemaVersion:  batchSchemaVersion,
 		EvidencePackID: packID,
@@ -1386,6 +1388,7 @@ func (s *EvidenceService) GenerateBatchPackInTx(ctx context.Context, packTx *sql
 		TenantID:       req.TenantID,
 		AggregateType:  "evidence_pack",
 		AggregateID:    req.ClientBatchID,
+		SourceService:  "zord-evidence",
 		EventType:      "evidence.batch.pack.created",
 		Payload:        payloadBytes,
 		Status:         "PENDING",
