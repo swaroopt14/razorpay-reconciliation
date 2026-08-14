@@ -10,6 +10,26 @@ func rankAndTrimBalanced(chunks []model.RetrievedChunk, topK int) []model.Retrie
 	if topK <= 0 || len(chunks) <= topK {
 		return chunks
 	}
+	pinned := make([]model.RetrievedChunk, 0, 2)
+	remaining := make([]model.RetrievedChunk, 0, len(chunks))
+
+	for _, c := range chunks {
+		if strings.EqualFold(strings.TrimSpace(c.SourceType), "evidence_batch_exact_counts") {
+			pinned = append(pinned, c)
+			continue
+		}
+		remaining = append(remaining, c)
+	}
+
+	if len(pinned) > 0 {
+		if len(pinned) >= topK {
+			sort.SliceStable(pinned, func(i, j int) bool { return pinned[i].Score > pinned[j].Score })
+			return pinned[:topK]
+		}
+
+		trimmedRemaining := rankAndTrimBalanced(remaining, topK-len(pinned))
+		return append(pinned, trimmedRemaining...)
+	}
 
 	buckets := map[string][]model.RetrievedChunk{}
 	for _, c := range chunks {

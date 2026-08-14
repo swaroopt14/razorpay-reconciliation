@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 	"zord-prompt-layer/dto"
@@ -49,9 +50,20 @@ func (r *LiveSQLRetriever) fetchFromEvidence(req dto.QueryRequest, tenantID stri
 		if err != nil {
 			logSafeEvidenceCountError(tenantID, batchID, err)
 		} else {
+			log.Printf(
+				"[prompt-layer][evidence-db] exact counts used tenant=%s batch=%s total=%d active=%d proof_ready_or_assembled=%d intent_level=%d batch_level=%d",
+				tenantID,
+				batchID,
+				totalPacks,
+				activePacks,
+				proofReadyPacks,
+				intentLevelPacks,
+				batchLevelPacks,
+			)
+
 			out = append(out, model.RetrievedChunk{
 				SourceType: "evidence_batch_exact_counts",
-				Score:      1.0,
+				Score:      1.25,
 				Text: fmt.Sprintf(
 					"Evidence batch exact count summary: Batch reference=%s. Total evidence packs generated=%d. Active evidence packs=%d. Proof-ready or assembled evidence packs=%d. Intent-level evidence packs=%d. Batch-level evidence packs=%d. First created=%s. Last updated=%s. Use this SQL aggregate as the source of truth for evidence pack count questions.",
 					batchID,
