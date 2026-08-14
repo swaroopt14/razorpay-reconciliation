@@ -242,6 +242,25 @@ type Signature struct {
 	SignedPayload string `json:"signed_payload,omitempty"`
 }
 
+// PackManifestV1 is the canonical form used for signature binding.
+// It includes exactly the fields that were signed to create SignedPayloadHash,
+// so that verification can reconstruct the same bytes from the current pack
+// state and compare the digest before verifying the ed25519 signature.
+//
+// The serialization format matches the original signPayload construction:
+//   packID|merkleRoot|intent_or_batch_id|created_at_iso|ruleset_version
+// For intent packs: packID|merkleRoot|intentID|contractID|created_at|rulesetVersion
+// For batch packs: packID|merkleRoot|batchID|created_at|rulesetVersion
+type PackManifestV1 struct {
+	EvidencePackID string `json:"evidence_pack_id"`
+	TenantID       string `json:"tenant_id"`
+	MerkleRoot     string `json:"merkle_root"`
+	// The third field is intent_id for intent mode or batch_id for batch mode
+	ScopeID string `json:"scope_id"`
+	CreatedAt string `json:"created_at"`
+	RulesetVersion string `json:"ruleset_version"`
+}
+
 // EvidencePack is the canonical committed proof bundle for one payment lifecycle.
 // Mode: INTELLIGENCE_ATTACH | SECONDARY_DISPATCH | FULL_CONTROL
 type EvidencePack struct {
