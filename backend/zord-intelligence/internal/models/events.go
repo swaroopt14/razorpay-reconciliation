@@ -269,6 +269,7 @@ type EvidencePackReadyEvent struct {
 	RequiredLeafCount                 int       `json:"required_leaf_count"`
 	SettlementLeafPresentFlag         bool      `json:"settlement_leaf_present_flag"`
 	AttachmentDecisionLeafPresentFlag bool      `json:"attachment_decision_leaf_present_flag"`
+	SourceService					  string    `json:"source_service"`
 }
 
 // ── Event 7: from any service's Dead Letter Queue ─────────────────────────────

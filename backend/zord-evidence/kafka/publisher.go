@@ -51,6 +51,7 @@ type PackEvent struct {
 	// sourced items (see packEnvelopeVersions in services/evidence_service.go)
 	// rather than hardcoded here.
 	EventVersion   string    `json:"event_version,omitempty"`
+	SourceService  string    `json:"source_service,omitempty"`
 	SchemaVersion  string    `json:"schema_version,omitempty"`
 	EvidencePackID string    `json:"evidence_pack_id"`
 	TenantID       string    `json:"tenant_id"`

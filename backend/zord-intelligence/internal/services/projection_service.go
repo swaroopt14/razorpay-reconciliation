@@ -724,8 +724,8 @@ func (s *ProjectionService) HandleEvidencePackReady(
 		return nil
 	}
 
-	log.Printf("[evidence.pack.created] RECEIVED event_id=%s tenant=%s pack=%s intent=%s completeness=%.2f leaves=%d/%d batch-id=%v",
-		e.EventID, e.TenantID, e.EvidencePackID, e.IntentID, e.PackCompletenessScore, e.LeafCount, e.RequiredLeafCount, e.BatchID)
+	log.Printf("[evidence.pack.created] RECEIVED event_id=%s tenant=%s pack=%s intent=%s completeness=%.2f leaves=%d/%d batch-id=%v source_service=%v",
+		e.EventID, e.TenantID, e.EvidencePackID, e.IntentID, e.PackCompletenessScore, e.LeafCount, e.RequiredLeafCount, e.BatchID, e.SourceService)
 
 	window := todayWindow(e.OccurredAt)
 
