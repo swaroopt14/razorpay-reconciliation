@@ -291,6 +291,72 @@ func (s *IntentService) EmitDLQVectorIndexRequest(dlq models.DLQEntry) {
 		},
 	)
 }
+func (s *IntentService) maybeEmitCompletedBatchVectorIndex(ctx context.Context, tenantID, batchID string) {
+	tenantID = strings.TrimSpace(tenantID)
+	batchID = strings.TrimSpace(batchID)
+
+	if s == nil || s.vectorPublisher == nil || tenantID == "" || batchID == "" {
+		return
+	}
+
+	var totalRows, acceptedRows, failedRows, duplicateRows int
+	var status string
+
+	err := s.db.QueryRowContext(ctx, `
+		SELECT
+			COALESCE(total_rows, 0),
+			COALESCE(accepted_rows, 0),
+			COALESCE(failed_rows, 0),
+			COALESCE(duplicate_rows, 0),
+			COALESCE(status, '')
+		FROM intent_ingest_runs
+		WHERE tenant_id = $1::uuid
+		  AND batch_id = $2
+	`, tenantID, batchID).Scan(
+		&totalRows,
+		&acceptedRows,
+		&failedRows,
+		&duplicateRows,
+		&status,
+	)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			log.Printf("[intent-engine][vector-index] completion check failed tenant=%s batch_id=%s err=%v", tenantID, batchID, err)
+		}
+		return
+	}
+
+	processedRows := acceptedRows + failedRows + duplicateRows
+	if totalRows <= 0 || processedRows < totalRows || !strings.EqualFold(status, "COMPLETED") {
+		log.Printf("[intent-engine][vector-index] batch not complete tenant=%s batch_id=%s processed=%d total=%d status=%s", tenantID, batchID, processedRows, totalRows, status)
+		return
+	}
+
+	log.Printf("[intent-engine][vector-index] final batch emit tenant=%s entity=intent_batch id=%s processed=%d total=%d accepted=%d failed=%d duplicate=%d",
+		tenantID,
+		batchID,
+		processedRows,
+		totalRows,
+		acceptedRows,
+		failedRows,
+		duplicateRows,
+	)
+
+	s.emitVectorIndexRequest(
+		"intent_batch.updated.v1",
+		tenantID,
+		"intent_batch",
+		batchID,
+		batchID,
+		map[string]string{
+			"vector_summary_scope": "batch",
+			"total_rows":           strconv.Itoa(totalRows),
+			"accepted_rows":        strconv.Itoa(acceptedRows),
+			"failed_rows":          strconv.Itoa(failedRows),
+			"duplicate_rows":       strconv.Itoa(duplicateRows),
+		},
+	)
+}
 
 // resolveBusinessDate returns tenantID's business_date for now, via the
 // per-tenant timezone configured in tenant_business_date_config (4.2.7),
@@ -2662,6 +2728,17 @@ func (s *IntentService) ProcessIncomingIntent(
 		if errUpsert != nil {
 			log.Printf("⚠️ Audit: failed to upsert run audit for batch=%s: %v", *in.BatchID, errUpsert)
 		}
+		if errUpsert == nil && runStatus == "COMPLETED" {
+			batchKey := fmt.Sprintf("%s|%s", in.TenantID.String(), *in.BatchID)
+			_, aggErr, _ := batchAggregateGroup.Do(batchKey, func() (interface{}, error) {
+				return s.repo.UpdateBatchAggregateConfidence(context.Background(), in.TenantID.String(), *in.BatchID)
+			})
+			if aggErr != nil {
+				log.Printf("âš ï¸ Failed to update batch aggregate confidence before vector emit for batch=%s: %v", *in.BatchID, aggErr)
+			}
+
+			s.maybeEmitCompletedBatchVectorIndex(ctx, in.TenantID.String(), *in.BatchID)
+		}
 	}()
 
 	var nir *models.NormalizedIngestRecord
@@ -3046,17 +3123,7 @@ func (s *IntentService) ProcessIncomingIntentsBatch(
 	}
 
 	for batchID, tenantID := range emittedBatches {
-		log.Printf("[intent-engine][vector-index] final batch emit tenant=%s entity=intent_batch id=%s", tenantID, batchID)
-		s.emitVectorIndexRequest(
-			"intent_batch.updated.v1",
-			tenantID,
-			"intent_batch",
-			batchID,
-			batchID,
-			map[string]string{
-				"vector_summary_scope": "batch",
-			},
-		)
+		s.maybeEmitCompletedBatchVectorIndex(ctx, tenantID, batchID)
 	}
 	return savedIntents, savedDLQs, nil
 }

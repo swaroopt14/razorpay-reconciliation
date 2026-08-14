@@ -7,15 +7,20 @@ import (
 )
 
 type AppConfig struct {
-	ServiceName string
-	HTTPPort    string
-
-	GeminiAPIKey     string
-	GeminiModel      string
-	GeminiBaseURL    string
-	JWTSigningSecret string
-	JWTIssuer        string
-	JWTAudience      string
+	ServiceName                  string
+	HTTPPort                     string
+	HTTPReadHeaderTimeoutSeconds int
+	HTTPReadTimeoutSeconds       int
+	HTTPWriteTimeoutSeconds      int
+	HTTPIdleTimeoutSeconds       int
+	HTTPRequestTimeoutSeconds    int
+	HTTPMaxBodyBytes             int64
+	GeminiAPIKey                 string
+	GeminiModel                  string
+	GeminiBaseURL                string
+	JWTSigningSecret             string
+	JWTIssuer                    string
+	JWTAudience                  string
 
 	DBStatementTimeoutMS int
 	DBLockTimeoutMS      int
@@ -75,6 +80,14 @@ func Load() AppConfig {
 		for _, k := range keys {
 			if v := strings.TrimSpace(os.Getenv(k)); v != "" {
 				return v
+			}
+		}
+		return d
+	}
+	getInt := func(k string, d int) int {
+		if v := os.Getenv(k); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				return n
 			}
 		}
 		return d
@@ -164,16 +177,21 @@ func Load() AppConfig {
 		}
 	}
 	return AppConfig{
-		ServiceName: get("SERVICE_NAME", "zord-prompt-layer"),
-		HTTPPort:    get("HTTP_PORT", "8086"),
-
-		GeminiAPIKey:     os.Getenv("GEMINI_API_KEY"),
-		GeminiAPIKeys:    parseCSVKeys(os.Getenv("GEMINI_API_KEYS")),
-		GeminiModel:      get("GEMINI_MODEL", "gemini-3.1-flash-lite"),
-		GeminiBaseURL:    get("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"),
-		JWTSigningSecret: os.Getenv("JWT_SIGNING_SECRET"),
-		JWTIssuer:        get("JWT_ISSUER", "zord-edge"),
-		JWTAudience:      get("JWT_AUDIENCE", "zord-console"),
+		ServiceName:                  get("SERVICE_NAME", "zord-prompt-layer"),
+		HTTPPort:                     get("HTTP_PORT", "8086"),
+		HTTPReadHeaderTimeoutSeconds: getInt("HTTP_READ_HEADER_TIMEOUT_SECONDS", 5),
+		HTTPReadTimeoutSeconds:       getInt("HTTP_READ_TIMEOUT_SECONDS", 30),
+		HTTPWriteTimeoutSeconds:      getInt("HTTP_WRITE_TIMEOUT_SECONDS", 120),
+		HTTPIdleTimeoutSeconds:       getInt("HTTP_IDLE_TIMEOUT_SECONDS", 60),
+		HTTPRequestTimeoutSeconds:    getInt("HTTP_REQUEST_TIMEOUT_SECONDS", 110),
+		HTTPMaxBodyBytes:             int64(getInt("HTTP_MAX_BODY_BYTES", 1048576)),
+		GeminiAPIKey:                 os.Getenv("GEMINI_API_KEY"),
+		GeminiAPIKeys:                parseCSVKeys(os.Getenv("GEMINI_API_KEYS")),
+		GeminiModel:                  get("GEMINI_MODEL", "gemini-3.1-flash-lite"),
+		GeminiBaseURL:                get("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"),
+		JWTSigningSecret:             os.Getenv("JWT_SIGNING_SECRET"),
+		JWTIssuer:                    get("JWT_ISSUER", "zord-edge"),
+		JWTAudience:                  get("JWT_AUDIENCE", "zord-console"),
 
 		DBStatementTimeoutMS: dbStatementTimeoutMS,
 		DBLockTimeoutMS:      dbLockTimeoutMS,
