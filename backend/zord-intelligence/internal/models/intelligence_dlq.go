@@ -15,7 +15,17 @@ import "time"
 // event_receipts.RunOnce) is explicitly out of scope for now — this type
 // only guarantees durable capture, not automated recovery.
 type IntelligenceDLQRecord struct {
-	TenantID     string    `json:"tenant_id"`
+	// TenantID is parsed from the validated event envelope (INTEL-03), never
+	// from the raw Kafka partition key — most producers in this system key
+	// by event_id/dlq_id/batch_id/dispatch_id, not tenant_id, so casting the
+	// key to TenantID mislabeled the large majority of DLQ records. See
+	// PartitionKey below for the raw key, and buildDLQRecord in
+	// kafka/consumer.go for the extraction.
+	TenantID string `json:"tenant_id"`
+	// PartitionKey is the raw Kafka message key, kept for debugging/
+	// correlation only — it is transport routing metadata, not tenant
+	// identity (INTEL-03).
+	PartitionKey string    `json:"partition_key,omitempty"`
 	SourceTopic  string    `json:"source_topic"`
 	Partition    int       `json:"partition"`
 	Offset       int64     `json:"offset"`
@@ -35,4 +45,11 @@ const (
 	DLQErrorClassHandler            = "HANDLER_ERROR"
 	DLQErrorClassUnsupportedVersion = "UNSUPPORTED_SCHEMA_VERSION" // corrective-action-report P1-01
 	DLQErrorClassMissingField       = "MISSING_REQUIRED_FIELD"     // INTEL-04: schema_version or trace_id absent on a supported-event topic
+	// DLQErrorClassUnapprovedLegacySchema (INTEL-06): schema_version was
+	// empty or the literal "legacy" on a live (non-exempt) topic, but
+	// source_service is not on the configured backfill allow-list. Kept
+	// distinct from DLQErrorClassMissingField — the remediation differs
+	// (add the source to the allow-list vs. fix the producer to send a
+	// real schema_version).
+	DLQErrorClassUnapprovedLegacySchema = "UNAPPROVED_LEGACY_SCHEMA"
 )
