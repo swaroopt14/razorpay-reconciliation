@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -216,6 +217,19 @@ func main() {
 		func(ctx context.Context, rawMsg []byte, attempts int, lastErr error) error {
 			if err := tokenizeFailureRepo.Record(ctx, rawMsg, attempts, lastErr); err != nil {
 				return err
+			}
+			// TOK-02: a pure Kafka delivery failure must NOT let the
+			// request offset advance -- per the acceptance test, "broker
+			// outage prevents request offset advancement." The durable
+			// receipt above is still recorded for operational visibility,
+			// but we deliberately keep returning an error here so
+			// ConsumeClaim never marks this message: it must keep being
+			// redelivered until Kafka genuinely recovers, unlike a
+			// permanent processing failure (bad data, crypto/DB errors),
+			// which correctly gets "resolved" into the poison DLQ and
+			// advanced past after exhausting retries.
+			if errors.Is(lastErr, kafka.ErrDeliveryFailed) {
+				return lastErr
 			}
 			if tokenizeDLQTopic != "" {
 				if pubErr := producer.Publish(ctx, tokenizeDLQTopic, "", json.RawMessage(rawMsg)); pubErr != nil {
