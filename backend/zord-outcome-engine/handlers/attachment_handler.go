@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"zord-outcome-engine/db"
+	"zord-outcome-engine/internal/auth"
 	"zord-outcome-engine/models"
 	"zord-outcome-engine/services"
 
@@ -100,6 +101,9 @@ func (h *Handler) RunAttachmentHandler(c *gin.Context) {
 	var req models.AttachmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body: " + err.Error()})
+		return
+	}
+	if !auth.EnsureBodyTenant(c, req.TenantID) {
 		return
 	}
 
@@ -374,6 +378,9 @@ func (h *Handler) RegisterIntentHandler(c *gin.Context) {
 	}
 	if intent.TenantID == uuid.Nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "tenant_id is required"})
+		return
+	}
+	if !auth.EnsureBodyTenant(c, intent.TenantID.String()) {
 		return
 	}
 
