@@ -35,10 +35,7 @@ func TenantContextMiddleware(auth AuthConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		claims, err := verifyBearerAccessToken(c.GetHeader("Authorization"), auth)
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error":   "unauthorized",
-				"details": "Invalid or expired authentication token. Please login again.",
-			})
+			SafeError(c, http.StatusUnauthorized, "unauthorized", "Invalid or expired authentication token. Please login again.")
 			c.Abort()
 			return
 		}
@@ -47,37 +44,25 @@ func TenantContextMiddleware(auth AuthConfig) gin.HandlerFunc {
 		userID := strings.ToLower(strings.TrimSpace(claims.UserID))
 
 		if !tenantUUIDRe.MatchString(tenantID) {
-			c.JSON(http.StatusForbidden, gin.H{
-				"error":   "forbidden",
-				"details": "Invalid tenant context.",
-			})
+			SafeError(c, http.StatusUnauthorized, "unauthorized", "Invalid tenant context Please login again.")
 			c.Abort()
 			return
 		}
 
 		if !tenantUUIDRe.MatchString(userID) {
-			c.JSON(http.StatusForbidden, gin.H{
-				"error":   "forbidden",
-				"details": "Invalid user context.",
-			})
+			SafeError(c, http.StatusUnauthorized, "unauthorized", "Invalid user context. Please login again.")
 			c.Abort()
 			return
 		}
 
 		if !optionalHeaderMatches(c.GetHeader("X-Tenant-ID"), tenantID) {
-			c.JSON(http.StatusForbidden, gin.H{
-				"error":   "forbidden",
-				"details": "Tenant mismatch with authenticated context.",
-			})
+			SafeError(c, http.StatusForbidden, "forbidden", "Tenant mismatch with authenticated context. Please login again.")
 			c.Abort()
 			return
 		}
 
 		if !optionalHeaderMatches(c.GetHeader("X-User-ID"), userID) {
-			c.JSON(http.StatusForbidden, gin.H{
-				"error":   "forbidden",
-				"details": "User mismatch with authenticated context.",
-			})
+			SafeError(c, http.StatusForbidden, "forbidden", "User mismatch with authenticated context. Please login again.")
 			c.Abort()
 			return
 		}

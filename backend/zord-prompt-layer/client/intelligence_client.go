@@ -41,7 +41,7 @@ func NewIntelligenceClient(baseURL string, timeoutSec int) *IntelligenceClient {
 	}
 }
 
-func (c *IntelligenceClient) doGetJSON(path string, q url.Values, out any) error {
+func (c *IntelligenceClient) doGetJSON(path string, q url.Values, authorization string, out any) error {
 	u := c.BaseURL + path
 	if len(q) > 0 {
 		u += "?" + q.Encode()
@@ -54,6 +54,10 @@ func (c *IntelligenceClient) doGetJSON(path string, q url.Values, out any) error
 		req, err := http.NewRequest(http.MethodGet, u, nil)
 		if err != nil {
 			return err
+		}
+		req.Header.Set("Accept", "application/json")
+		if strings.TrimSpace(authorization) != "" {
+			req.Header.Set("Authorization", strings.TrimSpace(authorization))
 		}
 
 		resp, err := c.HTTP.Do(req)
@@ -109,7 +113,7 @@ func backoff(attempt int) time.Duration {
 	return d
 }
 
-func (c *IntelligenceClient) FetchRCAClusters(tenantID string) (*RCAClustersResponse, error) {
+func (c *IntelligenceClient) FetchRCAClusters(tenantID, authorization string) (*RCAClustersResponse, error) {
 	if strings.TrimSpace(tenantID) == "" {
 		return nil, nil
 	}
@@ -117,7 +121,7 @@ func (c *IntelligenceClient) FetchRCAClusters(tenantID string) (*RCAClustersResp
 	q.Set("tenant_id", tenantID)
 
 	var out RCAClustersResponse
-	if err := c.doGetJSON("/v1/intelligence/rca/clusters", q, &out); err != nil {
+	if err := c.doGetJSON("/v1/intelligence/rca/clusters", q, authorization, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
