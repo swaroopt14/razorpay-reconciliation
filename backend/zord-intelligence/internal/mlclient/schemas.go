@@ -4,6 +4,7 @@ import "time"
 
 // Event type constants — must match Python app/schemas.py exactly.
 const (
+	MLSchemaVersion     = "1"
 	EventIFScore        = "ISOLATION_FOREST_SCORE"
 	EventZScore         = "ZSCORE_DETECT"
 	EventLRPredict      = "LOGISTIC_REGRESSION_PREDICT"
@@ -15,22 +16,29 @@ const (
 
 // MLRequest is the envelope published to ml.request.events.
 type MLRequest struct {
-	EventID   string                 `json:"event_id"`
-	EventType string                 `json:"event_type"`
-	TenantID  string                 `json:"tenant_id"`
-	Payload   map[string]interface{} `json:"payload"`
-	Timestamp int64                  `json:"timestamp"`
+	EventID       string                 `json:"event_id"`
+	EventType     string                 `json:"event_type"`
+	TenantID      string                 `json:"tenant_id"`
+	Payload       map[string]interface{} `json:"payload"`
+	Timestamp     int64                  `json:"timestamp"`
+	SchemaVersion string                 `json:"schema_version"`
 }
 
 // MLResult is the envelope consumed from ml.result.events.
 type MLResult struct {
-	EventID      string                 `json:"event_id"`
-	EventType    string                 `json:"event_type"`
-	TenantID     string                 `json:"tenant_id"`
-	ModelOutputs map[string]interface{} `json:"model_outputs"`
-	ModelVersion string                 `json:"model_version"`
-	ProcessedAt  int64                  `json:"processed_at"`
-	Error        string                 `json:"error,omitempty"`
+	EventID        string                 `json:"event_id"`
+	EventType      string                 `json:"event_type"`
+	TenantID       string                 `json:"tenant_id"`
+	ModelOutputs   map[string]interface{} `json:"model_outputs"`
+	ModelVersion   string                 `json:"model_version"`
+	ProcessedAt    int64                  `json:"processed_at"`
+	Error          string                 `json:"error,omitempty"`
+	PredictionID   string                 `json:"prediction_id,omitempty"`
+	SchemaVersion  string                 `json:"schema_version,omitempty"`
+	RequestHash    string                 `json:"request_hash,omitempty"`
+	ModelDigest    string                 `json:"model_digest,omitempty"`
+	ModelReady     bool                   `json:"model_ready"`
+	FallbackReason string                 `json:"fallback_reason,omitempty"`
 }
 
 // ── Per-model typed request/result structs ────────────────────────────────────

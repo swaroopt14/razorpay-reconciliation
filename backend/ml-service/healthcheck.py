@@ -6,6 +6,8 @@ Used by Docker HEALTHCHECK instead of the shallow import check.
 import os
 import sys
 
+from app import config
+from app.model_registry import ModelRegistry
 from confluent_kafka.admin import AdminClient
 
 brokers = os.getenv("KAFKA_BROKERS", "localhost:9092")
@@ -17,6 +19,12 @@ try:
     })
     meta = client.list_topics(timeout=5)
     if meta is not None:
+        if config.MODEL_REGISTRY_REQUIRED:
+            registry = ModelRegistry(
+                config.INTELLIGENCE_DATABASE_URL,
+                config.MODEL_REGISTRY_PUBLIC_KEY,
+            )
+            registry.verify_promotions()
         print("ok")
         sys.exit(0)
     sys.exit(1)

@@ -351,6 +351,9 @@ func (c *Client) roundTrip(
 }
 
 func (c *Client) publish(ctx context.Context, envelope MLRequest) error {
+	if envelope.SchemaVersion == "" {
+		envelope.SchemaVersion = MLSchemaVersion
+	}
 	value, err := json.Marshal(envelope)
 	if err != nil {
 		return err

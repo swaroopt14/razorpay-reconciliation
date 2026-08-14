@@ -37,6 +37,8 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 logger = logging.getLogger(__name__)
+from app.model_contracts import file_sha256
+
 
 FEATURE_CONTRACT_VERSION = "rca_v1"
 NOISE_SOFT_PROB_THRESHOLD = 0.15
@@ -910,11 +912,24 @@ class RCAModel:
         self._lock = threading.RLock()
         self._bundle: Optional[RCABundle] = None
         self._retrain_buffer: list[dict] = []
+        self._model_digest = ""
         self._retrain_labels: list[str] = []
         self._retraining = False
         self._load()
 
     # ── Public API ────────────────────────────────────────────────────────────
+
+    @property
+    def is_ready(self) -> bool:
+        """Whether an RCA bundle was successfully loaded and can serve inference."""
+        with self._lock:
+            return self._bundle is not None
+
+    @property
+    def model_digest(self) -> str:
+        """SHA-256 of the exact loaded RCA artifact."""
+        with self._lock:
+            return self._model_digest
 
     def predict(self, candidates: list[dict]) -> list[dict]:
         """
@@ -1032,8 +1047,10 @@ class RCAModel:
     def _load(self) -> None:
         try:
             bundle: RCABundle = joblib.load(self._path)
+            model_digest = file_sha256(self._path)
             with self._lock:
                 self._bundle = bundle
+                self._model_digest = model_digest
             logger.info(
                 "rca_model: loaded bundle version=%s cluster_map_size=%d path=%s",
                 bundle.feature_contract_version,
@@ -1086,10 +1103,12 @@ class RCAModel:
             tmp_path = self._path + ".tmp"
             joblib.dump(new_bundle, tmp_path)
             os.replace(tmp_path, self._path)
+            model_digest = file_sha256(self._path)
 
             with self._lock:
                 self._bundle = new_bundle
 
+                self._model_digest = model_digest
             logger.info(
                 "rca_model: retrain complete clusters=%d noise_pct=%.1f%%",
                 len(cluster_label_map),
