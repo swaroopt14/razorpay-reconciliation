@@ -12,6 +12,7 @@ import (
 	"zord-outcome-engine/config"
 	"zord-outcome-engine/db"
 	"zord-outcome-engine/handlers"
+	"zord-outcome-engine/internal/auth"
 	"zord-outcome-engine/internal/health"
 	"zord-outcome-engine/kafka"
 	"zord-outcome-engine/routes"
@@ -49,6 +50,9 @@ func main() {
 	err := godotenv.Load()
 	if err != nil {
 		log.Println("No .env file found")
+	}
+	if err := auth.InitJWTSigningSecret(); err != nil {
+		log.Fatal("JWT auth init failed:", err)
 	}
 
 	brokers := strings.Split(os.Getenv("KAFKA_BROKERS"), ",")
