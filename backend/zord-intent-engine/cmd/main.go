@@ -53,11 +53,9 @@ func main() {
 		log.Fatal("migrations failed:", err)
 	}
 
-	cfg := config.LoadConfig()
-
-	err := vault.InitVaultKey(cfg.VaultKey)
+	err := vault.InitVault()
 	if err != nil {
-		log.Fatal("failed to initialize vault key:", err)
+		log.Fatal("failed to initialize vault:", err)
 	}
 
 	// R-01: every public, tenant-scoped handler must run behind a verified

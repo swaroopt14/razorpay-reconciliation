@@ -91,7 +91,7 @@ func RawIntent(ctx context.Context,
 		ConnectorBindingID:           rawIntent.ConnectorBindingID,
 		EventType:                    rawIntent.EventType,
 		CreatedAt:                    storageAck.ReceivedAt,
-		EncryptionKeyID:              os.Getenv("VAULT_KEY_ID"),
+		EncryptionKeyID:              rawIntent.EncryptionKeyID,
 		ObjectStoreVersion:           os.Getenv("OBJECT_STORE_VERSION"),
 		IdempotencyReservationStatus: "RESERVED",
 		PrincipalID: func() uuid.UUID {

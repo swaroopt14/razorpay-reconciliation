@@ -26,6 +26,9 @@ type IncomingIntent struct {
 	ReceivedAt        time.Time `json:"received_at" db:"received_at"`
 	Payload           json.RawMessage
 	EncryptedPayload  []byte  `json:"encrypted_payload,omitempty" db:"encrypted_payload"`
+	ContentType       string  `json:"content_type,omitempty" db:"-"`
+	KMSKeyVersion     string  `json:"kms_key_version,omitempty" db:"-"`
+	EncryptionKeyID   string  `json:"encryption_key_id,omitempty" db:"-"`
 	BatchID           *string `json:"batchid,omitempty" db:"batchid"`
 	SourceRowRef      *string `json:"source_row_ref,omitempty" db:"-"`
 	FileName          *string `json:"file_name,omitempty" db:"-"`

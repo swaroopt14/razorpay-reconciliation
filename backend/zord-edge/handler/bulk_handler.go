@@ -1265,7 +1265,12 @@ func (h *Handler) processBulkIntentRow(
 	authMethod string,
 ) (*model.AckMessage, uuid.UUID, error) {
 
-	encryptedPayload, err := vault.Encrypt(rawPayload)
+	encResult, err := vault.Encrypt(vault.EncryptionContext{
+		TenantID:          tenantID.String(),
+		ArtifactID:        artifactID,
+		ArtifactVersionID: artifactVersionID,
+		ContentType:       contentType,
+	}, rawPayload)
 	if err != nil {
 		logger.Log.Error("failed to encrypt payload for bulk row",
 			slog.String("trace_id", traceID),
@@ -1273,6 +1278,7 @@ func (h *Handler) processBulkIntentRow(
 			slog.String("error", err.Error()))
 		return nil, uuid.Nil, err
 	}
+	encryptedPayload := encResult.Ciphertext
 
 	fingerprintInput := append(rawPayload, []byte(idempotencyKey+tenantID.String())...)
 	fingerprintSum := sha256.Sum256(fingerprintInput)
@@ -1296,7 +1302,8 @@ func (h *Handler) processBulkIntentRow(
 
 		// Hardcoded values
 		ObjectEncryptionAlg:  "AES256",
-		KMSKeyVersion:        "v1",
+		KMSKeyVersion:        encResult.KeyVersion,
+		EncryptionKeyID:      encResult.KeyID,
 		IngressAPIVersion:    "v1",
 		RetentionPolicyClass: "STANDARD",
 		EventType:            "Envelope.Created",
