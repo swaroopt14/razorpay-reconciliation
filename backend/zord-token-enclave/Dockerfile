@@ -24,6 +24,7 @@ WORKDIR /app
 
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /out/zord-token-enclave /app/zord-token-enclave
+COPY --from=builder /src/db/migrations /app/db/migrations
 
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 USER 65532:65532

@@ -13,10 +13,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
+	"github.com/pressly/goose/v3"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
 	"zord-token-enclave/internal/config"
-	"zord-token-enclave/internal/db"
 	"zord-token-enclave/internal/handlers"
 	"zord-token-enclave/internal/health"
 	"zord-token-enclave/internal/keymanager"
@@ -78,8 +78,15 @@ func main() {
 		log.Fatal("❌ DB not reachable:", err)
 	}
 
-	if err := db.CreateTables(database); err != nil {
-		log.Fatal("❌ Failed to create tables:", err)
+	// TOK-06: versioned goose migrations replace the old runtime
+	// CREATE TABLE IF NOT EXISTS calls -- same pattern zord-intent-engine
+	// already uses (see its cmd/main.go).
+	goose.SetBaseFS(nil)
+	if err := goose.SetDialect("postgres"); err != nil {
+		log.Fatal("❌ goose dialect error:", err)
+	}
+	if err := goose.Up(database, "db/migrations"); err != nil {
+		log.Fatal("❌ Failed to run migrations:", err)
 	}
 
 	// ---------------- REPO + KEY MANAGER ----------------
