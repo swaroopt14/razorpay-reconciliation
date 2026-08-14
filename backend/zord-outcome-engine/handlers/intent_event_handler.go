@@ -55,9 +55,8 @@ func HandleIntentEvent(msg []byte) error {
 	log.Printf("intent event consumed [event_id=%s event_type=%s trace_id=%s tenant_id=%s schema_version=%s]",
 		event.EventID, event.EventType, event.TraceID, event.TenantID, event.SchemaVersion)
 
-	normalized := strings.ToLower(strings.TrimSpace(event.EventType))
-	if !strings.HasPrefix(normalized, "intent.") {
-		_ = persistDeadLetter(context.Background(), event.EventID, event.EventType, event.SchemaVersion, event.TenantID, event.TraceID, msg, fmt.Sprintf("unsupported event_type prefix %q", event.EventType), "UNSUPPORTED_VERSION")
+	if strings.TrimSpace(event.EventType) != models.EventTypeIntentCreatedV1 {
+		_ = persistDeadLetter(context.Background(), event.EventID, event.EventType, event.SchemaVersion, event.TenantID, event.TraceID, msg, fmt.Sprintf("unsupported event_type %q (expected %q)", event.EventType, models.EventTypeIntentCreatedV1), "UNSUPPORTED_VERSION")
 		return nil
 	}
 
