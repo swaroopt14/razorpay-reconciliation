@@ -216,27 +216,127 @@ func (r *TokenRepository) GetKeyByID(ctx context.Context, keyID string) (*models
 	return &k, nil
 }
 
-func (r *TokenRepository) RotateKey(ctx context.Context, tenantID string, newKeyID string, newKey []byte, createdBy string) error {
+// RotateKey performs a full rotation for tenantID inside one transaction,
+// gated by a non-blocking, transaction-scoped Postgres advisory lock keyed
+// per tenant (TOK-07: "Coordinate key rotation across replicas"). If another
+// replica is already rotating this same tenant, this returns (false, nil) --
+// not an error, an expected outcome under concurrent replicas -- and performs
+// no writes. pg_try_advisory_xact_lock self-releases on COMMIT, ROLLBACK, or
+// a dead connection, so a crash mid-rotation leaves nothing to clean up: the
+// whole transaction simply never committed, and the tenant is still eligible
+// for rotation on the next attempt.
+func (r *TokenRepository) RotateKey(ctx context.Context, tenantID string, newKeyID string, newKey []byte, createdBy string) (bool, error) {
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer tx.Rollback()
-	// No manual count check here; handled by service-layer singleflight and DB constraints.
 
+	acquired, err := tryAcquireRotationXactLock(ctx, tx, tenantID)
+	if err != nil {
+		return false, err
+	}
+	if !acquired {
+		return false, nil
+	}
+
+	if err := rotateKeyTx(ctx, tx, tenantID, newKeyID, newKey, createdBy); err != nil {
+		return false, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+// RotateKeyIfStale is RotateKey's auto-rotation-safe twin: after acquiring
+// the SAME per-tenant advisory lock (same key, same lock space -- a session
+// or another transaction already holding it blocks this one regardless of
+// which of the two functions is asking), it re-reads the current active
+// key's active_from INSIDE that lock -- not the possibly-stale read the
+// caller made before ever attempting to acquire -- and only rotates if it's
+// still older than maxAge. This closes the race a lock alone cannot close:
+// two replicas can both read the same stale key before either acquires the
+// lock; the lock alone only serializes the eventual WRITE (replica B would
+// still rotate again right after replica A releases). Re-validating the
+// READ that justified the write, inside the same critical section the write
+// happens in, is what makes "one effective rotation" hold even in that
+// sequential-not-concurrent sub-case.
+//
+// Deliberately its own transaction/lock-acquire rather than a precondition
+// bolted onto RotateKey: callers that want unconditional rotation
+// (EnsureInitialKey's bootstrap path, the manual admin handler) must never
+// have their explicit request silently no-op against a staleness check that
+// has nothing to do with why they're calling.
+func (r *TokenRepository) RotateKeyIfStale(ctx context.Context, tenantID string, newKeyID string, newKey []byte, createdBy string, maxAge time.Duration) (bool, error) {
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+
+	acquired, err := tryAcquireRotationXactLock(ctx, tx, tenantID)
+	if err != nil {
+		return false, err
+	}
+	if !acquired {
+		return false, nil
+	}
+
+	var activeFrom time.Time
+	err = tx.QueryRowContext(ctx, `
+		SELECT active_from FROM token_encryption_keys
+		WHERE tenant_id = $1 AND status = 'ACTIVE'
+	`, tenantID).Scan(&activeFrom)
+	if err != nil {
+		return false, err
+	}
+	if time.Since(activeFrom) < maxAge {
+		// No longer stale -- another replica already rotated it in the
+		// window between our caller's read and this lock acquisition.
+		return false, nil
+	}
+
+	if err := rotateKeyTx(ctx, tx, tenantID, newKeyID, newKey, createdBy); err != nil {
+		return false, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+func tryAcquireRotationXactLock(ctx context.Context, tx *sql.Tx, tenantID string) (bool, error) {
+	var acquired bool
+	err := tx.QueryRowContext(ctx,
+		`SELECT pg_try_advisory_xact_lock(hashtextextended('token-rotation:'||$1, 0))`,
+		tenantID,
+	).Scan(&acquired)
+	return acquired, err
+}
+
+// rotateKeyTx is the actual key-swap: mark the current ACTIVE key RETIRING,
+// insert the new one ACTIVE. Callers MUST already hold the per-tenant
+// advisory lock (via tryAcquireRotationXactLock in the SAME tx) before
+// calling this -- it performs no locking of its own.
+func rotateKeyTx(ctx context.Context, tx *sql.Tx, tenantID string, newKeyID string, newKey []byte, createdBy string) error {
 	// 1️⃣ Mark current ACTIVE key as RETIRING
-	_, err = tx.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, `
 		UPDATE token_encryption_keys
 		SET status = 'RETIRING', retire_from = now()
 		WHERE tenant_id = $1 AND status = 'ACTIVE'
-	`, tenantID)
-	if err != nil {
+	`, tenantID); err != nil {
 		return err
 	}
 
 	// 2️⃣ Insert new ACTIVE key (V2)
-	_, err = tx.ExecContext(ctx, `
+	_, err := tx.ExecContext(ctx, `
 		INSERT INTO token_encryption_keys
 		(key_id, tenant_id, key_version, encrypted_key, status, active_from, created_by)
 		VALUES ($1, $2, $3, $4, 'ACTIVE', now(), $5)
@@ -247,12 +347,7 @@ func (r *TokenRepository) RotateKey(ctx context.Context, tenantID string, newKey
 		newKey,
 		createdBy,
 	)
-	if err != nil {
-		return err
-	}
-
-	return tx.Commit()
-
+	return err
 }
 
 func getNextVersion(ctx context.Context, tx *sql.Tx, tenantID string) int {

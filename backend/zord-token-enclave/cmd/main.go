@@ -8,7 +8,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -96,16 +98,33 @@ func main() {
 	// ---------------- SERVICE ----------------
 	tokenSvc := services.NewTokenService(tokenRepo, keyManager, cfg.TokenSecret)
 
+	// TOK-07: "Multiple replicas can rotate the same tenant concurrently or
+	// continue during shutdown" -- these two workers previously ran on
+	// context.Background() forever, with no way to stop on shutdown. A
+	// signal-derived root context lets them exit their loop promptly on
+	// SIGTERM/SIGINT instead of running an in-flight (or next) cycle to
+	// completion regardless of what the orchestrator wants. HTTP graceful
+	// shutdown (r.Run below) is a separate, explicitly out-of-scope concern
+	// for this ticket -- the audit's code evidence names only these
+	// workers' background contexts.
+	workerCtx, stopWorkers := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopWorkers()
+
 	// ---------------- MIGRATION WORKER ----------------
 	go func() {
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
 		for {
 			log.Println("🔁 Starting migration check for all tenants...")
-			tenants, err := tokenSvc.GetAllTenants(context.Background())
+			tenants, err := tokenSvc.GetAllTenants(workerCtx)
 			if err != nil {
 				log.Println("❌ Failed to load tenants for migration:", err)
 			} else {
 				for _, tenantID := range tenants {
-					if err := tokenSvc.MigrateKeys(context.Background(), tenantID); err != nil {
+					if workerCtx.Err() != nil {
+						break
+					}
+					if err := tokenSvc.MigrateKeys(workerCtx, tenantID); err != nil {
 						log.Printf("❌ Migration error for tenant %s: %v", tenantID, err)
 					} else {
 						log.Printf("✅ Migration cycle completed for tenant %s", tenantID)
@@ -113,20 +132,31 @@ func main() {
 				}
 			}
 
-			time.Sleep(1 * time.Minute)
+			select {
+			case <-workerCtx.Done():
+				log.Println("🛑 migration worker shutting down")
+				return
+			case <-ticker.C:
+			}
 		}
 	}()
 
 	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
 		for {
 			log.Println("🔐 Checking if key rotation needed...")
 
-			err := tokenSvc.AutoRotateKeys(context.Background())
-			if err != nil {
+			if err := tokenSvc.AutoRotateKeys(workerCtx); err != nil {
 				log.Println("❌ Auto-rotation error:", err)
 			}
 
-			time.Sleep(10 * time.Minute)
+			select {
+			case <-workerCtx.Done():
+				log.Println("🛑 auto-rotation worker shutting down")
+				return
+			case <-ticker.C:
+			}
 		}
 	}()
 
