@@ -48,28 +48,38 @@ func persistDeadLetter(ctx context.Context, eventID, eventType, schemaVersion, t
 func HandleIntentEvent(msg []byte) error {
 	var event models.IntentOutboxEvent
 	if err := json.Unmarshal(msg, &event); err != nil {
-		_ = persistDeadLetter(context.Background(), "", "", "", "", "", msg, fmt.Sprintf("json unmarshal failed: %v", err), "ENVELOPE_UNMARSHAL")
-		return err
+		// Poison envelope: retrying will not help. Persist a dead letter and
+		// return nil only after that write succeeds so the Kafka offset is
+		// not marked without a durable failure record (OUT-02).
+		if dlqErr := persistDeadLetter(context.Background(), "", "", "", "", "", msg, fmt.Sprintf("json unmarshal failed: %v", err), "ENVELOPE_UNMARSHAL"); dlqErr != nil {
+			return dlqErr
+		}
+		return nil
 	}
 
 	log.Printf("intent event consumed [event_id=%s event_type=%s trace_id=%s tenant_id=%s schema_version=%s]",
 		event.EventID, event.EventType, event.TraceID, event.TenantID, event.SchemaVersion)
 
-	normalized := strings.ToLower(strings.TrimSpace(event.EventType))
-	if !strings.HasPrefix(normalized, "intent.") {
-		_ = persistDeadLetter(context.Background(), event.EventID, event.EventType, event.SchemaVersion, event.TenantID, event.TraceID, msg, fmt.Sprintf("unsupported event_type prefix %q", event.EventType), "UNSUPPORTED_VERSION")
+	if strings.TrimSpace(event.EventType) != models.EventTypeIntentCreatedV1 {
+		if dlqErr := persistDeadLetter(context.Background(), event.EventID, event.EventType, event.SchemaVersion, event.TenantID, event.TraceID, msg, fmt.Sprintf("unsupported event_type %q (expected %q)", event.EventType, models.EventTypeIntentCreatedV1), "UNSUPPORTED_VERSION"); dlqErr != nil {
+			return dlqErr
+		}
 		return nil
 	}
 
 	if event.SchemaVersion != models.SchemaVersionV1 {
-		_ = persistDeadLetter(context.Background(), event.EventID, event.EventType, event.SchemaVersion, event.TenantID, event.TraceID, msg, fmt.Sprintf("unsupported schema_version %q for event_type %q (expected %q)", event.SchemaVersion, event.EventType, models.SchemaVersionV1), "UNSUPPORTED_VERSION")
+		if dlqErr := persistDeadLetter(context.Background(), event.EventID, event.EventType, event.SchemaVersion, event.TenantID, event.TraceID, msg, fmt.Sprintf("unsupported schema_version %q for event_type %q (expected %q)", event.SchemaVersion, event.EventType, models.SchemaVersionV1), "UNSUPPORTED_VERSION"); dlqErr != nil {
+			return dlqErr
+		}
 		return nil
 	}
 
 	var payload models.IntentPayload
 	if err := json.Unmarshal(event.Payload, &payload); err != nil {
-		_ = persistDeadLetter(context.Background(), event.EventID, event.EventType, event.SchemaVersion, event.TenantID, event.TraceID, msg, fmt.Sprintf("payload unmarshal failed: %v", err), "PAYLOAD_UNMARSHAL")
-		return err
+		if dlqErr := persistDeadLetter(context.Background(), event.EventID, event.EventType, event.SchemaVersion, event.TenantID, event.TraceID, msg, fmt.Sprintf("payload unmarshal failed: %v", err), "PAYLOAD_UNMARSHAL"); dlqErr != nil {
+			return dlqErr
+		}
+		return nil
 	}
 	if payload.TenantID == "" {
 		payload.TenantID = event.TenantID
@@ -77,11 +87,17 @@ func HandleIntentEvent(msg []byte) error {
 
 	intent, err := canonicalIntentFromPayload(payload, event.TraceID)
 	if err != nil {
-		_ = persistDeadLetter(context.Background(), event.EventID, event.EventType, event.SchemaVersion, event.TenantID, event.TraceID, msg, fmt.Sprintf("canonicalization failed: %v", err), "CANONICALIZATION")
-		return err
+		if dlqErr := persistDeadLetter(context.Background(), event.EventID, event.EventType, event.SchemaVersion, event.TenantID, event.TraceID, msg, fmt.Sprintf("canonicalization failed: %v", err), "CANONICALIZATION"); dlqErr != nil {
+			return dlqErr
+		}
+		return nil
 	}
 	if err := upsertCanonicalIntent(context.Background(), intent); err != nil {
-		_ = persistDeadLetter(context.Background(), event.EventID, event.EventType, event.SchemaVersion, event.TenantID, event.TraceID, msg, fmt.Sprintf("persistence failed: %v", err), "PERSISTENCE")
+		// Transient persistence failures must not be dead-lettered here:
+		// kafka.ConsumeClaim retries in place, then writes a durable
+		// consumer_failure_receipts row before marking. Returning err
+		// without a DLQ keeps the partition blocked until that receipt
+		// exists (OUT-02).
 		return err
 	}
 	log.Printf("canonical_intents upserted from topic event_id=%s intent_id=%s", event.EventID, payload.IntentID)

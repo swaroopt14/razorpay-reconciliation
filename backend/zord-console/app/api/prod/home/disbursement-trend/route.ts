@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  const buckets = await fetchLeakageTrendFromIntelligence(tenantId, range)
+  const buckets = await fetchLeakageTrendFromIntelligence(tenantId, range, gate.accessToken)
   const body: DisbursementTrendResponse = {
     data_available: buckets.some((b) => b.total_amount > 0 || b.confirmed_amount > 0),
     range,

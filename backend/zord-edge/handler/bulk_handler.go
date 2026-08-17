@@ -23,6 +23,7 @@ import (
 
 	"zord-edge/db"
 	"zord-edge/logger"
+	"zord-edge/middleware"
 	"zord-edge/model"
 	"zord-edge/services"
 	"zord-edge/vault"
@@ -161,6 +162,20 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 	tenantID := c.MustGet("tenant_id").(uuid.UUID)
 	tenantName := c.MustGet("tenant_name").(string)
+
+	principalType, _ := middleware.GetPrincipalType(c)
+	authMethod := string(principalType)
+
+	var principalID string
+	if uid, exists := c.Get("user_id"); exists {
+		if id, ok := uid.(uuid.UUID); ok {
+			principalID = id.String()
+		}
+	}
+	if principalID == "" {
+		principalID = tenantID.String()
+	}
+
 	PayloadSize := c.MustGet("PayloadSize").(int64)
 	fileTraceID := uuid.Must(uuid.NewV7()).String()
 
@@ -509,6 +524,8 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 						&profileIDForAudit, // Use profileIDForAudit as the audit hint
 						artifactID.String(),
 						artifactVersionID.String(),
+						principalID,
+						authMethod,
 					)
 
 					resultsMu.Lock()
@@ -830,6 +847,8 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 						&profileIDForAudit, // Use profileIDForAudit as the audit hint
 						artifactID.String(),
 						artifactVersionID.String(),
+						principalID,
+						authMethod,
 					)
 
 					resultsMu.Lock()
@@ -1242,9 +1261,16 @@ func (h *Handler) processBulkIntentRow(
 	profileID *string, // audit: which mapping profile parsed this row
 	artifactID string, // shared file-level artifact id, stamped on every row envelope
 	artifactVersionID string,
+	principalID string,
+	authMethod string,
 ) (*model.AckMessage, uuid.UUID, error) {
 
-	encryptedPayload, err := vault.Encrypt(rawPayload)
+	encResult, err := vault.Encrypt(vault.EncryptionContext{
+		TenantID:          tenantID.String(),
+		ArtifactID:        artifactID,
+		ArtifactVersionID: artifactVersionID,
+		ContentType:       contentType,
+	}, rawPayload)
 	if err != nil {
 		logger.Log.Error("failed to encrypt payload for bulk row",
 			slog.String("trace_id", traceID),
@@ -1252,6 +1278,7 @@ func (h *Handler) processBulkIntentRow(
 			slog.String("error", err.Error()))
 		return nil, uuid.Nil, err
 	}
+	encryptedPayload := encResult.Ciphertext
 
 	fingerprintInput := append(rawPayload, []byte(idempotencyKey+tenantID.String())...)
 	fingerprintSum := sha256.Sum256(fingerprintInput)
@@ -1275,7 +1302,8 @@ func (h *Handler) processBulkIntentRow(
 
 		// Hardcoded values
 		ObjectEncryptionAlg:  "AES256",
-		KMSKeyVersion:        "v1",
+		KMSKeyVersion:        encResult.KeyVersion,
+		EncryptionKeyID:      encResult.KeyID,
 		IngressAPIVersion:    "v1",
 		RetentionPolicyClass: "STANDARD",
 		EventType:            "Envelope.Created",
@@ -1286,6 +1314,8 @@ func (h *Handler) processBulkIntentRow(
 		RowCountEstimate:     rowCountEstimate,
 		FileUploadChannel:    fileUploadChannel,
 		SourceRowRef:         sourceRowRef,
+		PrincipalID:          principalID,
+		AuthMethod:           authMethod,
 	}
 
 	id, err := services.PersistIdempotency(ctx, rawIntent, db.DB)
@@ -1346,14 +1376,59 @@ func (h *Handler) processBulkIntentRow(
 	return storageAck, uuid.Nil, nil
 }
 
-// ── Sanitization Helpers ────────────────────────────────────────────────────────
+// ── Spreadsheet safety (import only) ───────────────────────────────────────────
+//
+// Edge quarantines actual formula/macro injection — not every signed value.
+// Legitimate negatives (+/- amounts), phone numbers (+91…), and signed identifiers
+// pass through; field-kind validation is handled downstream in intent-engine.
+// Export sanitization is out of scope for this service.
 
 func isCsvFormula(val string) bool {
-	trimmer := strings.TrimSpace(val)
-	if len(trimmer) == 0 {
+	trimmed := strings.TrimSpace(val)
+	if len(trimmed) == 0 {
 		return false
 	}
-	return trimmer[0] == '=' || trimmer[0] == '+' || trimmer[0] == '-' || trimmer[0] == '@'
+	if trimmed[0] == '=' || trimmed[0] == '@' || trimmed[0] == '\t' || trimmed[0] == '\r' {
+		return true
+	}
+
+	lower := strings.ToLower(trimmed)
+	if strings.Contains(lower, "cmd|") || strings.Contains(lower, "dde|") ||
+		strings.Contains(lower, "hyperlink(") {
+		return true
+	}
+
+	if trimmed[0] == '+' || trimmed[0] == '-' {
+		return isSpreadsheetFormulaExpression(trimmed)
+	}
+	return false
+}
+
+func isSpreadsheetFormulaExpression(val string) bool {
+	rest := strings.TrimLeft(val, "+-")
+	if rest == "" {
+		return false
+	}
+	for i := 1; i < len(rest); i++ {
+		if rest[i] == '(' {
+			start := i - 1
+			for start >= 0 && ((rest[start] >= 'A' && rest[start] <= 'Z') || (rest[start] >= 'a' && rest[start] <= 'z')) {
+				start--
+			}
+			if i-1-start >= 2 {
+				return true
+			}
+		}
+	}
+	if len(rest) >= 3 && rest[0] >= '0' && rest[0] <= '9' {
+		for i := 1; i < len(rest)-1; i++ {
+			if (rest[i] == '+' || rest[i] == '-' || rest[i] == '*' || rest[i] == '/') &&
+				rest[i+1] >= '0' && rest[i+1] <= '9' {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func CheckRowForFormulas(headers, row []string, rowNum int) *BulkResult {
@@ -1367,9 +1442,7 @@ func CheckRowForFormulas(headers, row []string, rowNum int) *BulkResult {
 				Row:    rowNum,
 				Status: "REJECTED",
 				Error:  fmt.Sprintf("formula injection detected in column %q", header),
-				// structured code for 3.1.4
 			}
-
 		}
 	}
 	return nil

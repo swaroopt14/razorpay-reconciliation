@@ -476,11 +476,23 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 		cfg.TopicSLATimerTick:       true,
 	}
 
+	// INTEL-06: source_service values permitted to send an empty or literal
+	// "legacy" schema_version on live (non-exempt) topics. Parsed once here
+	// from cfg.LegacySchemaAllowedSources (comma-separated); empty by
+	// default, so live production topics fail closed unless an ops-run
+	// backfill/replay tool's source_service is explicitly listed.
+	legacyAllowedSources := map[string]bool{}
+	for _, s := range strings.Split(cfg.LegacySchemaAllowedSources, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			legacyAllowedSources[s] = true
+		}
+	}
+
 	topicCount := 0
 	for topic, fn := range topicHandlers {
 		t, f := topic, fn // capture loop variables before goroutine launch
 		exempt := requiredFieldExemptTopics[t]
-		go consumeSingleTopic(ctx, brokers, cfg.KafkaGroupID, t, f, producer, cfg.TopicIntelligenceDLQ, exempt)
+		go consumeSingleTopic(ctx, brokers, cfg.KafkaGroupID, t, f, producer, cfg.TopicIntelligenceDLQ, exempt, legacyAllowedSources)
 		topicCount++
 	}
 
@@ -555,6 +567,11 @@ func (c KafkaGoHeaderCarrier) Keys() []string {
 // exemptFromRequiredFieldCheck disables the INTEL-04 missing-schema_version/
 // missing-trace_id gate for this topic only — see requiredFieldExemptTopics
 // in StartConsumers for which topic that is and why.
+//
+// legacyAllowedSources (INTEL-06) is the set of source_service values
+// permitted to send an empty or literal "legacy" schema_version on this
+// topic when it is NOT exempt — see StartConsumers for how it's parsed from
+// cfg.LegacySchemaAllowedSources. Empty by default (fail closed).
 func consumeSingleTopic(
 	ctx context.Context,
 	brokers []string,
@@ -563,6 +580,7 @@ func consumeSingleTopic(
 	producer *Producer,
 	dlqTopic string,
 	exemptFromRequiredFieldCheck bool,
+	legacyAllowedSources map[string]bool,
 ) {
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        brokers,
@@ -619,7 +637,7 @@ func consumeSingleTopic(
 		// to the topic name / "legacy" for the two flat, non-enveloped
 		// topics that carry neither field.
 		hash := sha256.Sum256(msg.Value)
-		domainEventType, schemaVersion, traceID := extractEnvelopeFieldsBestEffort(msg.Value)
+		domainEventType, schemaVersion, traceID, tenantID, sourceService := extractEnvelopeFieldsBestEffort(msg.Value)
 		if domainEventType == "" {
 			domainEventType = msg.Topic
 		}
@@ -627,13 +645,20 @@ func consumeSingleTopic(
 		if eventVersion == "" {
 			eventVersion = models.DefaultEventVersion
 		}
+		// INTEL-05: EventSource is the envelope-derived domain producer
+		// (e.g. zord-outcome-engine), never a hardcoded transport identity.
+		// Left "" here for the 3 exempt topics that carry no such field —
+		// EnvelopeMetaFromContext's existing fallback still applies when this
+		// is read back downstream. SourceTopic (below) already carries the
+		// actual transport/relay hop.
 		msgCtx = models.ContextWithEnvelopeMeta(msgCtx, models.EnvelopeMeta{
-			EventSource:  models.DefaultEventSource,
+			EventSource:  sourceService,
 			SourceTopic:  msg.Topic,
 			EventType:    domainEventType,
 			EventVersion: eventVersion,
 			PayloadHash:  hex.EncodeToString(hash[:]),
 			TraceID:      traceID,
+			TenantID:     tenantID,
 		})
 
 		// Unknown major schema version: route straight to the DLQ without
@@ -655,11 +680,40 @@ func consumeSingleTopic(
 		// defaulting that happens for logging/lineage purposes elsewhere.
 		// exemptFromRequiredFieldCheck carves out cfg.TopicDLQ only — see
 		// requiredFieldExemptTopics in StartConsumers.
+		//
+		// INTEL-03: tenant_id joins the same required-field gate — a
+		// supported-event topic with no tenant_id cannot be safely attributed
+		// to a tenant anywhere downstream (DLQ records, metrics, replay
+		// authorization), so it is rejected here rather than silently
+		// defaulting TenantID to "" (or, as before this fix, to the wrong
+		// value read off the Kafka partition key). Same exemption set as
+		// schema_version/trace_id above.
+		//
+		// INTEL-05: source_service joins the gate too — a supported-event
+		// topic with no domain producer identity must not silently persist
+		// with a defaulted/wrong lineage value (event_source is part of
+		// event_receipts' primary key and is returned directly in the
+		// customer-facing trace/RCA API). Same exemption set again.
+		//
+		// INTEL-06: a *live* (non-exempt) topic's message with schema_version
+		// explicitly set to the literal "legacy" string is scoped to an
+		// explicit source_service allow-list, not accepted unconditionally —
+		// closing the gap where models.IsKnownSchemaVersion's blanket
+		// "legacy" leniency let any producer bypass real versioning on any
+		// topic. Checked against the raw schemaVersion (== DefaultEventVersion,
+		// i.e. the literal string, not merely defaulted from empty by
+		// eventVersion above) so this is distinct from — and evaluated before
+		// — the required-field gate below, which continues to unconditionally
+		// reject a genuinely empty schema_version regardless of allow-list: an
+		// approved backfill/replay source must explicitly say "legacy", never
+		// rely on an absent field.
 		switch {
 		case !models.IsKnownSchemaVersion(eventVersion):
 			err = fmt.Errorf("%w: schema_version=%q topic=%s", errUnsupportedSchemaVersion, eventVersion, msg.Topic)
-		case !exemptFromRequiredFieldCheck && (schemaVersion == "" || traceID == ""):
-			err = fmt.Errorf("%w: schema_version=%q trace_id=%q topic=%s", errMissingRequiredField, schemaVersion, traceID, msg.Topic)
+		case isUnapprovedLegacySchema(schemaVersion, sourceService, exemptFromRequiredFieldCheck, legacyAllowedSources):
+			err = fmt.Errorf("%w: schema_version=%q source_service=%q topic=%s", errUnapprovedLegacySchema, schemaVersion, sourceService, msg.Topic)
+		case !exemptFromRequiredFieldCheck && (schemaVersion == "" || traceID == "" || tenantID == "" || sourceService == ""):
+			err = fmt.Errorf("%w: schema_version=%q trace_id=%q tenant_id=%q source_service=%q topic=%s", errMissingRequiredField, schemaVersion, traceID, tenantID, sourceService, msg.Topic)
 		default:
 			err = handle(msgCtx, msg)
 		}
@@ -674,10 +728,12 @@ func consumeSingleTopic(
 			// deadlock/serialization errors internally, not connection
 			// failures, so without this a brief outage would go straight to
 			// the DLQ instead of recovering. A genuine poison message (bad
-			// JSON), an unsupported schema version, or a missing required
-			// field (INTEL-04) skips this — retrying identical bytes cannot
-			// supply a field the message never carried in the first place.
-			if !isUnmarshalError(err) && !errors.Is(err, errUnsupportedSchemaVersion) && !errors.Is(err, errMissingRequiredField) {
+			// JSON), an unsupported schema version, a missing required
+			// field (INTEL-04), or an unapproved legacy schema_version
+			// (INTEL-06) skips this — retrying identical bytes cannot
+			// supply a field the message never carried, or make an
+			// unapproved source approved.
+			if !isUnmarshalError(err) && !errors.Is(err, errUnsupportedSchemaVersion) && !errors.Is(err, errMissingRequiredField) && !errors.Is(err, errUnapprovedLegacySchema) {
 				for attempt, backoff := 2, time.Second; attempt <= 3 && err != nil; attempt, backoff = attempt+1, backoff*3 {
 					time.Sleep(backoff)
 					log.Printf("kafka: retrying handler topic=%s partition=%d offset=%d attempt=%d/3",
@@ -732,6 +788,18 @@ func isUnmarshalError(err error) bool {
 	return errors.As(err, &syntaxErr) || errors.As(err, &typeErr)
 }
 
+// isUnapprovedLegacySchema reports whether schemaVersion is the literal
+// models.DefaultEventVersion ("legacy") string on a non-exempt (live) topic
+// whose source_service is not on the configured backfill allow-list
+// (INTEL-06). schemaVersion must be the raw extracted value — not the
+// eventVersion defaulted-from-empty value — so a genuinely empty
+// schema_version is never confused with an explicit "legacy" claim; the
+// former is always handled by the required-field gate regardless of this
+// function or the allow-list.
+func isUnapprovedLegacySchema(schemaVersion, sourceService string, exempt bool, legacyAllowedSources map[string]bool) bool {
+	return !exempt && schemaVersion == models.DefaultEventVersion && !legacyAllowedSources[sourceService]
+}
+
 // errUnsupportedSchemaVersion is the sentinel wrapped into the synthetic
 // error consumeSingleTopic raises when a message's schema_version is not in
 // models.SupportedSchemaVersions (corrective-action-report P1-01). Like a
@@ -745,6 +813,15 @@ var errUnsupportedSchemaVersion = errors.New("unsupported schema version")
 // See requiredFieldExemptTopics in StartConsumers for the one topic (dlq.event)
 // this check does not apply to.
 var errMissingRequiredField = errors.New("missing required event field")
+
+// errUnapprovedLegacySchema is the sentinel wrapped into the synthetic error
+// consumeSingleTopic raises when a live (non-exempt) topic's message has an
+// empty or literal "legacy" schema_version and source_service is not on the
+// configured backfill allow-list (INTEL-06). Unlike errMissingRequiredField,
+// this isn't about a field being absent — trace_id/tenant_id/source_service
+// may all be present — it's specifically about an unapproved source claiming
+// legacy/no-version status on a topic that requires a real one.
+var errUnapprovedLegacySchema = errors.New("unapproved legacy schema_version")
 
 // extractEnvelopeFieldsBestEffort tries to pull the domain event_type,
 // schema_version, and trace_id out of raw message bytes without knowing the
@@ -780,33 +857,83 @@ var errMissingRequiredField = errors.New("missing required event field")
 // upstream data-quality gap (see the outcome-engine buildRow()/observation-
 // lookup code), not an extraction-location gap, so no ZPI-side fallback fixes
 // it.
-func extractEnvelopeFieldsBestEffort(payload []byte) (eventType, schemaVersion, traceID string) {
+//
+// TENANT_ID (INTEL-03): unlike schema_version, tenant_id has no nested-
+// payload fallback — every producer stamps it as a real top-level field
+// (models.RelayEvent.TenantID for enveloped topics; a top-level tenant_id on
+// the flat DLQEvent/DLQItemEvent/CorridorHealthTickEvent/SLATimerTickEvent
+// shapes too), so the top-level probe alone is sufficient. This is the field
+// buildDLQRecord below now uses for TenantID — the raw Kafka partition key
+// is NOT a reliable tenant proxy: an audit of every zord-relay producer call
+// site found most topics ZPI consumes are keyed by event_id/dlq_id/batch_id/
+// dispatch_id, not tenant_id.
+//
+// SOURCE_SERVICE (INTEL-05): a real field on every RelayEvent-enveloped
+// topic (models.RelayEvent.SourceService) and on the flat DLQItemEvent
+// shape. Only dlq.event, corridor.health.tick, and sla.timer.tick genuinely
+// carry no such field — the same three topics already exempted from this
+// required-field gate. This is the domain producer identity (intent-engine,
+// outcome-engine, evidence, ...); it must never be defaulted to
+// "zord-relay", which is only the transport hop these events pass through —
+// see SourceTopic for that.
+//
+// CORRECTION (live-traffic investigation after INTEL-05 shipped): this doc
+// previously claimed source_service, like tenant_id, is always a top-level
+// field with no nested fallback needed. False for zord-outcome-engine:
+// confirmed against its outbox pipeline (zord-outcome-engine/models/
+// outbox_model.go's OutboxEvent — the struct its Lease HTTP handler
+// serializes for zord-relay to republish — has no top-level source_service
+// field at all, only event_version/schema_version, which the handler stamps
+// as producer-constants the same way; source_service was simply never added
+// there). Every zord-outcome-engine outbox builder DOES set source_service
+// correctly, but only inside the payload map it JSON-marshals into the
+// event's nested payload column — so it never reaches the envelope's own
+// top level. Given the same nested fallback already exists for
+// schema_version below (needed for the identical reason, on the identical
+// producer), source_service gets one too.
+func extractEnvelopeFieldsBestEffort(payload []byte) (eventType, schemaVersion, traceID, tenantID, sourceService string) {
 	var v struct {
 		EventType     string          `json:"event_type"`
 		SchemaVersion string          `json:"schema_version"`
 		TraceID       string          `json:"trace_id"`
+		TenantID      string          `json:"tenant_id"`
+		SourceService string          `json:"source_service"`
 		Payload       json.RawMessage `json:"payload"`
 	}
 	_ = json.Unmarshal(payload, &v)
 
 	schemaVersion = v.SchemaVersion
-	if schemaVersion == "" && len(v.Payload) > 0 {
+	sourceService = v.SourceService
+	if (schemaVersion == "" || sourceService == "") && len(v.Payload) > 0 {
 		var nested struct {
 			SchemaVersion string `json:"schema_version"`
+			SourceService string `json:"source_service"`
 		}
 		if json.Unmarshal(v.Payload, &nested) == nil {
-			schemaVersion = nested.SchemaVersion
+			if schemaVersion == "" {
+				schemaVersion = nested.SchemaVersion
+			}
+			if sourceService == "" {
+				sourceService = nested.SourceService
+			}
 		}
 	}
 
-	return v.EventType, schemaVersion, v.TraceID
+	return v.EventType, schemaVersion, v.TraceID, v.TenantID, sourceService
 }
 
-// buildDLQRecord assembles the durable failure record for msg. TenantID is
-// read from msg.Key — every producer in this system uses tenant_id as the
-// partition key (see the ordering comment above consumeSingleTopic's call
-// site), so this is reliable even when the payload itself never got far
-// enough to unmarshal. EventID is recovered best-effort via a minimal,
+// buildDLQRecord assembles the durable failure record for msg.
+//
+// TenantID (INTEL-03) is read from meta.TenantID — the envelope-derived
+// value extracted by extractEnvelopeFieldsBestEffort and carried via
+// EnvelopeMeta — NOT from msg.Key. A prior version of this function cast
+// msg.Key directly to TenantID on the claim that "every producer uses
+// tenant_id as the partition key"; an audit of every zord-relay producer
+// call site showed that's false for most topics ZPI consumes (they key by
+// event_id/dlq_id/batch_id/dispatch_id instead), so that cast frequently
+// mislabeled DLQ records with the wrong tenant. The raw key is still
+// captured, just under PartitionKey — transport routing metadata, not
+// tenant identity. EventID is recovered best-effort via a minimal,
 // topic-agnostic decode, working for both RelayEvent-enveloped topics and
 // the flat DLQItemEvent-shaped ones without touching any of the per-topic
 // closures in StartConsumers.
@@ -820,6 +947,8 @@ func buildDLQRecord(msgCtx context.Context, msg kafka.Message, handlerErr error)
 		errClass = models.DLQErrorClassUnsupportedVersion
 	case errors.Is(handlerErr, errMissingRequiredField):
 		errClass = models.DLQErrorClassMissingField
+	case errors.Is(handlerErr, errUnapprovedLegacySchema):
+		errClass = models.DLQErrorClassUnapprovedLegacySchema
 	}
 	errMsg := handlerErr.Error()
 	const maxErrLen = 2000
@@ -827,7 +956,8 @@ func buildDLQRecord(msgCtx context.Context, msg kafka.Message, handlerErr error)
 		errMsg = errMsg[:maxErrLen]
 	}
 	return models.IntelligenceDLQRecord{
-		TenantID:     string(msg.Key),
+		TenantID:     meta.TenantID,
+		PartitionKey: string(msg.Key),
 		SourceTopic:  msg.Topic,
 		Partition:    msg.Partition,
 		Offset:       msg.Offset,

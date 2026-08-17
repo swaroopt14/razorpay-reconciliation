@@ -8,3 +8,8 @@ package models
 // TestINT07_LocalConstantsMatchSpec asserts these stay equal to the spec.
 const EventVersionV1 = "v1"
 const SchemaVersionV1 = "v1"
+
+// EventTypeIntentCreatedV1 is the only intent outbox event type outcome-engine
+// accepts for canonical_intents upsert (OUT-03). Matches intent-engine and
+// relay allow-list: intent.created.v1
+const EventTypeIntentCreatedV1 = "intent.created.v1"

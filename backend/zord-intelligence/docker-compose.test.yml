@@ -17,6 +17,11 @@ services:
       - INTELLIGENCE_MODE=GRADE_A
       - TOPIC_ML_REQUEST=ml.request.events
       - TOPIC_ML_RESULT=ml.result.events
+      # INTEL-01: test-only value, not the real shared dev secret — this
+      # compose stack is self-contained (no token issuer to interoperate
+      # with), so any fixed value works here.
+      - JWT_SIGNING_SECRET=test-only-jwt-signing-secret-not-for-production
+      - JWT_ISSUER=zord-edge
     depends_on:
       postgres:
         condition: service_healthy

@@ -37,15 +37,39 @@ test.describe('console BFF smoke', () => {
     })
   }
 
-  test('POST /api/prompt-layer/query responds without hard failure', async ({ request, baseURL }) => {
+  // CON-P0-04 + CON-P1-01: forged identity headers must not authorize; session required.
+  test('POST /api/prompt-layer/query rejects anonymous callers (CON-P0-04)', async ({
+    request,
+    baseURL,
+  }) => {
     const origin = baseURL ? new URL(baseURL).origin : 'http://127.0.0.1:3000'
     const res = await request.post('/api/prompt-layer/query', {
-      // CON-P1-01: cookie mutations require same-origin Origin (anonymous still fails auth later).
-      headers: { Origin: origin },
-      data: { query: 'smoke test', tenant_id: 'smoke-tenant', top_k: 1 },
+      data: { query: 'smoke test', tenant_id: 'forged-tenant', top_k: 1 },
+      headers: {
+        Origin: origin,
+        'x-tenant-id': '00000000-0000-4000-8000-000000000099',
+        'x-user-id': 'forged-user',
+        'x-session-id': 'forged-session',
+      },
     })
-    // 502 when prompt-layer service is not running locally — still not a console crash
-    expect(res.status()).toBeLessThan(503)
+    // Same-origin passes CSRF gate without cookies; no session ⇒ 401 (not 200/502).
+    expect(res.status()).toBe(401)
+  })
+
+  // CON-P1-01: prompt-layer mutations reject cross-site Origin.
+  test('POST /api/prompt-layer/query rejects cross-site Origin', async ({ request }) => {
+    const res = await request.post('/api/prompt-layer/query', {
+      headers: {
+        Origin: 'https://evil.example',
+        Cookie: 'zord_access_token=e2e-access; zord_csrf_token=e2e-csrf',
+        'x-csrf-token': 'e2e-csrf',
+        'content-type': 'application/json',
+      },
+      data: { query: 'csrf', top_k: 1 },
+    })
+    expect(res.status()).toBe(403)
+    const body = await res.json()
+    expect(body.code).toMatch(/ORIGIN_MISMATCH|CROSS_SITE_FORBIDDEN/)
   })
 
   // CON-P0-05: generic intelligence catch-all must not proxy; always 404.
@@ -91,5 +115,20 @@ test.describe('console BFF smoke', () => {
     // CSRF/same-origin ok → session auth fails with fake cookie (not 403 CSRF).
     expect(res.status()).not.toBe(403)
     expect([401, 502]).toContain(res.status())
+  })
+
+  // CON-P1-02: baseline browser security headers on live HTML.
+  test('GET /signin includes CSP and baseline security headers', async ({ request }) => {
+    const res = await request.get('/signin')
+    expect(res.status()).toBeLessThan(500)
+    const headers = res.headers()
+    expect(headers['x-content-type-options']).toBe('nosniff')
+    expect(headers['referrer-policy']).toBe('strict-origin-when-cross-origin')
+    expect(headers['x-frame-options']).toBe('DENY')
+    const csp = headers['content-security-policy'] || ''
+    expect(csp).toContain("frame-ancestors 'none'")
+    expect(csp).toContain("connect-src 'self'")
+    expect(csp).toContain("default-src 'self'")
+    expect(headers['permissions-policy'] || '').toContain('camera=()')
   })
 })

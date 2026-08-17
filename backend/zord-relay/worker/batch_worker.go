@@ -2,8 +2,12 @@ package worker
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"time"
 
+	"github.com/IBM/sarama"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
@@ -12,8 +16,15 @@ import (
 	"zord-relay/client"
 	"zord-relay/config"
 	"zord-relay/metrics"
+	"zord-relay/model"
 	"zord-relay/publisher"
+	"zord-relay/retry"
+	"zord-relay/services"
 	"zord-relay/tracing"
+)
+
+const (
+	batchMaxPublishAttempts = 20
 )
 
 type BatchWorker struct {
@@ -23,6 +34,9 @@ type BatchWorker struct {
 	pub         publisher.Publisher
 	sema        *semaphore.Weighted
 	log         *zap.Logger
+
+	// failureRepo durably persists exhausted publish attempts
+	failureRepo *services.PublishFailureRepo
 }
 
 func NewBatchWorker(
@@ -30,6 +44,7 @@ func NewBatchWorker(
 	relayCfg config.RelayConfig,
 	pub publisher.Publisher,
 	log *zap.Logger,
+	failureRepo *services.PublishFailureRepo,
 ) *BatchWorker {
 	workerLog := log.With(zap.String("service_batch", svcCfg.Name))
 
@@ -54,6 +69,7 @@ func NewBatchWorker(
 		pub:         pub,
 		sema:        semaphore.NewWeighted(concurrency),
 		log:         workerLog,
+		failureRepo: failureRepo,
 	}
 }
 
@@ -138,15 +154,35 @@ func (w *BatchWorker) runCycle(ctx context.Context) int {
 	for i := range leaseResp.Events {
 		evt := &leaseResp.Events[i]
 
-		err := w.pub.PublishBatchCompleted(ctx, evt, topic)
+		err := w.publishWithRetry(ctx, evt, topic, leaseResp.LeaseID)
 		if err == nil {
 			metrics.PublishTotal.WithLabelValues(w.svcCfg.Name+"-batch", topic, "success").Inc()
 			log.Info("batch completed event published successfully", zap.String("topic", topic), zap.String("batch_id", evt.BatchID))
 			toAck = append(toAck, evt.BatchID)
 		} else {
 			metrics.PublishTotal.WithLabelValues(w.svcCfg.Name+"-batch", topic, "error").Inc()
-			log.Error("failed to publish batch completed event", zap.String("batch_id", evt.BatchID), zap.Error(err))
-			toNack = append(toNack, evt.BatchID)
+			log.Error("failed to publish batch completed event after max retries", zap.String("batch_id", evt.BatchID), zap.Error(err))
+
+			// Durable record of the failure
+			terminalAck := false
+			if w.failureRepo != nil {
+				if kPub, ok := w.pub.(*publisher.KafkaPublisher); ok {
+					val, _ := json.Marshal(evt)
+					headers := kPub.BuildHeaders(ctx, nil)
+					// For batch events, we don't have direct access to headers builder
+					// Just build simple headers
+					terminalAck = w.recordBatchFailure(ctx, evt, topic, val, headers, batchMaxPublishAttempts, err)
+				}
+			}
+
+			if terminalAck {
+				toAck = append(toAck, evt.BatchID)
+				w.log.Warn("exhausted batch publish failure acked from outbox after durable ledger record",
+					zap.String("batch_id", evt.BatchID),
+				)
+			} else {
+				toNack = append(toNack, evt.BatchID)
+			}
 		}
 	}
 
@@ -161,6 +197,89 @@ func (w *BatchWorker) runCycle(ctx context.Context) int {
 	}
 
 	return len(leaseResp.Events)
+}
+
+func (w *BatchWorker) publishWithRetry(ctx context.Context, evt *model.BatchCanonicalizationCompletedEvent, topic string, leaseID string) error {
+	retryPolicy := retry.Policy{
+		MaxAttempts: batchMaxPublishAttempts,
+		BaseDelay:   100 * time.Millisecond,
+		MaxDelay:    30 * time.Second,
+		Multiplier:  2.0,
+	}
+
+	return retryPolicy.Do(ctx,
+		func(ctx context.Context, attempt retry.Attempt) error {
+			err := w.pub.PublishBatchCompleted(ctx, evt, topic)
+			if err == nil {
+				return nil
+			}
+
+			if publisher.IsPoison(err) {
+				return &stopRetryError{cause: err, isPoison: true}
+			}
+
+			metrics.RetryTotal.WithLabelValues(w.svcCfg.Name + "-batch").Inc()
+
+			w.log.Warn("kafka publish failed, will retry",
+				zap.Int("attempt", attempt.Number),
+				zap.Int("max_attempts", batchMaxPublishAttempts),
+				zap.String("batch_id", evt.BatchID),
+				zap.Error(err),
+			)
+			return err
+		},
+		func(attempt retry.Attempt, delay time.Duration) {
+			w.log.Info("retry backoff",
+				zap.Int("attempt", attempt.Number),
+				zap.Duration("backoff", delay),
+				zap.Error(attempt.LastError),
+			)
+		},
+	)
+}
+
+func (w *BatchWorker) recordBatchFailure(ctx context.Context, evt *model.BatchCanonicalizationCompletedEvent, topic string, messageValue []byte, headers []sarama.RecordHeader, attempts int, cause error) bool {
+	if w.failureRepo == nil {
+		w.log.Error("CRITICAL: no publish-failure repo configured — cannot durably record failure, withholding upstream ack",
+			zap.String("batch_id", evt.BatchID),
+		)
+		return false
+	}
+
+	sum := sha256.Sum256(messageValue)
+	payloadHash := hex.EncodeToString(sum[:])
+
+	headerBytes, _ := json.Marshal(headers)
+
+	err := w.failureRepo.Record(ctx, services.PublishFailureRecord{
+		SourceEventID:    evt.BatchID,
+		SourceService:    w.svcCfg.Name + "-batch",
+		Topic:            "",
+		DestinationTopic: topic,
+		PayloadHash:      payloadHash,
+		MessageKey:       evt.BatchID,
+		MessageValue:     messageValue,
+		HeadersJSON:      headerBytes,
+		AttemptCount:     attempts,
+		FailureClass:     model.ReasonCodeKafkaMaxRetries,
+		LastError:        cause.Error(),
+		FailureSource:    services.FailureSourceBatch,
+		PublishKind:      "batch",
+		TenantID:         evt.TenantID,
+		TraceID:          "",
+		ReplayStatus:     services.ReplayStatusPending,
+	})
+	if err != nil {
+		metrics.PublishFailurePersistErrorTotal.WithLabelValues(w.svcCfg.Name + "-batch").Inc()
+		w.log.Error("CRITICAL: failed to durably persist publish failure record — withholding upstream ack",
+			zap.String("batch_id", evt.BatchID),
+			zap.Error(err),
+		)
+		return false
+	}
+
+	metrics.PublishFailureRecordedTotal.WithLabelValues(w.svcCfg.Name+"-batch", model.ReasonCodeKafkaMaxRetries).Inc()
+	return true
 }
 
 func (w *BatchWorker) ack(ctx context.Context, leaseID string, batchIDs []string) {

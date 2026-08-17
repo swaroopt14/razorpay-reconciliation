@@ -13,6 +13,7 @@ import (
 	"zord-relay/config"
 	"zord-relay/db"
 	"zord-relay/internal/health"
+	"zord-relay/internal/operator"
 	"zord-relay/kafka"
 	"zord-relay/logger"
 	"zord-relay/psp"
@@ -145,6 +146,9 @@ func run() error {
 	// after success or a durable replayable failure record.
 	publishFailureRepo := services.NewPublishFailureRepo(database)
 
+	// ── Failure Replay Service ──────────────────────────────────────────────
+	failureReplayService := services.NewFailureReplayService(publishFailureRepo, saramaProducer.InternalProducer(), log)
+
 	// ── Payload hash verifier (P0 6.1.2) ─────────────────────────────────────
 	// Verifies SHA-256(payload bytes) == upstream payload_hash before publish.
 	// On mismatch: persist conflict, do not publish, do not ACK lease.
@@ -225,7 +229,7 @@ func run() error {
 		PublishFailureDLQTopic: cfg.RelayLoop.PublishFailureDLQTopic,
 		PoisonEventDLQTopic:    cfg.RelayLoop.PoisonEventDLQTopic,
 	}
-	relayLoop := services.NewRelayLoop(relayOutboxRepo, saramaProducer, relayLoopCfg)
+	relayLoop := services.NewRelayLoop(relayOutboxRepo, publishFailureRepo, saramaProducer, relayLoopCfg)
 
 	// ── Retry Sweeper (FAILED_RETRYABLE → re-run Steps 2-5) ──────────────────
 	retrySweeper := services.NewRetrySweeper(
@@ -268,6 +272,20 @@ func run() error {
 			health.HTTPCheck("token-enclave", cfg.TokenEnclave.BaseURL+"/health"),
 		})
 		r.GET("/ready", readinessHandler.Ready)
+
+		// Operator API (P0 6.1.3)
+		if cfg.Relay.OperatorAPIEnabled {
+			opToken := cfg.Relay.OperatorAuthToken
+			if opToken == "" {
+				// Fallback to first configured service token for trust boundary
+				opToken = cfg.Services[0].AuthToken
+			}
+			opHandler := operator.NewFailureHandler(publishFailureRepo, failureReplayService, opToken)
+			internal := r.Group("/internal/relay")
+			internal.Use(opHandler.AuthMiddleware())
+			opHandler.Register(internal)
+			log.Info("operator API mounted on metrics server", zap.String("path", "/internal/relay"))
+		}
 
 		metricsSrv = &http.Server{
 			Addr:         cfg.Metrics.Addr,

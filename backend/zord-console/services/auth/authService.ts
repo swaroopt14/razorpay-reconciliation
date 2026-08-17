@@ -3,6 +3,15 @@
 import { User, UserRole } from '@/types/auth'
 import { STORAGE_KEYS } from '@/constants'
 import { clearLegacyTenantApiSecrets } from '@/services/auth/readStoredTenantApiKey'
+import {
+  clearTabSessionTenantId,
+  installSessionTenantFetchPatch,
+  readTabSessionTenantId,
+  sessionTenantHeaders,
+  withSessionTenantQuery,
+  writeTabSessionTenantId,
+} from '@/services/auth/tenantSessionBrowser'
+import { SESSION_TENANT_QUERY } from '@/services/auth/tenantSessionConstants'
 
 const AUTH_KEY = STORAGE_KEYS.AUTH
 const ROLE_KEY = STORAGE_KEYS.CURRENT_ROLE
@@ -143,10 +152,13 @@ export function setCurrentUser(user: User): void {
 
 export function clearAuth(): void {
   clearUserStorage()
+  clearTabSessionTenantId()
   clearClientCookie(SESSION_HINT_COOKIE)
   clearClientCookie(ROLE_COOKIE)
   emitAuthChanged()
 }
+
+export { withSessionTenantQuery, writeTabSessionTenantId, readTabSessionTenantId }
 
 export async function login(request: LoginRequest): Promise<AuthApiEnvelope> {
   const response = await fetch('/api/auth/login', {
@@ -175,17 +187,26 @@ export async function login(request: LoginRequest): Promise<AuthApiEnvelope> {
     throw new Error('Unable to sign in right now.')
   }
 
-  storeUser(toClientUser(payload as AuthApiEnvelope))
+  const user = toClientUser(payload as AuthApiEnvelope)
+  writeTabSessionTenantId(user.tenantId || user.tenant || '')
+  storeUser(user)
   return payload as AuthApiEnvelope
 }
 
 export async function hydrateSession(): Promise<User | null> {
+  installSessionTenantFetchPatch()
+  const tabTenant = readTabSessionTenantId()
+  const mePath = tabTenant
+    ? `/api/auth/me?${SESSION_TENANT_QUERY}=${encodeURIComponent(tabTenant)}`
+    : '/api/auth/me'
+
   let response: Response
   try {
-    response = await fetch('/api/auth/me', {
+    response = await fetch(mePath, {
       method: 'GET',
       cache: 'no-store',
       credentials: 'include',
+      headers: sessionTenantHeaders(tabTenant),
     })
   } catch {
     // Network down, CORS misconfig, or browser blocked request — do not clear auth;
@@ -208,6 +229,7 @@ export async function hydrateSession(): Promise<User | null> {
   }
 
   const user = toClientUser(payload)
+  writeTabSessionTenantId(user.tenantId || user.tenant || '')
   storeUser(user)
   return user
 }

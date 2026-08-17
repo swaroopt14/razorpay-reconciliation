@@ -91,22 +91,29 @@ func RawIntent(ctx context.Context,
 		ConnectorBindingID:           rawIntent.ConnectorBindingID,
 		EventType:                    rawIntent.EventType,
 		CreatedAt:                    storageAck.ReceivedAt,
-		EncryptionKeyID:              os.Getenv("VAULT_KEY_ID"),
+		EncryptionKeyID:              rawIntent.EncryptionKeyID,
 		ObjectStoreVersion:           os.Getenv("OBJECT_STORE_VERSION"),
 		IdempotencyReservationStatus: "RESERVED",
-		PrincipalID:                  tenantID,
-		AuthMethod:                   "API_KEY",
-		ObjectRef:                    objectRef,
-		Status:                       "RECEIVED",
-		ReceivedAt:                   storageAck.ReceivedAt,
-		Payload:                      rawIntent.Payload,
-		FileName:                     rawIntent.FileName,
-		FileSizeBytes:                rawIntent.FileSizeBytes,
-		FileContentHash:              rawIntent.FileContentHash,
-		RowCountEstimate:             rawIntent.RowCountEstimate,
-		FileUploadChannel:            rawIntent.FileUploadChannel,
-		SourceRowRef:                 rawIntent.SourceRowRef,
-		BatchID:                      rawIntent.BatchID,
+		PrincipalID: func() uuid.UUID {
+			if rawIntent.PrincipalID != "" {
+				if pid, err := uuid.Parse(rawIntent.PrincipalID); err == nil {
+					return pid
+				}
+			}
+			return tenantID
+		}(),
+		AuthMethod:        rawIntent.AuthMethod,
+		ObjectRef:         objectRef,
+		Status:            "RECEIVED",
+		ReceivedAt:        storageAck.ReceivedAt,
+		Payload:           rawIntent.Payload,
+		FileName:          rawIntent.FileName,
+		FileSizeBytes:     rawIntent.FileSizeBytes,
+		FileContentHash:   rawIntent.FileContentHash,
+		RowCountEstimate:  rawIntent.RowCountEstimate,
+		FileUploadChannel: rawIntent.FileUploadChannel,
+		SourceRowRef:      rawIntent.SourceRowRef,
+		BatchID:           rawIntent.BatchID,
 	}
 
 	// Envolope.SaveRawIntent()

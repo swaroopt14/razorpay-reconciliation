@@ -26,7 +26,7 @@ export async function GET(
     return res
   }
 
-  const upstreamTimeline = await getEvidenceTimelineById(gate.tenantId, evidenceId)
+  const upstreamTimeline = await getEvidenceTimelineById(gate.tenantId, gate.accessToken, evidenceId)
   let rows: OperationalTimelineRow[] = []
 
   if (upstreamTimeline.ok) {
@@ -34,7 +34,7 @@ export async function GET(
   }
 
   if (rows.length === 0) {
-    const full = await getEvidencePackById(gate.tenantId, evidenceId)
+    const full = await getEvidencePackById(gate.tenantId, gate.accessToken, evidenceId)
     if (full.ok) {
       const createdAt = full.data.created_at || new Date().toISOString()
       rows = [

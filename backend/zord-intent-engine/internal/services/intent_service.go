@@ -291,6 +291,72 @@ func (s *IntentService) EmitDLQVectorIndexRequest(dlq models.DLQEntry) {
 		},
 	)
 }
+func (s *IntentService) maybeEmitCompletedBatchVectorIndex(ctx context.Context, tenantID, batchID string) {
+	tenantID = strings.TrimSpace(tenantID)
+	batchID = strings.TrimSpace(batchID)
+
+	if s == nil || s.vectorPublisher == nil || tenantID == "" || batchID == "" {
+		return
+	}
+
+	var totalRows, acceptedRows, failedRows, duplicateRows int
+	var status string
+
+	err := s.db.QueryRowContext(ctx, `
+		SELECT
+			COALESCE(total_rows, 0),
+			COALESCE(accepted_rows, 0),
+			COALESCE(failed_rows, 0),
+			COALESCE(duplicate_rows, 0),
+			COALESCE(status, '')
+		FROM intent_ingest_runs
+		WHERE tenant_id = $1::uuid
+		  AND batch_id = $2
+	`, tenantID, batchID).Scan(
+		&totalRows,
+		&acceptedRows,
+		&failedRows,
+		&duplicateRows,
+		&status,
+	)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			log.Printf("[intent-engine][vector-index] completion check failed tenant=%s batch_id=%s err=%v", tenantID, batchID, err)
+		}
+		return
+	}
+
+	processedRows := acceptedRows + failedRows + duplicateRows
+	if totalRows <= 0 || processedRows < totalRows || !strings.EqualFold(status, "COMPLETED") {
+		log.Printf("[intent-engine][vector-index] batch not complete tenant=%s batch_id=%s processed=%d total=%d status=%s", tenantID, batchID, processedRows, totalRows, status)
+		return
+	}
+
+	log.Printf("[intent-engine][vector-index] final batch emit tenant=%s entity=intent_batch id=%s processed=%d total=%d accepted=%d failed=%d duplicate=%d",
+		tenantID,
+		batchID,
+		processedRows,
+		totalRows,
+		acceptedRows,
+		failedRows,
+		duplicateRows,
+	)
+
+	s.emitVectorIndexRequest(
+		"intent_batch.updated.v1",
+		tenantID,
+		"intent_batch",
+		batchID,
+		batchID,
+		map[string]string{
+			"vector_summary_scope": "batch",
+			"total_rows":           strconv.Itoa(totalRows),
+			"accepted_rows":        strconv.Itoa(acceptedRows),
+			"failed_rows":          strconv.Itoa(failedRows),
+			"duplicate_rows":       strconv.Itoa(duplicateRows),
+		},
+	)
+}
 
 // resolveBusinessDate returns tenantID's business_date for now, via the
 // per-tenant timezone configured in tenant_business_date_config (4.2.7),
@@ -1252,6 +1318,9 @@ func (s *IntentService) processIncomingIntentInternal(
 		RawRowHash:        event.RawRowHash,
 		ArtifactID:        event.ArtifactID,
 		ArtifactVersionID: event.ArtifactVersionID,
+		ContentType:       event.ContentType,
+		KMSKeyVersion:     event.KMSKeyVersion,
+		EncryptionKeyID:   event.EncryptionKeyID,
 		ReceivedAt:        event.ReceivedAt,
 		BatchID:           event.BatchID,
 		SourceRowRef:      event.SourceRowRef,
@@ -1378,9 +1447,20 @@ func (s *IntentService) processIncomingIntentInternal(
 	}
 
 	// -------- STEP 5: Parse raw payload into domain model --------
-	decryptedPayload, err = vault.DecryptPayload(in.EncryptedPayload)
+	contentType := in.ContentType
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	encCtx := vault.EncryptionContext{
+		TenantID:          in.TenantID.String(),
+		ArtifactID:        in.ArtifactID.String(),
+		ArtifactVersionID: in.ArtifactVersionID,
+		ContentType:       contentType,
+	}
+	decryptedPayload, err = vault.DecryptPayload(encCtx, in.EncryptedPayload, in.KMSKeyVersion)
 	if err != nil {
-		log.Printf("⚠️ Payload decryption failed for EnvelopeID=%s: %v", in.EnvelopeID, err)
+		log.Printf("vault decrypt failed envelope_id=%s tenant_id=%s artifact_id=%s artifact_version_id=%s content_type=%s err=%v",
+			in.EnvelopeID, encCtx.TenantID, encCtx.ArtifactID, encCtx.ArtifactVersionID, encCtx.ContentType, err)
 		retIn = in
 		retProfile = resolvedProfile
 		retDecrypted = decryptedPayload
@@ -1398,6 +1478,8 @@ func (s *IntentService) processIncomingIntentInternal(
 		}
 		return
 	}
+	log.Printf("vault decrypt ok envelope_id=%s tenant_id=%s artifact_id=%s artifact_version_id=%s content_type=%s",
+		in.EnvelopeID, encCtx.TenantID, encCtx.ArtifactID, encCtx.ArtifactVersionID, encCtx.ContentType)
 
 	rawAuditPayload = append([]byte(nil), decryptedPayload...)
 	sourceRowRef := ""
@@ -2646,6 +2728,17 @@ func (s *IntentService) ProcessIncomingIntent(
 		if errUpsert != nil {
 			log.Printf("⚠️ Audit: failed to upsert run audit for batch=%s: %v", *in.BatchID, errUpsert)
 		}
+		if errUpsert == nil && runStatus == "COMPLETED" {
+			batchKey := fmt.Sprintf("%s|%s", in.TenantID.String(), *in.BatchID)
+			_, aggErr, _ := batchAggregateGroup.Do(batchKey, func() (interface{}, error) {
+				return s.repo.UpdateBatchAggregateConfidence(context.Background(), in.TenantID.String(), *in.BatchID)
+			})
+			if aggErr != nil {
+				log.Printf("âš ï¸ Failed to update batch aggregate confidence before vector emit for batch=%s: %v", *in.BatchID, aggErr)
+			}
+
+			s.maybeEmitCompletedBatchVectorIndex(ctx, in.TenantID.String(), *in.BatchID)
+		}
 	}()
 
 	var nir *models.NormalizedIngestRecord
@@ -2749,16 +2842,9 @@ func (s *IntentService) ProcessIncomingIntent(
 	}
 
 	if batchID != "" {
-		s.emitVectorIndexRequest(
-			"intent_batch.updated.v1",
-			saved.TenantID,
-			"intent_batch",
-			batchID,
-			batchID,
-			map[string]string{
-				"vector_summary_scope": "batch",
-			},
-		)
+		// Batch-level vector indexing is emitted once from the batch completion path.
+		// Do not emit one vector event per row here, otherwise large uploads create noisy duplicate events.
+		log.Printf("[intent-engine][vector-index] defer batch vector emit tenant=%s batch_id=%s intent_id=%s", saved.TenantID, batchID, saved.IntentID)
 	} else {
 		s.emitVectorIndexRequest(
 			"payment_intent.saved.v1",
@@ -3037,16 +3123,7 @@ func (s *IntentService) ProcessIncomingIntentsBatch(
 	}
 
 	for batchID, tenantID := range emittedBatches {
-		s.emitVectorIndexRequest(
-			"intent_batch.updated.v1",
-			tenantID,
-			"intent_batch",
-			batchID,
-			batchID,
-			map[string]string{
-				"vector_summary_scope": "batch",
-			},
-		)
+		s.maybeEmitCompletedBatchVectorIndex(ctx, tenantID, batchID)
 	}
 	return savedIntents, savedDLQs, nil
 }

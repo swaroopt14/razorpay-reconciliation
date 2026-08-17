@@ -726,7 +726,7 @@ func (r *LiveSQLRetriever) fetchVectorEvidencePack(ctx context.Context, tenantID
 		SELECT mode, pack_status, ruleset_version, signature_alg, replay_equivalence_status, created_at::text, updated_at::text
 		FROM evidence_packs
 		WHERE tenant_id = $1
-		  AND (pack_id::text = $2 OR subject_ref = $2)
+		  AND (evidence_pack_id = $2 OR batch_id = $2 OR intent_id = $2 OR client_payout_ref = $2)
 		ORDER BY updated_at DESC, created_at DESC
 		LIMIT 10
 	`, tenantID, entityID)
@@ -764,6 +764,18 @@ func (r *LiveSQLRetriever) fetchVectorEvidenceBatchSummary(ctx context.Context, 
 	if r.evidenceDB == nil {
 		return []model.RetrievedChunk{}, nil
 	}
+	var totalPacks, activePacks, proofReadyPacks sql.NullString
+	if err := r.evidenceDB.QueryRowContext(ctx, `
+	SELECT
+		COUNT(*)::text AS total_packs,
+		COUNT(*) FILTER (WHERE UPPER(COALESCE(pack_status, '')) = 'ACTIVE')::text AS active_packs,
+		COUNT(*) FILTER (WHERE UPPER(COALESCE(proof_status, '')) IN ('PROOF_READY', 'READY', 'VERIFIED'))::text AS proof_ready_packs
+	FROM evidence_packs
+	WHERE tenant_id = $1
+	  AND batch_id = $2
+`, tenantID, batchID).Scan(&totalPacks, &activePacks, &proofReadyPacks); err != nil {
+		return nil, fmt.Errorf("vector evidence batch exact count retrieval failed: %w", err)
+	}
 
 	rows, err := r.evidenceDB.QueryContext(ctx, `
 		SELECT
@@ -788,7 +800,14 @@ func (r *LiveSQLRetriever) fetchVectorEvidenceBatchSummary(ctx context.Context, 
 	}
 	defer rows.Close()
 
-	parts := make([]string, 0, 12)
+	parts := []string{
+		strings.Join(nonEmptyParts([]string{
+			"Exact batch evidence total",
+			"Total evidence packs generated: " + safeOptional(nullText(totalPacks)),
+			"Active evidence packs: " + safeOptional(nullText(activePacks)),
+			"Proof-ready evidence packs: " + safeOptional(nullText(proofReadyPacks)),
+		}), " · "),
+	}
 	for rows.Next() {
 		var mode, status, replay, proofStatus, packCount, leafCount, requiredLeafCount, firstCreated, lastUpdated sql.NullString
 		if err := rows.Scan(

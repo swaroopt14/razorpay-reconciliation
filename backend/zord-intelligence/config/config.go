@@ -54,6 +54,13 @@ type Config struct {
 	KafkaBrokers string
 	KafkaGroupID string
 
+	// LegacySchemaAllowedSources (INTEL-06) — comma-separated source_service
+	// values permitted to send an empty or literal "legacy" schema_version on
+	// live (non-exempt) topics. Empty by default: fail closed on current
+	// production topics. An ops-run backfill/replay tool opts in by setting
+	// its own source_service to a value on this list.
+	LegacySchemaAllowedSources string
+
 	// ── Kafka Input Topics (ZPI reads FROM these) ────────────────
 	TopicIntentCreated      string
 	TopicDispatchCreated    string
@@ -138,6 +145,8 @@ func Load() *Config {
 		KafkaBrokers: getRequired("KAFKA_BROKERS"),
 		KafkaGroupID: getWithDefault("KAFKA_GROUP_ID", "zord-intelligence-group"),
 
+		LegacySchemaAllowedSources: getWithDefault("LEGACY_SCHEMA_ALLOWED_SOURCES", ""),
+
 		// ── Kafka Input Topics ───────────────────────────────────
 		TopicIntentCreated:      getWithDefault("TOPIC_INTENT_CREATED", "payments.intent.events.v1"),
 		TopicDispatchCreated:    getWithDefault("TOPIC_DISPATCH_CREATED", "dispatch.attempt.created"),
@@ -169,8 +178,8 @@ func Load() *Config {
 		TopicOutboxDLQ:           getWithDefault("TOPIC_OUTBOX_DLQ", "zord-intelligence.outbox-dlq.v1"),
 
 		// ── ML Service Topics ────────────────────────────────────────
-		TopicMLRequest:                  getWithDefault("TOPIC_ML_REQUEST", "ml.request.events"),
-		TopicMLResult:                   getWithDefault("TOPIC_ML_RESULT", "ml.result.events"),
+		TopicMLRequest: getWithDefault("TOPIC_ML_REQUEST", "ml.request.events"),
+		TopicMLResult:  getWithDefault("TOPIC_ML_RESULT", "ml.result.events"),
 		// ── PHASE 6: Intelligence Mode ────────────────────────────
 		IntelligenceMode: mode,
 	}

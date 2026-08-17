@@ -2,11 +2,24 @@ import { createHash, randomBytes } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { BACKEND_SERVICES } from '@/config/api.endpoints'
 import { CSRF_COOKIE_NAME } from '@/services/auth/csrfConstants'
+import {
+  ACTIVE_TENANT_COOKIE_NAME,
+  sanitizeTenantCookieKey,
+  SESSION_TENANT_HEADER,
+  SESSION_TENANT_QUERY,
+  SESSION_TENANTS_COOKIE_NAME,
+} from '@/services/auth/tenantSessionConstants'
 
 export const ACCESS_COOKIE_NAME = 'zord_access_token'
 export const REFRESH_COOKIE_NAME = 'zord_refresh_token'
 export const SESSION_HINT_COOKIE_NAME = 'zord_session_present'
 export const ROLE_COOKIE_NAME = 'zord_role'
+export {
+  ACTIVE_TENANT_COOKIE_NAME,
+  SESSION_TENANT_HEADER,
+  SESSION_TENANT_QUERY,
+  SESSION_TENANTS_COOKIE_NAME,
+}
 
 const DEFAULT_REFRESH_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
 
@@ -92,11 +105,100 @@ export function applyCsrfCookie(response: NextResponse, accessToken?: string) {
   })
 }
 
-export function applyAuthCookies(response: NextResponse, payload: BackendAuthEnvelope) {
-  // Access/refresh tokens stay HttpOnly so browser JavaScript never sees them.
-  // We keep a separate non-sensitive hint cookie for route guards and fast client checks.
+export function scopedAccessCookieName(tenantId: string): string {
+  return `${ACCESS_COOKIE_NAME}__${sanitizeTenantCookieKey(tenantId)}`
+}
+
+export function scopedRefreshCookieName(tenantId: string): string {
+  return `${REFRESH_COOKIE_NAME}__${sanitizeTenantCookieKey(tenantId)}`
+}
+
+/** Resolve which tenant session this request should use (tab header / query / active cookie). */
+export function resolveRequestedSessionTenantId(request: NextRequest): string {
+  const fromHeader = request.headers.get(SESSION_TENANT_HEADER)?.trim() || ''
+  if (fromHeader && sanitizeTenantCookieKey(fromHeader) === fromHeader) return fromHeader
+  const fromQuery = request.nextUrl.searchParams.get(SESSION_TENANT_QUERY)?.trim() || ''
+  if (fromQuery && sanitizeTenantCookieKey(fromQuery) === fromQuery) return fromQuery
+  const fromActive = request.cookies.get(ACTIVE_TENANT_COOKIE_NAME)?.value?.trim() || ''
+  if (fromActive && sanitizeTenantCookieKey(fromActive) === fromActive) return fromActive
+  return ''
+}
+
+export function readSessionTenantRegistry(request: NextRequest): string[] {
+  const raw = request.cookies.get(SESSION_TENANTS_COOKIE_NAME)?.value?.trim() || ''
+  if (!raw) return []
+  return raw
+    .split(',')
+    .map((t) => t.trim())
+    .filter((t) => t && sanitizeTenantCookieKey(t) === t)
+}
+
+function writeSessionTenantRegistry(response: NextResponse, tenantIds: string[]) {
+  const baseOptions = cookieBaseOptions()
+  const unique = Array.from(new Set(tenantIds.filter(Boolean)))
+  if (unique.length === 0) {
+    response.cookies.set({
+      name: SESSION_TENANTS_COOKIE_NAME,
+      value: '',
+      httpOnly: true,
+      maxAge: 0,
+      ...baseOptions,
+    })
+    return
+  }
+  response.cookies.set({
+    name: SESSION_TENANTS_COOKIE_NAME,
+    value: unique.join(','),
+    httpOnly: true,
+    maxAge: DEFAULT_REFRESH_COOKIE_MAX_AGE_SECONDS,
+    ...baseOptions,
+  })
+}
+
+export function getAccessTokenFromRequest(request: NextRequest): string | undefined {
+  const tenantId = resolveRequestedSessionTenantId(request)
+  if (tenantId) {
+    const scoped = request.cookies.get(scopedAccessCookieName(tenantId))?.value
+    if (scoped) return scoped
+  }
+  return request.cookies.get(ACCESS_COOKIE_NAME)?.value
+}
+
+export function getRefreshTokenFromRequest(request: NextRequest): string | undefined {
+  const tenantId = resolveRequestedSessionTenantId(request)
+  if (tenantId) {
+    const scoped = request.cookies.get(scopedRefreshCookieName(tenantId))?.value
+    if (scoped) return scoped
+  }
+  return request.cookies.get(REFRESH_COOKIE_NAME)?.value
+}
+
+/** True when any global or tenant-scoped session cookie exists. */
+export function requestHasAnyAuthSession(request: NextRequest): boolean {
+  if (request.cookies.get(ACCESS_COOKIE_NAME)?.value || request.cookies.get(REFRESH_COOKIE_NAME)?.value) {
+    return true
+  }
+  for (const tid of readSessionTenantRegistry(request)) {
+    if (
+      request.cookies.get(scopedAccessCookieName(tid))?.value ||
+      request.cookies.get(scopedRefreshCookieName(tid))?.value
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
+export function applyAuthCookies(
+  response: NextResponse,
+  payload: BackendAuthEnvelope,
+  request?: NextRequest,
+) {
+  // Access/refresh tokens stay HttpOnly. Also mirror per-tenant so two tabs
+  // (Tenant A + Tenant B) can keep isolated sessions across reload.
   const baseOptions = cookieBaseOptions()
   const accessExpiresAt = new Date(payload.access_expires_at)
+  const tenantId = payload.session?.tenant_id?.trim() || payload.user?.tenant_id?.trim() || ''
 
   if (payload.access_token) {
     response.cookies.set({
@@ -106,6 +208,15 @@ export function applyAuthCookies(response: NextResponse, payload: BackendAuthEnv
       expires: accessExpiresAt,
       ...baseOptions,
     })
+    if (tenantId) {
+      response.cookies.set({
+        name: scopedAccessCookieName(tenantId),
+        value: payload.access_token,
+        httpOnly: true,
+        expires: accessExpiresAt,
+        ...baseOptions,
+      })
+    }
   }
 
   if (payload.refresh_token) {
@@ -116,10 +227,32 @@ export function applyAuthCookies(response: NextResponse, payload: BackendAuthEnv
       maxAge: DEFAULT_REFRESH_COOKIE_MAX_AGE_SECONDS,
       ...baseOptions,
     })
+    if (tenantId) {
+      response.cookies.set({
+        name: scopedRefreshCookieName(tenantId),
+        value: payload.refresh_token,
+        httpOnly: true,
+        maxAge: DEFAULT_REFRESH_COOKIE_MAX_AGE_SECONDS,
+        ...baseOptions,
+      })
+    }
+  }
+
+  if (tenantId) {
+    response.cookies.set({
+      name: ACTIVE_TENANT_COOKIE_NAME,
+      value: tenantId,
+      httpOnly: false,
+      maxAge: DEFAULT_REFRESH_COOKIE_MAX_AGE_SECONDS,
+      ...baseOptions,
+    })
   }
 
   applySessionMarkerCookies(response, payload.user.role)
   applyCsrfCookie(response, payload.access_token)
+  if (request && tenantId) {
+    registerSessionTenant(response, request, tenantId)
+  }
 }
 
 export function applySessionMarkerCookies(response: NextResponse, role: string) {
@@ -142,7 +275,15 @@ export function applySessionMarkerCookies(response: NextResponse, role: string) 
   })
 }
 
-export function clearAuthCookies(response: NextResponse) {
+/**
+ * Clear the active/global session cookies.
+ * When `tenantId` is set, also clear that tenant's scoped cookies and drop it from the registry
+ * (other tenants' scoped sessions remain for other tabs).
+ */
+export function clearAuthCookies(
+  response: NextResponse,
+  opts?: { tenantId?: string; registry?: string[]; clearAllScoped?: boolean },
+) {
   const baseOptions = cookieBaseOptions()
 
   for (const cookieName of [
@@ -151,6 +292,7 @@ export function clearAuthCookies(response: NextResponse) {
     SESSION_HINT_COOKIE_NAME,
     ROLE_COOKIE_NAME,
     CSRF_COOKIE_NAME,
+    ACTIVE_TENANT_COOKIE_NAME,
   ]) {
     response.cookies.set({
       name: cookieName,
@@ -158,11 +300,131 @@ export function clearAuthCookies(response: NextResponse) {
       httpOnly:
         cookieName === ACCESS_COOKIE_NAME ||
         cookieName === REFRESH_COOKIE_NAME ||
-        cookieName === ROLE_COOKIE_NAME,
+        cookieName === ROLE_COOKIE_NAME ||
+        cookieName === SESSION_TENANTS_COOKIE_NAME,
       maxAge: 0,
       ...baseOptions,
     })
   }
+
+  const tenantId = opts?.tenantId?.trim() || ''
+  if (tenantId) {
+    response.cookies.set({
+      name: scopedAccessCookieName(tenantId),
+      value: '',
+      httpOnly: true,
+      maxAge: 0,
+      ...baseOptions,
+    })
+    response.cookies.set({
+      name: scopedRefreshCookieName(tenantId),
+      value: '',
+      httpOnly: true,
+      maxAge: 0,
+      ...baseOptions,
+    })
+  }
+
+  const registry = opts?.registry ?? []
+  if (opts?.clearAllScoped) {
+    for (const tid of registry) {
+      response.cookies.set({
+        name: scopedAccessCookieName(tid),
+        value: '',
+        httpOnly: true,
+        maxAge: 0,
+        ...baseOptions,
+      })
+      response.cookies.set({
+        name: scopedRefreshCookieName(tid),
+        value: '',
+        httpOnly: true,
+        maxAge: 0,
+        ...baseOptions,
+      })
+    }
+    writeSessionTenantRegistry(response, [])
+  } else if (tenantId) {
+    writeSessionTenantRegistry(
+      response,
+      registry.filter((t) => t !== tenantId),
+    )
+  }
+}
+
+/** After a successful login/refresh, register tenant id for multi-tab isolation. */
+export function registerSessionTenant(
+  response: NextResponse,
+  request: NextRequest,
+  tenantId: string,
+) {
+  const tid = tenantId.trim()
+  if (!tid) return
+  const next = Array.from(new Set([...readSessionTenantRegistry(request), tid]))
+  writeSessionTenantRegistry(response, next)
+}
+
+/** Backend codes that mean the session/token is definitely dead (clear cookies). */
+const DEFINITIVE_INVALID_SESSION_CODES = new Set([
+  'INVALID_SESSION',
+  'INVALID_TOKEN',
+  'TOKEN_REVOKED',
+  'SESSION_REVOKED',
+  'SESSION_EXPIRED',
+  'REFRESH_TOKEN_INVALID',
+  'UNAUTHORIZED',
+])
+
+/**
+ * CON-P1-03 — only definitive auth rejection clears cookies.
+ * Transport failures and 5xx must not look like logout.
+ */
+export function isDefinitiveAuthFailure(status: number, code?: string | null): boolean {
+  if (status === 401 || status === 403) return true
+  const normalized = code?.trim().toUpperCase()
+  return Boolean(normalized && DEFINITIVE_INVALID_SESSION_CODES.has(normalized))
+}
+
+export function authServiceUnavailableResponse(message?: string): NextResponse {
+  return NextResponse.json(
+    {
+      code: 'AUTH_SERVICE_UNAVAILABLE',
+      message: message ?? 'Authentication service is unavailable right now. Retry shortly.',
+    },
+    { status: 503, headers: { 'cache-control': 'no-store' } },
+  )
+}
+
+/** Map Edge refresh failures: clear cookies only for revoked/invalid session. */
+export function refreshFailureResponse(
+  status: number,
+  errorBody?: BackendErrorEnvelope | null,
+): NextResponse {
+  if (isDefinitiveAuthFailure(status, errorBody?.code)) {
+    const response = NextResponse.json(
+      {
+        code: errorBody?.code ?? 'INVALID_SESSION',
+        message: errorBody?.message ?? 'Session expired',
+      },
+      {
+        status: status === 403 ? 403 : 401,
+        headers: { 'cache-control': 'no-store' },
+      },
+    )
+    clearAuthCookies(response)
+    return response
+  }
+
+  return NextResponse.json(
+    {
+      code: 'AUTH_SERVICE_UNAVAILABLE',
+      message: errorBody?.message ?? 'Authentication service is unavailable right now. Retry shortly.',
+    },
+    {
+      status: status >= 500 && status < 600 ? status : 503,
+      headers: { 'cache-control': 'no-store' },
+    },
+  )
 }
 
 export function sanitizeAuthEnvelope(payload: BackendAuthEnvelope) {
@@ -184,6 +446,64 @@ export async function parseJSONSafe<T>(target: { json(): Promise<unknown> }): Pr
   }
 }
 
+/**
+ * CON-P1-04 — validate a single IP literal for audit forwarding.
+ * Rejects empty values, spaces/commas (multi-hop injection), and obvious garbage.
+ */
+export function sanitizeSingleIp(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const value = raw.trim()
+  if (!value || value.includes(',') || /\s/.test(value)) return null
+  // Basic IPv4 / IPv6 (incl. compressed) guard — not a full parser.
+  const ipv4 = /^(?:\d{1,3}\.){3}\d{1,3}$/
+  const ipv6 = /^[0-9a-fA-F:]+$/
+  if (ipv4.test(value)) {
+    const parts = value.split('.').map((p) => Number(p))
+    if (parts.every((n) => n >= 0 && n <= 255)) return value
+    return null
+  }
+  if (ipv6.test(value) && value.includes(':')) return value
+  return null
+}
+
+function trustProxyHeadersEnabled(): boolean {
+  const explicit = process.env.TRUST_PROXY_HEADERS?.trim().toLowerCase()
+  if (explicit === 'true' || explicit === '1') return true
+  if (explicit === 'false' || explicit === '0') return false
+  // Production console sits behind Kong/ALB which append the real client hop.
+  return process.env.NODE_ENV === 'production'
+}
+
+/**
+ * CON-P1-04 — resolve the client IP that Edge may record for audit.
+ *
+ * Never forwards the browser's raw X-Forwarded-For chain (spoofable).
+ * Order:
+ * 1) Ingress-controlled single-IP headers (x-real-ip / true-client-ip / cf-connecting-ip)
+ * 2) When TRUST_PROXY_HEADERS / production: rightmost XFF hop only (proxy-appended)
+ * 3) Otherwise omit (Edge falls back to TCP peer = console→edge, not attacker-chosen)
+ */
+export function resolveTrustedClientIp(request: NextRequest): string | null {
+  for (const headerName of ['x-real-ip', 'true-client-ip', 'cf-connecting-ip'] as const) {
+    const trusted = sanitizeSingleIp(request.headers.get(headerName))
+    if (trusted) return trusted
+  }
+
+  if (!trustProxyHeadersEnabled()) {
+    return null
+  }
+
+  const xff = request.headers.get('x-forwarded-for')
+  if (!xff) return null
+  const hops = xff
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+  if (hops.length === 0) return null
+  // Rightmost hop is appended by the nearest reverse proxy; leftmost is client-controlled.
+  return sanitizeSingleIp(hops[hops.length - 1])
+}
+
 export function buildForwardHeaders(request: NextRequest, accessToken?: string): HeadersInit {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -194,9 +514,11 @@ export function buildForwardHeaders(request: NextRequest, accessToken?: string):
     headers['User-Agent'] = userAgent
   }
 
-  const forwardedFor = request.headers.get('x-forwarded-for')
-  if (forwardedFor) {
-    headers['X-Forwarded-For'] = forwardedFor
+  // CON-P1-04: never copy arbitrary browser X-Forwarded-For into Edge calls.
+  const clientIp = resolveTrustedClientIp(request)
+  if (clientIp) {
+    headers['X-Forwarded-For'] = clientIp
+    headers['X-Real-IP'] = clientIp
   }
 
   if (accessToken) {
@@ -211,10 +533,13 @@ export function edgeAuthUrl(path: string) {
 }
 
 async function refreshFromCookie(request: NextRequest): Promise<{ payload?: BackendAuthEnvelope; errorResponse?: NextResponse }> {
-  const refreshToken = request.cookies.get(REFRESH_COOKIE_NAME)?.value
+  const refreshToken = getRefreshTokenFromRequest(request)
   if (!refreshToken) {
     const response = NextResponse.json({ code: 'INVALID_SESSION', message: 'Session expired' }, { status: 401 })
-    clearAuthCookies(response)
+    clearAuthCookies(response, {
+      tenantId: resolveRequestedSessionTenantId(request),
+      registry: readSessionTenantRegistry(request),
+    })
     return { errorResponse: response }
   }
 
@@ -227,35 +552,24 @@ async function refreshFromCookie(request: NextRequest): Promise<{ payload?: Back
       body: JSON.stringify({ refresh_token: refreshToken }),
     })
   } catch {
-    const response = NextResponse.json(
-      { code: 'AUTH_SERVICE_UNAVAILABLE', message: 'Authentication service is unavailable right now.' },
-      { status: 503 },
-    )
-    clearAuthCookies(response)
-    return { errorResponse: response }
+    // CON-P1-03: transport/outage ≠ revoked session — keep cookies for retry.
+    return { errorResponse: authServiceUnavailableResponse() }
   }
 
   if (!refreshResponse.ok) {
     const errorBody = await parseJSONSafe<BackendErrorEnvelope>(refreshResponse)
-    const response = NextResponse.json(
-      {
-        code: errorBody?.code ?? 'INVALID_SESSION',
-        message: errorBody?.message ?? 'Session expired',
-      },
-      { status: refreshResponse.status },
-    )
-    clearAuthCookies(response)
-    return { errorResponse: response }
+    return { errorResponse: refreshFailureResponse(refreshResponse.status, errorBody) }
   }
 
   const payload = await parseJSONSafe<BackendAuthEnvelope>(refreshResponse)
   if (!payload?.access_token || !payload.refresh_token) {
-    const response = NextResponse.json(
-      { code: 'AUTH_RESPONSE_INVALID', message: 'Refresh response was incomplete.' },
-      { status: 502 },
-    )
-    clearAuthCookies(response)
-    return { errorResponse: response }
+    // Incomplete upstream body is treated as temporary (502), not logout.
+    return {
+      errorResponse: NextResponse.json(
+        { code: 'AUTH_RESPONSE_INVALID', message: 'Refresh response was incomplete. Retry shortly.' },
+        { status: 502, headers: { 'cache-control': 'no-store' } },
+      ),
+    }
   }
 
   return { payload }
@@ -282,7 +596,7 @@ export async function authorizedEdgeFetch(
       body: init.body,
     })
 
-  const accessToken = request.cookies.get(ACCESS_COOKIE_NAME)?.value
+  const accessToken = getAccessTokenFromRequest(request)
   if (accessToken) {
     try {
       const edgeResponse = await callEdge(accessToken)

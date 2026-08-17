@@ -87,6 +87,13 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 		intendedAmount := decimal.Zero
 		settledAmount := decimal.Zero
 
+		bID := ""
+		// trace_id is intent-centric: every AttachmentDecision is scoped to a
+		// real intent (d.IntentID is always set by runAttachment, matched or
+		// not), so its trace_id always comes from that intent — never from
+		// the settlement observation, which has no trace_id of its own.
+		tID := uuid.Nil
+
 		// FIX #10: look up intent data from the passed-in map, not a DB query.
 		if d.IntentID != uuid.Nil {
 			if info, ok := intentMap[d.IntentID]; ok {
@@ -95,13 +102,14 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 				}
 				curr = info.CurrencyCode
 				intendedAmount = info.Amount
+				if info.TraceID != nil {
+					tID = *info.TraceID
+				}
 				// contract_id is not on CanonicalIntent in this projection;
 				// keep uuid.Nil unless available via dispatch_index fallback below.
 			}
 		}
 
-		bID := ""
-		tID := uuid.Nil
 		var sourceSystem string
 		var bankRef, clientRefCandidate string
 		var obsCreatedAt time.Time
@@ -128,9 +136,6 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 			}
 			if curr == "" {
 				curr = obs.CurrencyCode
-			}
-			if obs.TraceID != nil {
-				tID = *obs.TraceID
 			}
 			if obs.BankReference != nil {
 				bankRef = *obs.BankReference
@@ -236,7 +241,7 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 			}
 		}
 
-		row, err := s.buildRow(ctx, d.TenantID, job.AttachmentJobID,
+		row, err := s.buildRow(ctx, tID, d.TenantID, job.AttachmentJobID,
 			envelopeIDStr, contractIDStr, bID,
 			"attachment_decision", d.AttachmentDecisionID,
 			"attachment.decision.created", payload)
@@ -257,7 +262,7 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 				"candidate_set_hash":        d.CandidateSetHash,
 				"reason_code":               d.DecisionReasonCode,
 			}
-			if r, err := s.buildRow(ctx, d.TenantID, d.AttachmentJobID,
+			if r, err := s.buildRow(ctx, tID, d.TenantID, d.AttachmentJobID,
 				envelopeIDStr, "", "",
 				"attachment_decision", d.AttachmentDecisionID,
 				"attachment.ambiguous.flagged", flagPayload); err != nil {
@@ -274,7 +279,7 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 				"reason_code":               d.DecisionReasonCode,
 				"ambiguity_score":           d.AmbiguityScore,
 			}
-			if r, err := s.buildRow(ctx, d.TenantID, d.AttachmentJobID,
+			if r, err := s.buildRow(ctx, tID, d.TenantID, d.AttachmentJobID,
 				envelopeIDStr, "", "",
 				"attachment_decision", d.AttachmentDecisionID,
 				"attachment.unresolved.flagged", flagPayload); err != nil {
@@ -294,7 +299,7 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 				"candidate_set_hash":        d.CandidateSetHash,
 				"review_urgency":            "HIGH",
 			}
-			if r, err := s.buildRow(ctx, d.TenantID, d.AttachmentJobID,
+			if r, err := s.buildRow(ctx, tID, d.TenantID, d.AttachmentJobID,
 				envelopeIDStr, "", "",
 				"attachment_decision", d.AttachmentDecisionID,
 				"attachment.review.required", reviewPayload); err != nil {
@@ -331,9 +336,16 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 		}
 
 		// FIX #10: look up intent from map, not DB.
+		// trace_id is intent-centric: variances only exist for decisions with a
+		// matched settlement, and are always scoped to the real intent that
+		// produced them, so trace_id comes from the intent, not the observation.
+		vTraceID := uuid.Nil
 		if info, ok := intentMap[v.IntentID]; ok {
 			expectedValueDate = info.IntendedExecutionAt
 			intendedAmount = info.Amount
+			if info.TraceID != nil {
+				vTraceID = *info.TraceID
+			}
 		}
 
 		var expectedDateStr, actualDateStr string
@@ -368,12 +380,8 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 			vType = "REVERSAL"
 		}
 
-		vTraceID := uuid.Nil
 		var vSourceSystem string
 		if obs, ok := obsMap[v.SettlementObservationID]; ok {
-			if obs.TraceID != nil {
-				vTraceID = *obs.TraceID
-			}
 			vSourceSystem = obs.SourceSystem
 		}
 
@@ -405,7 +413,7 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 			"is_whitelisted":        false,
 			"evidence_gap_flags":    evidenceGapFlags,
 		}
-		if r, err := s.buildRow(ctx, v.TenantID, job.AttachmentJobID,
+		if r, err := s.buildRow(ctx, vTraceID, v.TenantID, job.AttachmentJobID,
 			envelopeIDStr, "", "",
 			"variance_record", v.VarianceRecordID,
 			"variance.record.created", vPayload); err != nil {
@@ -424,7 +432,7 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 	}
 
 	// ── Leaf bundle events ────────────────────────────────────────────────────
-	leafRows, err = s.buildLeafBundleRows(ctx, job, decisions, variances, obsMap, parsedByRowRef)
+	leafRows, err = s.buildLeafBundleRows(ctx, job, decisions, variances, obsMap, parsedByRowRef, intentMap)
 	if err != nil {
 		lastErr = err
 	}
@@ -568,7 +576,9 @@ func (s *AttachmentOutboxService) buildBatchUpdatedRow(
 		"job_status":                         job.Status,
 	}
 
-	return s.buildRow(ctx, job.TenantID, job.AttachmentJobID,
+	// Batch-level event spans many intents, so there is no single trace_id to
+	// attach; uuid.Nil here is intentional, not the bug this file used to have.
+	return s.buildRow(ctx, uuid.Nil, job.TenantID, job.AttachmentJobID,
 		"", "", batchID,
 		"attachment_job", job.AttachmentJobID,
 		"attachment.batch.updated", batchPayload)
@@ -602,8 +612,15 @@ func resolveDecisionBatchID(
 
 // buildRow constructs a single OutboxRow from a payload map.
 // FIX #1: returns a struct instead of writing to the DB.
+//
+// traceID is the intent-centric trace id for this event (the originating
+// intent's trace_id when one is known, otherwise uuid.Nil for orphaned/
+// batch-level events). Callers must resolve it themselves — buildRow no
+// longer guesses it from ctx.Value, which was never populated by any caller
+// and always produced uuid.Nil.
 func (s *AttachmentOutboxService) buildRow(
 	ctx context.Context,
+	traceID uuid.UUID,
 	tenantID uuid.UUID,
 	jobID uuid.UUID,
 	envelopeID string,
@@ -618,13 +635,6 @@ func (s *AttachmentOutboxService) buildRow(
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
 		return models.OutboxRow{}, fmt.Errorf("outbox buildRow marshal: %w", err)
-	}
-
-	traceID := uuid.Nil
-	if tid, ok := ctx.Value("trace_id").(string); ok {
-		if u, err2 := uuid.Parse(tid); err2 == nil {
-			traceID = u
-		}
 	}
 
 	var envID *uuid.UUID
@@ -704,6 +714,7 @@ type leafCandidate struct {
 type leafBundlePayload struct {
 	EventType               string          `json:"event_type"`
 	TenantID                string          `json:"tenant_id"`
+	TraceID                 string          `json:"trace_id,omitempty"`
 	IntentID                string          `json:"intent_id"`
 	EnvelopeID              string          `json:"envelope_id"`
 	SettlementObservationID string          `json:"settlement_observation_id"`
@@ -731,6 +742,7 @@ func (s *AttachmentOutboxService) buildLeafBundleRows(
 	variances []models.VarianceRecord,
 	obsMap map[uuid.UUID]*models.CanonicalSettlementObservation,
 	parsedByRowRef map[string]*models.SettlementParsedRow,
+	intentMap map[uuid.UUID]models.CanonicalIntent,
 ) ([]models.OutboxRow, error) {
 
 	vrByDecision := make(map[uuid.UUID]*models.VarianceRecord, len(variances))
@@ -856,9 +868,19 @@ func (s *AttachmentOutboxService) buildLeafBundleRows(
 			batchID = *obs.BatchReference
 		}
 
+		// trace_id is intent-centric: leaf bundles only exist for
+		// winner-resolved decisions, which always carry a real intent.
+		leafTraceID := uuid.Nil
+		var leafTraceIDStr string
+		if info, ok := intentMap[d.IntentID]; ok && info.TraceID != nil {
+			leafTraceID = *info.TraceID
+			leafTraceIDStr = leafTraceID.String()
+		}
+
 		bundle := leafBundlePayload{
 			EventType:               "outcome.leaf_bundle.created",
 			TenantID:                d.TenantID.String(),
+			TraceID:                 leafTraceIDStr,
 			IntentID:                d.IntentID.String(),
 			EnvelopeID:              obs.SettlementEnvelopeID.String(),
 			SettlementObservationID: d.SettlementObservationID.String(),
@@ -876,7 +898,7 @@ func (s *AttachmentOutboxService) buildLeafBundleRows(
 			AmountMatch:                amountMatch,
 		}
 
-		row, err := s.buildRow(ctx, d.TenantID, d.AttachmentJobID,
+		row, err := s.buildRow(ctx, leafTraceID, d.TenantID, d.AttachmentJobID,
 			obs.SettlementEnvelopeID.String(), "", batchID,
 			"attachment_leaf_bundle", d.AttachmentDecisionID,
 			"outcome.leaf_bundle.created", bundle)

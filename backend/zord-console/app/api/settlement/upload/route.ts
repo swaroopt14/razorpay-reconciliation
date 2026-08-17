@@ -5,9 +5,16 @@ import {
   applyRefreshedSessionCookies,
   resolveSettlementUploadContext,
 } from '@/services/auth/resolvePayoutTenant.server'
+import { publicBffError } from '@/services/bff/publicBffError'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
+
+/**
+ * Settlement upload BFF.
+ * MERGE RULE: keep assertCookieMutationProtection + session auth (no env API-key
+ * fallback) + publicBffError on upstream failure. Never restore leaky upstream JSON.
+ */
 
 /** Outcome-engine settlement ingest (default local: :8081). */
 function settlementBase() {
@@ -80,23 +87,25 @@ export async function POST(req: NextRequest) {
       },
     })
     if (ctx.refreshedPayload) {
-      applyAuthCookies(res, ctx.refreshedPayload)
+      applyAuthCookies(res, ctx.refreshedPayload, req)
     }
-    applyRefreshedSessionCookies(res, ctx.refreshedPayload)
+    applyRefreshedSessionCookies(res, ctx.refreshedPayload, req)
     return res
   } catch (error) {
     lastError = error
   }
 
-  const res = NextResponse.json(
-    {
-      error: 'Settlement upload upstream unavailable',
+  const res = publicBffError({
+    code: 'UPSTREAM_UNAVAILABLE',
+    message: 'Settlement upload is temporarily unavailable. Retry shortly.',
+    status: 502,
+    log: {
+      route: '/api/settlement/upload',
       upstream: url,
-      details: lastError instanceof Error ? lastError.message : 'Unknown upstream error',
+      error: lastError,
     },
-    { status: 502 },
-  )
-  if (ctx.refreshedPayload) applyAuthCookies(res, ctx.refreshedPayload)
-  applyRefreshedSessionCookies(res, ctx.refreshedPayload)
+  })
+  if (ctx.refreshedPayload) applyAuthCookies(res, ctx.refreshedPayload, req)
+  applyRefreshedSessionCookies(res, ctx.refreshedPayload, req)
   return res
 }

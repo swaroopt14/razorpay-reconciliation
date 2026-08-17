@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"zord-outcome-engine/db"
+	"zord-outcome-engine/internal/auth"
 	"zord-outcome-engine/models"
 	"zord-outcome-engine/services"
 
@@ -100,6 +101,9 @@ func (h *Handler) RunAttachmentHandler(c *gin.Context) {
 	var req models.AttachmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body: " + err.Error()})
+		return
+	}
+	if !auth.EnsureBodyTenant(c, req.TenantID) {
 		return
 	}
 
@@ -376,12 +380,15 @@ func (h *Handler) RegisterIntentHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "tenant_id is required"})
 		return
 	}
+	if !auth.EnsureBodyTenant(c, intent.TenantID.String()) {
+		return
+	}
 
 	intent.CreatedAt = time.Now().UTC()
 
 	_, err := db.DB.ExecContext(c.Request.Context(), `
 		INSERT INTO canonical_intents (
-			intent_id, tenant_id,
+			intent_id, tenant_id, trace_id,
 			client_payout_ref, client_batch_ref, business_idempotency_key,
 			amount, currency_code,
 			intended_execution_at, payout_type, provider_hint, corridor,
@@ -390,8 +397,9 @@ func (h *Handler) RegisterIntentHandler(c *gin.Context) {
 			beneficiary_fingerprint, zord_signature_carrier,
 			source_row_num, created_at
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
 		) ON CONFLICT (intent_id) DO UPDATE SET
+			trace_id                 = EXCLUDED.trace_id,
 			client_payout_ref        = EXCLUDED.client_payout_ref,
 			client_batch_ref         = EXCLUDED.client_batch_ref,
 			amount                   = EXCLUDED.amount,
@@ -400,7 +408,7 @@ func (h *Handler) RegisterIntentHandler(c *gin.Context) {
 			beneficiary_fingerprint  = EXCLUDED.beneficiary_fingerprint,
 			zord_signature_carrier   = EXCLUDED.zord_signature_carrier,
 			source_row_num           = EXCLUDED.source_row_num`,
-		intent.IntentID, intent.TenantID,
+		intent.IntentID, intent.TenantID, intent.TraceID,
 		intent.ClientPayoutRef, intent.ClientBatchRef, intent.BusinessIdempotencyKey,
 		intent.Amount, intent.CurrencyCode,
 		intent.IntendedExecutionAt, intent.PayoutType, intent.ProviderHint, intent.Corridor,

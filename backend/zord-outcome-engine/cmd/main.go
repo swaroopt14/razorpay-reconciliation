@@ -12,6 +12,7 @@ import (
 	"zord-outcome-engine/config"
 	"zord-outcome-engine/db"
 	"zord-outcome-engine/handlers"
+	"zord-outcome-engine/internal/auth"
 	"zord-outcome-engine/internal/health"
 	"zord-outcome-engine/kafka"
 	"zord-outcome-engine/routes"
@@ -50,6 +51,9 @@ func main() {
 	if err != nil {
 		log.Println("No .env file found")
 	}
+	if err := auth.InitJWTSigningSecret(); err != nil {
+		log.Fatal("JWT auth init failed:", err)
+	}
 
 	brokers := strings.Split(os.Getenv("KAFKA_BROKERS"), ",")
 	producer, err := kafka.NewProducer(brokers)
@@ -73,9 +77,14 @@ func main() {
 	groupID := "outcome-engine-dispatch-group"
 	intentGroupID := "outcome-engine-intent-group"
 
+	// OUT-02: durable failure recording is a precondition for offset
+	// advancement. A later successful message must never commit past an
+	// earlier failure unless that failure has a durable receipt.
+	recordConsumerFailure := services.NewConsumerFailureRecorder(db.DB)
+
 	// Dispatch consumer — runs in its own goroutine.
 	go func() {
-		err := kafka.StartConsumer(ctx, brokers, groupID, dispatchTopic, handlers.HandleDispatchEvent)
+		err := kafka.StartConsumer(ctx, brokers, groupID, dispatchTopic, handlers.HandleDispatchEvent, recordConsumerFailure)
 		if err != nil {
 			log.Fatalf("Dispatch Kafka consumer failed: %v", err)
 		}
@@ -83,7 +92,7 @@ func main() {
 
 	// Intent consumer — runs in its own goroutine.
 	go func() {
-		err := kafka.StartConsumer(ctx, brokers, intentGroupID, intentTopic, handlers.HandleIntentEvent)
+		err := kafka.StartConsumer(ctx, brokers, intentGroupID, intentTopic, handlers.HandleIntentEvent, recordConsumerFailure)
 		if err != nil {
 			log.Fatalf("Intent Kafka consumer failed: %v", err)
 		}

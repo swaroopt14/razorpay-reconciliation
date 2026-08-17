@@ -3,23 +3,28 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
+	"github.com/pressly/goose/v3"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
 	"zord-token-enclave/internal/config"
-	"zord-token-enclave/internal/db"
 	"zord-token-enclave/internal/handlers"
 	"zord-token-enclave/internal/health"
 	"zord-token-enclave/internal/keymanager"
 	"zord-token-enclave/internal/models"
 	"zord-token-enclave/internal/repository"
+	"zord-token-enclave/internal/retryutil"
 	"zord-token-enclave/internal/services"
 	"zord-token-enclave/kafka"
 	"zord-token-enclave/tracing"
@@ -75,8 +80,15 @@ func main() {
 		log.Fatal("❌ DB not reachable:", err)
 	}
 
-	if err := db.CreateTables(database); err != nil {
-		log.Fatal("❌ Failed to create tables:", err)
+	// TOK-06: versioned goose migrations replace the old runtime
+	// CREATE TABLE IF NOT EXISTS calls -- same pattern zord-intent-engine
+	// already uses (see its cmd/main.go).
+	goose.SetBaseFS(nil)
+	if err := goose.SetDialect("postgres"); err != nil {
+		log.Fatal("❌ goose dialect error:", err)
+	}
+	if err := goose.Up(database, "db/migrations"); err != nil {
+		log.Fatal("❌ Failed to run migrations:", err)
 	}
 
 	// ---------------- REPO + KEY MANAGER ----------------
@@ -86,16 +98,33 @@ func main() {
 	// ---------------- SERVICE ----------------
 	tokenSvc := services.NewTokenService(tokenRepo, keyManager, cfg.TokenSecret)
 
+	// TOK-07: "Multiple replicas can rotate the same tenant concurrently or
+	// continue during shutdown" -- these two workers previously ran on
+	// context.Background() forever, with no way to stop on shutdown. A
+	// signal-derived root context lets them exit their loop promptly on
+	// SIGTERM/SIGINT instead of running an in-flight (or next) cycle to
+	// completion regardless of what the orchestrator wants. HTTP graceful
+	// shutdown (r.Run below) is a separate, explicitly out-of-scope concern
+	// for this ticket -- the audit's code evidence names only these
+	// workers' background contexts.
+	workerCtx, stopWorkers := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopWorkers()
+
 	// ---------------- MIGRATION WORKER ----------------
 	go func() {
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
 		for {
 			log.Println("🔁 Starting migration check for all tenants...")
-			tenants, err := tokenSvc.GetAllTenants(context.Background())
+			tenants, err := tokenSvc.GetAllTenants(workerCtx)
 			if err != nil {
 				log.Println("❌ Failed to load tenants for migration:", err)
 			} else {
 				for _, tenantID := range tenants {
-					if err := tokenSvc.MigrateKeys(context.Background(), tenantID); err != nil {
+					if workerCtx.Err() != nil {
+						break
+					}
+					if err := tokenSvc.MigrateKeys(workerCtx, tenantID); err != nil {
 						log.Printf("❌ Migration error for tenant %s: %v", tenantID, err)
 					} else {
 						log.Printf("✅ Migration cycle completed for tenant %s", tenantID)
@@ -103,20 +132,31 @@ func main() {
 				}
 			}
 
-			time.Sleep(1 * time.Minute)
+			select {
+			case <-workerCtx.Done():
+				log.Println("🛑 migration worker shutting down")
+				return
+			case <-ticker.C:
+			}
 		}
 	}()
 
 	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
 		for {
 			log.Println("🔐 Checking if key rotation needed...")
 
-			err := tokenSvc.AutoRotateKeys(context.Background())
-			if err != nil {
+			if err := tokenSvc.AutoRotateKeys(workerCtx); err != nil {
 				log.Println("❌ Auto-rotation error:", err)
 			}
 
-			time.Sleep(10 * time.Minute)
+			select {
+			case <-workerCtx.Done():
+				log.Println("🛑 auto-rotation worker shutting down")
+				return
+			case <-ticker.C:
+			}
 		}
 	}()
 
@@ -202,6 +242,40 @@ func main() {
 	}
 
 	handler := kafka.BuildTokenizeHandler(ctx, tokenizeLogic)
+
+	// TOK-01: bounded retry, then a durable failure receipt (Postgres) plus
+	// a best-effort poison-DLQ publish, before the Kafka offset is ever
+	// marked for a failed message. See kafka/retry_wrapper.go and
+	// kafka/consumer.go's ConsumeClaim (the actual mark-on-success-only fix).
+	tokenizeFailureRepo := repository.NewTokenizeFailureRepo(database)
+	tokenizeDLQTopic := os.Getenv("KAFKA_TOPIC_PII_TOKENIZE_REQUEST_DLQ")
+
+	handler = kafka.WithRetryAndPoisonDLQ(handler, retryutil.DefaultPolicy(),
+		func(ctx context.Context, rawMsg []byte, attempts int, lastErr error) error {
+			if err := tokenizeFailureRepo.Record(ctx, rawMsg, attempts, lastErr); err != nil {
+				return err
+			}
+			// TOK-02: a pure Kafka delivery failure must NOT let the
+			// request offset advance -- per the acceptance test, "broker
+			// outage prevents request offset advancement." The durable
+			// receipt above is still recorded for operational visibility,
+			// but we deliberately keep returning an error here so
+			// ConsumeClaim never marks this message: it must keep being
+			// redelivered until Kafka genuinely recovers, unlike a
+			// permanent processing failure (bad data, crypto/DB errors),
+			// which correctly gets "resolved" into the poison DLQ and
+			// advanced past after exhausting retries.
+			if errors.Is(lastErr, kafka.ErrDeliveryFailed) {
+				return lastErr
+			}
+			if tokenizeDLQTopic != "" {
+				if pubErr := producer.Publish(ctx, tokenizeDLQTopic, "", json.RawMessage(rawMsg)); pubErr != nil {
+					log.Printf("poison DLQ publish failed (non-fatal, durable receipt already recorded): %v", pubErr)
+				}
+			}
+			return nil
+		},
+	)
 
 	go func() {
 		err := kafka.StartConsumer(

@@ -20,16 +20,35 @@ func StartIntentConsumer(
 }
 
 func buildIntentHandler(pg PackGenerator) MessageHandler {
+	topic := "payments.intent.events.v1"
 	return func(ctx context.Context, key string, raw []byte) error {
 		var relayEvt models.RelayEvent
 		if err := json.Unmarshal(raw, &relayEvt); err != nil {
 			log.Printf("intent.consumer.parse_failed key=%s err=%v", key, err)
+			pg.RecordMalformedEvent(ctx, "", topic, key, "", "JSON parse failed: "+err.Error())
 			return nil
 		}
 
 		if relayEvt.TenantID == "" || relayEvt.AggregateID == "" {
+			reason := "missing required fields"
 			log.Printf("intent.consumer.missing_ids tenant=%s intent=%s", relayEvt.TenantID, relayEvt.AggregateID)
+			pg.RecordMalformedEvent(ctx, relayEvt.TenantID, topic, relayEvt.EventID, relayEvt.TraceID, reason)
 			return nil
+		}
+
+		// Map schema_version/event_version from the upstream envelope rather
+		// than hardcoding them — no fallback, just log if missing so gaps in
+		// upstream instrumentation are visible instead of silently masked.
+		sv := relayEvt.SchemaVersion
+		if sv == "" {
+			log.Printf("intent.consumer.missing_schema_version key=%s intent=%s event_id=%s", key, relayEvt.AggregateID, relayEvt.EventID)
+		}
+		ev := relayEvt.EventVersion
+		if ev == "" {
+			log.Printf("intent.consumer.missing_event_version key=%s intent=%s event_id=%s", key, relayEvt.AggregateID, relayEvt.EventID)
+		}
+		if relayEvt.TraceID == "" {
+			log.Printf("intent.consumer.missing_trace_id key=%s intent=%s event_id=%s", key, relayEvt.AggregateID, relayEvt.EventID)
 		}
 
 		// Carry the originating client_batch_id onto every buffered intent leaf so the
@@ -66,9 +85,11 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			LeafType:          models.LeafTypeCanonicalIntentHash,
 			ItemRef:           relayEvt.AggregateID,
 			Hash:              relayEvt.CanonicalHash,
-			SchemaVersion:     "v1",
+			SchemaVersion:     sv,
+			EventVersion:      ev,
 			SourceTopic:       "payments.intent.events.v1",
 			SourceEventID:     relayEvt.EventID,
+			TraceID:           relayEvt.TraceID,
 
 			// Traceability & Status Fields
 			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
@@ -95,9 +116,11 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			LeafType:          models.LeafTypeGovernanceDecision,
 			ItemRef:           relayEvt.AggregateID,
 			Hash:              relayEvt.GovernanceHash,
-			SchemaVersion:     "v1",
+			SchemaVersion:     sv,
+			EventVersion:      ev,
 			SourceTopic:       "payments.intent.events.v1",
 			SourceEventID:     relayEvt.EventID,
+			TraceID:           relayEvt.TraceID,
 
 			// Traceability & Status Fields
 			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
@@ -124,9 +147,11 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			LeafType:          models.LeafTypeRawRowEvidenceLeafHash,
 			ItemRef:           relayEvt.AggregateID,
 			Hash:              relayEvt.RawRowEvidenceLeafHash,
-			SchemaVersion:     "v1",
+			SchemaVersion:     sv,
+			EventVersion:      ev,
 			SourceTopic:       "payments.intent.events.v1",
 			SourceEventID:     relayEvt.EventID,
+			TraceID:           relayEvt.TraceID,
 
 			// Traceability & Status Fields
 			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
@@ -153,9 +178,11 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			LeafType:          models.LeafTypeCanonicalRowEvidenceLeafHash,
 			ItemRef:           relayEvt.AggregateID,
 			Hash:              relayEvt.CanonicalRowEvidenceLeafHash,
-			SchemaVersion:     "v1",
+			SchemaVersion:     sv,
+			EventVersion:      ev,
 			SourceTopic:       "payments.intent.events.v1",
 			SourceEventID:     relayEvt.EventID,
+			TraceID:           relayEvt.TraceID,
 
 			// Traceability & Status Fields
 			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
@@ -182,9 +209,11 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			LeafType:          models.LeafTypeMappingProfileHash,
 			ItemRef:           relayEvt.AggregateID,
 			Hash:              relayEvt.MappingProfileHash,
-			SchemaVersion:     "v1",
+			SchemaVersion:     sv,
+			EventVersion:      ev,
 			SourceTopic:       "payments.intent.events.v1",
 			SourceEventID:     relayEvt.EventID,
+			TraceID:           relayEvt.TraceID,
 
 			// Traceability & Status Fields
 			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
@@ -211,9 +240,11 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			LeafType:          models.LeafTypeBusinessIdempotencyHash,
 			ItemRef:           relayEvt.AggregateID,
 			Hash:              relayEvt.BusinessIdempotencyKey,
-			SchemaVersion:     "v1",
+			SchemaVersion:     sv,
+			EventVersion:      ev,
 			SourceTopic:       "payments.intent.events.v1",
 			SourceEventID:     relayEvt.EventID,
+			TraceID:           relayEvt.TraceID,
 
 			// Traceability & Status Fields
 			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,
@@ -240,9 +271,11 @@ func buildIntentHandler(pg PackGenerator) MessageHandler {
 			LeafType:          models.LeafTypeTokenizedDataHash,
 			ItemRef:           relayEvt.AggregateID,
 			Hash:              relayEvt.TokenizedDataHash,
-			SchemaVersion:     "v1",
+			SchemaVersion:     sv,
+			EventVersion:      ev,
 			SourceTopic:       "payments.intent.events.v1",
 			SourceEventID:     relayEvt.EventID,
+			TraceID:           relayEvt.TraceID,
 
 			// Traceability & Status Fields
 			PaymentInstructionReceived: relayEvt.PaymentInstructionReceived,

@@ -3,10 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"zord-intent-engine/internal/auth"
@@ -49,11 +53,9 @@ func main() {
 		log.Fatal("migrations failed:", err)
 	}
 
-	cfg := config.LoadConfig()
-
-	err := vault.InitVaultKey(cfg.VaultKey)
+	err := vault.InitVault()
 	if err != nil {
-		log.Fatal("failed to initialize vault key:", err)
+		log.Fatal("failed to initialize vault:", err)
 	}
 
 	// R-01: every public, tenant-scoped handler must run behind a verified
@@ -66,7 +68,19 @@ func main() {
 		log.Fatal("failed to initialize tokenized data hash master secret:", err)
 	}
 
+	// ctx is used for one-shot startup calls and — deliberately — for each
+	// Kafka message's own processing (see the handler/resultHandler closures
+	// below). It is NEVER cancelled by shutdown: an in-flight message that's
+	// already been read off the claim channel must be allowed to finish its
+	// DB work to completion, not have it aborted mid-flight by a shutdown
+	// signal. consumerCtx (INT-08), below, is the separate context that IS
+	// cancelled on shutdown — it only controls whether the Kafka consumer
+	// groups accept new sessions/claims, never the processing of a message
+	// already in progress.
 	ctx := context.Background()
+	consumerCtx, cancelConsumers := context.WithCancel(context.Background())
+	defer cancelConsumers()
+	var consumerWG sync.WaitGroup
 
 	// Seed built-in mapping profiles (TALLY, SAP, etc.) from global_profiles.json
 	// into mapping_profiles so they resolve with a real, persisted profile_hash
@@ -302,12 +316,13 @@ func main() {
 	})
 
 	err = kafka.StartConsumer(
-		ctx,
+		consumerCtx,
 		brokers,
 		groupID,
 		topic,
 		handler,
 		recordEventFailure,
+		&consumerWG,
 	)
 	if err != nil {
 		log.Fatalf("Kafka consumer failed: %v", err)
@@ -330,12 +345,13 @@ func main() {
 
 	go func() {
 		err := kafka.StartConsumer(
-			ctx,
+			consumerCtx,
 			brokers,
 			"intent-engine-tokenize-result-group",
 			resultTopic,
 			resultHandler,
 			recordTokenizeResultFailure,
+			&consumerWG,
 		)
 		if err != nil {
 			log.Fatalf("Kafka tokenize result consumer failed: %v", err)
@@ -344,12 +360,88 @@ func main() {
 	}()
 
 	// -------- HTTP SERVER --------
-	log.Println("Intent Engine (Service-2) running on :8083")
+	// INT-08: explicit timeouts on every phase of a connection's life --
+	// previously all four were unset, meaning a slow/stalled client (or a
+	// Slowloris-style attacker) could hold a connection, and its goroutine,
+	// open indefinitely.
 	server := &http.Server{
-		Addr:    ":8083",
-		Handler: otelhttp.NewHandler(mux, "http"),
+		Addr:              ":8083",
+		Handler:           otelhttp.NewHandler(mux, "http"),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      20 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
-	log.Fatal(server.ListenAndServe())
+
+	// Start serving in a goroutine so main() can go on to wait for either a
+	// shutdown signal or a startup/listen failure -- log.Fatal(ListenAndServe())
+	// previously blocked forever with no path to ever run cleanup.
+	serverErrors := make(chan error, 1)
+	go func() {
+		log.Println("Intent Engine (Service-2) running on :8083")
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErrors <- err
+			return
+		}
+		serverErrors <- nil
+	}()
+
+	// -------- GRACEFUL SHUTDOWN (INT-08) --------
+	shutdownCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	select {
+	case err := <-serverErrors:
+		if err != nil {
+			log.Fatalf("HTTP server failed: %v", err)
+		}
+	case <-shutdownCtx.Done():
+		stop()
+		log.Println("shutdown signal received, draining gracefully...")
+
+		// 1. Stop accepting new work first: flip readiness to false so a
+		// Kubernetes readiness probe notices and stops routing new traffic
+		// for the rest of the drain window below.
+		readinessHandler.SetNotReady()
+
+		// 2. Stop the Kafka consumer groups from taking new
+		// sessions/claims, then block until their goroutines have actually
+		// exited -- this waits for a message already in flight to finish
+		// processing (cancelling consumerCtx does not abort the in-flight
+		// handler call itself; see the comment where consumerCtx is
+		// created).
+		cancelConsumers()
+		consumerWG.Wait()
+		log.Println("Kafka consumers drained")
+
+		// 3. Drain in-flight HTTP requests.
+		httpShutdownCtx, cancelHTTP := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancelHTTP()
+		if err := server.Shutdown(httpShutdownCtx); err != nil {
+			log.Printf("HTTP server forced to shut down: %v", err)
+		} else {
+			log.Println("HTTP server drained")
+		}
+
+		// 4. Close the Kafka producer.
+		if err := producer.Close(); err != nil {
+			log.Printf("error closing Kafka producer: %v", err)
+		} else {
+			log.Println("Kafka producer closed")
+		}
+
+		// 5. Close the DB pool.
+		if err := db.DB.Close(); err != nil {
+			log.Printf("error closing DB pool: %v", err)
+		} else {
+			log.Println("DB pool closed")
+		}
+
+		log.Println("shutdown complete")
+	}
+	// main() now returns normally, running the tracing cleanup() deferred
+	// at the top -- previously unreachable, since nothing before this
+	// change ever let main() return.
 }
 
 // durationEnv reads a time.ParseDuration-formatted env var (e.g. "5m",

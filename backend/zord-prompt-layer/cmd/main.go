@@ -3,9 +3,15 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log"
 	"net/http"
+	"net/url"
+	"os"
+	"os/signal"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -17,6 +23,7 @@ import (
 	"zord-prompt-layer/config"
 	"zord-prompt-layer/handler"
 	"zord-prompt-layer/internal/health"
+	plmiddleware "zord-prompt-layer/middleware"
 	"zord-prompt-layer/repositories"
 	"zord-prompt-layer/routes"
 	"zord-prompt-layer/services"
@@ -40,6 +47,9 @@ func main() {
 		otelgin.Middleware(cfg.ServiceName),
 	)
 	router.Use(corsMiddleware())
+	router.Use(plmiddleware.RequestIDMiddleware())
+	router.Use(plmiddleware.MaxBodyBytesMiddleware(cfg.HTTPMaxBodyBytes))
+	router.Use(plmiddleware.RequestTimeoutMiddleware(time.Duration(cfg.HTTPRequestTimeoutSeconds) * time.Second))
 
 	cleanup := tracing.InitTracing(cfg.ServiceName)
 	defer cleanup()
@@ -54,13 +64,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed connecting redis memory store: %v", err)
 	}
-	edgeDB := mustOpenReadOnlyDB("edge", cfg.EdgeReadDSN)
-	intentDB := mustOpenReadOnlyDB("intent-engine", cfg.IntentReadDSN)
-	relayDB := mustOpenReadOnlyDB("relay", cfg.RelayReadDSN)
+	edgeDB := mustOpenReadOnlyDB("edge", cfg.EdgeReadDSN, cfg.DBStatementTimeoutMS, cfg.DBLockTimeoutMS)
+	intentDB := mustOpenReadOnlyDB("intent-engine", cfg.IntentReadDSN, cfg.DBStatementTimeoutMS, cfg.DBLockTimeoutMS)
+	relayDB := mustOpenReadOnlyDB("relay", cfg.RelayReadDSN, cfg.DBStatementTimeoutMS, cfg.DBLockTimeoutMS)
 
-	intelligenceDB := mustOpenReadOnlyDB("intelligence", cfg.IntelligenceReadDSN)
-	evidenceDB := mustOpenReadOnlyDB("evidence", cfg.EvidenceReadDSN)
-	outcomeDB := mustOpenReadOnlyDB("outcome", cfg.OutcomeReadDSN)
+	intelligenceDB := mustOpenReadOnlyDB("intelligence", cfg.IntelligenceReadDSN, cfg.DBStatementTimeoutMS, cfg.DBLockTimeoutMS)
+	evidenceDB := mustOpenReadOnlyDB("evidence", cfg.EvidenceReadDSN, cfg.DBStatementTimeoutMS, cfg.DBLockTimeoutMS)
+	outcomeDB := mustOpenReadOnlyDB("outcome", cfg.OutcomeReadDSN, cfg.DBStatementTimeoutMS, cfg.DBLockTimeoutMS)
 	liveRetriever := repositories.NewLiveSQLRetriever(edgeDB, intentDB, relayDB, intelligenceDB, evidenceDB, outcomeDB)
 	vectorStateDB := mustOpenDB("vector-index-state", cfg.VectorIndexStateDSN)
 
@@ -151,8 +161,12 @@ func main() {
 	retriever := services.NewHybridEvidenceRetriever(liveRetriever, vectorRetriever)
 	ragService := services.NewDefaultRAGService(cfg.GeminiModel, cfg.DefaultTopK, retriever, llmService, intelligenceClient, memoryStore)
 	queryHandler := handler.NewQueryHandler(ragService)
-
-	routes.Register(router, healthHandler, queryHandler)
+	authCfg := plmiddleware.AuthConfig{
+		SigningSecret: cfg.JWTSigningSecret,
+		Issuer:        cfg.JWTIssuer,
+		Audience:      cfg.JWTAudience,
+	}
+	routes.Register(router, healthHandler, queryHandler, authCfg)
 
 	// Readiness endpoint — checks read-only DB connectivity
 	var readinessChecks []health.DependencyCheck
@@ -171,8 +185,44 @@ func main() {
 	addr := ":" + cfg.HTTPPort
 	log.Printf("starting %s on %s", cfg.ServiceName, addr)
 
-	if err := router.Run(addr); err != nil {
-		log.Fatalf("server failed to start: %v", err)
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           router,
+		ReadHeaderTimeout: time.Duration(cfg.HTTPReadHeaderTimeoutSeconds) * time.Second,
+		ReadTimeout:       time.Duration(cfg.HTTPReadTimeoutSeconds) * time.Second,
+		WriteTimeout:      time.Duration(cfg.HTTPWriteTimeoutSeconds) * time.Second,
+		IdleTimeout:       time.Duration(cfg.HTTPIdleTimeoutSeconds) * time.Second,
+	}
+
+	serverErr := make(chan error, 1)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErr <- err
+			return
+		}
+		serverErr <- nil
+	}()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	select {
+	case sig := <-stop:
+		log.Printf("shutdown signal received signal=%s service=%s", sig.String(), cfg.ServiceName)
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Fatalf("server forced shutdown failed: %v", err)
+		}
+
+		log.Printf("server shutdown complete service=%s", cfg.ServiceName)
+
+	case err := <-serverErr:
+		if err != nil {
+			log.Fatalf("server failed: %v", err)
+		}
 	}
 }
 
@@ -204,20 +254,68 @@ func corsMiddleware() gin.HandlerFunc {
 	}
 }
 
-func mustOpenReadOnlyDB(name, dsn string) *sql.DB {
+func mustOpenReadOnlyDB(name, dsn string, statementTimeoutMS, lockTimeoutMS int) *sql.DB {
 	if dsn == "" {
 		log.Printf("%s read-only DSN not configured; retriever will skip this source", name)
 		return nil
 	}
-	db, err := sql.Open("postgres", dsn)
+
+	hardenedDSN := hardenPostgresReadOnlyDSN(dsn, name, statementTimeoutMS, lockTimeoutMS)
+
+	db, err := sql.Open("postgres", hardenedDSN)
 	if err != nil {
 		log.Fatalf("failed opening %s db: %v", name, err)
 	}
+
+	db.SetMaxOpenConns(5)
+	db.SetMaxIdleConns(2)
+	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetConnMaxIdleTime(2 * time.Minute)
+
 	if err := db.Ping(); err != nil {
 		log.Fatalf("failed pinging %s db: %v", name, err)
 	}
-	log.Printf("%s read-only db connected", name)
+
+	var readOnly string
+	if err := db.QueryRow("SHOW default_transaction_read_only").Scan(&readOnly); err != nil {
+		log.Fatalf("failed verifying %s read-only mode: %v", name, err)
+	}
+	if !strings.EqualFold(strings.TrimSpace(readOnly), "on") {
+		log.Fatalf("%s db connection is not read-only; refusing to start prompt-layer", name)
+	}
+
+	log.Printf("%s read-only db connected with statement_timeout_ms=%d lock_timeout_ms=%d", name, statementTimeoutMS, lockTimeoutMS)
 	return db
+}
+func hardenPostgresReadOnlyDSN(dsn, appName string, statementTimeoutMS, lockTimeoutMS int) string {
+	if statementTimeoutMS <= 0 {
+		statementTimeoutMS = 5000
+	}
+	if lockTimeoutMS <= 0 {
+		lockTimeoutMS = 1000
+	}
+
+	if u, err := url.Parse(dsn); err == nil && u.Scheme != "" && u.Host != "" {
+		q := u.Query()
+		q.Set("default_transaction_read_only", "on")
+		q.Set("statement_timeout", strconv.Itoa(statementTimeoutMS))
+		q.Set("lock_timeout", strconv.Itoa(lockTimeoutMS))
+		q.Set("idle_in_transaction_session_timeout", "5000")
+		q.Set("application_name", "zord-prompt-layer-"+appName)
+		u.RawQuery = q.Encode()
+		return u.String()
+	}
+
+	parts := []string{
+		dsn,
+		"default_transaction_read_only=on",
+		"statement_timeout=" + strconv.Itoa(statementTimeoutMS),
+		"lock_timeout=" + strconv.Itoa(lockTimeoutMS),
+		"idle_in_transaction_session_timeout=5000",
+		"application_name=zord-prompt-layer-" + appName,
+	}
+
+	return strings.Join(parts, " ")
 }
 func mustOpenDB(name, dsn string) *sql.DB {
 	if strings.TrimSpace(dsn) == "" {

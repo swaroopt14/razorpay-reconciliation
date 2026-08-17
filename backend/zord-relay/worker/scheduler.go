@@ -43,7 +43,7 @@ func NewScheduler(
 		if svcCfg.IsDLQ {
 			w = NewDLQWorker(svcCfg, cfg.Relay, pub, log)
 		} else if svcCfg.IsBatch {
-			w = NewBatchWorker(svcCfg, cfg.Relay, pub, log)
+			w = NewBatchWorker(svcCfg, cfg.Relay, pub, log, failureRepo)
 		} else {
 			// Pass hashVerifier only for IsIntent workers; nil for all others.
 			// This scopes payload hash verification strictly to intent-engine

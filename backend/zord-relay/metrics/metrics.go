@@ -220,4 +220,13 @@ var (
 		Name:      "publish_failure_persist_error_total",
 		Help:      "Failed attempts to durably persist a publish-failure record. Alert on this (SEV1): any non-zero increase.",
 	}, []string{"service"})
+
+	// ── Controlled replay (P0 6.1.3) ─────────────────────────────────────────
+
+	// ReplayTotal counts controlled replay attempts.
+	ReplayTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "relay",
+		Name:      "failure_replay_total",
+		Help:      "Total number of controlled replay attempts.",
+	}, []string{"outcome"}) // outcome: SUCCESS | FAILED
 )
