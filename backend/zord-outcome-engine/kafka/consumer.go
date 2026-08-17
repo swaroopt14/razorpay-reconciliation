@@ -76,7 +76,7 @@ type Consumer struct {
 
 func StartConsumer(ctx context.Context, brokers []string, groupID, topic string, handler func([]byte) error, onPermanentFailure FailureRecorder) error {
 	if onPermanentFailure == nil {
-		return errors.New("kafka.StartConsumer: onPermanentFailure is required (OUT-02: no durable failure recording, no consumer)")
+		return errors.New("kafka.StartConsumer: onPermanentFailure is required ")
 	}
 
 	config := sarama.NewConfig()
