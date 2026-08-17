@@ -135,11 +135,20 @@ spec:
             - name: OTEL_SERVICE_NAME
               value: zord-edge
             - name: MAX_BULK_BYTES
-              value: "52428800"
+              valueFrom:
+                configMapKeyRef:
+                  name: zord-aws-config
+                  key: MAX_BULK_BYTES
             - name: MAX_CSV_ROWS
-              value: "200000"
+              valueFrom:
+                configMapKeyRef:
+                  name: zord-aws-config
+                  key: MAX_CSV_ROWS
             - name: BULK_INGEST_JOB_TIMEOUT_MINUTES
-              value: "30"
+              valueFrom:
+                configMapKeyRef:
+                  name: zord-aws-config
+                  key: BULK_INGEST_JOB_TIMEOUT_MINUTES
           volumeMounts:
             - name: signing-key
               mountPath: /run/secrets
