@@ -2,6 +2,8 @@ import os
 
 KAFKA_BROKERS: list[str] = os.getenv("KAFKA_BROKERS", "localhost:9092").split(",")
 KAFKA_GROUP_ID: str = os.getenv("KAFKA_GROUP_ID", "ml-service-group")
+KAFKA_SASL_USERNAME: str = os.getenv("KAFKA_SASL_USERNAME", "")
+KAFKA_SASL_PASSWORD: str = os.getenv("KAFKA_SASL_PASSWORD", "")
 ML_REQUEST_TOPIC: str = os.getenv("ML_REQUEST_TOPIC", "ml.request.events")
 ML_RESULT_TOPIC: str = os.getenv("ML_RESULT_TOPIC", "ml.result.events")
 

@@ -18,6 +18,9 @@ func StartConsumer(
 	config := sarama.NewConfig()
 	config.Version = sarama.V2_8_0_0
 
+	// SASL/SCRAM-SHA-512 authentication (PLAT-06)
+	ApplySASL(config)
+
 	config.Consumer.Group.Rebalance.GroupStrategies = []sarama.BalanceStrategy{
 		sarama.NewBalanceStrategyRange(),
 	}

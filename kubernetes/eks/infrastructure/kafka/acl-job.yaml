@@ -1,0 +1,145 @@
+# Kafka ACL configuration — per-service topic permissions.
+# Each service can ONLY produce/consume its authorized topics.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: zord-kafka-acls
+spec:
+  backoffLimit: 6
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: acl-setup
+          image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/cp-kafka:7.6.0
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          command:
+            - /bin/bash
+            - -ec
+            - |
+              BOOTSTRAP="zord-kafka:9092"
+              # Use admin JAAS for ACL management
+              export KAFKA_OPTS="-Djava.security.auth.login.config=/tmp/admin-jaas.conf"
+              cat > /tmp/admin-jaas.conf <<'JAAS'
+              KafkaClient {
+                org.apache.kafka.common.security.scram.ScramLoginModule required
+                username="admin"
+                password="admin-secure-password-change-me";
+              };
+              JAAS
+
+              echo "Waiting for Kafka..."
+              until kafka-topics --bootstrap-server $BOOTSTRAP --list >/dev/null 2>&1; do
+                sleep 5
+              done
+
+              echo "=== Configuring ACLs ==="
+
+              # ── relay-service: can produce/consume ALL topics (it's the relay) ──
+              kafka-acls --bootstrap-server $BOOTSTRAP \
+                --add --allow-principal User:relay-service \
+                --operation Read --operation Write --operation Describe \
+                --topic '*' --group '*'
+
+              # ── edge-service: produce to ledger events only ──
+              kafka-acls --bootstrap-server $BOOTSTRAP \
+                --add --allow-principal User:edge-service \
+                --operation Write --operation Describe \
+                --topic payments.ledger.events.v1
+              kafka-acls --bootstrap-server $BOOTSTRAP \
+                --add --allow-principal User:edge-service \
+                --operation Write \
+                --topic pii.tokenize.request
+
+              # ── intent-service: consume ledger, produce intent events ──
+              kafka-acls --bootstrap-server $BOOTSTRAP \
+                --add --allow-principal User:intent-service \
+                --operation Read --operation Describe \
+                --topic payments.ledger.events.v1 --group intent-consumer-group
+              kafka-acls --bootstrap-server $BOOTSTRAP \
+                --add --allow-principal User:intent-service \
+                --operation Write --operation Describe \
+                --topic payments.intent.events.v1
+              kafka-acls --bootstrap-server $BOOTSTRAP \
+                --add --allow-principal User:intent-service \
+                --operation Write \
+                --topic payments.intent.dlq
+              kafka-acls --bootstrap-server $BOOTSTRAP \
+                --add --allow-principal User:intent-service \
+                --operation Write \
+                --topic batch.canonicalization.completed
+
+              # ── outcome-service: consume intent events, produce outcome events ──
+              kafka-acls --bootstrap-server $BOOTSTRAP \
+                --add --allow-principal User:outcome-service \
+                --operation Read --operation Describe \
+                --topic payments.intent.events.v1 --group outcome-consumer-group
+              kafka-acls --bootstrap-server $BOOTSTRAP \
+                --add --allow-principal User:outcome-service \
+                --operation Write --operation Describe \
+                --topic payments.outcome.events.v1
+              kafka-acls --bootstrap-server $BOOTSTRAP \
+                --add --allow-principal User:outcome-service \
+                --operation Write \
+                --topic canonical.settlement.created
+              kafka-acls --bootstrap-server $BOOTSTRAP \
+                --add --allow-principal User:outcome-service \
+                --operation Write \
+                --topic attachment.decision.created
+              kafka-acls --bootstrap-server $BOOTSTRAP \
+                --add --allow-principal User:outcome-service \
+                --operation Write \
+                --topic variance.record.created
+
+              # ── evidence-service: consume outcome events, produce evidence events ──
+              kafka-acls --bootstrap-server $BOOTSTRAP \
+                --add --allow-principal User:evidence-service \
+                --operation Read --operation Describe \
+                --topic payments.outcome.events.v1 --group evidence-consumer-group
+              kafka-acls --bootstrap-server $BOOTSTRAP \
+                --add --allow-principal User:evidence-service \
+                --operation Write \
+                --topic evidence.pack.created
+
+              # ── intelligence-service: consume multiple topics ──
+              kafka-acls --bootstrap-server $BOOTSTRAP \
+                --add --allow-principal User:intelligence-service \
+                --operation Read --operation Describe \
+                --topic payments.intent.events.v1 \
+                --topic payments.outcome.events.v1 \
+                --topic batch.canonicalization.completed \
+                --topic evidence.pack.created \
+                --group intelligence-consumer-group
+              kafka-acls --bootstrap-server $BOOTSTRAP \
+                --add --allow-principal User:intelligence-service \
+                --operation Write \
+                --topic zpi.actuation.retry
+              kafka-acls --bootstrap-server $BOOTSTRAP \
+                --add --allow-principal User:intelligence-service \
+                --operation Write \
+                --topic zpi.actuation.evidence
+              kafka-acls --bootstrap-server $BOOTSTRAP \
+                --add --allow-principal User:intelligence-service \
+                --operation Write \
+                --topic zpi.actuation.alert
+
+              # ── ml-service: consume/produce ML topics only ──
+              kafka-acls --bootstrap-server $BOOTSTRAP \
+                --add --allow-principal User:ml-service \
+                --operation Read --operation Describe \
+                --topic ml.request.events --group ml-consumer-group
+              kafka-acls --bootstrap-server $BOOTSTRAP \
+                --add --allow-principal User:ml-service \
+                --operation Write \
+                --topic ml.result.events
+
+              echo "=== ACLs configured ==="
+              echo ""
+              echo "=== Current ACL list ==="
+              kafka-acls --bootstrap-server $BOOTSTRAP --list

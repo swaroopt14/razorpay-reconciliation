@@ -68,6 +68,17 @@ spec:
                 configMapKeyRef:
                   name: zord-aws-config
                   key: KAFKA_BROKERS
+            # ── SASL/SCRAM Authentication (PLAT-06) ──
+            - name: KAFKA_SASL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: zord-app-secrets
+                  key: KAFKA_INTENT_USERNAME
+            - name: KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: zord-app-secrets
+                  key: KAFKA_INTENT_PASSWORD
             - name: KAFKA_TOPIC
               value: payments.ledger.events.v1
             - name: KAFKA_TOPIC_PII_TOKENIZE_REQUEST
