@@ -26,7 +26,24 @@ services:
 
 
       # Crypto
-      - MASTER_KEY=W2MSQaooUlXVmVxGB7NgU06keCyKgQ+NlbdaDHCERAE=
+      # TOK-03: MASTER_KEY replaced with KMS_KEY_ID (see .env for details).
+      - KMS_KEY_ID=arn:aws:kms:ap-south-1:522189039032:key/99851fd6-8fd2-45eb-9817-8d1fbca90a5f
+      # Default: real AWS keys pasted into .env (AWS_ACCESS_KEY_ID/
+      # AWS_SECRET_ACCESS_KEY there). Works out of the box, but every
+      # teammate ends up with a real key sitting in a local file.
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
+      # Alternative: mount your already-configured `aws configure`
+      # credentials instead of copying keys into .env. This image is
+      # FROM scratch with a numeric, passwd-less USER (see Dockerfile),
+      # so the AWS SDK can't resolve a home directory on its own --
+      # point it at the mounted file explicitly. To use this instead of
+      # the AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY lines above:
+      #   1) leave AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY blank in .env
+      #   2) uncomment the two lines below AND the volumes: block further down
+      # - AWS_SHARED_CREDENTIALS_FILE=/aws-creds/credentials
+      # - AWS_PROFILE=${AWS_PROFILE:-default}
       - ENCLAVE_INTERNAL_TOKEN=${ENCLAVE_INTERNAL_TOKEN}
 
        # -------- KAFKA --------
@@ -44,6 +61,12 @@ services:
     restart: unless-stopped
     # Container healthcheck intentionally omitted for minimal scratch image.
     # Use platform/orchestrator health probes instead.
+    # Uncomment to mount your local `aws configure` credentials instead of
+    # pasting keys into .env (pair with the AWS_SHARED_CREDENTIALS_FILE /
+    # AWS_PROFILE lines above). Host path is your OS's default AWS config
+    # dir: ~/.aws on Mac/Linux/WSL2, %USERPROFILE%\.aws on native Windows.
+    # volumes:
+    #   - ${HOME}/.aws:/aws-creds:ro
 
   postgres:
     image: postgres:16-alpine
