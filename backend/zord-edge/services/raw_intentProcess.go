@@ -25,6 +25,7 @@ func ProcessRawIntent(
 		[]byte(rawIntent.Payload),
 		rawIntent.TenantID,
 		rawIntent.TenantName,
+		rawIntent.ContentType,
 	)
 	if err != nil {
 		logger.Log.Error("S3 Upload Failed",

@@ -10,9 +10,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-func (s *S3Store) StoreRawPayload(ctx context.Context, EnvelopeID string, receivedTime time.Time, Payload []byte, TenantId string, TenantName string) (string, error) {
+func (s *S3Store) StoreRawPayload(ctx context.Context, EnvelopeID string, receivedTime time.Time, Payload []byte, TenantId string, TenantName string, contentType string) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if contentType == "" {
+		contentType = "application/json"
 	}
 
 	year, month, day := receivedTime.Date()
@@ -23,14 +26,14 @@ func (s *S3Store) StoreRawPayload(ctx context.Context, EnvelopeID string, receiv
 		day,
 		EnvelopeID)
 
-	s3Ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	s3Ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 
 	_, err := s.Client.PutObject(s3Ctx, &s3.PutObjectInput{
 		Bucket:      aws.String(s.BucketName),
 		Key:         aws.String(ObjectKey),
 		Body:        bytes.NewReader(Payload),
-		ContentType: aws.String("application/json"),
+		ContentType: aws.String(contentType),
 	})
 	if err != nil {
 		return "", err
