@@ -162,7 +162,7 @@ func (r *TokenRepository) writeAuditInTx(
 func (r *TokenRepository) GetActiveKey(ctx context.Context, tenantID string) (*models.EncryptionKey, error) {
 
 	query := `
-	SELECT key_id, tenant_id, key_version, encrypted_key, status, active_from
+	SELECT key_id, tenant_id, key_version, encrypted_key, wrapped, kms_key_id, status, active_from
 	FROM token_encryption_keys
 	WHERE tenant_id = $1 AND status = 'ACTIVE'
 	LIMIT 1
@@ -170,12 +170,15 @@ func (r *TokenRepository) GetActiveKey(ctx context.Context, tenantID string) (*m
 
 	var k models.EncryptionKey
 	var encryptedKey []byte
+	var kmsKeyID sql.NullString
 
 	err := r.db.QueryRowContext(ctx, query, tenantID).Scan(
 		&k.KeyID,
 		&k.TenantID,
 		&k.Version,
 		&encryptedKey,
+		&k.Wrapped,
+		&kmsKeyID,
 		&k.Status,
 		&k.ActiveFrom,
 	)
@@ -184,6 +187,7 @@ func (r *TokenRepository) GetActiveKey(ctx context.Context, tenantID string) (*m
 	}
 
 	k.RawKey = encryptedKey
+	k.KMSKeyID = kmsKeyID.String
 
 	return &k, nil
 }
@@ -191,19 +195,22 @@ func (r *TokenRepository) GetActiveKey(ctx context.Context, tenantID string) (*m
 func (r *TokenRepository) GetKeyByID(ctx context.Context, keyID string) (*models.EncryptionKey, error) {
 
 	query := `
-	SELECT key_id, tenant_id, key_version, encrypted_key, status, active_from
+	SELECT key_id, tenant_id, key_version, encrypted_key, wrapped, kms_key_id, status, active_from
 	FROM token_encryption_keys
 	WHERE key_id = $1
 	`
 
 	var k models.EncryptionKey
 	var encryptedKey []byte
+	var kmsKeyID sql.NullString
 
 	err := r.db.QueryRowContext(ctx, query, keyID).Scan(
 		&k.KeyID,
 		&k.TenantID,
 		&k.Version,
 		&encryptedKey,
+		&k.Wrapped,
+		&kmsKeyID,
 		&k.Status,
 		&k.ActiveFrom,
 	)
@@ -212,6 +219,7 @@ func (r *TokenRepository) GetKeyByID(ctx context.Context, keyID string) (*models
 	}
 
 	k.RawKey = encryptedKey
+	k.KMSKeyID = kmsKeyID.String
 
 	return &k, nil
 }
@@ -225,7 +233,7 @@ func (r *TokenRepository) GetKeyByID(ctx context.Context, keyID string) (*models
 // a dead connection, so a crash mid-rotation leaves nothing to clean up: the
 // whole transaction simply never committed, and the tenant is still eligible
 // for rotation on the next attempt.
-func (r *TokenRepository) RotateKey(ctx context.Context, tenantID string, newKeyID string, newKey []byte, createdBy string) (bool, error) {
+func (r *TokenRepository) RotateKey(ctx context.Context, tenantID string, newKeyID string, newKey []byte, kmsKeyID string, createdBy string) (bool, error) {
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -241,7 +249,7 @@ func (r *TokenRepository) RotateKey(ctx context.Context, tenantID string, newKey
 		return false, nil
 	}
 
-	if err := rotateKeyTx(ctx, tx, tenantID, newKeyID, newKey, createdBy); err != nil {
+	if err := rotateKeyTx(ctx, tx, tenantID, newKeyID, newKey, kmsKeyID, createdBy); err != nil {
 		return false, err
 	}
 
@@ -271,7 +279,7 @@ func (r *TokenRepository) RotateKey(ctx context.Context, tenantID string, newKey
 // (EnsureInitialKey's bootstrap path, the manual admin handler) must never
 // have their explicit request silently no-op against a staleness check that
 // has nothing to do with why they're calling.
-func (r *TokenRepository) RotateKeyIfStale(ctx context.Context, tenantID string, newKeyID string, newKey []byte, createdBy string, maxAge time.Duration) (bool, error) {
+func (r *TokenRepository) RotateKeyIfStale(ctx context.Context, tenantID string, newKeyID string, newKey []byte, kmsKeyID string, createdBy string, maxAge time.Duration) (bool, error) {
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -301,7 +309,7 @@ func (r *TokenRepository) RotateKeyIfStale(ctx context.Context, tenantID string,
 		return false, nil
 	}
 
-	if err := rotateKeyTx(ctx, tx, tenantID, newKeyID, newKey, createdBy); err != nil {
+	if err := rotateKeyTx(ctx, tx, tenantID, newKeyID, newKey, kmsKeyID, createdBy); err != nil {
 		return false, err
 	}
 
@@ -324,8 +332,11 @@ func tryAcquireRotationXactLock(ctx context.Context, tx *sql.Tx, tenantID string
 // rotateKeyTx is the actual key-swap: mark the current ACTIVE key RETIRING,
 // insert the new one ACTIVE. Callers MUST already hold the per-tenant
 // advisory lock (via tryAcquireRotationXactLock in the SAME tx) before
-// calling this -- it performs no locking of its own.
-func rotateKeyTx(ctx context.Context, tx *sql.Tx, tenantID string, newKeyID string, newKey []byte, createdBy string) error {
+// calling this -- it performs no locking of its own. newKey is always a
+// KMS-wrapped ciphertext blob (TOK-03: services.TokenService generates it
+// via keyManager.WrapNewDEK, never a raw DEK) -- wrapped is hardcoded true
+// for every row this function writes.
+func rotateKeyTx(ctx context.Context, tx *sql.Tx, tenantID string, newKeyID string, newKey []byte, kmsKeyID string, createdBy string) error {
 	// 1️⃣ Mark current ACTIVE key as RETIRING
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE token_encryption_keys
@@ -338,13 +349,14 @@ func rotateKeyTx(ctx context.Context, tx *sql.Tx, tenantID string, newKeyID stri
 	// 2️⃣ Insert new ACTIVE key (V2)
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO token_encryption_keys
-		(key_id, tenant_id, key_version, encrypted_key, status, active_from, created_by)
-		VALUES ($1, $2, $3, $4, 'ACTIVE', now(), $5)
+		(key_id, tenant_id, key_version, encrypted_key, wrapped, kms_key_id, status, active_from, created_by)
+		VALUES ($1, $2, $3, $4, true, $5, 'ACTIVE', now(), $6)
 	`,
 		newKeyID,
 		tenantID,
 		getNextVersion(ctx, tx, tenantID), // helper (below)
 		newKey,
+		kmsKeyID,
 		createdBy,
 	)
 	return err
@@ -371,9 +383,10 @@ func (r *TokenRepository) GetRetiringKey(ctx context.Context, tenantID string) (
 
 	var k models.EncryptionKey
 	var raw []byte
+	var kmsKeyID sql.NullString
 
 	err := r.db.QueryRowContext(ctx, `
-		SELECT key_id, tenant_id, key_version, encrypted_key, status
+		SELECT key_id, tenant_id, key_version, encrypted_key, wrapped, kms_key_id, status
 		FROM token_encryption_keys
 		WHERE tenant_id = $1 AND status = 'RETIRING'
 		LIMIT 1
@@ -382,6 +395,8 @@ func (r *TokenRepository) GetRetiringKey(ctx context.Context, tenantID string) (
 		&k.TenantID,
 		&k.Version,
 		&raw,
+		&k.Wrapped,
+		&kmsKeyID,
 		&k.Status,
 	)
 
@@ -390,6 +405,7 @@ func (r *TokenRepository) GetRetiringKey(ctx context.Context, tenantID string) (
 	}
 
 	k.RawKey = raw
+	k.KMSKeyID = kmsKeyID.String
 	return &k, nil
 }
 
