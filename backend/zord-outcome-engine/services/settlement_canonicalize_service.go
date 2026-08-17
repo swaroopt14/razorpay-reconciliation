@@ -21,10 +21,11 @@ import (
 type SettlementCanonicalizeService struct {
 }
 
-const canonicalObservationInsertColCount = 48
+const canonicalObservationInsertColCount = 50
 
 const canonicalObservationInsertCols = `settlement_observation_id, tenant_id, trace_id,
 				settlement_envelope_id, ingest_run_id, settlement_batch_id,
+				outcome_artifact_id, outcome_artifact_version_id,
 				source_file_ref, source_row_ref, source_system,
 				observation_kind, source_strength_class,
 				client_reference_candidate, provider_reference, bank_id, bank_reference,
@@ -55,6 +56,7 @@ func canonicalObservationInsertArgs(item canonicalObservationPersistItem) []inte
 	return []interface{}{
 		obs.SettlementObservationID, obs.TenantID, obs.TraceID,
 		obs.SettlementEnvelopeID, item.IngestRunID, item.SettlementBatchID,
+		obs.OutcomeArtifactID, obs.OutcomeArtifactVersionID,
 		obs.SourceFileRef, obs.SourceRowRef, obs.SourceSystem,
 		obs.ObservationKind, obs.SourceStrengthClass,
 		obs.ClientReferenceCandidate, obs.ProviderReference, obs.BankID, obs.BankReference,
@@ -78,7 +80,7 @@ func insertCanonicalObservation(ctx context.Context, item canonicalObservationPe
 				$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
 				$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,
 				$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,
-				$41,$42,$43,$44,$45,$46,$47,$48
+				$41,$42,$43,$44,$45,$46,$47,$48,$49,$50
 			) ON CONFLICT (settlement_observation_id) DO NOTHING`, canonicalObservationInsertCols),
 		canonicalObservationInsertArgs(item)...,
 	)
@@ -162,7 +164,16 @@ func (s *SettlementCanonicalizeService) persistCanonicalObservationsBatch(
 // 3. Compute quality and readiness scores for downstream matching.
 // 4. Group observations into a single batch under the client_batch_id.
 // 5. Persist everything and trigger the outbox event emission.
-func (s *SettlementCanonicalizeService) RunForJob(ctx context.Context, jobID string, tenantID uuid.UUID, profile models.MappingProfile, clientBatchID string) error {
+func (s *SettlementCanonicalizeService) RunForJob(
+	ctx context.Context,
+	jobID string,
+	tenantID uuid.UUID,
+	profile models.MappingProfile,
+	clientBatchID string,
+	settlementBatchID string,
+	outcomeArtifactID uuid.UUID,
+	outcomeArtifactVersionID uuid.UUID,
+) error {
 	log.Printf("settlement.canonicalize.start job_id=%s client_batch_id=%s", jobID, clientBatchID)
 
 	// 1. Load all parsed rows for this job.
@@ -231,6 +242,8 @@ func (s *SettlementCanonicalizeService) RunForJob(ctx context.Context, jobID str
 		obs := buildCanonicalObservation(tenantID, jobID, parsedRowID, envelopeID, shape, parseConfidence, profile, clientBatchID)
 		obs.IngestRunID = ingestRunID
 		obs.SettlementBatchID = settlementBatchID
+		obs.OutcomeArtifactID = outcomeArtifactID
+		obs.OutcomeArtifactVersionID = outcomeArtifactVersionID
 
 		pendingObservations = append(pendingObservations, canonicalObservationPersistItem{
 			Obs:               obs,
@@ -316,9 +329,10 @@ func (s *SettlementCanonicalizeService) RunForJob(ctx context.Context, jobID str
 				total_amount, total_settled_amount,
 				currency_code,
 				parse_confidence_overall, attachment_readiness_overall,
+				outcome_artifact_id, outcome_artifact_version_id,
 				created_at, updated_at
 			) VALUES (
-				$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
+				$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23
 			) ON CONFLICT (ingest_run_id, client_batch_id) DO UPDATE SET
 				row_count = EXCLUDED.row_count,
 				success_count_estimate = EXCLUDED.success_count_estimate,
@@ -328,6 +342,8 @@ func (s *SettlementCanonicalizeService) RunForJob(ctx context.Context, jobID str
 				total_settled_amount = EXCLUDED.total_settled_amount,
 				parse_confidence_overall = EXCLUDED.parse_confidence_overall,
 				attachment_readiness_overall = EXCLUDED.attachment_readiness_overall,
+				outcome_artifact_id = EXCLUDED.outcome_artifact_id,
+				outcome_artifact_version_id = EXCLUDED.outcome_artifact_version_id,
 				updated_at = EXCLUDED.updated_at`,
 			batchID, tenantID, ingestRunIDForJob, settlementBatchIDForJob,
 			firstObs.SourceFileRef, firstObs.SourceSystem,
@@ -337,6 +353,7 @@ func (s *SettlementCanonicalizeService) RunForJob(ctx context.Context, jobID str
 			totalAmount, totalSettledAmount,
 			firstObs.CurrencyCode,
 			parseConfSum/float64(len(group)), attachScoreSum/float64(len(group)),
+			firstObs.OutcomeArtifactID, firstObs.OutcomeArtifactVersionID,
 			time.Now().UTC(), time.Now().UTC(),
 		)
 		if err != nil {
@@ -356,7 +373,10 @@ func (s *SettlementCanonicalizeService) RunForJob(ctx context.Context, jobID str
 
 	// 6. Trigger outbox events.
 	outboxSvc := &SettlementOutboxService{}
-	return outboxSvc.EmitForJob(ctx, jobID, tenantID, observations, clientBatchID)
+	if settlementBatchIDForJob == "" {
+		settlementBatchIDForJob = settlementBatchID
+	}
+	return outboxSvc.EmitForJob(ctx, jobID, tenantID, observations, clientBatchID, settlementBatchIDForJob)
 }
 
 // buildCanonicalObservation maps the raw UniversalSettlementShape to a CanonicalSettlementObservation.
