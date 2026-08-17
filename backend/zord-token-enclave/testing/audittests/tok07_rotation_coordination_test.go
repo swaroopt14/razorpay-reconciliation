@@ -15,6 +15,7 @@ package audittests
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -27,9 +28,21 @@ import (
 )
 
 func tok07NewService(db *sql.DB, secret string) (*repository.TokenRepository, *services.TokenService) {
+	repo, svc, _ := tok07NewServiceWithKMS(db, secret)
+	return repo, svc
+}
+
+// tok07NewServiceWithKMS also returns the injected fake KMS client, for
+// tests that need to force a decrypt/encrypt failure directly (TOK-03's
+// cache means corrupting a DB row's bytes no longer reliably triggers a
+// fault -- GetRetiringKey/GetActiveKey/GetKeyByID may serve an
+// already-cached DEK for that key_id from earlier in the same test
+// without ever re-reading the corrupted column).
+func tok07NewServiceWithKMS(db *sql.DB, secret string) (*repository.TokenRepository, *services.TokenService, *fakeKMSClient) {
 	repo := repository.NewTokenRepository(db)
-	km := keymanager.NewKeyManager(repo)
-	return repo, services.NewTokenService(repo, km, []byte(secret))
+	fake := newFakeKMSClient("test-kms-key")
+	km := keymanager.NewKeyManager(repo, fake, "test-kms-key")
+	return repo, services.NewTokenService(repo, km, []byte(secret)), fake
 }
 
 // TestTOK07_ConcurrentRotateKeyNoCorruption fires many concurrent, genuinely
@@ -157,7 +170,7 @@ func TestTOK07_AutoRotateStalenessRecheck_OnlyOneEffectiveRotation(t *testing.T)
 		go func(idx int) {
 			defer wg.Done()
 			newKey := make([]byte, 32)
-			rotatedFlags[idx], errs[idx] = repo.RotateKeyIfStale(ctx, tenantID, uuid.New().String(), newKey, "auto-rotation", maxAge)
+			rotatedFlags[idx], errs[idx] = repo.RotateKeyIfStale(ctx, tenantID, uuid.New().String(), newKey, "test-kms-key", "auto-rotation", maxAge)
 		}(i)
 	}
 	wg.Wait()
@@ -276,15 +289,24 @@ func TestTOK07_JobStateRunningToDone(t *testing.T) {
 }
 
 // TestTOK07_JobStateRunningToFailed fault-injects a decrypt failure mid-sweep
-// (corrupting the retiring key's stored bytes directly via SQL, no
-// production code changes needed) and confirms: the job row reaches
-// FAILED with the real error recorded, AND the lock is still released
-// (Release fires on the error path too, not just success) -- proven by a
-// subsequent MigrateKeys attempt being able to acquire the lock again
-// immediately rather than hanging.
+// and confirms: the job row reaches FAILED with the real error recorded,
+// AND the lock is still released (Release fires on the error path too, not
+// just success) -- proven by a subsequent MigrateKeys attempt being able to
+// acquire the lock again immediately rather than hanging.
+//
+// TOK-03 note: this used to corrupt the RETIRING key's encrypted_key bytes
+// directly via SQL. That technique stopped working once GetRetiringKey
+// started routing through keymanager's cache -- TokenizePII/RotateKey
+// above already populate the cache for this exact key_id, so a raw SQL
+// corruption is never actually re-read; MigrateKeys would silently succeed
+// off the cached (correct) DEK, masking the fault entirely. Forcing the
+// injected fake KMS client's Decrypt to fail directly is the fault
+// injection that survives caching -- see tok03_kms_envelope_test.go's
+// TestTOK03_FakeMigrateJobFailsCleanlyOnDecryptError for the equivalent
+// TOK-03-owned test using the same technique.
 func TestTOK07_JobStateRunningToFailed(t *testing.T) {
 	db := tok06TestDB(t)
-	_, svc := tok07NewService(db, "tok07-jobstate-failed-secret")
+	_, svc, fake := tok07NewServiceWithKMS(db, "tok07-jobstate-failed-secret")
 	ctx := context.Background()
 	tenantID := uuid.New().String()
 
@@ -295,18 +317,12 @@ func TestTOK07_JobStateRunningToFailed(t *testing.T) {
 		t.Fatalf("RotateKey() rotated=%v err=%v", rotated, err)
 	}
 
-	// Corrupt the RETIRING key's encrypted_key bytes so decrypting any
-	// token still on it fails -- a realistic-shaped failure (e.g. a bad
-	// KMS unwrap) without needing to inject a fault into production code.
-	if _, err := db.ExecContext(ctx,
-		`UPDATE token_encryption_keys SET encrypted_key = $1 WHERE tenant_id=$2 AND status='RETIRING'`,
-		[]byte("not-a-valid-32-byte-key-at-all!"), tenantID,
-	); err != nil {
-		t.Fatalf("corrupting retiring key failed: %v", err)
-	}
+	fake.mu.Lock()
+	fake.decryptErr = errors.New("simulated KMS decrypt failure")
+	fake.mu.Unlock()
 
 	if err := svc.MigrateKeys(ctx, tenantID); err == nil {
-		t.Fatal("MigrateKeys() succeeded despite a corrupted retiring key -- fault injection did not take effect")
+		t.Fatal("MigrateKeys() succeeded despite a forced KMS decrypt failure -- fault injection did not take effect")
 	}
 
 	var status string

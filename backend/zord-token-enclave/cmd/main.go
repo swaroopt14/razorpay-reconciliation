@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	awskms "github.com/aws/aws-sdk-go-v2/service/kms"
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
 	"github.com/pressly/goose/v3"
@@ -91,9 +93,18 @@ func main() {
 		log.Fatal("❌ Failed to run migrations:", err)
 	}
 
+	// ---------------- KMS CLIENT (TOK-03) ----------------
+	// Default credential chain: resolves via this pod's zord-aws-access IRSA
+	// service account in EKS, or explicit AWS_* env vars locally/in tests.
+	awsCfg, err := awsconfig.LoadDefaultConfig(context.Background())
+	if err != nil {
+		log.Fatal("❌ Failed to load AWS config:", err)
+	}
+	kmsClient := keymanager.NewAWSKMSClient(awskms.NewFromConfig(awsCfg), cfg.KMSKeyID)
+
 	// ---------------- REPO + KEY MANAGER ----------------
 	tokenRepo := repository.NewTokenRepository(database)
-	keyManager := keymanager.NewKeyManager(tokenRepo)
+	keyManager := keymanager.NewKeyManager(tokenRepo, kmsClient, cfg.KMSKeyID)
 
 	// ---------------- SERVICE ----------------
 	tokenSvc := services.NewTokenService(tokenRepo, keyManager, cfg.TokenSecret)
@@ -307,9 +318,12 @@ func main() {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	// Readiness endpoint — checks DB connectivity
+	// Readiness endpoint — checks DB connectivity and KMS reachability.
+	// TOK-03: a missing/broken IAM grant on the KMS key now surfaces as
+	// "pod not ready" instead of live 500s on the hot Tokenize path.
 	readinessHandler := health.NewReadinessHandler([]health.DependencyCheck{
 		health.DBCheck("postgres", database),
+		{Name: "kms", Check: kmsClient.DescribeKey},
 	})
 	r.GET("/ready", readinessHandler.Ready)
 

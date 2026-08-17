@@ -89,11 +89,14 @@ spec:
                 configMapKeyRef:
                   name: zord-aws-config
                   key: DB_SSLMODE
-            - name: MASTER_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: zord-app-secrets
-                  key: MASTER_KEY
+            # TOK-03: MASTER_KEY replaced with KMS_KEY_ID -- the CMK ARN
+            # used to envelope-encrypt tenant DEKs. Not a Secret: an ARN
+            # alone grants no access, IAM does that (zord-aws-access must
+            # be granted kms:Encrypt/kms:Decrypt/kms:DescribeKey on this
+            # key before rollout -- see the TOK-03 report for the exact
+            # ARN).
+            - name: KMS_KEY_ID
+              value: "arn:aws:kms:ap-south-1:522189039032:key/99851fd6-8fd2-45eb-9817-8d1fbca90a5f"
             - name: TOKEN_SECRET
               valueFrom:
                 secretKeyRef:

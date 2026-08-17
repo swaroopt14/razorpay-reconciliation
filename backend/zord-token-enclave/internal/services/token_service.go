@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"log"
 	"os"
@@ -217,15 +216,17 @@ func (s *TokenService) DetokenizeFields(
 func (s *TokenService) RotateKey(ctx context.Context, tenantID string, createdBy string) (bool, error) {
 
 	v, err, _ := s.tenantGroup.Do("rotate:"+tenantID, func() (interface{}, error) {
-		// Generate new AES-256 key (32 bytes)
-		newKey := make([]byte, 32)
-		if _, err := rand.Read(newKey); err != nil {
+		// TOK-03: WrapNewDEK generates the raw DEK AND wraps it via KMS in
+		// one call -- the raw DEK never exists in this function's stack
+		// frame, only the wrapped ciphertext blob does.
+		wrapped, kmsKeyID, err := s.keyManager.WrapNewDEK(ctx, tenantID)
+		if err != nil {
 			return false, err
 		}
 
 		newKeyID := uuid.New().String()
 
-		return s.repo.RotateKey(ctx, tenantID, newKeyID, newKey, createdBy)
+		return s.repo.RotateKey(ctx, tenantID, newKeyID, wrapped, kmsKeyID, createdBy)
 	})
 	if err != nil {
 		return false, err
@@ -289,8 +290,13 @@ func (s *TokenService) migrateKeysLocked(ctx context.Context, tenantID string) e
 func (s *TokenService) doMigrateKeys(ctx context.Context, tenantID string) (oldKeyID, newKeyID string, err error) {
 	log.Printf("Migration started for tenant %s", tenantID)
 
-	// 1️⃣ Get RETIRING key (old key)
-	oldKey, err := s.repo.GetRetiringKey(ctx, tenantID)
+	// 1️⃣ Get RETIRING key (old key) -- TOK-03: routed through keyManager,
+	// NOT repo directly, so a wrapped RETIRING key gets unwrapped before
+	// oldCrypto is built below (repo.RawKey may be an opaque KMS ciphertext
+	// blob, never a usable AES key -- this was a real bug found and fixed
+	// during TOK-03 implementation: the migration sweep would otherwise
+	// hard-crash the moment a tenant's RETIRING key was wrapped).
+	oldKey, err := s.keyManager.GetRetiringKey(ctx, tenantID)
 	if err != nil {
 		// no retiring key → nothing to migrate
 		return "", "", nil
@@ -422,14 +428,14 @@ func (s *TokenService) AutoRotateKeys(ctx context.Context) error {
 func (s *TokenService) rotateKeyIfStale(ctx context.Context, tenantID string, createdBy string) (bool, error) {
 
 	v, err, _ := s.tenantGroup.Do("rotate:"+tenantID, func() (interface{}, error) {
-		newKey := make([]byte, 32)
-		if _, err := rand.Read(newKey); err != nil {
+		wrapped, kmsKeyID, err := s.keyManager.WrapNewDEK(ctx, tenantID)
+		if err != nil {
 			return false, err
 		}
 
 		newKeyID := uuid.New().String()
 
-		return s.repo.RotateKeyIfStale(ctx, tenantID, newKeyID, newKey, createdBy, autoRotationMaxAge)
+		return s.repo.RotateKeyIfStale(ctx, tenantID, newKeyID, wrapped, kmsKeyID, createdBy, autoRotationMaxAge)
 	})
 	if err != nil {
 		return false, err
