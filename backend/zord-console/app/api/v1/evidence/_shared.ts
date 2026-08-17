@@ -14,6 +14,8 @@ import type { BackendAuthEnvelope } from '@/services/auth/server'
 export type OperationalTimelineRow = {
   timestamp: string
   event: string
+  provenance?: 'AUTHORITATIVE' | 'DERIVED'
+  source_field?: string
 }
 
 export type EvidenceNodePayload = {
@@ -153,38 +155,16 @@ export function applyEvidenceGateCookies(
   applyRefreshedSessionCookies(response, refreshedPayload)
 }
 
-function eventFromRaw(value: string): string {
-  const text = value.trim().toLowerCase()
-  if (!text) return 'Evidence step recorded'
-  if (text.includes('payment instruction')) return 'Payment instruction received from ERP'
-  if (text.includes('payload') || text.includes('envelope') || text.includes('hash')) {
-    return 'File payload fingerprint securely recorded'
-  }
-  if (text.includes('structured') && text.includes('intent')) {
-    return 'Structured payment intent schema verified'
-  }
-  if (text.includes('settlement') && (text.includes('sftp') || text.includes('file'))) {
-    return 'Bank settlement file received via SFTP'
-  }
-  if (text.includes('utr') || text.includes('reconciliation') || text.includes('match')) {
-    return 'UTR reference auto-matched via reconciliation engine'
-  }
-  if (text.includes('compiled') || text.includes('sealed') || text.includes('evidence pack')) {
-    return 'Immutable evidence pack successfully compiled'
-  }
-  if (text.includes('proof root') || text.includes('merkle')) return 'Proof root committed to immutable log'
-  return value
-}
-
 export function mapTimelineRows(
   timeline: Array<{ timestamp?: string; event?: string; node_id?: string }>,
 ): OperationalTimelineRow[] {
   return timeline
     .map((entry) => ({
       timestamp: entry.timestamp || '',
-      event: eventFromRaw(entry.event || entry.node_id || ''),
+      event: (entry.event || entry.node_id || '').trim(),
+      provenance: 'AUTHORITATIVE' as const,
     }))
-    .filter((entry) => Boolean(entry.timestamp))
+    .filter((entry) => Boolean(entry.timestamp) && Boolean(entry.event))
     .sort((a, b) => {
       const ta = Date.parse(a.timestamp)
       const tb = Date.parse(b.timestamp)
@@ -192,6 +172,9 @@ export function mapTimelineRows(
       return a.timestamp.localeCompare(b.timestamp)
     })
 }
+
+export { postEvidencePackVerifyUpstream } from '@/services/payout-command/prod-api/verifyEvidencePackUpstream'
+
 
 export function mapLineageGraphFromPack(pack: EvidencePackFull): {
   evidence_pack_id: string

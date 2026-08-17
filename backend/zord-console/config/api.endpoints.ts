@@ -126,6 +126,7 @@ export const BACKEND_SERVICES = {
         `/v1/evidence/packs/${encodeURIComponent(packId)}/lineage-graph`,
       PACK_VERIFY: (packId: string) =>
         `/v1/evidence/packs/${encodeURIComponent(packId)}/verify`,
+      DISPUTE_EXPORT: '/v1/dispute/export',
     },
   },
 } as const

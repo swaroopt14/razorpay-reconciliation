@@ -24,14 +24,26 @@ type EvidenceSignals = Partial<
   proof_components?: Partial<Record<ProofComponentKey, boolean>>
 }
 
-export type NormalizedVerificationState = 'verified' | 'failed' | 'unknown'
+export type NormalizedVerificationState =
+  | 'verified'
+  | 'failed'
+  | 'internally_consistent'
+  | 'unknown'
 
 export function normalizeVerificationState(value: unknown): NormalizedVerificationState {
   if (typeof value === 'boolean') return value ? 'verified' : 'unknown'
-  const text = apiTrimmedString(value).toUpperCase()
+  const text = apiTrimmedString(value).toUpperCase().replace(/[\s-]+/g, '_')
   if (!text) return 'unknown'
-  if (text === 'VERIFIED' || text === 'PASS' || text === 'PASSED' || text === 'TRUE') return 'verified'
-  if (text === 'FAILED' || text === 'CORRUPTED' || text === 'INVALID') return 'failed'
+  if (text === 'VERIFIED') return 'verified'
+  if (text === 'INTERNALLY_CONSISTENT') return 'internally_consistent'
+  if (
+    text === 'FAILED' ||
+    text === 'CORRUPTED' ||
+    text === 'COMPROMISED' ||
+    text === 'INVALID'
+  ) {
+    return 'failed'
+  }
   return 'unknown'
 }
 

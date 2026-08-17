@@ -311,13 +311,11 @@ function SettlementJournalSurfaceContent({
       )
     })
     return scopedRows.sort((a, b) => {
-      const aNum = Number.parseInt(a.sourceRowRef, 10)
-      const bNum = Number.parseInt(b.sourceRowRef, 10)
-      const aValid = Number.isFinite(aNum)
-      const bValid = Number.isFinite(bNum)
-      if (aValid && bValid) return aNum - bNum
-      if (aValid) return -1
-      if (bValid) return 1
+      const aNum = a.displayRowIndex
+      const bNum = b.displayRowIndex
+      if (aNum != null && bNum != null) return aNum - bNum
+      if (aNum != null) return -1
+      if (bNum != null) return 1
       return 0
     })
   }, [

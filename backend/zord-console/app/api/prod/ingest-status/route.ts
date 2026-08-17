@@ -5,10 +5,11 @@ import {
   requireSessionTenantForProdProxy,
   sessionUpstreamHeaders,
 } from '@/services/auth/resolvePayoutTenant.server'
+import { evidenceReadinessFromPacks } from '@/services/payout-command/prod-api/layeredVerification'
 
 export const dynamic = 'force-dynamic'
 
-type SourceStatus = 'received' | 'missing' | 'partial' | 'processing'
+type SourceStatus = 'received' | 'missing' | 'partial' | 'processing' | 'ready'
 
 type IngestSource = {
   id: 'intent_file' | 'settlement_file' | 'bank_statement' | 'evidence'
@@ -51,8 +52,8 @@ export async function GET(request: NextRequest) {
       tenantId,
       accessToken,
     ),
-    probeJson<{ packs?: unknown[] }>(
-      `${evidenceBase}${BACKEND_SERVICES.EVIDENCE.ENDPOINTS.PACKS}?tenant_id=${encodeURIComponent(tenantId)}&limit=1`,
+    probeJson<{ packs?: Array<{ verification_status?: string }> }>(
+      `${evidenceBase}${BACKEND_SERVICES.EVIDENCE.ENDPOINTS.PACKS}?tenant_id=${encodeURIComponent(tenantId)}&limit=50`,
       tenantId,
       accessToken,
     ),
@@ -73,7 +74,9 @@ export async function GET(request: NextRequest) {
     intentProbe?.items?.length ??
     (patterns?.data_available === true ? (patterns.total_count ?? 0) : 0)
   const settlementCount = settlement?.items?.length ?? settlement?.observations?.length ?? 0
-  const packCount = evidencePacks?.packs?.length ?? 0
+  const packs = evidencePacks?.packs ?? []
+  const packCount = packs.length
+  const evidenceReadiness = evidenceReadinessFromPacks(packs)
   const bankHint =
     defensibility?.data_available === true && (defensibility.bank_confirmed_rate ?? 0) > 0
 
@@ -99,8 +102,13 @@ export async function GET(request: NextRequest) {
     {
       id: 'evidence',
       label: 'Evidence',
-      status: packCount > 0 ? 'received' : 'missing',
-      detail: packCount > 0 ? `${packCount}+ pack(s)` : undefined,
+      status: evidenceReadiness,
+      detail:
+        evidenceReadiness === 'ready'
+          ? 'Service 6 verified pack available'
+          : evidenceReadiness === 'partial'
+            ? `${packCount} pack(s) present — not verified`
+            : undefined,
     },
   ]
 

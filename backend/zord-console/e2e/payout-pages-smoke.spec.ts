@@ -948,10 +948,14 @@ function installEmptyProdMocks(page: Page) {
         body: JSON.stringify({
           status: 'VERIFIED',
           evidence_pack_id: PACK_BATCH,
+          verification_run_id: 'run_e2e_empty',
           checked_at: new Date().toISOString(),
           stored_root: 'a'.repeat(64),
           computed_root: 'a'.repeat(64),
-          explanation: 'Merkle root reproduced exactly from live database entries.',
+          explanation: 'Merkle root reproduced from live database entries, and every independent source verified successfully.',
+          db_merkle_status: 'PASSED',
+          signature_status: 'PASSED',
+          archive_status: 'PASSED',
         }),
       })
       return
@@ -1031,10 +1035,14 @@ function installEvidenceFixtureMocks(page: Page) {
         body: JSON.stringify({
           status: 'VERIFIED',
           evidence_pack_id: packId,
+          verification_run_id: 'run_e2e_fixture',
           checked_at: new Date().toISOString(),
           stored_root: 'c'.repeat(64),
           computed_root: 'c'.repeat(64),
-          explanation: 'Merkle root reproduced exactly from live database entries.',
+          explanation: 'Merkle root reproduced from live database entries, and every independent source verified successfully.',
+          db_merkle_status: 'PASSED',
+          signature_status: 'PASSED',
+          archive_status: 'PASSED',
         }),
       })
       return

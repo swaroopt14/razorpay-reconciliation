@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { fetchProdJsonGet } from '@/services/payout-command/prod-api/fetchProdJsonGet'
 import type { SettlementObservationBatchListResponse } from '@/services/payout-command/prod-api/settlementObservations'
 import type { IntentEngineBatchSidebarItem } from '@/services/payout-command/prod-api/getProdIntentEngineBatches'
+import type { ListPacksResponse } from '@/services/payout-command/prod-api/evidenceTypes'
+import { evidenceReadinessFromPacks } from '@/services/payout-command/prod-api/layeredVerification'
 
 type IntentBatchesProbe = {
   items?: IntentEngineBatchSidebarItem[]
@@ -25,7 +27,7 @@ export function usePaymentCommandDataSources(options: {
   evidencePackRate?: number | null
   auditReadyPct?: number | null
 }): PaymentCommandDataSources {
-  const { tenantReady, evidencePackRate, auditReadyPct } = options
+  const { tenantReady } = options
   const [intentStatus, setIntentStatus] = useState<DataSourceBadgeStatus>('missing')
   const [settlementStatus, setSettlementStatus] = useState<DataSourceBadgeStatus>('missing')
   const [bankStatementStatus, setBankStatementStatus] = useState<DataSourceBadgeStatus>('missing')
@@ -33,37 +35,31 @@ export function usePaymentCommandDataSources(options: {
   const [loading, setLoading] = useState(false)
   const cancelledRef = useRef(false)
 
-  const applyEvidenceFallback = useCallback(() => {
-    if (auditReadyPct != null && auditReadyPct >= 0.85) {
-      setEvidenceStatus('ready')
-    } else if (evidencePackRate != null && evidencePackRate > 0) {
-      setEvidenceStatus('partial')
-    } else {
-      setEvidenceStatus('missing')
-    }
-  }, [auditReadyPct, evidencePackRate])
-
   const refresh = useCallback(async () => {
     if (!tenantReady) return
     setLoading(true)
     try {
-      const ingest = await fetchProdJsonGet<{
-        sources?: Array<{ id: string; status: DataSourceBadgeStatus }>
-      }>('/api/prod/ingest-status')
+      const [ingest, packs] = await Promise.all([
+        fetchProdJsonGet<{
+          sources?: Array<{ id: string; status: DataSourceBadgeStatus }>
+        }>('/api/prod/ingest-status'),
+        fetchProdJsonGet<ListPacksResponse>('/api/prod/evidence/packs?limit=50'),
+      ])
       if (cancelledRef.current) return
       const byId = new Map((ingest?.sources ?? []).map((s) => [s.id, s.status]))
       setIntentStatus(byId.get('intent_file') ?? 'missing')
       setSettlementStatus(byId.get('settlement_file') ?? 'missing')
       setBankStatementStatus(byId.get('bank_statement') ?? 'missing')
-      const ev = byId.get('evidence')
-      if (ev && ev !== 'missing') setEvidenceStatus(ev)
-      else applyEvidenceFallback()
+      const fromPacks = evidenceReadinessFromPacks(packs?.packs ?? [])
+      const fromIngest = byId.get('evidence')
+      setEvidenceStatus(fromPacks !== 'missing' ? fromPacks : fromIngest === 'ready' ? 'ready' : fromIngest === 'partial' ? 'partial' : 'missing')
     } catch {
-      const [intents, settlement] = await Promise.all([
+      const [intents, settlement, packs] = await Promise.all([
         fetchProdJsonGet<IntentBatchesProbe>('/api/prod/intents/batches?page=1&page_size=5'),
         fetchProdJsonGet<SettlementObservationBatchListResponse>(
           '/api/prod/settlement/observations/batches',
         ),
+        fetchProdJsonGet<ListPacksResponse>('/api/prod/evidence/packs?limit=50'),
       ])
       if (cancelledRef.current) return
       const intentCount = intents?.items?.length ?? 0
@@ -71,11 +67,11 @@ export function usePaymentCommandDataSources(options: {
       const settlementCount = settlement?.items?.length ?? 0
       setSettlementStatus(settlementCount > 0 ? 'received' : 'missing')
       setBankStatementStatus('missing')
-      applyEvidenceFallback()
+      setEvidenceStatus(evidenceReadinessFromPacks(packs?.packs ?? []))
     } finally {
       if (!cancelledRef.current) setLoading(false)
     }
-  }, [tenantReady, applyEvidenceFallback])
+  }, [tenantReady])
 
   useEffect(() => {
     cancelledRef.current = false

@@ -5,6 +5,12 @@ import {
   requireSessionTenantForProdProxy,
 } from '@/services/auth/resolvePayoutTenant.server'
 import { publicBffError } from '@/services/bff/publicBffError'
+import { postEvidencePackVerifyUpstream } from '@/services/payout-command/prod-api/verifyEvidencePackUpstream'
+import {
+  exportVerificationLines,
+  parseLayeredVerification,
+  verifiedExportBlockReason,
+} from '@/services/payout-command/prod-api/layeredVerification'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -21,6 +27,7 @@ type EvidencePackExportPayload = {
   proof_status?: string
   proof_score?: number
   created_at?: string
+  signatures?: Array<{ signer?: string; alg?: string; signed_at?: string }>
   items?: Array<{
     type?: string
     ref?: string
@@ -73,7 +80,8 @@ function createSimplePdf(lines: string[]): Uint8Array {
   return new Uint8Array(Buffer.from(body, 'utf8'))
 }
 
-function evidencePackPdf(pack: EvidencePackExportPayload): Uint8Array {
+function evidencePackPdf(pack: EvidencePackExportPayload, verificationLines: string[]): Uint8Array {
+  const signer = pack.signatures?.[0]
   const lines = [
     'Evidence Pack Export',
     lineText('Evidence Pack ID', pack.evidence_pack_id),
@@ -83,10 +91,15 @@ function evidencePackPdf(pack: EvidencePackExportPayload): Uint8Array {
     lineText('Batch ID', pack.batch_id),
     lineText('Mode', pack.mode),
     lineText('Pack Status', pack.pack_status),
-    lineText('Proof Status', pack.proof_status),
-    lineText('Proof Score', pack.proof_score),
+    lineText('Completeness status', pack.proof_status),
+    lineText('Proof Score (completeness)', pack.proof_score),
     lineText('Merkle Root', pack.merkle_root),
     lineText('Created At', pack.created_at),
+    lineText('Signature signer', signer?.signer),
+    lineText('Signature alg', signer?.alg),
+    '',
+    '--- Service 6 verification ---',
+    ...verificationLines,
     '',
     `Evidence Items (${pack.items?.length ?? 0})`,
     ...(pack.items ?? []).map((item, index) =>
@@ -139,9 +152,36 @@ export async function GET(
       return res
     }
 
+    const pack = JSON.parse(text) as EvidencePackExportPayload
+    const verify = await postEvidencePackVerifyUpstream(gate.tenantId, gate.accessToken, packId)
+    const verification = parseLayeredVerification(verify.ok ? verify.data : { status: 'VERIFICATION_NOT_RUN' })
+    const blocked = verifiedExportBlockReason(verification)
+    const claimVerified = request.nextUrl.searchParams.get('verified') === '1' || format === 'pdf'
+    if (blocked && claimVerified) {
+      const res = NextResponse.json(
+        {
+          error: blocked,
+          verification,
+        },
+        { status: 422 },
+      )
+      applyRefreshedSessionCookies(res, gate.refreshedPayload)
+      return res
+    }
+
     const safePackId = safeFilenamePart(packId)
+    const verificationLines = exportVerificationLines(verification)
     if (format === 'json') {
-      const res = new NextResponse(text, {
+      const payload = {
+        pack,
+        verification,
+        export_label: verification.allowsVerifiedClaim
+          ? 'Verified Service 6 export'
+          : verification.overallStatus === 'VERIFICATION_NOT_RUN'
+            ? 'Complete-but-unverified pack. Verification not run.'
+            : `Not a verified export. Overall: ${verification.overallLabel}`,
+      }
+      const res = new NextResponse(JSON.stringify(payload, null, 2), {
         status: 200,
         headers: {
           'content-type': 'application/json; charset=utf-8',
@@ -153,8 +193,7 @@ export async function GET(
       return res
     }
 
-    const pack = JSON.parse(text) as EvidencePackExportPayload
-    const pdf = evidencePackPdf(pack)
+    const pdf = evidencePackPdf(pack, verificationLines)
     const pdfBytes = pdf.buffer.slice(pdf.byteOffset, pdf.byteOffset + pdf.byteLength) as ArrayBuffer
     const res = new NextResponse(pdfBytes, {
       status: 200,
@@ -162,6 +201,8 @@ export async function GET(
         'content-type': 'application/pdf',
         'content-disposition': `attachment; filename="evidence_pack_${safePackId}.pdf"`,
         'cache-control': 'no-store',
+        'x-verification-run-id': verification.verificationRunId ?? '',
+        'x-verification-overall': verification.overallStatus,
       },
     })
     applyRefreshedSessionCookies(res, gate.refreshedPayload)

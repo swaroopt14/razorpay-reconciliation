@@ -368,8 +368,8 @@ export function SettlementJournalActivityPanel({ vm }: SettlementJournalActivity
                     setExpandedId((id) => (id === row.observationId ? null : row.observationId))
                   }
                 >
-                  <td className="truncate px-3 py-2.5 font-mono text-[12px] text-[#334155]" title={row.sourceRowRef || row.settlementBatchId}>
-                    {row.sourceRowRef || row.settlementBatchId}
+                  <td className="truncate px-3 py-2.5 font-mono text-[12px] text-[#334155]" title={row.sourceRowRef ?? 'unavailable'}>
+                    {row.sourceRowRef ?? 'unavailable'}
                   </td>
                   <td className="truncate px-3 py-2.5 font-medium text-[#1e293b]" title={formatClientRefDisplay(row)}>
                     {formatClientRefDisplay(row)}
@@ -401,9 +401,16 @@ export function SettlementJournalActivityPanel({ vm }: SettlementJournalActivity
                       </p>
                       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 text-[13px]">
                         <p>
-                          <span className="text-[#888888]">Source row</span>
+                          <span className="text-[#888888]">Source row ref</span>
                           <br />
-                          <span className="font-mono">{row.sourceRowRef}</span>
+                          <span className="font-mono">{row.sourceRowRef ?? 'unavailable'}</span>
+                        </p>
+                        <p>
+                          <span className="text-[#888888]">Display row</span>
+                          <br />
+                          <span className="font-mono">
+                            {row.displayRowIndex != null ? `Display row ${row.displayRowIndex}` : 'unavailable'}
+                          </span>
                         </p>
                         <p>
                           <span className="text-[#888888]">Observation ID</span>
