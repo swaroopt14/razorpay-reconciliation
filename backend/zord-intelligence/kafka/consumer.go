@@ -112,6 +112,21 @@ type SLATimerTickHandler interface {
 	HandleSLATimerTick(ctx context.Context, e models.SLATimerTickEvent) error
 }
 
+// LocalDLQWriter (INTEL-07) is the contract consumeSingleTopic uses to
+// durably record a permanently-failed message BEFORE advancing its Kafka
+// offset, in place of publishing straight to TopicIntelligenceDLQ.
+//
+// WHY AN INTERFACE HERE TOO?
+// Same reasoning as EventHandler above: the concrete implementation
+// (persistence.IntelligenceDLQLocalRepo, a thin wrapper over a Postgres
+// table) already imports this kafka package (see
+// internal/persistence/vector_index_publisher.go), so this package cannot
+// import persistence back without a cycle. main.go wires the concrete repo
+// in as this interface.
+type LocalDLQWriter interface {
+	Insert(ctx context.Context, rec models.IntelligenceDLQRecord) error
+}
+
 // StartConsumers — wire topics to handlers and start consuming
 //
 // HOW THIS FUNCTION WORKS:
@@ -134,11 +149,14 @@ type SLATimerTickHandler interface {
 // StartConsumers builds the topic→handler map and starts the Kafka reader goroutine.
 // Call this once from main.go after all services are created.
 //
-// producer is the SAME Producer instance main.go already constructs for
-// outbox delivery — reused here (not a dedicated second producer) to
-// publish permanently-failed events to cfg.TopicIntelligenceDLQ before
-// their source offset is committed (corrective-action-report P0-02).
-func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandler, producer *Producer) {
+// localDLQWriter (INTEL-07) is the persistence.IntelligenceDLQLocalRepo main.go
+// constructs — a permanently-failed event's failure record is written there
+// before its source offset is committed (corrective-action-report P0-02),
+// instead of the previous direct-to-Kafka publish that could block this
+// goroutine indefinitely during a broker outage. A separate background
+// worker (internal/worker/intelligence_dlq_replay_worker.go) republishes
+// those records to cfg.TopicIntelligenceDLQ once Kafka is reachable again.
+func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandler, localDLQWriter LocalDLQWriter) {
 	brokers := strings.Split(cfg.KafkaBrokers, ",")
 
 	// topicHandlers maps each Kafka topic name to a function that:
@@ -492,7 +510,7 @@ func StartConsumers(ctx context.Context, cfg *config.Config, handler EventHandle
 	for topic, fn := range topicHandlers {
 		t, f := topic, fn // capture loop variables before goroutine launch
 		exempt := requiredFieldExemptTopics[t]
-		go consumeSingleTopic(ctx, brokers, cfg.KafkaGroupID, t, f, producer, cfg.TopicIntelligenceDLQ, exempt, legacyAllowedSources)
+		go consumeSingleTopic(ctx, brokers, cfg.KafkaGroupID, t, f, localDLQWriter, cfg.TopicIntelligenceDLQ, exempt, legacyAllowedSources)
 		topicCount++
 	}
 
@@ -559,10 +577,13 @@ func (c KafkaGoHeaderCarrier) Keys() []string {
 // sequentially by this goroutine — no cross-tenant race conditions.
 //
 // CommitInterval: 0 (manual commit) — offset is committed only after a
-// successful handler call OR (corrective-action-report P0-02) after a
-// permanently-failed event's durable DLQ record is confirmed published to
-// dlqTopic via producer. The offset is NEVER advanced while that DLQ
-// publish is still failing — see the retry loop below.
+// successful handler call OR (corrective-action-report P0-02, INTEL-07)
+// after a permanently-failed event's durable failure record is confirmed
+// written to localDLQWriter (a local Postgres table, not Kafka itself — see
+// LocalDLQWriter's doc comment for why). The offset is NEVER advanced while
+// that local write is still failing — see the retry loop below. dlqTopic is
+// carried through only for logging context; the actual publish to that topic
+// happens later, out of band, in internal/worker/intelligence_dlq_replay_worker.go.
 //
 // exemptFromRequiredFieldCheck disables the INTEL-04 missing-schema_version/
 // missing-trace_id gate for this topic only — see requiredFieldExemptTopics
@@ -577,7 +598,7 @@ func consumeSingleTopic(
 	brokers []string,
 	groupID, topic string,
 	handle func(context.Context, kafka.Message) error,
-	producer *Producer,
+	localDLQWriter LocalDLQWriter,
 	dlqTopic string,
 	exemptFromRequiredFieldCheck bool,
 	legacyAllowedSources map[string]bool,
@@ -743,15 +764,21 @@ func consumeSingleTopic(
 
 			if err != nil {
 				// Permanent failure: durably record it BEFORE advancing the
-				// offset (corrective-action-report P0-02). This blocks —
-				// deliberately — until the DLQ publish succeeds or the
-				// service is shutting down; not committing means Kafka will
-				// redeliver this same message on restart, which is correct.
+				// offset (corrective-action-report P0-02). INTEL-07: this
+				// records to localDLQWriter — a local Postgres table — not
+				// Kafka directly, so a Kafka broker outage can no longer
+				// block this goroutine indefinitely the way a direct publish
+				// to dlqTopic used to. This still blocks — deliberately —
+				// until the LOCAL write succeeds or the service is shutting
+				// down; not committing means Kafka will redeliver this same
+				// message on restart, which is correct. The actual
+				// publish to dlqTopic happens later, out of band, via
+				// internal/worker/intelligence_dlq_replay_worker.go.
 				rec := buildDLQRecord(msgCtx, msg, err)
 				for {
-					if perr := producer.Publish(ctx, dlqTopic, rec.TenantID, rec); perr != nil {
-						log.Printf("kafka: CRITICAL dlq publish failed, offset NOT advancing topic=%s partition=%d offset=%d: %v",
-							msg.Topic, msg.Partition, msg.Offset, perr)
+					if werr := localDLQWriter.Insert(ctx, rec); werr != nil {
+						log.Printf("kafka: CRITICAL local dlq receipt write failed, offset NOT advancing topic=%s partition=%d offset=%d: %v",
+							msg.Topic, msg.Partition, msg.Offset, werr)
 						if ctx.Err() != nil {
 							span.End()
 							return
@@ -761,7 +788,7 @@ func consumeSingleTopic(
 					}
 					break
 				}
-				log.Printf("kafka: event sent to DLQ topic=%s dlq_topic=%s partition=%d offset=%d event_id=%s error_class=%s: %v",
+				log.Printf("kafka: event recorded locally for dlq replay topic=%s dlq_topic=%s partition=%d offset=%d event_id=%s error_class=%s: %v",
 					msg.Topic, dlqTopic, msg.Partition, msg.Offset, rec.EventID, rec.ErrorClass, err)
 			}
 		}
