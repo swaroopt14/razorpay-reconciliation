@@ -32,8 +32,8 @@ import {
 } from '@/features/payout-command/layout/PayoutPageActionsContext'
 import type { OpsInsightAlert } from '@/features/payout-command/command-center/types'
 import {
-  CONNECTORS_DOCK_TEMPORARILY_HIDDEN,
   DASHBOARD_FONT_STACK,
+  LIVE_CONSOLE_DOCK_IDS,
   dockItems,
   type DockId,
 } from '@/services/payout-command/model'
@@ -46,11 +46,8 @@ const homeDock = dockItems.find((item) => item.id === 'home')!
 const previewDockItems = LANDING_SANDBOX_DOCK_IDS.map((id) => dockItems.find((item) => item.id === id)).filter(
   (item): item is (typeof dockItems)[number] => Boolean(item),
 )
-const liveDockItems = dockItems.filter(
-  (item) =>
-    item.id !== 'sandbox' &&
-    item.id !== 'billing' &&
-    !(CONNECTORS_DOCK_TEMPORARILY_HIDDEN && item.id === 'connectors'),
+const liveDockItems = LIVE_CONSOLE_DOCK_IDS.map((id) => dockItems.find((item) => item.id === id)).filter(
+  (item): item is (typeof dockItems)[number] => Boolean(item),
 )
 type PreviewMetric = 'intended' | 'confirmed'
 type PreviewPanel = 'ask' | 'export' | 'alerts' | 'search' | 'integrations' | null

@@ -238,8 +238,6 @@ export default function BatchCommandCenterClient() {
     showToolbarNotice('Opened email draft with batch summary.')
   }, [activeBatchId, showToolbarNotice, statCardsSummary, tenantId])
 
-  const createPaymentHref = '/payout-command-view/create-payment'
-
   return (
     <div
       className="payout-command-console text-[13px] font-normal leading-relaxed text-[#1A1A1A] antialiased"
@@ -267,12 +265,6 @@ export default function BatchCommandCenterClient() {
             >
               {BATCH_REVIEW_COPY.toolbar.uploadSettlementFile}
             </button>
-            <Link
-              href={createPaymentHref}
-              className="inline-flex h-9 items-center rounded-lg border border-[#e2e8f0] bg-white px-3 text-[13px] font-medium text-[#0f172a] transition hover:bg-slate-50"
-            >
-              {BATCH_REVIEW_COPY.toolbar.createPaymentManually}
-            </Link>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <LiveDataHint isLive={Boolean(tenantReady && feed.feedLoaded)} source={BATCH_REVIEW_COPY.toolbar.liveSource} />

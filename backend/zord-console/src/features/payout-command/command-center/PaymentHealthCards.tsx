@@ -29,9 +29,12 @@ function BreakdownRow({ label, value }: { label: string; value: string }) {
 }
 
 export type PaymentHealthCardsProps = {
-  fullyMatchedValue: string
-  fullyMatchedSub: string
-  fullyMatchedFooter?: string
+  observedValue: string
+  observedSub: string
+  observedFooter?: string
+  matchedAllocatedDisplay: string
+  orphanObservedDisplay: string
+  observedSourceLabel: string
   awaitingConfirmation?: boolean
 
   reviewValue: string
@@ -60,9 +63,12 @@ export type PaymentHealthCardsProps = {
 }
 
 export function PaymentHealthCards({
-  fullyMatchedValue,
-  fullyMatchedSub,
-  fullyMatchedFooter,
+  observedValue,
+  observedSub,
+  observedFooter,
+  matchedAllocatedDisplay,
+  orphanObservedDisplay,
+  observedSourceLabel,
   awaitingConfirmation = false,
   reviewValue,
   reviewSub,
@@ -91,25 +97,30 @@ export function PaymentHealthCards({
       <article className={COMMAND_CENTER_KPI_CARD + ' min-h-[280px]'}>
         <CommandCenterCardGlow />
         <div className="relative z-[1]">
-          <h3 className="text-[14px] font-medium text-[#000000]">Settlement Value Observed</h3>
+          <h3 className="text-[14px] font-medium text-[#000000]">Observed Outcome Value</h3>
           {awaitingConfirmation ? (
             <>
-              <p className={`mt-4 text-[18px] font-semibold ${HOME_TITLE_BLACK}`}>Awaiting confirmation data</p>
+              <p className={`mt-4 text-[18px] font-semibold ${HOME_TITLE_BLACK}`}>No observed outcomes yet</p>
               <p className={`mt-2 ${HOME_BODY_IMPERIAL_SM}`}>
-                Upload bank/settlement records to calculate settlement value observed.
+                Upload settlement records to calculate observed outcome value.
               </p>
             </>
           ) : (
             <>
               <p className="mt-4 text-center text-[36px] leading-none">
-                <HeroMetricWithSuperPercent text={fullyMatchedValue} />
+                <HeroMetricWithSuperPercent text={observedValue} />
               </p>
-              <p className={`mt-2 text-center text-[14px] font-medium ${HOME_BODY_IMPERIAL_SM}`}>{fullyMatchedSub}</p>
+              <p className={`mt-2 text-center text-[14px] font-medium ${HOME_BODY_IMPERIAL_SM}`}>{observedSub}</p>
+              <div className="mt-4">
+                <BreakdownRow label="Matched / allocated" value={matchedAllocatedDisplay} />
+                <BreakdownRow label="Unlinked / orphan observed" value={orphanObservedDisplay} />
+                <BreakdownRow label="Source" value={observedSourceLabel} />
+              </div>
             </>
           )}
         </div>
-        {fullyMatchedFooter?.trim() ? (
-          <p className={`relative z-[1] mt-auto pt-4 ${HOME_INSIGHT_PROSE}`}>{fullyMatchedFooter}</p>
+        {observedFooter?.trim() ? (
+          <p className={`relative z-[1] mt-auto pt-4 ${HOME_INSIGHT_PROSE}`}>{observedFooter}</p>
         ) : null}
       </article>
 
@@ -119,7 +130,7 @@ export function PaymentHealthCards({
       >
         <CommandCenterCardGlow />
         <div className="relative z-[1]">
-          <h3 className="text-[14px] font-medium text-[#000000]">Unmatched Intent Value</h3>
+          <h3 className="text-[14px] font-medium text-[#000000]">Unresolved Intended Value</h3>
           <p className="mt-4 text-center text-[36px] leading-none">
             <HeroMetricWithSuperPercent text={reviewValue} />
           </p>

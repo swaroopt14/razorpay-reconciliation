@@ -138,10 +138,9 @@ export function buildAttentionPreview(
     lastUpdated: r.lastUpdated,
   }))
   const intentAttention = intents.filter(
-    (r) =>
-      r.status === 'Needs Review' ||
-      r.status === 'Pending' ||
-      r.status === 'In Progress',
+    (r): r is JournalIntentRow & { requestId: string } =>
+      Boolean(r.requestId) &&
+      (r.status === 'Needs Review' || r.status === 'Pending' || r.status === 'In Progress'),
   )
   const intentItems: AttentionPreviewRow[] = intentAttention.map((r) => ({
     id: r.requestId,

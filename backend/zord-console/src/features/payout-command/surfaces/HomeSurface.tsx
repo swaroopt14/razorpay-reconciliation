@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   clamp,
   HOME_QUARTERS,
-  HOME_YEAR_OPTIONS,
   type HomeOverviewSnapshot,
   type HomeTimeframe,
 } from '@/services/payout-command/model'
@@ -71,6 +70,7 @@ export function HomeSurface({
   batchId,
   snapshot,
   timeframe,
+  yearOptions,
   onTimeframeChange,
   onYearChange,
   onQuarterChange,
@@ -79,8 +79,9 @@ export function HomeSurface({
   batchId?: string
   snapshot: HomeOverviewSnapshot
   timeframe: HomeTimeframe
+  yearOptions: readonly number[]
   onTimeframeChange: (timeframe: HomeTimeframe) => void
-  onYearChange: (year: 2026 | 2027 | 2028) => void
+  onYearChange: (year: number) => void
   onQuarterChange: (quarterIndex: number) => void
 }) {
   const [commandPeriod, setCommandPeriod] = useState<CommandCenterPeriod>(() =>
@@ -90,7 +91,7 @@ export function HomeSurface({
     homeTimeframeToTrendRange(timeframe),
   )
   const [carouselPeriod, setCarouselPeriod] = useState<CarouselInsightPeriod>('weekly')
-  const [heroMetric, setHeroMetric] = useState<'intended' | 'confirmed'>('intended')
+  const [heroMetric, setHeroMetric] = useState<'intended' | 'observed'>('intended')
 
   const { tenantId, tenantReady } = useSessionTenant()
   const { mode } = useEnvironment()
@@ -264,14 +265,10 @@ export function HomeSurface({
     : trendTotalsMinor && trendTotalsMinor.total > 0
       ? trendTotalsMinor.total
       : null
-  const unmatchedMinor = parseMinorStrict(leakageData?.unmatched_amount_minor)
-  const underSettlementMinor = parseMinorStrict(leakageData?.under_settlement_amount_minor)
   const orphanMinor = parseMinorStrict(leakageData?.orphan_amount_minor)
-  const unlinkedSettlementMinor = orphanMinor
-  const reversalMinor = parseMinorStrict(leakageData?.reversal_exposure_minor)
   const observedMinor = parseMinorStrict(leakageData?.total_observed_settled_amount_minor)
-
-  const bankConfirmedMinor = observedMinor
+  const matchedAllocatedMinor =
+    observedMinor != null && orphanMinor != null ? Math.max(0, observedMinor - orphanMinor) : null
 
   const reviewMinor = leakageData != null ? parseMinorField(leakageData.unmatched_amount_minor) : null
   const unmatchedAmountExact =
@@ -366,6 +363,17 @@ export function HomeSurface({
   const settlementHeroDisplay = loading
     ? '…'
     : formatKpiMoneyMinor(leakageData?.total_observed_settled_amount_minor)
+  const matchedAllocatedDisplay = loading
+    ? '…'
+    : matchedAllocatedMinor != null
+      ? fmtInrFromMinorExact(matchedAllocatedMinor)
+      : '—'
+  const observedSourceLabel =
+    dataSources.bankStatementStatus === 'received' || dataSources.bankStatementStatus === 'partial'
+      ? 'Bank'
+      : dataSources.settlementStatus === 'received' || dataSources.settlementStatus === 'partial'
+        ? 'Settlement'
+        : 'Unavailable'
 
   const nextActions = useMemo(() => {
     const actions: Array<{ title: string; description: string; href?: string; emphasis?: boolean }> = []
@@ -426,14 +434,14 @@ export function HomeSurface({
         </button>
         <button
           type="button"
-          onClick={() => setHeroMetric('confirmed')}
+          onClick={() => setHeroMetric('observed')}
           className={`rounded-full px-4 py-1.5 text-[13px] font-medium transition ${
-            heroMetric === 'confirmed'
+            heroMetric === 'observed'
               ? 'bg-white text-[#000000] shadow-sm ring-1 ring-black/5'
               : 'text-slate-500 hover:text-slate-700'
           }`}
         >
-          Bank-Confirmed
+          Observed
         </button>
       </div>
 
@@ -455,14 +463,16 @@ export function HomeSurface({
         ) : (
           <>
             <div className={`text-[64px] font-extrabold leading-none tabular-nums text-[#000000] sm:text-[72px]`}>
-              {bankConfirmedMinor != null && bankConfirmedMinor > 0
-                ? fmtInrFromMinorExact(bankConfirmedMinor)
-                : 'Not connected yet'}
+              {observedMinor != null && observedMinor > 0
+                ? fmtInrFromMinorExact(observedMinor)
+                : loading
+                  ? '₹…'
+                  : '—'}
             </div>
-            <div className="mt-3 text-[18px] font-bold text-[#000000]">Bank-Confirmed Value</div>
+            <div className="mt-3 text-[18px] font-bold text-[#000000]">Observed Outcome Value</div>
             <p className={`mt-2 max-w-xs ${HOME_BODY_IMPERIAL_CENTERED}`}>
-              {bankConfirmedMinor != null && bankConfirmedMinor > 0
-                ? 'Confirmed from bank/settlement records in this period.'
+              {observedMinor != null && observedMinor > 0
+                ? 'Reported settlement/outcome value. This is not matched allocation or bank confirmation.'
                 : PAYMENT_COMMAND_CENTER.bankPending}
             </p>
           </>
@@ -538,7 +548,7 @@ export function HomeSurface({
             <span className="truncate">{snapshot.timeframeLabel}</span>
           </div>
           <div className="flex w-1/2 min-w-0 items-center justify-end gap-2 px-4 py-3 sm:px-6 lg:px-8">
-            {HOME_YEAR_OPTIONS.map((year) => (
+            {yearOptions.map((year) => (
               <button
                 key={year}
                 type="button"
@@ -600,13 +610,16 @@ export function HomeSurface({
           <PaymentCommandCenterBand
             carouselPeriod={carouselPeriod}
             onCarouselPeriodChange={setCarouselPeriod}
-            fullyMatchedValue={settlementHeroDisplay}
-            fullyMatchedSub="Settlement value confirmed by bank or PSP"
-            fullyMatchedFooter="Includes partial matches and linked outcomes. This is not the same as total intended payment value for the batch."
+            observedValue={settlementHeroDisplay}
+            observedSub="Reported outcome value — not matched allocation"
+            observedFooter="Orphan and unlinked records increase observed value. They do not increase matched or allocated value."
+            matchedAllocatedDisplay={matchedAllocatedDisplay}
+            orphanObservedDisplay={loading ? '…' : formatKpiMoneyMinor(leakageData?.orphan_amount_minor)}
+            observedSourceLabel={observedSourceLabel}
             awaitingConfirmation={false}
             reviewValue={reviewDisplay}
-            reviewSub="Payments without a confirmed settlement outcome"
-            reviewFooter="Covers payments with no confirmed settlement link. Short-settled, over-settled, unlinked, and reversal amounts are broken out below."
+            reviewSub="Intended payments without a confirmed settlement outcome"
+            reviewFooter="Unresolved intended value. Short-settled, over-settled, unlinked, and reversal amounts are broken out below."
             shortSettledDisplay={loading ? '…' : formatKpiMoneyMinor(leakageData?.under_settlement_amount_minor)}
             overSettledDisplay={loading ? '…' : formatKpiMoneyMinor(leakageData?.over_settlement_amount_minor)}
             unlinkedDisplay={loading ? '…' : formatKpiMoneyMinor(leakageData?.orphan_amount_minor)}

@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { resolveInitialDock } from './_lib/resolveInitialDock'
+import { LIVE_CONSOLE_DOCK_IDS } from '@/services/payout-command/model'
 import PayoutCommandViewClient, {
   type PayoutCommandScope,
 } from '@/features/payout-command/shell/PayoutCommandViewClient'
@@ -35,7 +36,7 @@ export default function PayoutCommandViewTodayPage({
   return (
     <PayoutCommandViewClient
       forceMode="live"
-      initialDock={resolveInitialDock(searchParams.dock)}
+      initialDock={resolveInitialDock(searchParams.dock, LIVE_CONSOLE_DOCK_IDS)}
       scope={scope}
     />
   )

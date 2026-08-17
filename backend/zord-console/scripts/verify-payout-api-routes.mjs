@@ -39,7 +39,8 @@ const WIRED_ROUTES = [
   ['Intents · list', 'intents/route.ts'],
   ['DLQ · list', 'dlq/route.ts'],
   ['Overview · health', 'overview/route.ts'],
-  ['Zord · metrics overview', 'zord/metrics/overview/route.ts'],
+  ['Live workspace API keys', 'workspace-api-keys/route.ts'],
+  ['Synthetic zord catch-all', 'zord/[...path]/route.ts'],
 ]
 
 let missing = 0

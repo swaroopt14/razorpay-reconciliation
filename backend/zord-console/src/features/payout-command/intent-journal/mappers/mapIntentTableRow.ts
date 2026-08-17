@@ -1,5 +1,10 @@
 import type { IntentJournalPaymentIntentItem } from '@/services/payout-command/prod-api/intentJournalTypes'
-import type { JournalIntentRow, JournalIntentStatus } from '@/services/payout-command/prod-api/mapIntentEngineBatch'
+import {
+  formatIntentIdUnavailable,
+  journalIntentRowKey,
+  type JournalIntentRow,
+  type JournalIntentStatus,
+} from '@/services/payout-command/prod-api/mapIntentEngineBatch'
 import { apiTrimmedString } from '@/services/payout-command/prod-api/coerceApiField'
 import { readIntentQualityScore } from '@/services/payout-command/prod-api/resolveIntentQualityScore'
 
@@ -69,20 +74,6 @@ function beneficiaryNameHint(item: IntentJournalPaymentIntentItem): string | nul
   return null
 }
 
-function buildZordId(requestId: string, batchId: string, index: number): string {
-  const source = apiTrimmedString(requestId) || `${batchId}-row-${index + 1}`
-  const normalized = source.replace(/[^a-zA-Z0-9]/g, '')
-  if (!normalized) return `ZRD-${String(index + 1).padStart(4, '0')}`
-  return `ZRD-${normalized.slice(-8).toUpperCase()}`
-}
-
-function syntheticRequestId(batchId: string, index: number, item: IntentJournalPaymentIntentItem): string {
-  if (apiTrimmedString(item.intent_id)) return apiTrimmedString(item.intent_id)!
-  const sourceRowNum = parseSourceRowNum(item.source_row_num)
-  if (sourceRowNum != null) return `${batchId}-src-${sourceRowNum}`
-  return `${batchId}-row-${index + 1}`
-}
-
 /** Map thin payment-intents list item → journal table row. */
 export function mapPaymentIntentListItemToRow(
   item: IntentJournalPaymentIntentItem,
@@ -96,14 +87,15 @@ export function mapPaymentIntentListItemToRow(
   const status: JournalIntentStatus = 'Ready to Process'
   const provider = resolveProviderHint(item)
   const rail = resolveRailHint(item)
-  const requestId = syntheticRequestId(batchId, index, item)
-  const zordId = buildZordId(requestId, batchId, index)
+  const requestId = apiTrimmedString(item.intent_id) || null
+  const zordId = requestId ?? formatIntentIdUnavailable(sourceRowNum, index)
   const paymentRef = apiTrimmedString(item.client_payout_ref)
   const clientBatchRef = apiTrimmedString(item.client_batch_ref) || apiTrimmedString(item.batch_id) || batchId
-  const referenceFallback = sourceRowNum != null ? `SRC-${sourceRowNum}` : requestId
+  const referenceFallback = sourceRowNum != null ? `SRC-${sourceRowNum}` : '—'
 
   return {
     batchId,
+    rowKey: journalIntentRowKey(batchId, index, sourceRowNum, requestId),
     zordId,
     requestId,
     reference: paymentRef || referenceFallback,

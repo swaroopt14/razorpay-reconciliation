@@ -4,13 +4,16 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   DASHBOARD_FONT_STACK,
-  CONNECTORS_DOCK_TEMPORARILY_HIDDEN,
+  LIVE_CONSOLE_DOCK_IDS,
+  SANDBOX_ALLOWED_DOCK_IDS,
   dockItems,
+  isLiveBlockedDock,
   type DockId,
   type WorkspaceTab,
 } from '@/services/payout-command/model'
 import { EnvironmentProvider, type EnvMode } from '@/services/auth/EnvironmentProvider'
 import { useHomeState } from '../hooks/useHomeState'
+import { useLiveHomeState } from '../hooks/useLiveHomeState'
 import { useWorkspaceState } from '../hooks/useWorkspaceState'
 import { useAskZordState } from '../hooks/useAskZordState'
 import { AskZordPanel } from '../layout/AskZordPanel'
@@ -63,10 +66,15 @@ function resolveSharedBatchId(initial?: string) {
   return id || undefined
 }
 
-function resolveDockFromSearchParam(raw: string | null): DockId | null {
+function allowedDocksForMode(mode: EnvMode | undefined): readonly DockId[] {
+  return mode === 'sandbox' ? SANDBOX_ALLOWED_DOCK_IDS : LIVE_CONSOLE_DOCK_IDS
+}
+
+function resolveDockFromSearchParam(raw: string | null, mode: EnvMode | undefined): DockId | null {
   if (!raw) return null
   const id = raw as DockId
-  if (CONNECTORS_DOCK_TEMPORARILY_HIDDEN && id === 'connectors') return null
+  const allowed = allowedDocksForMode(mode)
+  if (!allowed.includes(id)) return null
   return dockItems.some((item) => item.id === id) ? id : null
 }
 
@@ -75,7 +83,7 @@ export default function PayoutCommandViewClient({
   initialDock = 'home',
   scope = {},
 }: PayoutCommandViewClientProps) {
-  // ── Navigation state ───────────────────────────────────────────────────────
+  const isSandbox = forceMode === 'sandbox'
   const [activeDock, setActiveDock] = useState<DockId>(initialDock)
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('Today')
   const [activateWizardOpen, setActivateWizardOpen] = useState(false)
@@ -97,7 +105,9 @@ export default function PayoutCommandViewClient({
   }, [activeSurface])
 
   // ── Feature hooks ──────────────────────────────────────────────────────────
-  const home = useHomeState(activeDock === 'home')
+  const sandboxHome = useHomeState(isSandbox && activeDock === 'home')
+  const liveHome = useLiveHomeState(!isSandbox && activeDock === 'home')
+  const home = isSandbox ? sandboxHome : liveHome
   const workspace = useWorkspaceState(activeTab, onWorkspaceSuggestionSelect)
   const askZord = useAskZordState(activeSurface.title)
 
@@ -120,17 +130,19 @@ export default function PayoutCommandViewClient({
   }, [activeDock, askZord.close])
 
   useEffect(() => {
-    const dockFromUrl = resolveDockFromSearchParam(searchParams.get('dock')) ?? initialDock
+    const dockFromUrl = resolveDockFromSearchParam(searchParams.get('dock'), forceMode) ?? initialDock
     setActiveDock((currentDock) => (currentDock === dockFromUrl ? currentDock : dockFromUrl))
-  }, [initialDock, searchParams])
+  }, [forceMode, initialDock, searchParams])
 
-  // Deep links with ?dock=connectors redirect to home while connectors nav is hidden.
+  // Blocked live docks (lending mocks, billing, connectors) redirect to home.
   useEffect(() => {
-    if (!CONNECTORS_DOCK_TEMPORARILY_HIDDEN || searchParams.get('dock') !== 'connectors') return
+    if (isSandbox) return
+    const requested = searchParams.get('dock')
+    if (!requested || !isLiveBlockedDock(requested)) return
     const params = new URLSearchParams(searchParams.toString())
     params.set('dock', 'home')
     router.replace(`${window.location.pathname}?${params.toString()}`, { scroll: false })
-  }, [router, searchParams])
+  }, [isSandbox, router, searchParams])
 
   // ── Navigation handlers ────────────────────────────────────────────────────
   const handleDockChange = useCallback(
@@ -167,6 +179,7 @@ export default function PayoutCommandViewClient({
             batchId={sharedBatchId}
             snapshot={home.snapshot}
             timeframe={home.timeframe}
+            yearOptions={home.yearOptions}
             onTimeframeChange={home.setTimeframe}
             onYearChange={home.setYear}
             onQuarterChange={(qi) => {
@@ -190,8 +203,12 @@ export default function PayoutCommandViewClient({
 
     if (activeDock === 'leakage') return <LeakageSurface initialBatchId={sharedBatchId} />
     if (activeDock === 'ambiguity') return <AmbiguitySurface initialBatchId={sharedBatchId} />
-    if (activeDock === 'verification') return <BorrowerVerificationSurface />
-    if (activeDock === 'monitoring') return <PostDisbursalMonitoringSurface />
+    if (activeDock === 'verification') {
+      return isSandbox ? <BorrowerVerificationSurface /> : null
+    }
+    if (activeDock === 'monitoring') {
+      return isSandbox ? <PostDisbursalMonitoringSurface /> : null
+    }
     if (activeDock === 'grid') return <IntentJournalSurface initialBatchId={scope.batchId} />
     if (activeDock === 'settlement') {
       return <SettlementJournalSurface initialClientBatchId={scope.clientBatchId} />
@@ -201,7 +218,7 @@ export default function PayoutCommandViewClient({
         <EvidenceSurface initialBatchId={sharedBatchId} />
       )
     if (activeDock === 'billing') {
-      return <BillingSurface onActivateClick={() => setActivateWizardOpen(true)} />
+      return isSandbox ? <BillingSurface onActivateClick={() => setActivateWizardOpen(true)} /> : null
     }
     if (activeDock === 'support') {
       return (
@@ -219,7 +236,7 @@ export default function PayoutCommandViewClient({
     scope.clientBatchId,
     scope.accountTab,
     sharedBatchId,
-    handleTabChange,
+    isSandbox,
     home,
     workspace,
   ])

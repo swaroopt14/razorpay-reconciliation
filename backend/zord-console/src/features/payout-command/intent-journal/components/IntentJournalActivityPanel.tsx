@@ -407,16 +407,21 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                           </tr>
                         ) : (
                           pageRows.map((row, rowIndex) => (
-                          <Fragment key={row.requestId}>
+                          <Fragment key={row.rowKey}>
                             <tr
                               onClick={() => {
+                                if (!row.requestId) {
+                                  setSelectedIntentId(null)
+                                  setExpandedId((current) => (current === row.rowKey ? null : row.rowKey))
+                                  return
+                                }
                                 setSelectedIntentId(row.requestId)
-                                setExpandedId((current) => (current === row.requestId ? null : row.requestId))
+                                setExpandedId((current) => (current === row.rowKey ? null : row.rowKey))
                               }}
-                              className={`cursor-pointer border-t border-[#f3f4f6] ${selectedIntentId === row.requestId ? 'bg-[#f8fafc]' : rowIndex % 2 === 1 ? 'bg-slate-50/40 hover:bg-[#f9fafb]' : 'hover:bg-[#f9fafb]'}`}
+                              className={`${row.requestId ? 'cursor-pointer' : 'cursor-default'} border-t border-[#f3f4f6] ${selectedIntentId === row.requestId ? 'bg-[#f8fafc]' : rowIndex % 2 === 1 ? 'bg-slate-50/40 hover:bg-[#f9fafb]' : 'hover:bg-[#f9fafb]'}`}
                             >
-                              <td className="truncate px-3 py-2.5 font-mono text-[12px] text-[#334155]" title={row.zordId ?? row.requestId}>
-                                {row.zordId ?? row.requestId}
+                              <td className="truncate px-3 py-2.5 font-mono text-[12px] text-[#334155]" title={row.zordId}>
+                                {row.zordId}
                               </td>
                               <td className="truncate px-3 py-2.5 text-[13px] text-[#334155]" title={row.reference}>
                                 {row.reference}
@@ -440,10 +445,15 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                               </td>
                               <td className="px-3 py-2.5 tabular-nums font-semibold text-[#0f172a]">{row.confidenceLabel}</td>
                             </tr>
-                            {expandedId === row.requestId ? (
+                            {expandedId === row.rowKey ? (
                               <tr className="bg-slate-50">
                                 <td colSpan={INTENT_TABLE_COL_COUNT} className="px-3 pb-4 pt-3">
-                                  {row.rawIntent ? (
+                                  {!row.requestId ? (
+                                    <p className="text-[14px] text-[#64748b]">
+                                      Intent ID unavailable{row.sourceRowNum != null ? ` · Source row ${row.sourceRowNum}` : ''}.
+                                      Detail and deep-link actions are disabled until an authoritative intent id exists.
+                                    </p>
+                                  ) : row.rawIntent ? (
                                     <div className="space-y-3">
                                       <p className="text-[14px] font-semibold text-[#0f172a]">Intent details</p>
                                       <IntentEngineDetailPanel intent={row.rawIntent} />
@@ -465,7 +475,7 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                                           bank: row.bank,
                                           uiStatus: row.status,
                                         },
-                                        journalUsesBackendFeed && expandedId === row.requestId ? liveIntentDrawerApi : null,
+                                        journalUsesBackendFeed && expandedId === row.rowKey && row.requestId ? liveIntentDrawerApi : null,
                                       )
                                       return (
                                         <div className="space-y-3">

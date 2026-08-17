@@ -21,6 +21,7 @@ import {
 } from '@/services/payout-command/support/supportTicketsApi'
 import { SANDBOX_RECENT_REQUESTS } from '@/services/payout-command/sandbox-data'
 import { clearLegacyTenantApiSecrets } from '@/services/auth/readStoredTenantApiKey'
+import { workspaceApiKeysPath } from '@/services/payout-command/workspaceApiKeysPath'
 import { getAmbiguityHeatmap, getPatternsKpis } from '@/services/payout-command/prod-api/getIntelligenceKpis'
 import { isDataAvailable, type AmbiguityHeatmapBatchRow } from '@/services/payout-command/prod-api/intelligenceTypes'
 import { getProdIntentEngineBatchesForSession } from '@/services/payout-command/prod-api/getProdIntentEngineBatches'
@@ -872,7 +873,7 @@ export function SupportSurface({ initialAccountTab }: SupportSurfaceProps) {
     let cancelled = false
     void (async () => {
       try {
-        const res = await fetch('/api/sandbox/workspace-api-keys', {
+        const res = await fetch(workspaceApiKeysPath('live'), {
           credentials: 'include',
           cache: 'no-store',
         })

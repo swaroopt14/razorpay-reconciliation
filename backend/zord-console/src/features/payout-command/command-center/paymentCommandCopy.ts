@@ -8,14 +8,14 @@ export const PAYMENT_COMMAND_CENTER = {
   sectionSubtitle:
     'Current status of payment value, confirmation, and review items across connected systems.',
   intendedHelper:
-    'This is the value your system intended to pay. Confirmation depends on bank/settlement data.',
+    'This is the value your system intended to pay. Observed outcomes are reported separately and are not the same as matched allocation.',
   bankPending:
-    'Bank confirmation data is not connected yet. Upload a bank statement or settlement file to verify outcomes.',
-  chartTitle: 'Payment Value: Intended vs Bank-Confirmed',
+    'No observed settlement outcomes in this period yet. Upload a settlement file or connect a source to populate observed value.',
+  chartTitle: 'Payment Value: Intended vs Observed',
   chartSubtitle:
-    'Shows how payment instructions compare with bank/settlement confirmations over time.',
+    'Shows how payment instructions compare with observed settlement outcomes over time. Observed is not matched allocation or bank confirmation.',
   legendIntended: 'Intended Payment Value',
-  legendConfirmed: 'Bank-Confirmed Value',
+  legendConfirmed: 'Observed Outcome Value',
   legendReview: 'Exposure amount',
   chipHighValue: 'High value',
   chipConfirmationGap: 'Confirmation gap',

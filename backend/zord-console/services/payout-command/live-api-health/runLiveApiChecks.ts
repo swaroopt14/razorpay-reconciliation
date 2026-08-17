@@ -229,13 +229,15 @@ export async function runLiveApiChecks(options: RunLiveApiChecksOptions = {}): P
       }),
     },
     {
-      id: 'zord-overview',
-      label: 'Zord metrics · overview',
-      url: '/api/prod/zord/metrics/overview?time_range=24h',
-      summarize: (d) => ({
-        status: d ? 'ok' : 'error',
-        detail: d ? 'metrics reachable (synthetic BFF)' : 'No response',
-      }),
+      id: 'evidence-packs',
+      label: 'Evidence · packs',
+      url: '/api/prod/evidence/packs',
+      summarize: (d) => {
+        const body = d as ListPacksResponse | null
+        if (!body) return { status: 'error', detail: 'No response' }
+        const n = body.packs?.length ?? 0
+        return { status: n > 0 ? 'ok' : 'empty', detail: n > 0 ? `${n} pack(s)` : 'reachable (empty)' }
+      },
     },
   ]
 
