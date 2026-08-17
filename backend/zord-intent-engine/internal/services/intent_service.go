@@ -2709,7 +2709,7 @@ func (s *IntentService) ProcessIncomingIntent(
 		}
 
 		runStatus := "PROCESSING"
-		if hasTotalRows && processedRows >= totalRows {
+		if processedRows > 0 && processedRows >= totalRows {
 			runStatus = "COMPLETED"
 		}
 
@@ -3067,8 +3067,8 @@ func (s *IntentService) ProcessIncomingIntentsBatch(
 		}
 
 		runStatus := "COMPLETED"
-		if firstIn.RowCountEstimate != nil && *firstIn.RowCountEstimate > actualAccepted+actualFailed {
-			// Declared file size exceeds what we wrote — still more rows expected.
+		processedRows := actualAccepted + actualFailed + actualDuplicate
+		if firstIn.RowCountEstimate != nil && *firstIn.RowCountEstimate > processedRows {
 			runStatus = "PROCESSING"
 		}
 
@@ -3118,11 +3118,10 @@ func (s *IntentService) ProcessIncomingIntentsBatch(
 			continue
 		}
 
-		// Non-batch DLQ items still need direct indexing because there is no batch summary key.
-		s.EmitDLQVectorIndexRequest(dlq)
 	}
 
 	for batchID, tenantID := range emittedBatches {
+		log.Printf("[intent-engine][vector-index] checking final batch emit tenant=%s batch_id=%s", tenantID, batchID)
 		s.maybeEmitCompletedBatchVectorIndex(ctx, tenantID, batchID)
 	}
 	return savedIntents, savedDLQs, nil
