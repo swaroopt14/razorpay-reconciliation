@@ -37,6 +37,11 @@ import { payoutBatchCommandCenterHref } from '@/services/payout-command/batchCom
 import { markSandboxSetupStep, openSandboxSetupPanel } from '@/services/payout-command/sandbox-setup-guide'
 import { useEnvironment } from '@/services/auth/EnvironmentProvider'
 import { dockItems } from '@/services/payout-command/model'
+import {
+  DEFAULT_TENANT_BUSINESS_TIMEZONE,
+  isInstantInBusinessDatePreset,
+} from '@/services/payout-command/tenantBusinessTimezone'
+import { useTenantBusinessTimezone } from '@/services/payout-command/useTenantBusinessTimezone'
 import { useRegisterPayoutPageActions } from '../layout/PayoutPageActionsContext'
 import {
   COMMAND_CENTER_KPI_CARD,
@@ -77,6 +82,7 @@ type IntentRow = {
   status: IntentStatus
   match: IntentMatch
   lastUpdated: string
+  lastUpdatedIso?: string
   paymentPartner: string
   bank: string
   paymentMethodDetail: string
@@ -104,6 +110,7 @@ type FailureRow = {
   failureReason: string
   failureStage: 'Validation' | 'Dispatch' | 'Processing' | 'Settlement'
   lastUpdated: string
+  lastUpdatedIso?: string
   action: 'Retry' | 'Fix Details' | 'Investigate' | 'Escalate' | 'Fix Mandate'
 }
 
@@ -138,19 +145,14 @@ const AMOUNT_RANGE_OPTIONS = [
 ] as const
 type AmountRangeFilter = (typeof AMOUNT_RANGE_OPTIONS)[number]
 
-function intentInDateRange(lastUpdated: string, preset: DateRangePreset): boolean {
-  if (preset === 'all') return true
-  const parsed = Date.parse(lastUpdated)
-  if (!Number.isFinite(parsed)) return true
-  const observed = new Date(parsed)
-  const now = new Date()
-  const start = new Date(now)
-  if (preset === '7d') start.setDate(now.getDate() - 7)
-  else if (preset === '30d') start.setDate(now.getDate() - 30)
-  else if (preset === '90d') start.setDate(now.getDate() - 90)
-  else if (preset === 'ytd') start.setMonth(0, 1)
-  start.setHours(0, 0, 0, 0)
-  return observed >= start
+function intentInDateRange(
+  lastUpdated: string,
+  preset: DateRangePreset,
+  timeZone: string = DEFAULT_TENANT_BUSINESS_TIMEZONE,
+  lastUpdatedIso?: string | null,
+): boolean {
+  // CON-P1-29: group on ISO instant in tenant business TZ — never browser-local display strings.
+  return isInstantInBusinessDatePreset(lastUpdatedIso?.trim() || lastUpdated, preset, timeZone)
 }
 
 function matchesIntentAmountRange(amount: number, range: AmountRangeFilter): boolean {
@@ -330,6 +332,7 @@ function failureHaystack(row: FailureRow) {
 
 export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: string } = {}) {
   const { mode } = useEnvironment()
+  const { timeZone: businessTimeZone } = useTenantBusinessTimezone()
   const batchCommandCenterHref = payoutBatchCommandCenterHref(mode === 'sandbox')
   /** Same `/api/prod/intelligence/*` + `/api/prod/intents*` + DLQ polling as live — sandbox is not local-only. */
   const journalUsesBackendFeed = mode === 'live' || mode === 'sandbox'
@@ -556,7 +559,7 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
       const byConnector = connectorFilter === 'All' || row.paymentPartner === connectorFilter
       const byDispatch = dispatchModeFilter === 'All' || row.method === dispatchModeFilter
       const byStatus = intentStatusFilter === 'All' || row.status === intentStatusFilter
-      const byDate = intentInDateRange(row.lastUpdated, dateRange)
+      const byDate = intentInDateRange(row.lastUpdated, dateRange, businessTimeZone, row.lastUpdatedIso)
       const byAmount = matchesIntentAmountRange(row.amount, amountRangeFilter)
       return bySearch && bySidebarBatch && byBatchFilter && byConnector && byDispatch && byStatus && byDate && byAmount
     })
@@ -571,6 +574,7 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
     intentStatusFilter,
     dateRange,
     amountRangeFilter,
+    businessTimeZone,
   ])
 
   const filteredFailures = useMemo(() => {
@@ -585,7 +589,7 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
       const byConnector = connectorFilter === 'All' || row.paymentPartner === connectorFilter
       const byDispatch = dispatchModeFilter === 'All' || row.method === dispatchModeFilter
       const byStage = failureStageFilter === 'All' || row.failureStage === failureStageFilter
-      const byDate = intentInDateRange(row.lastUpdated, dateRange)
+      const byDate = intentInDateRange(row.lastUpdated, dateRange, businessTimeZone, row.lastUpdatedIso)
       const byAmount = matchesIntentAmountRange(row.amount, amountRangeFilter)
       return bySearch && bySidebarBatch && byBatch && byConnector && byDispatch && byStage && byDate && byAmount
     })
@@ -608,6 +612,7 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
     failureStageFilter,
     dateRange,
     amountRangeFilter,
+    businessTimeZone,
   ])
 
   useEffect(() => {

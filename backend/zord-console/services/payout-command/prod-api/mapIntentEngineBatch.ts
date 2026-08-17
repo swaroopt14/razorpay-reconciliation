@@ -4,6 +4,10 @@ import type { IntelligenceBatchRow } from './intelligenceTypes'
 import { apiTrimmedString } from './coerceApiField'
 import { readIntentQualityScore } from '@/services/payout-command/prod-api/resolveIntentQualityScore'
 import { formatDlqStatusLabel, parseDlqIntentContext, normalizePspDisplayName } from './mapDlqContext'
+import {
+  DEFAULT_TENANT_BUSINESS_TIMEZONE,
+  formatInTenantBusinessTimezone,
+} from '@/services/payout-command/tenantBusinessTimezone'
 
 export type JournalBatchType = 'Disbursement' | 'Settlement'
 export type JournalIntentStatus = 'Ready to Process' | 'Confirmed' | 'Pending' | 'Needs Review' | 'In Progress'
@@ -41,6 +45,8 @@ export type JournalIntentRow = {
   status: JournalIntentStatus
   match: JournalIntentMatch
   lastUpdated: string
+  /** ISO instant for financial day filters (CON-P1-29). Display stays in lastUpdated. */
+  lastUpdatedIso?: string
   paymentPartner: string
   bank: string
   paymentMethodDetail: string
@@ -60,17 +66,7 @@ export type JournalIntentRow = {
 }
 
 function formatJournalExecutionAt(iso: string | undefined): string {
-  const s = apiTrimmedString(iso)
-  if (!s) return '—'
-  const d = new Date(s)
-  if (Number.isNaN(d.getTime())) return s
-  return d.toLocaleString('en-IN', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+  return formatInTenantBusinessTimezone(iso, DEFAULT_TENANT_BUSINESS_TIMEZONE)
 }
 
 function formatConfidenceLabel(score: number | undefined): string {
@@ -114,17 +110,7 @@ function resolveDlqPaymentMethod(ctx: ReturnType<typeof parseDlqIntentContext>):
 }
 
 function formatDlqUpdatedAt(iso?: string): string {
-  const s = apiTrimmedString(iso)
-  if (!s) return '—'
-  const d = new Date(s)
-  if (Number.isNaN(d.getTime())) return s
-  return d.toLocaleString('en-IN', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+  return formatInTenantBusinessTimezone(iso, DEFAULT_TENANT_BUSINESS_TIMEZONE)
 }
 
 export type JournalFailureRow = {
@@ -142,6 +128,7 @@ export type JournalFailureRow = {
   failureReason: string
   failureStage: 'Validation' | 'Dispatch' | 'Processing' | 'Settlement'
   lastUpdated: string
+  lastUpdatedIso?: string
   action: 'Retry' | 'Fix Details' | 'Investigate' | 'Escalate' | 'Fix Mandate'
   dlqStatus?: string
   dlqStatusLabel?: string
@@ -294,7 +281,12 @@ export function mapPaymentIntentToIntentRow(
     rail: instrument || '—',
     status,
     match,
-    lastUpdated: created.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+    lastUpdated: created.toLocaleTimeString('en-IN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: DEFAULT_TENANT_BUSINESS_TIMEZONE,
+    }),
+    lastUpdatedIso: apiTrimmedString(intent.created_at) || apiTrimmedString(intent.intended_execution_at),
     paymentPartner: instrument || '—',
     bank: instrument || '—',
     paymentMethodDetail,
@@ -341,6 +333,7 @@ export function mapDlqToFailureRow(row: ApiDlqRow, opts?: { inManualReviewQueue?
     failureReason: apiTrimmedString(row.error_detail) || apiTrimmedString(row.reason_code) || '—',
     failureStage,
     lastUpdated: formatDlqUpdatedAt(row.created_at),
+    lastUpdatedIso: apiTrimmedString(row.created_at),
     action: row.replayable ? 'Retry' : 'Investigate',
     dlqStatus: row.dlq_status,
     dlqStatusLabel: formatDlqStatusLabel(row.dlq_status),

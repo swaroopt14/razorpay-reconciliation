@@ -47,6 +47,7 @@ import { getBatchContractKpis } from '@/services/payout-command/prod-api/getInte
 import { parseMatchConfidence } from '../settlement-journal/selectors/resolveSettlementIntelligenceKpis'
 import { LiveDataHint } from '../shared'
 import { useRegisterPayoutPageActions } from '../layout/PayoutPageActionsContext'
+import { useTenantBusinessTimezone } from '@/services/payout-command/useTenantBusinessTimezone'
 
 type SettlementActivityTab = 'observations' | 'parseErrors'
 const SETTLEMENT_PAGE_SUMMARY = dockItems.find((d) => d.id === 'settlement')?.summary ?? ''
@@ -138,6 +139,7 @@ function SettlementJournalSurfaceContent({
   const { mode } = useEnvironment()
   const batchCommandCenterHref = payoutBatchCommandCenterHref(mode === 'sandbox')
   const { kpis } = useSettlementBatchIntelligence(selectedClientBatchId, tenantReady)
+  const { timeZone: businessTimeZone } = useTenantBusinessTimezone()
 
   const [tableSearch, setTableSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<'All' | string>('All')
@@ -292,7 +294,12 @@ function SettlementJournalSurfaceContent({
     const scopedRows = observationRows.filter((row) => {
       const bySearch = !q || observationSearchHaystack(row).includes(q)
       const byStatus = statusFilter === 'All' || row.status === statusFilter
-      const byDate = observationInDateRange(row.observationTime, dateRange)
+      const byDate = observationInDateRange(
+        row.observationTime,
+        dateRange,
+        businessTimeZone,
+        row.observationAtIso,
+      )
       const byBank = !bankQ || row.bankRef.toLowerCase().includes(bankQ)
       const byClient = !clientQ || row.clientRef.toLowerCase().includes(clientQ)
       const bySettlementBatch =
@@ -330,6 +337,7 @@ function SettlementJournalSurfaceContent({
     filterSettlementBatchId,
     sourceSystemFilter,
     amountRangeFilter,
+    businessTimeZone,
   ])
 
   const serverPagination = !filtersActive
