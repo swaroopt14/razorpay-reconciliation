@@ -58,7 +58,7 @@ spec:
             - name: KAFKA_LISTENER_NAME_SASL__PLAINTEXT_SCRAM__SHA__512_SASL_JAAS_CONFIG
               valueFrom:
                 secretKeyRef:
-                  name: zord-kafka-secrets
+                  name: zord-app-secrets
                   key: KAFKA_BROKER_JAAS_CONFIG
 
             # ── Topic governance ─────────────────────────────────────────────
