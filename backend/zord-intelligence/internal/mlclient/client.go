@@ -117,7 +117,12 @@ func (c *Client) InvokeIsolationForest(ctx context.Context, req IFRequest) (IFRe
 	if level == "" {
 		level = "LOW"
 	}
-	return IFResult{Score: score, Level: level, AnomalyType: anomalyType}, nil
+	return IFResult{
+		Score:       score,
+		Level:       level,
+		AnomalyType: anomalyType,
+		Advisory:    result.AdvisoryMetadata(),
+	}, nil
 }
 
 // InvokeZScore sends a Z-score request and blocks until a result arrives.
@@ -142,7 +147,14 @@ func (c *Client) InvokeZScore(ctx context.Context, req ZScoreRequest) (ZScoreRes
 	if level == "" {
 		level = "INSUFFICIENT_DATA"
 	}
-	return ZScoreResult{Score: score, Level: level, ZScore: zScore, Mean: mean, StdDev: stdDev}, nil
+	return ZScoreResult{
+		Score:    score,
+		Level:    level,
+		ZScore:   zScore,
+		Mean:     mean,
+		StdDev:   stdDev,
+		Advisory: result.AdvisoryMetadata(),
+	}, nil
 }
 
 // InvokeLogisticRegression sends an LR predict request and blocks until a result.
@@ -169,7 +181,11 @@ func (c *Client) InvokeLogisticRegression(ctx context.Context, req LRRequest) (L
 	if level == "" {
 		level = "LOW"
 	}
-	return LRResult{Probability: prob, Level: level}, nil
+	return LRResult{
+		Probability: prob,
+		Level:       level,
+		Advisory:    result.AdvisoryMetadata(),
+	}, nil
 }
 
 // InvokeRCAClustering sends payment candidates to the Python service for HDBSCAN
@@ -202,6 +218,7 @@ func (c *Client) InvokeRCAClustering(ctx context.Context, req RCARequest) (RCACl
 		log.Printf("mlclient: InvokeRCAClustering unmarshal tenant=%s: %v", req.TenantID, err)
 		return FallbackRCAResult(), err
 	}
+	clusterResult.Advisory = result.AdvisoryMetadata()
 	return clusterResult, nil
 }
 
@@ -262,6 +279,7 @@ func (c *Client) InvokeLeakagePrediction(
 		FallbackFeatureCount:  fallbackFeatureCount,
 		FallbackFeatures:      fallbackFeatures,
 		FallbackSegmentLevel:  fallbackSegmentLevel,
+		Advisory:              result.AdvisoryMetadata(),
 	}, nil
 }
 
@@ -341,6 +359,9 @@ func (c *Client) roundTrip(
 	case result := <-ch:
 		if result.Error != "" {
 			return result, fmt.Errorf("ml-service returned error: %s", result.Error)
+		}
+		if err := ValidateAdvisoryResult(result); err != nil {
+			return result, fmt.Errorf("unsafe ML result rejected: %w", err)
 		}
 		return result, nil
 	case <-timeoutCtx.Done():

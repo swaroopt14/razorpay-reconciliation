@@ -17,6 +17,7 @@ import time
 from typing import Optional
 
 from app import config
+from app.advisory import magnitude_contributions
 from app.exceptions import NonRetryableMessageError, UnsupportedEventTypeError
 from app.event_receipts import EventReceiptRepo
 from app.model_contracts import canonical_sha256, file_sha256, version_digest
@@ -246,6 +247,9 @@ class MLService:
             missing_ref_rate=float(raw.get("missing_ref_rate", 0.0)),
         )
         result = isolation_forest.score(features, history)
+        contributions = magnitude_contributions(
+            isolation_forest.FEATURE_NAMES, features
+        )
 
         return MLResult(
             event_id=req.event_id,
@@ -253,6 +257,16 @@ class MLService:
             tenant_id=req.tenant_id,
             model_outputs=result,
             model_version=config.MODEL_VERSION_IF,
+            prediction_confidence=(
+                0.0
+                if result["level"] == "INSUFFICIENT_DATA"
+                else abs(float(result["score"]) - 0.5) * 2.0
+            ),
+            calibration={
+                "status": "NOT_CALIBRATED",
+                "method": "isolation_score_range_normalization",
+            },
+            feature_contributions=contributions,
         )
 
     def _handle_zscore(self, req: MLRequest) -> MLResult:
@@ -268,6 +282,21 @@ class MLService:
             tenant_id=req.tenant_id,
             model_outputs=result,
             model_version=config.MODEL_VERSION_ZSCORE,
+            prediction_confidence=(
+                0.0
+                if result["level"] == "INSUFFICIENT_DATA"
+                else min(abs(float(result["z_score"])) / 3.0, 1.0)
+            ),
+            calibration={
+                "status": "RULE_CALIBRATED",
+                "method": "three_sigma_thresholds",
+            },
+            feature_contributions=[{
+                "feature": "current_value_vs_historical_mean",
+                "value": current_value,
+                "contribution": float(result["z_score"]),
+                "method": "standardized_deviation",
+            }],
         )
 
     def _handle_lr_predict(self, req: MLRequest) -> MLResult:
@@ -299,6 +328,12 @@ class MLService:
         )
         prob = self._lr_model.predict(features)
         level = logistic_regression.predict_level(prob)
+        feature_names = [
+            "ambiguity_rate",
+            "provider_ref_missing_rate",
+            "low_confidence_proxy",
+            "value_at_risk_rate",
+        ]
 
         return MLResult(
             event_id=req.event_id,
@@ -310,6 +345,22 @@ class MLService:
                 if self._promotion(MODEL_LR)
                 else config.MODEL_VERSION_LR
             ),
+            prediction_confidence=abs(prob - 0.5) * 2.0,
+            calibration={
+                "status": "NOT_CALIBRATED",
+                "method": "raw_logistic_probability",
+            },
+            feature_contributions=[
+                {
+                    "feature": name,
+                    "value": feature,
+                    "contribution": weight * feature,
+                    "method": "logit_weight_times_feature",
+                }
+                for name, feature, weight in zip(
+                    feature_names, features, self._lr_model.weights
+                )
+            ],
         )
 
     def _handle_lr_train(self, req: MLRequest) -> None:
@@ -461,6 +512,18 @@ class MLService:
             model_outputs["noise_points"],
             req.tenant_id,
         )
+        clusters = list(model_outputs.get("top_clusters") or [])
+        clustered_points = sum(int(cluster.get("size", 0)) for cluster in clusters)
+        prediction_confidence = (
+            sum(
+                float(cluster.get("membership_confidence", 0.0))
+                * int(cluster.get("size", 0))
+                for cluster in clusters
+            ) / clustered_points
+            if clustered_points > 0
+            else 0.0
+        )
+
 
         return MLResult(
             event_id=req.event_id,
@@ -472,6 +535,23 @@ class MLService:
                 if self._promotion(MODEL_RCA)
                 else config.MODEL_VERSION_RCA
             ),
+            prediction_confidence=prediction_confidence,
+            calibration={
+                "status": "NOT_CALIBRATED",
+                "method": "mean_membership_strength",
+            },
+            feature_contributions=[
+                {
+                    "feature": f"cluster:{cluster.get('cluster_code', 'UNKNOWN')}",
+                    "value": float(cluster.get("share_pct", 0.0)),
+                    "contribution": (
+                        float(cluster.get("membership_confidence", 0.0))
+                        * float(cluster.get("share_pct", 0.0)) / 100.0
+                    ),
+                    "method": "cluster_share_times_membership",
+                }
+                for cluster in clusters
+            ],
         )
 
     def _handle_leakage_predict(self, req: MLRequest) -> MLResult:
@@ -499,6 +579,22 @@ class MLService:
                 self._promotion(MODEL_LEAKAGE).version
                 if self._promotion(MODEL_LEAKAGE)
                 else config.MODEL_VERSION_LEAKAGE
+            ),
+            prediction_confidence=(
+                max(
+                    0.0,
+                    1.0 - float(result.get("fallback_feature_count", 0))
+                    / max(len(leakage_prediction.FEATURE_COLUMNS), 1),
+                )
+                if result.get("model_ready", False)
+                else 0.0
+            ),
+            calibration={
+                "status": "NOT_CALIBRATED",
+                "method": "feature_completeness_proxy",
+            },
+            feature_contributions=list(
+                result.get("feature_contributions") or []
             ),
         )
 

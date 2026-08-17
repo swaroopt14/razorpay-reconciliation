@@ -8,7 +8,7 @@ from typing import Any
 import joblib
 import numpy as np
 import pandas as pd
-from catboost import CatBoostRegressor
+from catboost import CatBoostRegressor, Pool
 
 from app import config
 from app.leakage_training_repo import LeakageTrainingDataset, LeakageTrainingRepo
@@ -102,6 +102,9 @@ class LeakagePredictionModel:
             }
 
         frame, diagnostics = self._frame_from_features(raw_features, bundle)
+        feature_contributions = self._feature_contributions(
+            model, frame, list(bundle.get("categorical_columns") or CATEGORICAL_COLUMNS)
+        )
         rate = float(np.clip(model.predict(frame)[0], 0.0, 1.0))
         intended = float(frame["batch_total_intended_amount_minor"].iloc[0])
         amount = rate * max(intended, 0.0)
@@ -116,7 +119,46 @@ class LeakagePredictionModel:
             "fallback_feature_count": diagnostics["fallback_feature_count"],
             "fallback_features": diagnostics["fallback_features"],
             "fallback_segment_level": diagnostics["fallback_segment_level"],
+            "feature_contributions": feature_contributions,
         }
+
+    @staticmethod
+    def _feature_contributions(
+        model: Any,
+        frame: pd.DataFrame,
+        categorical_columns: list[str],
+    ) -> list[dict[str, Any]]:
+        """Return the ten largest local CatBoost SHAP contributions."""
+        try:
+            pool = Pool(frame, cat_features=categorical_columns)
+            shap_values = model.get_feature_importance(
+                data=pool, type="ShapValues"
+            )[0]
+            contributions: list[dict[str, Any]] = []
+            for name, contribution in zip(frame.columns, shap_values[:-1]):
+                raw_value = frame[name].iloc[0]
+                value: Any = (
+                    float(raw_value)
+                    if isinstance(raw_value, (int, float, np.number))
+                    else str(raw_value)
+                )
+                contributions.append({
+                    "feature": str(name),
+                    "value": value,
+                    "contribution": float(contribution),
+                    "method": "catboost_shap_value",
+                })
+            return sorted(
+                contributions,
+                key=lambda item: abs(float(item["contribution"])),
+                reverse=True,
+            )[:10]
+        except Exception as exc:
+            logger.warning(
+                "leakage_model: local feature contributions unavailable: %s",
+                exc,
+            )
+            return []
 
     def maybe_retrain_async(self, batch_id: str = "", tenant_id: str = "") -> None:
         if not self._repo.is_configured():

@@ -26,19 +26,26 @@ type MLRequest struct {
 
 // MLResult is the envelope consumed from ml.result.events.
 type MLResult struct {
-	EventID        string                 `json:"event_id"`
-	EventType      string                 `json:"event_type"`
-	TenantID       string                 `json:"tenant_id"`
-	ModelOutputs   map[string]interface{} `json:"model_outputs"`
-	ModelVersion   string                 `json:"model_version"`
-	ProcessedAt    int64                  `json:"processed_at"`
-	Error          string                 `json:"error,omitempty"`
-	PredictionID   string                 `json:"prediction_id,omitempty"`
-	SchemaVersion  string                 `json:"schema_version,omitempty"`
-	RequestHash    string                 `json:"request_hash,omitempty"`
-	ModelDigest    string                 `json:"model_digest,omitempty"`
-	ModelReady     bool                   `json:"model_ready"`
-	FallbackReason string                 `json:"fallback_reason,omitempty"`
+	EventID                   string                 `json:"event_id"`
+	EventType                 string                 `json:"event_type"`
+	TenantID                  string                 `json:"tenant_id"`
+	ModelOutputs              map[string]interface{} `json:"model_outputs"`
+	ModelVersion              string                 `json:"model_version"`
+	ProcessedAt               int64                  `json:"processed_at"`
+	Error                     string                 `json:"error,omitempty"`
+	PredictionID              string                 `json:"prediction_id,omitempty"`
+	SchemaVersion             string                 `json:"schema_version,omitempty"`
+	RequestHash               string                 `json:"request_hash,omitempty"`
+	ModelDigest               string                 `json:"model_digest,omitempty"`
+	ModelReady                bool                   `json:"model_ready"`
+	FallbackReason            string                 `json:"fallback_reason,omitempty"`
+	OutputKind                string                 `json:"output_kind"`
+	DecisionAuthority         string                 `json:"decision_authority"`
+	MayActuate                bool                   `json:"may_actuate"`
+	DeterministicRuleRequired bool                   `json:"deterministic_rule_required"`
+	PredictionConfidence      float64                `json:"prediction_confidence"`
+	Calibration               map[string]interface{} `json:"calibration"`
+	FeatureContributions      []FeatureContribution  `json:"feature_contributions"`
 }
 
 // ── Per-model typed request/result structs ────────────────────────────────────
@@ -60,6 +67,7 @@ type IFResult struct {
 	Score       float64
 	Level       string
 	AnomalyType string
+	Advisory    AdvisoryMetadata
 }
 
 // ZScoreRequest carries inputs for Z-score anomaly detection.
@@ -71,11 +79,12 @@ type ZScoreRequest struct {
 
 // ZScoreResult mirrors zscore.Result from the old Go implementation.
 type ZScoreResult struct {
-	Score  float64
-	Level  string
-	ZScore float64
-	Mean   float64
-	StdDev float64
+	Score    float64
+	Level    string
+	ZScore   float64
+	Mean     float64
+	StdDev   float64
+	Advisory AdvisoryMetadata
 }
 
 // LRRequest carries inputs for Logistic Regression prediction.
@@ -92,6 +101,7 @@ type LRRequest struct {
 type LRResult struct {
 	Probability float64
 	Level       string
+	Advisory    AdvisoryMetadata
 }
 
 // LRTrainRequest carries inputs for one online SGD training step (fire-and-forget).
@@ -185,23 +195,27 @@ type RCARequest struct {
 
 // RCAClusterSummary is one cluster in the result, fully enriched from the taxonomy.
 type RCAClusterSummary struct {
-	ClusterCode           string   `json:"cluster_code"`
-	ClusterLabel          string   `json:"cluster_label"`
-	Category              string   `json:"category"`
-	Severity              string   `json:"severity"`
-	RecommendedAction     string   `json:"recommended_action"`
-	UserExplanation       string   `json:"user_explanation"`
-	BusinessImpact        string   `json:"business_impact"`
-	TriggerCondition      string   `json:"trigger_condition"`
-	DefaultActionContract string   `json:"default_action_contract"`
-	IntelligenceLayer     string   `json:"intelligence_layer"`
-	InternalOnly          bool     `json:"internal_only"`
-	Size                  int      `json:"size"`
-	AffectedAmountMinor   int64    `json:"affected_amount_minor"`
-	SharePct              float64  `json:"share_pct"`
-	MembershipConfidence  float64  `json:"membership_confidence"`
-	RepresentativeReasons []string `json:"representative_reasons"`
-	TopScope              string   `json:"top_scope"`
+	ClusterCode               string   `json:"cluster_code"`
+	ClusterLabel              string   `json:"cluster_label"`
+	Category                  string   `json:"category"`
+	RecommendationNature      string   `json:"recommendation_nature"`
+	DecisionAuthority         string   `json:"decision_authority"`
+	MayActuate                bool     `json:"may_actuate"`
+	DeterministicRuleRequired bool     `json:"deterministic_rule_required"`
+	Severity                  string   `json:"severity"`
+	RecommendedAction         string   `json:"recommended_action"`
+	UserExplanation           string   `json:"user_explanation"`
+	BusinessImpact            string   `json:"business_impact"`
+	TriggerCondition          string   `json:"trigger_condition"`
+	DefaultActionContract     string   `json:"default_action_contract"`
+	IntelligenceLayer         string   `json:"intelligence_layer"`
+	InternalOnly              bool     `json:"internal_only"`
+	Size                      int      `json:"size"`
+	AffectedAmountMinor       int64    `json:"affected_amount_minor"`
+	SharePct                  float64  `json:"share_pct"`
+	MembershipConfidence      float64  `json:"membership_confidence"`
+	RepresentativeReasons     []string `json:"representative_reasons"`
+	TopScope                  string   `json:"top_scope"`
 }
 
 // RCAClusterResult is the full response from the Python RCA clustering service.
@@ -213,6 +227,7 @@ type RCAClusterResult struct {
 	TotalPoints              int                 `json:"total_points"`
 	TotalAffectedAmountMinor int64               `json:"total_affected_amount_minor"`
 	FeatureContractVersion   string              `json:"feature_contract_version"`
+	Advisory                 AdvisoryMetadata    `json:"advisory"`
 }
 
 // LeakagePredictionRequest carries the batch-level intent-safe feature row for
@@ -235,6 +250,7 @@ type LeakagePredictionResult struct {
 	FallbackFeatureCount  int
 	FallbackFeatures      []string
 	FallbackSegmentLevel  string
+	Advisory              AdvisoryMetadata
 }
 
 // LeakageTrainRequest signals that a newly labeled leakage batch is now available

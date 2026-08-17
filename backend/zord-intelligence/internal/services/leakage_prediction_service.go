@@ -139,6 +139,7 @@ func (s *LeakagePredictionService) CaptureBatchOnce(
 
 		explanationJSON, _ := json.Marshal(map[string]any{
 			"algorithm":                leakagePredictionModelID,
+			"advisory":                 result.Advisory,
 			"feature_contract_version": leakageFeatureVersion,
 			"risk_tier":                result.RiskTier,
 			"fallback_feature_count":   result.FallbackFeatureCount,
@@ -156,7 +157,7 @@ func (s *LeakagePredictionService) CaptureBatchOnce(
 			PredictionFamily: "LEAKAGE",
 			PredictionValue:  rate.StringFixed(6),
 			PredictionScore:  clampLeakage01(result.PredictedLeakageRate),
-			Confidence:       1.0,
+			Confidence:       result.Advisory.Confidence,
 			FeatureRowID:     &featureRef,
 			ExplanationJSON:  explanationJSON,
 			CreatedAt:        predictedAt,

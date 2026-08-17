@@ -9,6 +9,8 @@ from app.model_contracts import canonical_sha256
 
 CURRENT_SCHEMA_VERSION = "1"
 SUPPORTED_SCHEMA_VERSIONS = {CURRENT_SCHEMA_VERSION}
+OUTPUT_KIND_ADVISORY = "ADVISORY_PREDICTION"
+DECISION_AUTHORITY_ADVISORY = "ADVISORY_ONLY"
 
 # Event type constants — must match mlclient/schemas.go exactly
 EVENT_TYPE_IF_SCORE = "ISOLATION_FOREST_SCORE"
@@ -130,10 +132,29 @@ class MLResult:
     model_digest: str = ""
     model_ready: bool = True
     fallback_reason: Optional[str] = None
+    output_kind: str = OUTPUT_KIND_ADVISORY
+    decision_authority: str = DECISION_AUTHORITY_ADVISORY
+    may_actuate: bool = False
+    deterministic_rule_required: bool = True
+    prediction_confidence: float = 0.0
+    calibration: dict[str, Any] = field(default_factory=lambda: {
+        "status": "NOT_EVALUATED",
+        "method": "none",
+    })
+    feature_contributions: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.prediction_id:
             self.prediction_id = self.event_id
+        if self.output_kind != OUTPUT_KIND_ADVISORY:
+            raise ValueError("ML results must be labeled ADVISORY_PREDICTION")
+        if self.decision_authority != DECISION_AUTHORITY_ADVISORY:
+            raise ValueError("ML results must have ADVISORY_ONLY authority")
+        if self.may_actuate or not self.deterministic_rule_required:
+            raise ValueError("ML results cannot actuate without a deterministic rule")
+        self.prediction_confidence = max(
+            0.0, min(1.0, float(self.prediction_confidence))
+        )
 
     def to_dict(self) -> dict:
         return asdict(self)

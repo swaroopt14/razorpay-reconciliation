@@ -9,6 +9,7 @@ func FallbackIFResult() IFResult {
 		Score:       0.5,
 		Level:       "INSUFFICIENT_DATA",
 		AnomalyType: "ml_service_unavailable",
+		Advisory:    UnavailableAdvisory("ML_SERVICE_UNAVAILABLE"),
 	}
 }
 
@@ -17,11 +18,12 @@ func FallbackIFResult() IFResult {
 // response when history is below MinSamples — no anomaly alert is raised.
 func FallbackZScoreResult() ZScoreResult {
 	return ZScoreResult{
-		Score:  0.0,
-		Level:  "INSUFFICIENT_DATA",
-		ZScore: 0.0,
-		Mean:   0.0,
-		StdDev: 0.0,
+		Score:    0.0,
+		Level:    "INSUFFICIENT_DATA",
+		ZScore:   0.0,
+		Mean:     0.0,
+		StdDev:   0.0,
+		Advisory: UnavailableAdvisory("ML_SERVICE_UNAVAILABLE"),
 	}
 }
 
@@ -32,6 +34,7 @@ func FallbackLRResult() LRResult {
 	return LRResult{
 		Probability: 0.5,
 		Level:       "MEDIUM",
+		Advisory:    UnavailableAdvisory("ML_SERVICE_UNAVAILABLE"),
 	}
 }
 
@@ -42,6 +45,7 @@ func FallbackRCAResult() RCAClusterResult {
 	return RCAClusterResult{
 		TopClusters:            []RCAClusterSummary{},
 		FeatureContractVersion: "rca_v1",
+		Advisory:               UnavailableAdvisory("ML_SERVICE_UNAVAILABLE"),
 	}
 }
 
@@ -54,5 +58,6 @@ func FallbackLeakagePredictionResult() LeakagePredictionResult {
 		RiskTier:              "",
 		ModelReady:            false,
 		Status:                "UNAVAILABLE",
+		Advisory:              UnavailableAdvisory("ML_SERVICE_UNAVAILABLE"),
 	}
 }

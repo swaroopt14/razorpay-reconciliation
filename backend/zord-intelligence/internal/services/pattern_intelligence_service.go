@@ -94,9 +94,10 @@ type PatternSnapshot struct {
 	RiskSignals []BatchRiskSignal `json:"risk_signals"`
 	RiskTier    string            `json:"risk_tier"`
 
-	BatchAnomalyScore float64 `json:"batch_anomaly_score"`
-	AnomalyLevel      string  `json:"anomaly_level"`
-	AnomalyType       string  `json:"anomaly_type"`
+	BatchAnomalyScore float64                   `json:"batch_anomaly_score"`
+	AnomalyLevel      string                    `json:"anomaly_level"`
+	AnomalyType       string                    `json:"anomaly_type"`
+	MLAdvisory        mlclient.AdvisoryMetadata `json:"ml_advisory"`
 
 	PrepareAndSignRecommended bool   `json:"prepare_and_sign_recommended"`
 	RecommendedAction         string `json:"recommended_action,omitempty"`
@@ -106,18 +107,18 @@ type PatternSnapshot struct {
 	SourceQualityPatterns []SourceQualityPattern `json:"source_quality_patterns,omitempty"`
 	// WeakestSourceSystem: the source system with the highest combined issue rate.
 	// Pre-computed for fast recommendation trigger evaluation.
-	WeakestSourceSystem        string  `json:"weakest_source_system,omitempty"`
+	WeakestSourceSystem           string  `json:"weakest_source_system,omitempty"`
 	WeakestSourceManualReviewRate float64 `json:"weakest_source_manual_review_rate,omitempty"`
-	WeakestSourceMissingRefRate  float64 `json:"weakest_source_missing_ref_rate,omitempty"`
+	WeakestSourceMissingRefRate   float64 `json:"weakest_source_missing_ref_rate,omitempty"`
 
 	// ── Section B: Bank/PSP/provider reliability patterns ────────────────────
 	ProviderQualityPatterns []ProviderQualityPattern `json:"provider_quality_patterns,omitempty"`
 	WeakestProviderID       string                   `json:"weakest_provider_id,omitempty"`
 
 	// ── Section C: Ambiguity pattern intelligence ─────────────────────────────
-	AmbiguityBySource      []AmbiguityBySourcePattern `json:"ambiguity_by_source,omitempty"`
-	TopAmbiguousSourceSystem string                   `json:"top_ambiguous_source_system,omitempty"`
-	TopAmbiguousSourceRate   float64                  `json:"top_ambiguous_source_rate,omitempty"`
+	AmbiguityBySource        []AmbiguityBySourcePattern `json:"ambiguity_by_source,omitempty"`
+	TopAmbiguousSourceSystem string                     `json:"top_ambiguous_source_system,omitempty"`
+	TopAmbiguousSourceRate   float64                    `json:"top_ambiguous_source_rate,omitempty"`
 
 	// ── Section D: Leakage / variance pattern intelligence ───────────────────
 	UnexplainedVarianceAmountMinor  decimal.Decimal `json:"unexplained_variance_amount_minor,omitempty"`
@@ -133,9 +134,9 @@ type PatternSnapshot struct {
 	TopManualReviewReasons []ReasonBreakdown `json:"top_manual_review_reasons,omitempty"`
 
 	// ── Section G: Evidence weakness patterns ────────────────────────────────
-	MissingLeafRate     float64 `json:"missing_leaf_rate,omitempty"`
+	MissingLeafRate      float64 `json:"missing_leaf_rate,omitempty"`
 	EvidencePackCoverage float64 `json:"evidence_pack_coverage,omitempty"`
-	WeakEvidenceRate    float64 `json:"weak_evidence_rate,omitempty"`
+	WeakEvidenceRate     float64 `json:"weak_evidence_rate,omitempty"`
 
 	// ── Section H: Settlement timing / SLA patterns ───────────────────────────
 	SettlementDelayP50Days float64 `json:"settlement_delay_p50_days,omitempty"`
@@ -151,7 +152,7 @@ type PatternSnapshot struct {
 type SourceQualityPattern struct {
 	SourceSystem         string          `json:"source_system"`
 	TotalIntentCount     int             `json:"total_intent_count"`
-	BatchCount           int             `json:"batch_count"`           // approximate distinct batches from this source
+	BatchCount           int             `json:"batch_count"` // approximate distinct batches from this source
 	ManualReviewRate     float64         `json:"manual_review_rate"`
 	MissingClientRefRate float64         `json:"missing_client_ref_rate"`
 	LowMatchabilityRate  float64         `json:"low_matchability_rate"`
@@ -177,13 +178,13 @@ type ProviderQualityPattern struct {
 // AmbiguityBySourcePattern summarises ambiguity signals per source system.
 // Used in PatternSnapshot.AmbiguityBySource (section C).
 type AmbiguityBySourcePattern struct {
-	SourceSystem        string          `json:"source_system"`
-	AmbiguityRate       float64         `json:"ambiguity_rate"`
-	CollisionRate       float64         `json:"collision_rate"`
-	LowConfidenceRate   float64         `json:"low_confidence_rate"`
-	ValueAtRiskMinor    decimal.Decimal `json:"value_at_risk_minor"`
-	TotalDecisions      int             `json:"total_decisions"`
-	Severity            string          `json:"severity"`
+	SourceSystem      string          `json:"source_system"`
+	AmbiguityRate     float64         `json:"ambiguity_rate"`
+	CollisionRate     float64         `json:"collision_rate"`
+	LowConfidenceRate float64         `json:"low_confidence_rate"`
+	ValueAtRiskMinor  decimal.Decimal `json:"value_at_risk_minor"`
+	TotalDecisions    int             `json:"total_decisions"`
+	Severity          string          `json:"severity"`
 }
 
 // ReasonBreakdown summarises manual review events by reason code.
@@ -249,6 +250,7 @@ func (s *PatternIntelligenceService) ComputeAndSave(
 		snap.BatchAnomalyScore = 0.5
 		snap.AnomalyLevel = "INSUFFICIENT_DATA"
 		snap.AnomalyType = "not_enough_history"
+		snap.MLAdvisory = mlclient.UnavailableAdvisory("INSUFFICIENT_DATA")
 		// Write synchronously — no ML call needed
 		return s.finalizePatternSnapshot(ctx, tenantID, batchID, snap, inputs, batchHealth, windowStart, windowEnd)
 	}
@@ -267,10 +269,7 @@ func (s *PatternIntelligenceService) ComputeAndSave(
 		if ifErr != nil {
 			log.Printf("pattern_svc: InvokeIsolationForestAsync failed tenant=%s: %v", tenantID, ifErr)
 		}
-		riskHint := patternClamp01((inputs.AmbiguityRate + inputs.VarianceRate + math.Max(inputs.UnresolvedRatio, inputs.MissingRefRate) + (1.0 - inputs.SettlementRatio)) / 4.0)
-		snap.BatchAnomalyScore = patternClamp01((ifResult.Score + riskHint) / 2.0)
-		snap.AnomalyLevel = levelFromScore(snap.BatchAnomalyScore)
-		snap.AnomalyType = ifResult.AnomalyType
+		snap = applyPatternMLAdvisory(snap, ifResult)
 
 		if finalErr := s.finalizePatternSnapshot(ctx, tenantID, batchID, snap, inputs, batchHealth, windowStart, windowEnd); finalErr != nil {
 			log.Printf("pattern_svc: finalizePatternSnapshot async failed tenant=%s batch=%s: %v",
@@ -279,6 +278,16 @@ func (s *PatternIntelligenceService) ComputeAndSave(
 	})
 
 	return nil
+}
+
+func applyPatternMLAdvisory(
+	snap PatternSnapshot, result mlclient.IFResult,
+) PatternSnapshot {
+	snap.BatchAnomalyScore = patternClamp01(result.Score)
+	snap.AnomalyLevel = result.Level
+	snap.AnomalyType = result.AnomalyType
+	snap.MLAdvisory = result.Advisory
+	return snap
 }
 
 // finalizePatternSnapshot writes the PATTERN snapshot and all related records.
@@ -466,7 +475,7 @@ func (s *PatternIntelligenceService) persistMLPrediction(
 ) {
 	explanation := map[string]any{
 		"algorithm":     "isolation_forest_v1",
-		"calibration":   "if_plus_risk_hint",
+		"advisory":      snap.MLAdvisory,
 		"anomaly_type":  snap.AnomalyType,
 		"anomaly_level": snap.AnomalyLevel,
 		"features": map[string]any{
@@ -490,7 +499,7 @@ func (s *PatternIntelligenceService) persistMLPrediction(
 		PredictionFamily: "PATTERN",
 		PredictionValue:  snap.AnomalyLevel,
 		PredictionScore:  snap.BatchAnomalyScore,
-		Confidence:       1.0,
+		Confidence:       snap.MLAdvisory.Confidence,
 		ExplanationJSON:  expJSON,
 		SnapshotID:       &snapID,
 		CreatedAt:        time.Now().UTC(),
@@ -636,11 +645,11 @@ func levelFromScore(score float64) string {
 
 // PatternTenantKPISnapshot is the TENANT-scoped pattern snapshot holding P2/P3/P6.
 type PatternTenantKPISnapshot struct {
-	DuplicateRiskRate            float64 `json:"duplicate_risk_rate"`             // P2
-	DuplicateRiskCount           int     `json:"duplicate_risk_count"`            // P2 numerator
-	TotalIntentCount             int     `json:"total_intent_count"`              // P2 denominator
-	SameBeneficiaryAmountDensity float64 `json:"same_beneficiary_amount_density"` // P3
-	SettlementDelayP95Days       float64 `json:"settlement_delay_p95_days"`       // P6
+	DuplicateRiskRate            float64   `json:"duplicate_risk_rate"`             // P2
+	DuplicateRiskCount           int       `json:"duplicate_risk_count"`            // P2 numerator
+	TotalIntentCount             int       `json:"total_intent_count"`              // P2 denominator
+	SameBeneficiaryAmountDensity float64   `json:"same_beneficiary_amount_density"` // P3
+	SettlementDelayP95Days       float64   `json:"settlement_delay_p95_days"`       // P6
 	ComputedAt                   time.Time `json:"computed_at"`
 }
 
@@ -666,9 +675,9 @@ func (s *PatternIntelligenceService) computeAndSaveTenantPatternKPIs(
 		ComputedAt: time.Now().UTC(),
 	}
 	if p2p6 != nil {
-		kpiSnap.DuplicateRiskRate  = p2p6.DuplicateRiskRate
+		kpiSnap.DuplicateRiskRate = p2p6.DuplicateRiskRate
 		kpiSnap.DuplicateRiskCount = p2p6.DuplicateRiskCount
-		kpiSnap.TotalIntentCount   = p2p6.TotalIntentCount
+		kpiSnap.TotalIntentCount = p2p6.TotalIntentCount
 		kpiSnap.SettlementDelayP95Days = p2p6.SettlementDelayP95Days
 	}
 
@@ -686,9 +695,9 @@ func (s *PatternIntelligenceService) computeAndSaveTenantPatternKPIs(
 	// ── Build enriched PatternSnapshot with all 8 categories ─────────────────
 	enriched := PatternSnapshot{
 		// Carry forward P2/P3/P6 fields into the multi-dimensional snapshot
-		DuplicateRiskRate:            kpiSnap.DuplicateRiskRate,
-		SettlementDelayP95Days:       kpiSnap.SettlementDelayP95Days,
-		ComputedAt:                   time.Now().UTC(),
+		DuplicateRiskRate:      kpiSnap.DuplicateRiskRate,
+		SettlementDelayP95Days: kpiSnap.SettlementDelayP95Days,
+		ComputedAt:             time.Now().UTC(),
 	}
 
 	// ── Section A: Source quality patterns ────────────────────────────────────
