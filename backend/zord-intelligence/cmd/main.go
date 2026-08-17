@@ -116,6 +116,7 @@ func main() {
 	actionRepo := persistence.NewActionContractRepo(pool)
 	outboxRepo := persistence.NewOutboxRepo(pool)
 	slaRepo := persistence.NewSLATimerRepo(pool)
+	intelDLQLocalRepo := persistence.NewIntelligenceDLQLocalRepo(pool) // INTEL-07: local fallback for the inbound Kafka DLQ hand-off
 
 	// ── PHASE 4 & 7: New intelligence repos ───────────────────────────────
 	snapshotRepo := persistence.NewIntelligenceSnapshotRepo(pool)
@@ -225,6 +226,9 @@ func main() {
 	// Phase 2 gap-fix pass: clarification doc §11/§14 scheduled jobs.
 	consistencyWorker := worker.NewProjectionConsistencyWorker(projRepo)
 	shadowDiffWorker := worker.NewShadowDiffWorker(batchRepo, policyRepo)
+	// INTEL-07: replays intelligence_dlq_local_receipts to cfg.TopicIntelligenceDLQ
+	// once Kafka is reachable — see kafka.StartConsumers below for the write side.
+	intelDLQReplayWorker := worker.NewIntelligenceDLQReplayWorker(intelDLQLocalRepo, producer, cfg)
 
 	// ── Step 8: Create HTTP handlers ──────────────────────────────────────
 	healthHandler := handlers.NewHealthHandler(pool)
@@ -312,12 +316,16 @@ func main() {
 	go cronWorker.Start(ctx)
 	go consistencyWorker.Start(ctx)
 	go shadowDiffWorker.Start(ctx)
-	log.Println("main: background workers started (outbox + sla + policy-cron)")
+	go intelDLQReplayWorker.Start(ctx)
+	log.Println("main: background workers started (outbox + sla + policy-cron + intel-dlq-replay)")
 
 	// ── Step 13: Start Kafka consumers ────────────────────────────────────
-	// producer is reused here (P0-02) so a permanently-failed inbound event
-	// can be published to cfg.TopicIntelligenceDLQ before its offset commits.
-	kafkapkg.StartConsumers(ctx, cfg, kafkaIngestionHandler, producer)
+	// intelDLQLocalRepo is passed here (INTEL-07) so a permanently-failed
+	// inbound event's failure record is written locally before its offset
+	// commits — decoupled from Kafka's health. intelDLQReplayWorker (started
+	// above) is what eventually gets that record onto
+	// cfg.TopicIntelligenceDLQ.
+	kafkapkg.StartConsumers(ctx, cfg, kafkaIngestionHandler, intelDLQLocalRepo)
 	log.Println("main: kafka consumers started")
 
 	// ── Step 14: Start HTTP server ────────────────────────────────────────
