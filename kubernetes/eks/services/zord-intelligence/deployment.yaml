@@ -77,6 +77,17 @@ spec:
                 configMapKeyRef:
                   name: zord-aws-config
                   key: KAFKA_BROKERS
+            # ── SASL/SCRAM Authentication (PLAT-06) ──
+            - name: KAFKA_SASL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: zord-app-secrets
+                  key: KAFKA_INTELLIGENCE_USERNAME
+            - name: KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: zord-app-secrets
+                  key: KAFKA_INTELLIGENCE_PASSWORD
             - name: KAFKA_GROUP_ID
               value: zord-intelligence-group
             - name: INTELLIGENCE_MODE

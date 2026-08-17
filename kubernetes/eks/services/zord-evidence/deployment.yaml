@@ -74,6 +74,17 @@ spec:
                 configMapKeyRef:
                   name: zord-aws-config
                   key: KAFKA_BROKERS
+            # ── SASL/SCRAM Authentication (PLAT-06) ──
+            - name: KAFKA_SASL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: zord-app-secrets
+                  key: KAFKA_EVIDENCE_USERNAME
+            - name: KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: zord-app-secrets
+                  key: KAFKA_EVIDENCE_PASSWORD
             - name: EVIDENCE_KAFKA_TOPIC
               value: z.outcome.events.v1
             - name: EVIDENCE_KAFKA_GROUP
