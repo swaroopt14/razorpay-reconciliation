@@ -47,8 +47,8 @@ func TestTOK06_RotationFullLifecycle(t *testing.T) {
 		t.Fatalf("GetActiveKey() before rotation error = %v", err)
 	}
 
-	if err := svc.RotateKey(ctx, tenantID, "test-rotation"); err != nil {
-		t.Fatalf("RotateKey() error = %v", err)
+	if rotated, err := svc.RotateKey(ctx, tenantID, "test-rotation"); err != nil || !rotated {
+		t.Fatalf("RotateKey() rotated=%v err = %v", rotated, err)
 	}
 	newKey, err := repo.GetActiveKey(ctx, tenantID)
 	if err != nil {
@@ -108,8 +108,8 @@ func TestTOK06_AutoRotateKeysTriggersOnAge(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := uuid.New().String()
-	if err := svc.RotateKey(ctx, tenantID, "bootstrap"); err != nil {
-		t.Fatalf("RotateKey() bootstrap error = %v", err)
+	if rotated, err := svc.RotateKey(ctx, tenantID, "bootstrap"); err != nil || !rotated {
+		t.Fatalf("RotateKey() bootstrap rotated=%v err = %v", rotated, err)
 	}
 	original, err := repo.GetActiveKey(ctx, tenantID)
 	if err != nil {
@@ -151,8 +151,8 @@ func TestTOK06_AutoRotateKeysLeavesFreshKeysAlone(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := uuid.New().String()
-	if err := svc.RotateKey(ctx, tenantID, "bootstrap"); err != nil {
-		t.Fatalf("RotateKey() bootstrap error = %v", err)
+	if rotated, err := svc.RotateKey(ctx, tenantID, "bootstrap"); err != nil || !rotated {
+		t.Fatalf("RotateKey() bootstrap rotated=%v err = %v", rotated, err)
 	}
 	original, err := repo.GetActiveKey(ctx, tenantID)
 	if err != nil {
