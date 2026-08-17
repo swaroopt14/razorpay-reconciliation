@@ -17,7 +17,9 @@ import type {
   PatternsKpiResponse,
   RcaKpiResponse,
   RecommendationsKpiResponse,
+  IntelligenceAvailability,
 } from './intelligenceTypes'
+import { intelligenceAvailability } from './intelligenceTypes'
 import { apiTrimmedString } from './coerceApiField'
 
 export type IntelligenceKpis = {
@@ -27,6 +29,8 @@ export type IntelligenceKpis = {
   patterns: PatternsKpiResponse | null
   recommendations: RecommendationsKpiResponse | null
   rca: RcaKpiResponse | null
+  availability: IntelligenceAvailability | null
+  unavailableReason: string | null
   loading: boolean
   lastFetchedAt: Date | null
   refresh: () => Promise<void>
@@ -66,6 +70,8 @@ export function useIntelligenceKpis(options: UseIntelligenceKpisOptions): Intell
   const [patterns, setPatterns] = useState<PatternsKpiResponse | null>(null)
   const [recommendations, setRecommendations] = useState<RecommendationsKpiResponse | null>(null)
   const [rca, setRca] = useState<RcaKpiResponse | null>(null)
+  const [availability, setAvailability] = useState<IntelligenceAvailability | null>(null)
+  const [unavailableReason, setUnavailableReason] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [lastFetchedAt, setLastFetchedAt] = useState<Date | null>(null)
 
@@ -90,6 +96,26 @@ export function useIntelligenceKpis(options: UseIntelligenceKpisOptions): Intell
       setPatterns(pt)
       setRecommendations(rc)
       setRca(rcaRes)
+      const responses = [lk, am, df, pt, rc, rcaRes]
+      const states = responses.map(intelligenceAvailability)
+      const unavailable = responses.find((response) => response?.availability === 'UNAVAILABLE')
+      if (states.includes('UNAVAILABLE') || responses.some((response) => response === null)) {
+        setAvailability('UNAVAILABLE')
+        setUnavailableReason(
+          unavailable && 'reason' in unavailable
+            ? unavailable.reason
+            : 'Intelligence service is temporarily unavailable. Retry shortly.',
+        )
+      } else if (states.includes('STALE')) {
+        setAvailability('STALE')
+        setUnavailableReason(null)
+      } else if (states.includes('AVAILABLE')) {
+        setAvailability('AVAILABLE')
+        setUnavailableReason(null)
+      } else {
+        setAvailability('EMPTY')
+        setUnavailableReason(null)
+      }
       setLastFetchedAt(new Date())
     } finally {
       if (!cancelledRef.current) setLoading(false)
@@ -105,6 +131,8 @@ export function useIntelligenceKpis(options: UseIntelligenceKpisOptions): Intell
       setPatterns(null)
       setRecommendations(null)
       setRca(null)
+      setAvailability(null)
+      setUnavailableReason(null)
       return
     }
     void refresh()
@@ -122,5 +150,17 @@ export function useIntelligenceKpis(options: UseIntelligenceKpisOptions): Intell
     }
   }, [tenantReady, refresh, intervalMs])
 
-  return { leakage, ambiguity, defensibility, patterns, recommendations, rca, loading, lastFetchedAt, refresh }
+  return {
+    leakage,
+    ambiguity,
+    defensibility,
+    patterns,
+    recommendations,
+    rca,
+    availability,
+    unavailableReason,
+    loading,
+    lastFetchedAt,
+    refresh,
+  }
 }

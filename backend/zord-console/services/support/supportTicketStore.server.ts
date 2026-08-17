@@ -1,6 +1,9 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import type { SupportTicket } from '@/services/payout-command/support/supportTickets'
+import {
+  normalizeSupportDeliveryClaims,
+  type SupportTicket,
+} from '@/services/payout-command/support/supportTickets'
 
 const DATA_DIR = path.join(process.cwd(), '.data', 'support-tickets')
 
@@ -18,7 +21,7 @@ export async function loadTenantSupportTickets(tenantId: string): Promise<Suppor
   try {
     const raw = await readFile(tenantFilePath(tenantId), 'utf8')
     const parsed = JSON.parse(raw) as SupportTicket[]
-    return Array.isArray(parsed) ? parsed : []
+    return Array.isArray(parsed) ? parsed.map(normalizeSupportDeliveryClaims) : []
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code
     if (code === 'ENOENT') return []
@@ -38,7 +41,9 @@ export async function migrateTenantSupportTicketsIfEmpty(
   const existing = await loadTenantSupportTickets(tenantId)
   if (existing.length > 0) return existing
   if (!Array.isArray(incoming) || incoming.length === 0) return []
-  const valid = incoming.filter((t) => t && typeof t.id === 'string')
+  const valid = incoming
+    .filter((t) => t && typeof t.id === 'string')
+    .map(normalizeSupportDeliveryClaims)
   if (valid.length === 0) return []
   await saveTenantSupportTickets(tenantId, valid)
   return valid

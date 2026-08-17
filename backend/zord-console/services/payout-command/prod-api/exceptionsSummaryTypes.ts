@@ -1,5 +1,8 @@
+import type { IntelligenceUnavailableResponse } from './intelligenceTypes'
+
 export type ExceptionsSummaryResolved = {
   data_available: true
+  availability?: 'AVAILABLE' | 'STALE'
   tenant_id: string
   computed_at?: string
   batch_id?: string
@@ -17,4 +20,5 @@ export type ExceptionsSummaryResolved = {
 
 export type ExceptionsSummaryResponse =
   | ExceptionsSummaryResolved
-  | { data_available: false; reason?: string; tenant_id?: string }
+  | { data_available: false; availability?: 'EMPTY'; reason?: string; tenant_id?: string }
+  | IntelligenceUnavailableResponse

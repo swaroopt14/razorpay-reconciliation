@@ -1,16 +1,27 @@
-// Shape contracts for the 5 KPI dashboards + 2 batches endpoints on zord-intelligence (:8089).
-// All endpoints return `data_available: false` with a `reason` when the tenant has no events
-// yet — the frontend uses that to render empty-state cards instead of zeros.
+// Shape contracts for the KPI dashboards + batches endpoints on zord-intelligence (:8089).
+// EMPTY means the service answered successfully with no scoped data. UNAVAILABLE means
+// the service could not answer and must never be rendered as zero risk / zero activity.
+
+export type IntelligenceAvailability = 'AVAILABLE' | 'EMPTY' | 'STALE' | 'UNAVAILABLE'
+
+export type IntelligenceUnavailableResponse = {
+  availability: 'UNAVAILABLE'
+  data_available: false
+  reason: string
+  retryable?: boolean
+}
 
 export type RiskTier = 'CLEAN' | 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
 
 export type EmptyKpiResponse = {
   data_available: false
+  availability?: 'EMPTY'
   reason?: string
 }
 
 export type Resolved<T> = T & {
   data_available: true
+  availability?: 'AVAILABLE' | 'STALE'
   tenant_id: string
   snapshot_id?: string
   computed_at?: string
@@ -42,7 +53,7 @@ export type LeakageKpiResolved = Resolved<{
   exposure_bands?: ExposureBand[]
   segment_roll_rates?: SegmentRollRate[]
 }>
-export type LeakageKpiResponse = LeakageKpiResolved | EmptyKpiResponse
+export type LeakageKpiResponse = LeakageKpiResolved | EmptyKpiResponse | IntelligenceUnavailableResponse
 
 export type ExposureBand = {
   band: string
@@ -106,6 +117,7 @@ export type LeakageExposureTimeseriesResolved = Resolved<{
 export type LeakageExposureTimeseriesResponse =
   | LeakageExposureTimeseriesResolved
   | EmptyKpiResponse
+  | IntelligenceUnavailableResponse
 
 // ── KPIs 7–10: Ambiguity ──────────────────────────────────────────────────
 export type AmbiguityVelocityPoint = {
@@ -157,7 +169,7 @@ export type AmbiguityHeatmapResolved = Resolved<{
   batches: AmbiguityHeatmapBatchRow[]
 }>
 
-export type AmbiguityHeatmapResponse = AmbiguityHeatmapResolved | EmptyKpiResponse
+export type AmbiguityHeatmapResponse = AmbiguityHeatmapResolved | EmptyKpiResponse | IntelligenceUnavailableResponse
 
 export type AmbiguityKpiResolved = Resolved<{
   ambiguous_intent_count: number
@@ -207,7 +219,7 @@ export type AmbiguityKpiResolved = Resolved<{
   intelligence_headline?: string
   intelligence_body?: string
 }>
-export type AmbiguityKpiResponse = AmbiguityKpiResolved | EmptyKpiResponse
+export type AmbiguityKpiResponse = AmbiguityKpiResolved | EmptyKpiResponse | IntelligenceUnavailableResponse
 
 // ── KPIs 11–13: Defensibility ─────────────────────────────────────────────
 export type DefensibilityTier = 'STRONG' | 'GOOD' | 'WEAK' | 'FRAGILE'
@@ -227,7 +239,7 @@ export type DefensibilityKpiResolved = Resolved<{
   weak_evidence_count?: number
   weak_evidence_rate?: number
 }>
-export type DefensibilityKpiResponse = DefensibilityKpiResolved | EmptyKpiResponse
+export type DefensibilityKpiResponse = DefensibilityKpiResolved | EmptyKpiResponse | IntelligenceUnavailableResponse
 
 // ── KPI 14: Pattern / Batch anomaly ───────────────────────────────────────
 export type AnomalyLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | 'INSUFFICIENT_DATA' | string
@@ -291,6 +303,10 @@ export type PatternsKpiResolved = Resolved<{
 }>
 export type PatternsKpiResponse =
   | PatternsKpiResolved
+  | (IntelligenceUnavailableResponse & {
+      decision_success_rate?: never
+      by_provider?: never
+    })
   | (EmptyKpiResponse & {
       tenant_id?: string
       intelligence_mode?: string
@@ -304,7 +320,8 @@ export type PatternsKpiResponse =
     })
 
 // ── Batch contract dashboard (settlement journal KPIs) ────────────────────
-export type BatchContractKpiResponse = {
+export type BatchContractKpiResolved = {
+  availability?: 'AVAILABLE' | 'EMPTY' | 'STALE'
   tenant_id: string
   intelligence_mode?: string
   batch_id: string
@@ -334,6 +351,17 @@ export type BatchContractKpiResponse = {
   match_confidence?: number | null
   missing_reference_rate?: string | number
 }
+export type BatchContractKpiResponse = BatchContractKpiResolved | (IntelligenceUnavailableResponse & {
+  variance_amount?: never
+  orphan_amount?: never
+  unmatch_amount?: never
+  total_confirmed_amount?: never
+  match_confidence?: never
+  missing_reference_rate?: never
+  settlement_ref_count?: never
+  bank_reference_coverage?: never
+  client_reference_coverage?: never
+})
 
 // ── KPIs 15–16: Recommendations ───────────────────────────────────────────
 export type RecommendationsKpiResolved = Resolved<{
@@ -345,7 +373,7 @@ export type RecommendationsKpiResolved = Resolved<{
   recommendation_priority_score?: number
   recommendation_impact_estimate_minor?: MinorAmountField
 }>
-export type RecommendationsKpiResponse = RecommendationsKpiResolved | EmptyKpiResponse
+export type RecommendationsKpiResponse = RecommendationsKpiResolved | EmptyKpiResponse | IntelligenceUnavailableResponse
 
 // ── RCA dashboard (R4–R8) ─────────────────────────────────────────────────
 export type RcaKpiResolved = Resolved<{
@@ -358,7 +386,7 @@ export type RcaKpiResolved = Resolved<{
   rca_concentration: number
   total_settlements: number
 }>
-export type RcaKpiResponse = RcaKpiResolved | EmptyKpiResponse
+export type RcaKpiResponse = RcaKpiResolved | EmptyKpiResponse | IntelligenceUnavailableResponse
 
 // ── Batches list ──────────────────────────────────────────────────────────
 export type IntelligenceBatchRow = {
@@ -398,12 +426,19 @@ export type IntelligenceBatchRow = {
   ambiguity_score?: number | null
   status_label?: string
 }
-export type BatchesListResponse = {
+export type BatchesListResolved = {
+  availability?: 'AVAILABLE' | 'EMPTY' | 'STALE'
   tenant_id: string
   intelligence_mode: string
   status_filter: string
   batches: IntelligenceBatchRow[]
 }
+export type BatchesListResponse = BatchesListResolved | (IntelligenceUnavailableResponse & {
+  tenant_id?: never
+  intelligence_mode?: never
+  status_filter?: never
+  batches?: never
+})
 
 // ── Single batch detail (row + projection) ────────────────────────────────
 export type BatchHealth = {
@@ -426,15 +461,32 @@ export type BatchHealth = {
   finality_status: FinalityStatus | string
   updated_at?: string
 }
-export type BatchDetailResponse = {
+export type BatchDetailResolved = {
+  availability?: 'AVAILABLE' | 'EMPTY' | 'STALE'
   tenant_id: string
   intelligence_mode: string
   batch: IntelligenceBatchRow
   batch_health: BatchHealth | null
 }
+export type BatchDetailResponse = BatchDetailResolved | (IntelligenceUnavailableResponse & {
+  tenant_id?: never
+  intelligence_mode?: never
+  batch?: never
+  batch_health?: never
+})
 
-export function isDataAvailable<T extends EmptyKpiResponse | { data_available: true }>(
+export function isDataAvailable<T extends { data_available: boolean }>(
   res: T | null | undefined,
-): res is Exclude<T, EmptyKpiResponse> {
+): res is Extract<T, { data_available: true }> {
   return Boolean(res && (res as { data_available?: boolean }).data_available === true)
+}
+
+export function intelligenceAvailability(
+  response: { availability?: IntelligenceAvailability; data_available?: boolean } | null | undefined,
+): IntelligenceAvailability | null {
+  if (!response) return null
+  if (response.availability) return response.availability
+  if (response.data_available === true) return 'AVAILABLE'
+  if (response.data_available === false) return 'EMPTY'
+  return null
 }

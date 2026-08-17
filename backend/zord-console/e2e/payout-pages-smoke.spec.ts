@@ -918,14 +918,38 @@ function evidenceFixtureBody(path: string, search: URLSearchParams): unknown {
 }
 
 function installAuthRoutes(page: Page) {
+  const accessExpiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+  const idleExpiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString()
+  const absoluteExpiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString()
   return Promise.all([
     page.route('**/api/auth/me', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          session: { tenant_id: SESSION_TENANT },
-          user: { tenant_id: SESSION_TENANT },
+          session: {
+            tenant_id: SESSION_TENANT,
+            access_expires_at: accessExpiresAt,
+            idle_expires_at: idleExpiresAt,
+            absolute_expires_at: absoluteExpiresAt,
+          },
+          user: {
+            id: 'e2e-user',
+            email: 'qa@example.com',
+            role: 'CUSTOMER_USER',
+            tenant_id: SESSION_TENANT,
+            name: 'QA Engineer',
+          },
+        }),
+      })
+    }),
+    page.route('**/api/auth/session/status', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          idle_expires_at: idleExpiresAt,
+          absolute_expires_at: absoluteExpiresAt,
         }),
       })
     }),
@@ -1172,6 +1196,100 @@ test.describe('payout console pages smoke (empty prod → preview fallbacks)', (
     })
     await expect(page.getByText('WALLET')).toHaveCount(0)
     await expect(page.getByText('ACC55knkn5000')).toHaveCount(0)
+  })
+
+  test('Service 7 outage is shown as unavailable, not an empty or zero-risk state', async ({ page }) => {
+    await page.route('**/api/prod/intelligence/**', async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          availability: 'UNAVAILABLE',
+          data_available: false,
+          reason: 'Intelligence service is temporarily unavailable. Retry shortly.',
+          retryable: true,
+        }),
+      })
+    })
+
+    await page.goto('/payout-command-view/today?dock=home')
+    await expect(page.getByTestId('intelligence-unavailable')).toBeVisible({ timeout: 25_000 })
+    await expect(page.getByText('Intelligence data is unavailable')).toBeVisible()
+    await expect(page.getByText(/Values are not zero|unknown, not zero/i).first()).toBeVisible()
+  })
+
+  test('support logs email intent without claiming provider delivery', async ({ page }) => {
+    const now = new Date().toISOString()
+    const ticket = {
+      id: 'qa-support-ticket',
+      ticketNumber: 'QA-1001',
+      category: 'API & integrations',
+      topic: 'Provider delivery wording',
+      status: 'open',
+      state: 'active',
+      preview: 'Acceptance test',
+      createdAt: now,
+      updatedAt: now,
+      unreadForCustomer: 0,
+      messages: [
+        {
+          id: 'qa-message-1',
+          author: 'You',
+          role: 'customer',
+          body: 'Acceptance test',
+          createdAt: now,
+        },
+      ],
+    }
+    let postedKind = ''
+    await page.route('**/api/support/tickets', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ tickets: [ticket] }),
+      })
+    })
+    await page.route('**/api/support/tickets/qa-support-ticket/messages', async (route) => {
+      const posted = route.request().postDataJSON() as { kind?: string; body?: string; subject?: string }
+      postedKind = posted.kind ?? ''
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          ticket: {
+            ...ticket,
+            preview: `Email logged for support: ${posted.subject}`,
+            messages: [
+              ...ticket.messages,
+              {
+                id: 'qa-message-2',
+                author: 'Email logged',
+                role: 'customer',
+                kind: 'email',
+                emailDirection: 'outbound',
+                body: posted.body,
+                createdAt: now,
+              },
+            ],
+          },
+          delivery: { support_log_created: true, email_sent: false, slack_notified: false },
+        }),
+      })
+    })
+
+    await page.goto('/payout-command-view/today?dock=support')
+    const logButton = page.getByRole('button', { name: 'Log email / notify support' })
+    await expect(logButton).toBeVisible({ timeout: 25_000 })
+    await expect(page.getByText('Email sent')).toHaveCount(0)
+    await logButton.click()
+    await expect(page.getByRole('heading', { name: 'Log email / notify support' })).toBeVisible()
+    await expect(page.getByText('It does not send an email.')).toBeVisible()
+    await page.getByPlaceholder('Write email...').fill('Please record this for support follow-up.')
+    await page.getByRole('button', { name: 'Log email', exact: true }).click()
+    await expect(page.getByText('Email logged for support').first()).toBeVisible()
+    await expect(page.getByText('Email sent')).toHaveCount(0)
+    expect(postedKind).toBe('email_log')
   })
 
   test('navy KPI heroes render all expected bucket counts', async ({ page }) => {

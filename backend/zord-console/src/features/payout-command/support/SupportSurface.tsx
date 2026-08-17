@@ -186,7 +186,7 @@ function MessageRow({ msg }: { msg: SupportMessage }) {
       <article className="rounded-xl border border-[#dbe8ff] bg-[#f7faff] px-4 py-3">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[13px] font-semibold text-[#1d4ed8]">
-            {msg.emailDirection === 'inbound' ? 'Email reply' : 'Email sent'}
+            {msg.emailDirection === 'inbound' ? 'Email reply' : 'Email logged for support'}
           </span>
           <span className="text-[11px] font-medium text-slate-500">{relativeTime(msg.createdAt)}</span>
         </div>
@@ -250,8 +250,10 @@ function SendEmailModal({ open, onClose, defaultTo, defaultSubject, onSend }: Se
       <div className="relative z-[83] w-full max-w-xl rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h3 className={`text-[1.15rem] font-bold ${HOME_TITLE_BLACK}`}>Send Email</h3>
-            <p className={`mt-1 text-[12px] ${HOME_BODY_IMPERIAL_SM}`}>Email becomes a message event in this thread.</p>
+            <h3 className={`text-[1.15rem] font-bold ${HOME_TITLE_BLACK}`}>Log email / notify support</h3>
+            <p className={`mt-1 text-[12px] ${HOME_BODY_IMPERIAL_SM}`}>
+              This records the message in the ticket and notifies support. It does not send an email.
+            </p>
           </div>
           <button type="button" onClick={onClose} className="rounded-lg px-2 py-1 text-[20px] leading-none text-slate-500 hover:bg-slate-100">×</button>
         </div>
@@ -275,7 +277,7 @@ function SendEmailModal({ open, onClose, defaultTo, defaultSubject, onSend }: Se
             }}
             className="rounded-lg bg-[#0f172a] px-4 py-2 text-[13px] font-semibold text-white"
           >
-            Send Email
+            Log email
           </button>
         </div>
       </div>
@@ -783,7 +785,7 @@ function SupportRequestsTab({
                   />
                   <div className="grid gap-2 sm:grid-cols-3">
                     <button type="button" onClick={handleSendReply} disabled={!replyDraft.trim()} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#0f172a] py-3 text-[14px] font-bold text-white shadow-md transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-45">Reply</button>
-                    <button type="button" onClick={() => setMailOpen(true)} className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#bfdbfe] bg-[#eff6ff] py-3 text-[14px] font-semibold text-[#1d4ed8] hover:bg-[#dbeafe]">Send Email</button>
+                    <button type="button" onClick={() => setMailOpen(true)} className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#bfdbfe] bg-[#eff6ff] py-3 text-[14px] font-semibold text-[#1d4ed8] hover:bg-[#dbeafe]">Log email / notify support</button>
                     <button type="button" className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-50 py-3 text-[14px] font-semibold text-slate-700 hover:bg-slate-100">Attach File</button>
                   </div>
                 </footer>
@@ -1064,7 +1066,7 @@ export function SupportSurface({ initialAccountTab }: SupportSurfaceProps) {
     void postSupportEmailMessage(selected.id, payload)
       .then(replaceTicket)
       .catch((e) => {
-        setTicketsError(e instanceof Error ? e.message : 'Could not send email to support.')
+        setTicketsError(e instanceof Error ? e.message : 'Could not log the email for support.')
       })
       .finally(() => setTicketActionPending(false))
   }

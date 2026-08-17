@@ -20,7 +20,7 @@ export const dynamic = 'force-dynamic'
 
 type PostBody =
   | { kind: 'chat'; body: string }
-  | ({ kind: 'email' } & EmailMessageInput)
+  | ({ kind: 'email_log' } & EmailMessageInput)
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
@@ -74,7 +74,7 @@ export async function POST(
   let updated = current
   let slackEvent: Parameters<typeof notifySupportSlack>[0] | null = null
 
-  if (body.kind === 'email') {
+  if (body.kind === 'email_log') {
     const to = asString(body.to)
     const subject = asString(body.subject)
     const emailBody = asString(body.body)
@@ -91,7 +91,7 @@ export async function POST(
       body: emailBody,
     })
     const message = updated.messages[updated.messages.length - 1]
-    slackEvent = { kind: 'email', tenantId: gate.tenantId, ticket: updated, message }
+    slackEvent = { kind: 'email_log', tenantId: gate.tenantId, ticket: updated, message }
   } else {
     const chatBody = asString(body.body)
     if (!chatBody) {
@@ -118,7 +118,15 @@ export async function POST(
   const slackDelivered = slackEvent ? await notifySupportSlack(slackEvent) : false
 
   const res = NextResponse.json(
-    { ok: true, ticket: updated, slackDelivered },
+    {
+      ok: true,
+      ticket: updated,
+      delivery: {
+        support_log_created: true,
+        email_sent: false,
+        slack_notified: slackDelivered,
+      },
+    },
     { status: 200, headers: { 'cache-control': 'no-store' } },
   )
   applyRefreshedSessionCookies(res, gate.refreshedPayload)
