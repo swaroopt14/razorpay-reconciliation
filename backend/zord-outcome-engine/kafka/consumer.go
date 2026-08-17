@@ -43,6 +43,9 @@ func StartConsumer(ctx context.Context, brokers []string, groupID, topic string,
 	config := sarama.NewConfig()
 	config.Version = sarama.V2_8_0_0
 
+	// SASL/SCRAM-SHA-512 authentication (PLAT-06)
+	ApplySASL(config)
+
 	//Consumer Group Setting
 	config.Consumer.Group.Rebalance.GroupStrategies = []sarama.BalanceStrategy{
 		sarama.NewBalanceStrategyRange(),

@@ -69,6 +69,9 @@ func NewProducer(brokers string) *Producer {
 		// Addr is the Kafka broker address
 		Addr: kafka.TCP(brokerList...),
 
+		// SASL/SCRAM-SHA-512 authentication (PLAT-06)
+		Transport: NewSASLTransport(),
+
 		// Balancer decides which partition a message goes to.
 		// LeastBytes sends to the partition with the fewest recent bytes.
 		// For ZPI, we use the tenant_id as the message Key (set in Publish below),

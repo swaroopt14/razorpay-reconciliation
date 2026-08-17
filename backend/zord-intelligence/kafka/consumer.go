@@ -570,6 +570,7 @@ func consumeSingleTopic(
 		Topic:          topic, // single topic per goroutine
 		CommitInterval: 0,     // manual commit — commit only on success
 		MaxWait:        3e9,   // 3 seconds: max time to wait for a new message
+		Dialer:         NewSASLDialer(), // PLAT-06: SASL/SCRAM-SHA-512 auth
 	})
 	defer func() {
 		if err := reader.Close(); err != nil {

@@ -20,13 +20,26 @@ logger = logging.getLogger(__name__)
 
 class MLProducer:
     def __init__(self) -> None:
-        self._producer = _KafkaProducer({
+        kafka_config = {
             "bootstrap.servers": ",".join(config.KAFKA_BROKERS),
             "acks": "all",
             "retries": 3,
             "retry.backoff.ms": 100,
             "delivery.timeout.ms": 10_000,
-        })
+        }
+
+        # SASL/SCRAM-SHA-512 authentication (PLAT-06)
+        sasl_username = config.KAFKA_SASL_USERNAME
+        sasl_password = config.KAFKA_SASL_PASSWORD
+        if sasl_username and sasl_password:
+            kafka_config.update({
+                "security.protocol": "SASL_PLAINTEXT",
+                "sasl.mechanism": "SCRAM-SHA-512",
+                "sasl.username": sasl_username,
+                "sasl.password": sasl_password,
+            })
+
+        self._producer = _KafkaProducer(kafka_config)
 
     def publish_result(self, result: MLResult) -> None:
         """Publish an ML result to ml.result.events, keyed by tenant_id."""
