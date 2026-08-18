@@ -123,7 +123,11 @@ func (s *LeakagePredictionService) CaptureBatchOnce(
 			return
 		}
 		rate := decimal.NewFromFloat(clampLeakage01(result.PredictedLeakageRate))
-		amountMinor := decimal.NewFromFloat(result.PredictedLeakageMinor)
+		// Round to whole minor units: the ML service returns a float64, and minor
+		// units (paise) have no sub-unit precision — this also keeps the stored
+		// value integer so any future JSON re-serialization is exactly
+		// representable in a float64-based decoder (e.g. JavaScript).
+		amountMinor := decimal.NewFromFloat(result.PredictedLeakageMinor).Round(0)
 		predictedAt := time.Now().UTC()
 
 		if err := s.batchRepo.SetLeakagePrediction(
