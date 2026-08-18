@@ -344,9 +344,12 @@ func (s *TokenService) doMigrateKeys(ctx context.Context, tenantID string) (oldK
 				return oldKey.KeyID, newKey.KeyID, err
 			}
 
-			// 💾 update DB
+			// 💾 update DB -- TOK-05: scoped by the full composite
+			// identity (tenant_id, kind, token_id), not token_id alone.
 			err = s.repo.UpdateTokenKey(
 				ctx,
+				t.TenantID,
+				t.Kind,
 				t.TokenID,
 				newCipher,
 				newNonce,

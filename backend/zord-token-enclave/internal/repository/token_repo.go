@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"fmt"
 
 	"time"
 
@@ -452,24 +453,67 @@ func (r *TokenRepository) GetTokensByKey(ctx context.Context, keyID string, limi
 	return tokens, nil
 }
 
+// UpdateTokenKey re-encrypts one token under a new DEK during a key-
+// rotation migration sweep (TOK-05: "Scope token-key updates by the full
+// composite identity"). The UPDATE's WHERE clause is the table's actual
+// PRIMARY KEY (tenant_id, kind, token_id), not token_id alone -- a
+// deterministic token_id collision across tenants/kinds is cryptographically
+// implausible (GenerateDeterministicToken already mixes tenant_id and kind
+// into the HMAC), but a programming error passing a mismatched tenant_id/
+// kind for a real token_id must not be able to silently update -- or
+// silently no-op against -- the wrong row. Wrapped in one transaction with
+// an immutable token_audit entry: if the UPDATE affects anything other than
+// exactly one row (0 = the composite identity didn't match reality, >1 is
+// structurally impossible given the PK but asserted anyway per the audit's
+// literal wording), the whole rotation step aborts and rolls back rather
+// than silently succeeding or partially applying.
 func (r *TokenRepository) UpdateTokenKey(
 	ctx context.Context,
-	tokenID string,
+	tenantID, kind, tokenID string,
 	ciphertext, nonce []byte,
 	newKeyID string,
 	newVersion int,
 ) error {
 
-	_, err := r.db.ExecContext(ctx, `
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(ctx, `
 		UPDATE token_map
 		SET ciphertext = $1,
 		    nonce = $2,
 		    encryption_key_id = $3,
 		    key_version = $4
-		WHERE token_id = $5
-	`, ciphertext, nonce, newKeyID, newVersion, tokenID)
+		WHERE tenant_id = $5 AND kind = $6 AND token_id = $7
+	`, ciphertext, nonce, newKeyID, newVersion, tenantID, kind, tokenID)
+	if err != nil {
+		return err
+	}
 
-	return err
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected != 1 {
+		return fmt.Errorf(
+			"UpdateTokenKey: expected exactly 1 row for tenant=%s kind=%s token_id=%s, affected %d -- aborting rotation",
+			tenantID, kind, tokenID, rowsAffected,
+		)
+	}
+
+	// Immutable audit trail for the key-rotation update itself -- reuses
+	// the same append-only token_audit table Tokenize/Detokenize already
+	// write to, in the SAME transaction so the update and its audit record
+	// are atomic (either both commit or neither does).
+	if err := r.writeAuditInTx(ctx, tx, tokenID, tenantID, "system:key-rotation",
+		"KEY_ROTATION", "ALLOW", "KEY_ROTATION", newKeyID, ""); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func (r *TokenRepository) CountTokensByKey(ctx context.Context, keyID string) (int, error) {
