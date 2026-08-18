@@ -34,7 +34,7 @@ class MLConsumer:
     ) -> None:
         self._handler = handler
         self._dead_letter_handler = dead_letter_handler
-        self._consumer = Consumer({
+        kafka_config = {
             "bootstrap.servers": ",".join(config.KAFKA_BROKERS),
             "group.id": config.KAFKA_GROUP_ID,
             "auto.offset.reset": "earliest",
