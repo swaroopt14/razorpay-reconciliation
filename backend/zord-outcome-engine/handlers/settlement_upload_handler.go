@@ -187,6 +187,17 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 		return
 	}
 
+	parsedArtifactID, err := uuid.Parse(outcomeArtifactID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid outcome_artifact_id from register"})
+		return
+	}
+	parsedArtifactVersionID, err := uuid.Parse(outcomeArtifactVersionID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid outcome_artifact_version_id from register"})
+		return
+	}
+
 	previousRunID := ""
 	if existingBatch != nil {
 		previousRunID = existingBatch.CurrentActiveRunID
@@ -227,6 +238,8 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 		bgEnvelope uuid.UUID,
 		bgRef string,
 		bgClientBatchID string,
+		bgOutcomeArtifactID uuid.UUID,
+		bgOutcomeArtifactVersionID uuid.UUID,
 		data []byte,
 	) {
 		defer cancel()
@@ -317,7 +330,10 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 		// ── PHASE 5: CANONICALIZATION ─────────────────────────────────────────
 		log.Printf("settlement.upload.canonicalize_start job_id=%s", bgIngestRunID)
 		canonSvc := &services.SettlementCanonicalizeService{}
-		if err := canonSvc.RunForJob(bgCtx, bgIngestRunID, bgTenant, pspProfile, bgClientBatchID); err != nil {
+		if err := canonSvc.RunForJob(
+			bgCtx, bgIngestRunID, bgTenant, pspProfile, bgClientBatchID,
+			bgSettlementBatchID, bgOutcomeArtifactID, bgOutcomeArtifactVersionID,
+		); err != nil {
 			log.Printf("settlement.upload.canonicalize_error job_id=%s err=%v", bgIngestRunID, err)
 			return
 		}
@@ -355,5 +371,6 @@ func (h *Handler) SettlementUploadHandler(c *gin.Context) {
 				bgIngestRunID, attachJobID, err)
 		}
 	}(bgCtx, profile, ingestRunID, settlementBatchID, previousRunID, runNumber,
-		tenantID, envelopeID, objRef, clientBatchID, fileBytes)
+		tenantID, envelopeID, objRef, clientBatchID,
+		parsedArtifactID, parsedArtifactVersionID, fileBytes)
 }
