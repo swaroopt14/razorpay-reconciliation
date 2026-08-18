@@ -32,9 +32,9 @@ func (r *TokenRepository) Insert(ctx context.Context, t models.TokenRecord) erro
 
 	// Insert token_map — conflict on composite PK (tenant_id, kind, token_id)
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO token_map 
-		(token_id, tenant_id, kind, ciphertext, nonce, encryption_key_id, key_version, status, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		INSERT INTO token_map
+		(token_id, tenant_id, kind, ciphertext, nonce, encryption_key_id, key_version, status, created_at, normalization_version, secret_version)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 		ON CONFLICT (tenant_id, kind, token_id) DO NOTHING
 	`,
 		t.TokenID,
@@ -46,6 +46,8 @@ func (r *TokenRepository) Insert(ctx context.Context, t models.TokenRecord) erro
 		t.KeyVersion,
 		t.Status,
 		time.Now().UTC(),
+		t.NormalizationVersion,
+		t.SecretVersion,
 	)
 	if err != nil {
 		return err
@@ -61,15 +63,15 @@ func (r *TokenRepository) Insert(ctx context.Context, t models.TokenRecord) erro
 		uuid.New().String(),
 		t.TokenID,
 		t.TenantID,
-		t.Actor,             // was hardcoded "service-2"
+		t.Actor, // was hardcoded "service-2"
 		"TOKENIZE",
 		"INTENT_PROCESSING",
 		"ALLOW",
-		t.TraceID,           // was hardcoded ""
-		t.Actor,             // caller = same as actor for tokenize
-		"",                  // object_ref not applicable for tokenize
+		t.TraceID, // was hardcoded ""
+		t.Actor,   // caller = same as actor for tokenize
+		"",        // object_ref not applicable for tokenize
 		"INTENT_PROCESSING",
-		"",                  // correlation_id
+		"", // correlation_id
 		time.Now().UTC(),
 	)
 	if err != nil {
@@ -100,7 +102,7 @@ func (r *TokenRepository) Get(
 
 	var rec models.TokenRecord
 	err = tx.QueryRowContext(ctx, `
-		SELECT token_id, tenant_id, kind, ciphertext, nonce, encryption_key_id, key_version, status, created_at
+		SELECT token_id, tenant_id, kind, ciphertext, nonce, encryption_key_id, key_version, status, created_at, normalization_version, secret_version
 		FROM token_map
 		WHERE token_id = $1 AND tenant_id = $2
 	`, tokenID, tenantID).Scan(
@@ -108,6 +110,7 @@ func (r *TokenRepository) Get(
 		&rec.Ciphertext, &rec.Nonce,
 		&rec.EncryptionKeyID, &rec.KeyVersion,
 		&rec.Status, &rec.CreatedAt,
+		&rec.NormalizationVersion, &rec.SecretVersion,
 	)
 	if err != nil {
 		// Write DENY audit before returning — commit it even on select failure

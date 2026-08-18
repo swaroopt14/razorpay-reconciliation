@@ -20,6 +20,16 @@ CREATE TABLE IF NOT EXISTS token_map (
     status            TEXT         NOT NULL DEFAULT 'ACTIVE',
     created_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
 
+    -- TOK-08: which normalization ruleset / secret version produced this
+    -- token_id's deterministic hash. Defaults are semantically correct for
+    -- any pre-existing row too (that's genuinely what produced them), not
+    -- just a safe placeholder -- see internal/crypto/deterministic.go's
+    -- CurrentNormalizationVersion/CurrentSecretVersion. Not in production
+    -- yet, so added directly to the CREATE TABLE rather than a separate
+    -- ALTER TABLE migration (same precedent as TOK-03).
+    normalization_version TEXT NOT NULL DEFAULT 'v1',
+    secret_version         INT  NOT NULL DEFAULT 1,
+
     PRIMARY KEY (tenant_id, kind, token_id)
 );
 
