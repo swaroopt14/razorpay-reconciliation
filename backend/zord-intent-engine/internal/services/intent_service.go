@@ -483,6 +483,27 @@ func callEnclaveTokenizeOnce(ctx context.Context, req enclaveTokenizeRequest) (m
 	return out.Tokens, nil
 }
 
+// computeBeneficiaryFingerprint hashes the raw TOKEN VALUES zord-token-
+// enclave returned (not the underlying PII itself) into a stable
+// fingerprint, used by business_idempotency_registry to detect duplicate
+// payment intents for the same beneficiary (SAME_BENEFICIARY_AMOUNT_TIME).
+//
+// TOK-08 dependency (found during zord-token-enclave's "field-kind-specific
+// normalization and versioned token semantics" ticket): this function's
+// correctness depends entirely on the enclave computing the SAME token for
+// the SAME real-world account_number/ifsc/vpa every time. The enclave now
+// has real, explicit normalization versioning (internal/crypto/
+// deterministic.go's CurrentNormalizationVersion), but keeps its ACTIVE
+// version ("v1") bit-for-bit identical to its original behavior specifically
+// so this function's existing fingerprints stay valid. If that ever changes
+// -- i.e. a future ticket activates a new normalization version as the
+// default -- every fingerprint computed from tokens produced under the new
+// version will differ from what's already stored here for the same real
+// beneficiary, and this table's lookup will silently stop finding genuine
+// duplicates. business_idempotency_registry.token_normalization_version
+// (added by db/migrations/20260817120000_...) exists as a forward-
+// compatible hook for that future ticket to populate/reconcile against --
+// it is not populated by this code path today.
 func (s *IntentService) computeBeneficiaryFingerprint(tokens map[string]string) string {
 	// FIX: deterministic fingerprint using tokens
 	// beneficiary_fingerprint = SHA256(account_number_token + ifsc_token + vpa_token)

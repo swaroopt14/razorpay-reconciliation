@@ -89,7 +89,6 @@ Copy this entire JSON and paste as the secret value:
   "INTELLIGENCE_DB_PASSWORD": "",
   "ZORD_VAULT_KEY": "",
   "INTERNAL_ADMIN_KEY": "",
-  "MASTER_KEY": "",
   "TOKEN_SECRET": "",
   "JWT_SIGNING_SECRET": "",
   "ENCLAVE_INTERNAL_TOKEN": "",
@@ -116,7 +115,7 @@ Copy this entire JSON and paste as the secret value:
 }
 ```
 
-**Total: 34 keys** (includes JWT_SIGNING_SECRET for Kong JWT plugin, ENCLAVE_INTERNAL_TOKEN for token-enclave auth, OUTCOME_READ_DSN for prompt-layer, SLACK_LEADS_WEBHOOK_URL for lead notifications, SLACK_SUPPORT_WEBHOOK_URL for support tickets)
+**Total: 33 keys** (includes JWT_SIGNING_SECRET for Kong JWT plugin, ENCLAVE_INTERNAL_TOKEN for token-enclave auth, OUTCOME_READ_DSN for prompt-layer, SLACK_LEADS_WEBHOOK_URL for lead notifications, SLACK_SUPPORT_WEBHOOK_URL for support tickets). MASTER_KEY was removed (TOK-03): zord-token-enclave now uses KMS_KEY_ID (a plain, non-secret CMK ARN set directly in its deployment.yaml, not in this JSON) plus its pod's zord-aws-access IAM role for AWS KMS access.
 
 ### 1.3 Value for `ZORD_EDGE_SIGNING_KEY_JSON`
 

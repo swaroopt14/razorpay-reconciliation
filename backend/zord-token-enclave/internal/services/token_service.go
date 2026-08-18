@@ -52,9 +52,9 @@ func releaseRotationLock(lock *repository.RotationLock, tenantID string) {
 type TokenService struct {
 	repo        *repository.TokenRepository
 	keyManager  keymanager.KeyManager
-	tokenSecret []byte            // for deterministic tokenization
+	tokenSecret []byte             // for deterministic tokenization
 	tenantGroup singleflight.Group // per-tenant concurrency control
-	tokenSem    chan struct{}       // limit global tokenization concurrency
+	tokenSem    chan struct{}      // limit global tokenization concurrency
 }
 
 func NewTokenService(r *repository.TokenRepository, km keymanager.KeyManager, secret []byte) *TokenService {
@@ -111,22 +111,27 @@ func (s *TokenService) Tokenize(
 		return "", err
 	}
 
-	// 3. Deterministic token ID — scoped to tenant + kind
-	normalized := crypto.NormalizeValue(string(plaintext))
-	tokenID := "zrd_" + crypto.GenerateDeterministicToken(s.tokenSecret, tenantID, kind, normalized)
+	// 3. Deterministic token ID — scoped to tenant + kind, versioned
+	// (TOK-08). CurrentNormalizationVersion's rule for every kind is
+	// bit-identical to the old blanket NormalizeValue -- this call
+	// changes no existing token_id for any kind.
+	normalized := crypto.NormalizeValueForKind(crypto.CurrentNormalizationVersion, kind, string(plaintext))
+	tokenID := "zrd_" + crypto.GenerateDeterministicToken(s.tokenSecret, tenantID, kind, crypto.CurrentNormalizationVersion, normalized)
 
 	// 4. Store in DB with key reference and actor context
 	rec := models.TokenRecord{
-		TokenID:         tokenID,
-		TenantID:        tenantID,
-		Kind:            kind,
-		Ciphertext:      ciphertext,
-		Nonce:           nonce,
-		EncryptionKeyID: key.KeyID,
-		KeyVersion:      key.Version,
-		Status:          "ACTIVE",
-		Actor:           actor,
-		TraceID:         traceID,
+		TokenID:              tokenID,
+		TenantID:             tenantID,
+		Kind:                 kind,
+		Ciphertext:           ciphertext,
+		Nonce:                nonce,
+		EncryptionKeyID:      key.KeyID,
+		KeyVersion:           key.Version,
+		Status:               "ACTIVE",
+		Actor:                actor,
+		TraceID:              traceID,
+		NormalizationVersion: crypto.CurrentNormalizationVersion,
+		SecretVersion:        crypto.CurrentSecretVersion,
 	}
 
 	if err := s.repo.Insert(ctx, rec); err != nil {

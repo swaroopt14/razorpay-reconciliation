@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 
+	"zord-token-enclave/internal/crypto"
 	"zord-token-enclave/internal/services"
 
 	"github.com/gin-gonic/gin"
@@ -54,5 +55,11 @@ func (h *TokenHandler) Tokenize(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"tokens": tokens})
+	// TOK-08: normalization_version is purely additive -- existing callers
+	// that don't read this field are unaffected. Every tokenize call in a
+	// given deployed build uses the same active version uniformly.
+	c.JSON(http.StatusOK, gin.H{
+		"tokens":                tokens,
+		"normalization_version": crypto.CurrentNormalizationVersion,
+	})
 }
