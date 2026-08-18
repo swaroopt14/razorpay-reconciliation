@@ -6,8 +6,7 @@
  * Headers forwarded by BFF:
  *   Content-Type: multipart/form-data
  *   Batch-Id: <client batch id>
- *   X-Zord-Force-Reprocess: true
- *   X-Zord-Force-Reprocess-Reason: CLIENT_CORRECTED_FILE
+ *   X-Zord-Force-Reprocess / Reason: only when explicitly selected in the UI
  *
  * Body: multipart field `file`
  *
@@ -15,6 +14,7 @@
  */
 import { csrfMutationHeaders } from '@/services/auth/csrfBrowser'
 import { errorMessageFromProxyResponse, normalizeAuthorizationHeader } from './intakeHttpShared'
+import type { ReprocessReason } from './reprocessReason'
 
 export const SETTLEMENT_UPLOAD_PROXY_PATH = '/api/settlement/upload'
 
@@ -33,6 +33,8 @@ export type PostSettlementFileUploadParams = {
   tenantId?: string
   psp: string
   batchId: string
+  forceReprocess?: boolean
+  reprocessReason?: ReprocessReason
   /** Override for tests */
   endpointPath?: string
 }
@@ -58,10 +60,11 @@ export async function postSettlementFileUpload(params: PostSettlementFileUploadP
   const formData = new FormData()
   formData.append('file', params.file, params.file.name)
 
-  const uploadHeaders: Record<string, string> = csrfMutationHeaders({
-    'X-Zord-Force-Reprocess': 'true',
-    'X-Zord-Force-Reprocess-Reason': 'CLIENT_CORRECTED_FILE',
-  })
+  const uploadHeaders: Record<string, string> = csrfMutationHeaders()
+  if (params.forceReprocess) {
+    uploadHeaders['X-Zord-Force-Reprocess'] = 'true'
+    if (params.reprocessReason) uploadHeaders['X-Zord-Force-Reprocess-Reason'] = params.reprocessReason
+  }
   if (batchId) uploadHeaders['Batch-Id'] = batchId
   if (auth) uploadHeaders.authorization = auth
 

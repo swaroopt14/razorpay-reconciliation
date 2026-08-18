@@ -75,6 +75,8 @@ export const BATCH_REVIEW_COPY = {
     batchReferencePlaceholder: 'Leave blank if you want Zord to create one automatically',
     reprocess: 'Reprocess this file',
     reprocessHelper: 'Use only when uploading a corrected file or rerunning a previous batch.',
+    reprocessReason: 'Reprocess reason',
+    reprocessReasonPlaceholder: 'Select a reason',
     apiKey: 'API key (optional)',
     apiKeyPlaceholder: 'Same Bearer token as Postman',
     activeBatchId: 'Active batch reference',

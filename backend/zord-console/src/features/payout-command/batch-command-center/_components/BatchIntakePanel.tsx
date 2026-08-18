@@ -16,6 +16,11 @@ import {
 import { BatchPortalUploadZone } from './portal/BatchPortalUploadZone'
 import { PORTAL_BLUE_TITLE, PORTAL_PRIMARY_BTN } from './portal/batchPortalTokens'
 import { BATCH_REVIEW_COPY, type SourceTypeOption } from '../copy/batchCommandCenterCopy'
+import {
+  REPROCESS_REASONS,
+  type ReprocessReason,
+} from '@/services/payout-command/batch-intake/reprocessReason'
+import { BatchUploadErrorDialog } from './BatchUploadErrorDialog'
 
 const INTENT_FILE_ACCEPT =
   '.csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -117,6 +122,12 @@ export function BatchIntakePanel({
   const [sourceSystem, setSourceSystem] = useState('')
   const [psp, setPsp] = useState(() => process.env.NEXT_PUBLIC_ZORD_SETTLEMENT_PSP ?? 'razorpay')
   const [bulkForceReprocess, setBulkForceReprocess] = useState(false)
+  const [reprocessReason, setReprocessReason] = useState<ReprocessReason | ''>('')
+  const [uploadError, setUploadError] = useState<{
+    kind: 'intent' | 'settlement'
+    message: string
+    fileName: string | null
+  } | null>(null)
   const [selectedIntentFile, setSelectedIntentFile] = useState<File | null>(null)
   const [selectedSettlementFile, setSelectedSettlementFile] = useState<File | null>(null)
   const [intentFileName, setIntentFileName] = useState<string | null>(null)
@@ -228,16 +239,20 @@ export function BatchIntakePanel({
     setUploadState('uploading')
     if (userBatchId) setSettlementBatchId(userBatchId)
     try {
-      const parsed = await parseUploadedSheet(file)
       if (bulkForceReprocess && !userBatchId) {
         throw new Error('Reprocess requires a batch reference in the field above.')
       }
+      if (bulkForceReprocess && !reprocessReason) {
+        throw new Error('Select a reprocess reason before uploading the file.')
+      }
+      const parsed = await parseUploadedSheet(file)
       const result = await postIntentBulkIngest({
         file,
         sourceType: bulkIngestSourceTypeFromFilename(file.name),
         sourceSystem: sourceSystem.trim() || undefined,
         optionalBatchId: userBatchId || undefined,
         forceReprocess: bulkForceReprocess,
+        reprocessReason: bulkForceReprocess ? reprocessReason || undefined : undefined,
       })
       if (!result.ok) {
         const batchToKeep = userBatchId || result.batchIdFromBody
@@ -275,10 +290,12 @@ export function BatchIntakePanel({
         fileName: file.name,
       })
     } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Unknown error'
+      setUploadError({ kind: 'intent', message: detail, fileName: file.name })
       setIntentIngestOk(false)
       reportUploadStatus(
         'failed',
-        `Payment file upload failed (${error instanceof Error ? error.message : 'unknown error'}). Step 2 stays locked until upload succeeds.`,
+        `Payment file upload failed (${detail}). Step 2 stays locked until upload succeeds.`,
       )
       setIntakeStep('idle')
       setUploadState('idle')
@@ -286,6 +303,7 @@ export function BatchIntakePanel({
   }, [
     draftBatchRef,
     bulkForceReprocess,
+    reprocessReason,
     commitBatchRefImmediately,
     onIntentIngestSuccess,
     onIntentUploadFailed,
@@ -312,22 +330,26 @@ export function BatchIntakePanel({
     const pspVal = psp.trim().toLowerCase()
     const bid = (settlementBatchId ?? draftBatchRef.trim()).trim()
     if (!tenantReady || !pspVal || !bid) {
-      reportUploadStatus(
-        'failed',
-        settlementBlockedReason ??
-          'Confirmation upload needs an active session, payment partner, and batch reference.',
-      )
+      const detail = settlementBlockedReason ??
+        'Confirmation upload needs an active session, payment partner, and batch reference.'
+      reportUploadStatus('failed', detail)
+      setUploadError({ kind: 'settlement', message: detail, fileName: file.name })
       return
     }
     setSettlementFileName(file.name)
     setIntakeStep('settlement_uploading')
     reportUploadStatus('syncing', BATCH_REVIEW_COPY.intake.uploadSettlementBusy)
     try {
+      if (bulkForceReprocess && !reprocessReason) {
+        throw new Error('Select a reprocess reason before uploading the file.')
+      }
       const parsed = await parseUploadedSheet(file)
       const result = await postSettlementFileUpload({
         file,
         psp: pspVal,
         batchId: bid,
+        forceReprocess: bulkForceReprocess,
+        reprocessReason: bulkForceReprocess ? reprocessReason || undefined : undefined,
       })
       if (!result.ok) {
         const detail = result.errorMessage?.trim() || `HTTP ${result.httpStatus || 'error'}`
@@ -343,19 +365,22 @@ export function BatchIntakePanel({
       setIntakeStep('closed')
       onSettlementIngestSuccess({ batchId: bid, fileName: file.name, parsedRows: parsed })
     } catch (error) {
+      const detail = error instanceof Error && error.message.trim()
+        ? error.message.trim()
+        : 'Check your session and retry.'
+      setUploadError({ kind: 'settlement', message: detail, fileName: file.name })
       reportUploadStatus(
         'failed',
-        (() => {
-          const detail = error instanceof Error ? error.message.trim() : ''
-          return detail ? `Confirmation upload failed: ${detail}` : 'Confirmation upload failed. Check your session and retry.'
-        })(),
+        `Confirmation upload failed: ${detail}`,
       )
       setIntakeStep('intent_ready')
     }
   }, [
     draftBatchRef,
+    bulkForceReprocess,
     onSettlementIngestSuccess,
     psp,
+    reprocessReason,
     reportUploadStatus,
     selectedSettlementFile,
     settlementBatchId,
@@ -423,13 +448,34 @@ export function BatchIntakePanel({
                 <input
                   type="checkbox"
                   checked={bulkForceReprocess}
-                  onChange={(e) => setBulkForceReprocess(e.target.checked)}
+                  onChange={(e) => {
+                    setBulkForceReprocess(e.target.checked)
+                    if (!e.target.checked) setReprocessReason('')
+                  }}
+                  aria-describedby="reprocess-helper"
                   className="h-4 w-4 rounded border-[#cbd5e1]"
                 />
                 {c.fields.reprocess}
               </span>
-              <span className="text-[11px] text-[#64748b]">{c.fields.reprocessHelper}</span>
+              <span id="reprocess-helper" className="text-[11px] text-[#64748b]">{c.fields.reprocessHelper}</span>
             </span>
+          </label>
+          <label className="flex flex-col justify-end gap-1 sm:col-span-2 lg:col-span-1">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#888888]">
+              {c.fields.reprocessReason}
+            </span>
+            <select
+              value={reprocessReason}
+              disabled={!bulkForceReprocess}
+              required={bulkForceReprocess}
+              onChange={(event) => setReprocessReason(event.target.value as ReprocessReason | '')}
+              className="h-9 rounded-lg border border-[#E5E5E5] bg-white px-2.5 text-[13px] text-[#0A0A0A] outline-none focus:border-[#6366f1]/50 disabled:cursor-not-allowed disabled:bg-[#f8fafc] disabled:text-[#94a3b8]"
+            >
+              <option value="">{c.fields.reprocessReasonPlaceholder}</option>
+              {REPROCESS_REASONS.map((reason) => (
+                <option key={reason} value={reason}>{reason}</option>
+              ))}
+            </select>
           </label>
         </div>
         {settlementBatchIdResolved ? (
@@ -523,6 +569,14 @@ export function BatchIntakePanel({
           </div>
         </div>
       </Card>
+      {uploadError ? (
+        <BatchUploadErrorDialog
+          kind={uploadError.kind}
+          message={uploadError.message}
+          fileName={uploadError.fileName}
+          onClose={() => setUploadError(null)}
+        />
+      ) : null}
     </div>
   )
 }

@@ -6,6 +6,7 @@ import {
   resolveSettlementUploadContext,
 } from '@/services/auth/resolvePayoutTenant.server'
 import { publicBffError } from '@/services/bff/publicBffError'
+import { isReprocessReason, REPROCESS_REASONS } from '@/services/payout-command/batch-intake/reprocessReason'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -64,11 +65,24 @@ export async function POST(req: NextRequest) {
 
   if (batchId?.trim()) headers['Batch-Id'] = batchId.trim()
 
-  const force = req.headers.get('x-zord-force-reprocess') ?? 'true'
-  headers['X-Zord-Force-Reprocess'] = force
-
-  const reason = req.headers.get('x-zord-force-reprocess-reason') ?? 'CLIENT_CORRECTED_FILE'
-  headers['X-Zord-Force-Reprocess-Reason'] = reason
+  const forceReprocess = req.headers.get('x-zord-force-reprocess')?.trim().toLowerCase() === 'true'
+  const reason = req.headers.get('x-zord-force-reprocess-reason')?.trim() || null
+  if (forceReprocess && !isReprocessReason(reason)) {
+    return NextResponse.json(
+      { error: `A valid reprocess reason is required: ${REPROCESS_REASONS.join(', ')}.` },
+      { status: 400 },
+    )
+  }
+  if (!forceReprocess && reason) {
+    return NextResponse.json(
+      { error: 'A reprocess reason may only be sent when force reprocess is enabled.' },
+      { status: 400 },
+    )
+  }
+  if (forceReprocess && reason) {
+    headers['X-Zord-Force-Reprocess'] = 'true'
+    headers['X-Zord-Force-Reprocess-Reason'] = reason
+  }
 
   let lastError: unknown = null
   try {
