@@ -134,6 +134,44 @@ func (r *TokenRepository) Get(
 	return &rec, nil
 }
 
+// WriteAuthzDenialAudit records a TOK-04 authorization denial -- an invalid/
+// forged/expired service JWT, a purpose_code outside the caller's allowed
+// scope, or a missing object_ref/correlation_id. Called from contexts with
+// no token row (and often no verified tenant_id/caller either) to tie a
+// transaction to, so it writes directly rather than through writeAuditInTx.
+// Best-effort: logging a denial must never block or fail the denial itself,
+// so callers should not treat a write error here as fatal.
+func (r *TokenRepository) WriteAuthzDenialAudit(
+	ctx context.Context,
+	tenantID, caller, action, purposeCode, objectRef, correlationID, reason string,
+) error {
+	var tenantIDArg any
+	if tenantID != "" {
+		tenantIDArg = tenantID
+	}
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO token_audit
+		(audit_id, token_id, tenant_id, actor, action, purpose, decision,
+		 trace_id, caller, object_ref, purpose_code, correlation_id, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+	`,
+		uuid.New().String(),
+		"",
+		tenantIDArg,
+		caller,
+		action,
+		reason,
+		"DENY",
+		"",
+		caller,
+		objectRef,
+		purposeCode,
+		correlationID,
+		time.Now().UTC(),
+	)
+	return err
+}
+
 func (r *TokenRepository) writeAuditInTx(
 	ctx context.Context,
 	tx *sql.Tx,

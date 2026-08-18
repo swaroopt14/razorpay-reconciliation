@@ -489,3 +489,14 @@ func (s *TokenService) EnsureInitialKey(ctx context.Context, tenantID string) er
 func (s *TokenService) GetAllTenants(ctx context.Context) ([]string, error) {
 	return s.repo.GetAllTenants(ctx)
 }
+
+// WriteAuthzDenialAudit delegates to the repository — the HTTP handlers'
+// only DB-adjacent entry point (TOK-04), used to durably record an
+// authorization denial (invalid service JWT, disallowed purpose_code,
+// missing object_ref/correlation_id).
+func (s *TokenService) WriteAuthzDenialAudit(
+	ctx context.Context,
+	tenantID, caller, action, purposeCode, objectRef, correlationID, reason string,
+) error {
+	return s.repo.WriteAuthzDenialAudit(ctx, tenantID, caller, action, purposeCode, objectRef, correlationID, reason)
+}
