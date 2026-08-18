@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 // writeJSON serialises v to JSON and writes it to the response.
@@ -75,4 +77,15 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{
 		"error": message,
 	})
+}
+
+// roundMinor rounds a money value to whole minor currency units (e.g. whole
+// paise). Minor units are by definition the smallest currency subdivision, so
+// a fractional minor-unit value is never meaningful — it's noise from
+// intermediate arithmetic (Mul/Div/float conversion) that must be cleaned up
+// before the value reaches a JSON response, since it's otherwise indistinguishable
+// wire-format-wise from a value large enough to lose precision in a float64-based
+// JSON decoder (e.g. JavaScript).
+func roundMinor(d decimal.Decimal) decimal.Decimal {
+	return d.Round(0)
 }
