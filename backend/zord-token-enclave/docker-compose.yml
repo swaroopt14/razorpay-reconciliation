@@ -44,7 +44,9 @@ services:
       #   2) uncomment the two lines below AND the volumes: block further down
       # - AWS_SHARED_CREDENTIALS_FILE=/aws-creds/credentials
       # - AWS_PROFILE=${AWS_PROFILE:-default}
-      - ENCLAVE_INTERNAL_TOKEN=${ENCLAVE_INTERNAL_TOKEN}
+      # TOK-04: replaces ENCLAVE_INTERNAL_TOKEN. Must match
+      # SERVICE_JWT_SIGNING_SECRET in zord-intent-engine's own .env.
+      - SERVICE_JWT_SIGNING_SECRET=${SERVICE_JWT_SIGNING_SECRET}
 
        # -------- KAFKA --------
      # -------- KAFKA --------

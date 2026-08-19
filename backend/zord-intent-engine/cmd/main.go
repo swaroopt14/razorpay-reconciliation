@@ -64,6 +64,13 @@ func main() {
 		log.Fatal("failed to initialize JWT signing secret:", err)
 	}
 
+	// TOK-04: every outbound call to zord-token-enclave must carry a scoped
+	// service JWT (not a static shared secret). Fail startup rather than
+	// silently run with every tokenize call doomed to a 401.
+	if err := auth.InitServiceJWTSigningSecret(); err != nil {
+		log.Fatal("failed to initialize service JWT signing secret:", err)
+	}
+
 	if err := services.InitTokenizedDataHashMasterSecret(); err != nil {
 		log.Fatal("failed to initialize tokenized data hash master secret:", err)
 	}

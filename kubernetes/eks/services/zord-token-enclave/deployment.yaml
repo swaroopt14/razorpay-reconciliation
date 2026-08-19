@@ -122,11 +122,15 @@ spec:
               value: pii.tokenize.request
             - name: KAFKA_TOPIC_PII_TOKENIZE_RESULT
               value: pii.tokenize.result
-            - name: ENCLAVE_INTERNAL_TOKEN
+            # TOK-04: replaces ENCLAVE_INTERNAL_TOKEN -- verifies the scoped
+            # service JWT callers now mint instead of a static shared secret.
+            # Must match SERVICE_JWT_SIGNING_SECRET in zord-intent-engine's
+            # deployment (same zord-app-secrets key, shared value).
+            - name: SERVICE_JWT_SIGNING_SECRET
               valueFrom:
                 secretKeyRef:
                   name: zord-app-secrets
-                  key: ENCLAVE_INTERNAL_TOKEN
+                  key: SERVICE_JWT_SIGNING_SECRET
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               valueFrom:
                 configMapKeyRef:
