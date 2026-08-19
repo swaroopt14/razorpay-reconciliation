@@ -1,5 +1,8 @@
 """
-Synthetic RCA training data generator + model trainer.
+Test-only synthetic RCA training data generator + model trainer.
+
+This script must never create a production model. Set ML_ENV=test explicitly
+when generating an artifact for local or automated tests.
 
 SPARSE PATTERN DESIGN — matches the real event-pipeline fragment profiles.
 
@@ -195,6 +198,12 @@ def _row(idx: int, pattern: int) -> dict:
 
 
 def main() -> None:
+    if os.environ.get("ML_ENV", "").lower() != "test":
+        log.error(
+            "Synthetic RCA training is test-only; refusing to run unless ML_ENV=test."
+        )
+        raise SystemExit(1)
+
     model_path = os.environ.get("RCA_MODEL_PATH", "/data/rca_model.pkl")
     total_rows = ROWS_PER_PATTERN * 4
 

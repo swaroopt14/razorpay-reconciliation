@@ -1,9 +1,9 @@
 {
   "_generated_by": "testing/generate_outbox_contract_inventory.py",
-  "_generated_at": "2026-08-10T07:46:25Z",
+  "_generated_at": "2026-08-13T06:20:59Z",
   "_source": "db/migrations/*.sql (schema) + internal/persistence/outbox_insert_contract.go and outbox_lease_contract.go (Go contract lists)",
   "table": "outbox",
-  "total_columns": 91,
+  "total_columns": 92,
   "columns": [
     {
       "name": "event_id",
@@ -550,6 +550,12 @@
       "type": "TEXT",
       "deprecated": false,
       "deprecation_note": null
+    },
+    {
+      "name": "canonical_payload_hash",
+      "type": "TEXT\n    GENERATED ALWAYS AS (encode(sha256(payload::text::bytea), 'hex')) STORED\n    NOT NULL",
+      "deprecated": false,
+      "deprecation_note": null
     }
   ],
   "deprecated_columns": [
@@ -699,9 +705,40 @@
     "intent_quality_score",
     "mapping_confidence_score",
     "schema_completeness_score",
-    "duplicate_reason_code"
+    "duplicate_reason_code",
+    "schema_version",
+    "payload_hash",
+    "canonical_payload_hash",
+    "source_row_ref",
+    "source_system",
+    "client_batch_ref",
+    "salient_hash",
+    "canonical_row_hash",
+    "input_facts_hash",
+    "raw_row_hash",
+    "idempotency_key",
+    "intent_type",
+    "canonical_version",
+    "intended_execution_at",
+    "constraints",
+    "beneficiary_type",
+    "pii_tokens",
+    "beneficiary",
+    "intent_status",
+    "confidence_score",
+    "canonical_snapshot_ref",
+    "nir_snapshot_ref",
+    "governance_snapshot_ref",
+    "provider_hint",
+    "request_fingerprint",
+    "routing_hints_json",
+    "business_state",
+    "duplicate_risk_flag",
+    "mapping_profile_version",
+    "beneficiary_fingerprint",
+    "aggregate_confidence_score"
   ],
-  "lease_exposed_column_count": 56,
+  "lease_exposed_column_count": 87,
   "migrations_touching_outbox": [
     "20260707095144_create_outbox.sql",
     "20260709060000_add_intent_lifecycle_state_and_dlq_status_check.sql",
@@ -711,7 +748,8 @@
     "20260714110000_add_governance_tokenized_evidence_hashes.sql",
     "20260715130000_add_raw_row_hash.sql",
     "20260715140000_add_artifact_id_to_payment_intents_and_outbox.sql",
-    "20260723070000_deprecate_outbox_batch_aggregate_columns.sql"
+    "20260723070000_deprecate_outbox_batch_aggregate_columns.sql",
+    "20260812150000_add_canonical_payload_hash_to_outbox.sql"
   ],
   "_consistency_checks": {
     "deprecated_columns_match_schema_comments": true,

@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"zord-edge/config"
 	"zord-edge/db"
 	"zord-edge/logger"
 	"zord-edge/middleware"
@@ -56,13 +57,13 @@ func init() {
 }
 
 type BulkResult struct {
-	Row        int    `json:"row"`
-	EnvelopeID string `json:"EnvelopeID,omitempty"`
-	TraceID    string `json:"Trace_id,omitempty"`
-	Status     string `json:"Status"`
+	Row            int    `json:"row"`
+	EnvelopeID     string `json:"EnvelopeID,omitempty"`
+	TraceID        string `json:"Trace_id,omitempty"`
+	Status         string `json:"Status"`
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
-	ReceivedAt string `json:"Received_At,omitempty"`
-	Error      string `json:"error,omitempty"`
+	ReceivedAt     string `json:"Received_At,omitempty"`
+	Error          string `json:"error,omitempty"`
 }
 
 type BulkJob struct {
@@ -106,37 +107,17 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 	}
 	defer src.Close()
 
-	// ── Phase 1: Stream file to S3 while computing hash/size/row-count ────────
+	// ── Phase 1: Read upload into memory while hashing / row-counting ──────────
 	//
 	// REQUIREMENT 12: The entire original file must be stored as a file-level
-	// RawEnvelope BEFORE any row processing begins. This is source-of-truth for
-	// dispute reconstruction, replay after parser upgrades, and batch audit.
-	//
-	// STREAMING STRATEGY: We cannot hold the full file in memory (original
-	// io.ReadAll), but we also cannot drop the file bytes (previous refactor
-	// mistake — it removed "file_data" from the envelope, breaking Req 12).
-	//
-	// Solution: pipe src through an io.TeeReader into a MultiWriter that
-	// simultaneously (a) hashes the stream and (b) writes chunks into a
-	// fileEnvelopeWriter that accumulates ONLY enough to build the S3 payload.
-	// Because ProcessRawIntent/S3store expects a []byte payload today, we still
-	// need to buffer — but we do it in one pass rather than two (no ReadAll +
-	// re-read). The buffer is released immediately after the file envelope is
-	// stored, before any row processing begins.
-	//
-	// If S3store is later upgraded to accept an io.Reader, the `var fileBuf`
-	// block below becomes the only change needed — everything else stays the same.
+	// artifact on S3 (vault-encrypted) BEFORE row processing begins.
+	// One raw in-memory copy (max MaxBulkUploadBytes) — no base64/JSON wrapper.
 
 	hasher := sha256.New()
-	var fileBuf bytes.Buffer
 	cw := &countingWriter{}
-
-	// TeeReader: every byte read from src is written to MultiWriter.
-	// MultiWriter fans to: hash computation + raw file buffer + byte/newline counter.
-	tee := io.TeeReader(src, io.MultiWriter(hasher, &fileBuf, cw))
-
-	// Drain the TeeReader — this is the single read pass over the file.
-	if _, err := io.Copy(io.Discard, tee); err != nil {
+	var fileBuf bytes.Buffer
+	limited := io.LimitReader(src, config.MaxBulkUploadBytes+1)
+	if _, err := io.Copy(io.MultiWriter(&fileBuf, hasher, cw), limited); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    "FILE_READ_ERROR",
 			"message": "failed to read file",
@@ -144,21 +125,23 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		return
 	}
 
-	filebyte := fileBuf.Bytes()
-	mimetype := http.DetectContentType(filebyte[:min(512, len(filebyte))])
-
-	fileHash := hex.EncodeToString(hasher.Sum(nil))
 	fileSizeBytes := int64(cw.total)
-	rowCountEstimate := cw.newlines - 1 // subtract header line, matches original
-
-	// Reset file pointer so the format-specific parser (CSV/xlsx) starts at byte 0.
-	if _, err := src.Seek(0, io.SeekStart); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    "FILE_SEEK_ERROR",
-			"message": "failed to reset file pointer",
+	if fileSizeBytes > config.MaxBulkUploadBytes {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+			"code":    "FILE_SIZE_LIMIT_EXCEEDED",
+			"message": "file size exceeds bulk upload limit",
+			"limit":   config.MaxBulkUploadBytes,
+			"actual":  fileSizeBytes,
 		})
 		return
 	}
+
+	fileBytes := fileBuf.Bytes()
+	headLen := min(512, len(fileBytes))
+	mimetype := http.DetectContentType(fileBytes[:headLen])
+
+	fileHash := hex.EncodeToString(hasher.Sum(nil))
+	rowCountEstimate := cw.newlines - 1 // subtract header line
 
 	tenantID := c.MustGet("tenant_id").(uuid.UUID)
 	tenantName := c.MustGet("tenant_name").(string)
@@ -176,7 +159,6 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		principalID = tenantID.String()
 	}
 
-	PayloadSize := c.MustGet("PayloadSize").(int64)
 	fileTraceID := uuid.Must(uuid.NewV7()).String()
 
 	batchIDHeader := c.GetHeader("Batch-ID")
@@ -199,52 +181,8 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 	// re-ingestion if the client hammers the endpoint.
 	forceReprocess := c.GetHeader("X-Zord-Force-Reprocess") == "true"
 
-	logger.Log.Info("bulk file stored",
-		slog.String("filename", file.Filename),
-		slog.Int64("size", fileSizeBytes),
-		slog.String("hash", fileHash),
-		slog.String("tenant_id", tenantID.String()))
-
-	// REQUIREMENT 12 PRESERVED: "file_data" contains the raw file bytes,
-	// identical to the original. This is the source-of-truth payload stored
-	// in the file-level RawEnvelope on S3 before any row is processed.
-	filePayload := map[string]interface{}{
-		"file_name":           file.Filename,
-		"file_size":           PayloadSize,
-		"file_content_hash":   fileHash,
-		"row_count_estimate":  rowCountEstimate,
-		"file_upload_channel": "CSV",
-		"file_data":           fileBuf.Bytes(), // raw file bytes — Req 12 source truth
-	}
-
-	payloadBytes, err := json.Marshal(filePayload)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    "PAYLOAD_MARSHAL_ERROR",
-			"message": "failed to build file payload",
-		})
-		return
-	}
-
-	fileMsg := model.RawIntentMessage{
-		TenantID:             tenantID.String(),
-		TraceID:              fileTraceID,
-		TenantName:           tenantName,
-		IdempotencyKey:       uuid.Must(uuid.NewV7()).String(),
-		PayloadSize:          int(PayloadSize),
-		Payload:              payloadBytes,
-		ContentType:          "application/json",
-		SourceType:           "BULK_FILE",
-		SourceClass:          c.GetString("source_class"),
-		ObjectEncryptionAlg:  "AES256",
-		KMSKeyVersion:        "v1",
-		SourceSystemHint:     nil,
-		IngressAPIVersion:    "v1",
-		RetentionPolicyClass: "STANDARD",
-		EventType:            "Envelope.Created",
-		BatchID:              finalBatchID,
-	}
 	ext := strings.ToLower(filepath.Ext(file.Filename))
+	fileContentType := bulkFileContentType(ext)
 
 	// MIME validation — before touching DB or S3
 	switch ext {
@@ -284,15 +222,11 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 			})
 			return
 		}
-		maxrowstemp := os.Getenv("MAX_CSV_ROWS")
-		if maxrowstemp == "" {
-			maxrowstemp = "10000"
-		}
-		if maxrows, err := strconv.Atoi(maxrowstemp); err == nil && rowCountEstimate > maxrows {
-			c.JSON(http.StatusBadRequest, gin.H{
+		if rowCountEstimate > config.MaxCSVRows {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
 				"code":    "FILE_ROW_LIMIT_EXCEEDED",
 				"message": "file row limit exceeded",
-				"limit":   maxrows,
+				"limit":   config.MaxCSVRows,
 				"actual":  rowCountEstimate,
 			})
 			return
@@ -384,6 +318,48 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 		return
 	}
 
+	encResult, err := vault.Encrypt(vault.EncryptionContext{
+		TenantID:          tenantID.String(),
+		ArtifactID:        artifactID.String(),
+		ArtifactVersionID: artifactVersionID.String(),
+		ContentType:       fileContentType,
+	}, fileBytes)
+	if err != nil {
+		services.MarkArtifactFailed(context.Background(), artifactVersionID)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    "FILE_ENCRYPT_ERROR",
+			"message": "failed to encrypt bulk file artifact",
+		})
+		return
+	}
+
+	fileMsg := model.RawIntentMessage{
+		TenantID:             tenantID.String(),
+		TraceID:              fileTraceID,
+		TenantName:           tenantName,
+		IdempotencyKey:       uuid.Must(uuid.NewV7()).String(),
+		PayloadSize:          int(fileSizeBytes),
+		Payload:              encResult.Ciphertext,
+		ContentType:          "application/octet-stream",
+		SourceType:           "BULK_FILE",
+		SourceClass:          c.GetString("source_class"),
+		ObjectEncryptionAlg:  "AES256",
+		KMSKeyVersion:        encResult.KeyVersion,
+		EncryptionKeyID:      encResult.KeyID,
+		SourceSystemHint:     nil,
+		IngressAPIVersion:    "v1",
+		RetentionPolicyClass: "STANDARD",
+		EventType:            "Envelope.Created",
+		BatchID:              finalBatchID,
+	}
+
+	logger.Log.Info("bulk file artifact encrypted",
+		slog.String("filename", file.Filename),
+		slog.Int64("size", fileSizeBytes),
+		slog.String("hash", fileHash),
+		slog.String("tenant_id", tenantID.String()),
+		slog.String("artifact_id", artifactID.String()))
+
 	data, err := services.ProcessRawIntent(context.Background(), fileMsg, h.S3store, FileEnvelopeId.String(), time.Now().UTC())
 	if err != nil {
 		services.MarkArtifactFailed(context.Background(), artifactVersionID)
@@ -404,10 +380,6 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 	data.ArtifactVersionId = artifactVersionID.String()
 	data.ArtifactId = artifactID.String()
-
-	// File envelope is now durably stored on S3. Release the buffer — row
-	// processing from this point forward uses only the reset src reader.
-	fileBuf.Reset()
 
 	// ── Phase 2: Stream rows for per-row processing ───────────────────────────
 
@@ -532,44 +504,44 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 					if err != nil {
 						if errors.Is(err, services.ErrFingerprintMismatch) {
 							resultsMap[job.Row] = BulkResult{
-								Row:    job.Row,
-								Status: "CONFLICT",
+								Row:            job.Row,
+								Status:         "CONFLICT",
 								IdempotencyKey: idempotencyKey,
-								Error:  "idempotency key reuse with different payload",
+								Error:          "idempotency key reuse with different payload",
 							}
 						} else if errors.Is(err, services.ErrIdempotencyInFlight) {
 							resultsMap[job.Row] = BulkResult{
-								Row:    job.Row,
-								Status: "CONFLICT",
+								Row:            job.Row,
+								Status:         "CONFLICT",
 								IdempotencyKey: idempotencyKey,
-								Error:  "idempotency key in flight — retry later",
+								Error:          "idempotency key in flight — retry later",
 							}
 						} else {
 							resultsMap[job.Row] = BulkResult{
-								Row:     job.Row,
-								Status:  "FAILED",
-								TraceID: traceID,
+								Row:            job.Row,
+								Status:         "FAILED",
+								TraceID:        traceID,
 								IdempotencyKey: idempotencyKey,
-								Error:   err.Error(),
+								Error:          err.Error(),
 							}
 						}
 					} else if duplicateID != uuid.Nil {
 						resultsMap[job.Row] = BulkResult{
-							Row:        job.Row,
-							Status:     "DUPLICATE",
-							TraceID:    traceID,
-							EnvelopeID: duplicateID.String(),
+							Row:            job.Row,
+							Status:         "DUPLICATE",
+							TraceID:        traceID,
+							EnvelopeID:     duplicateID.String(),
 							IdempotencyKey: idempotencyKey,
-							Error:      "duplicate idempotency key",
+							Error:          "duplicate idempotency key",
 						}
 					} else {
 						resultsMap[job.Row] = BulkResult{
-							Row:        job.Row,
-							Status:     "Accepted",
-							TraceID:    traceID,
-							EnvelopeID: storageAck.EnvelopeId,
+							Row:            job.Row,
+							Status:         "Accepted",
+							TraceID:        traceID,
+							EnvelopeID:     storageAck.EnvelopeId,
 							IdempotencyKey: idempotencyKey,
-							ReceivedAt: storageAck.ReceivedAt.Format(time.RFC3339Nano),
+							ReceivedAt:     storageAck.ReceivedAt.Format(time.RFC3339Nano),
 						}
 					}
 					resultsMu.Unlock()
@@ -577,7 +549,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 			}()
 		}
 
-		reader := csv.NewReader(src)
+		reader := csv.NewReader(bytes.NewReader(fileBytes))
 
 		headers, err := reader.Read()
 		if err != nil {
@@ -743,7 +715,7 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 	// ── Excel ─────────────────────────────────────────────────────────────────
 	case ".xlsx":
-		f, err := excelize.OpenReader(src)
+		f, err := excelize.OpenReader(bytes.NewReader(fileBytes))
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"code":    "INVALID_EXCEL_FILE",
@@ -779,16 +751,11 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 			})
 			return
 		}
-		maxrowstemp := os.Getenv("MAX_CSV_ROWS")
-		if maxrowstemp == "" {
-			logger.Log.Warn("MAX_CSV_ROWS not set; using default 10000")
-			maxrowstemp = "10000"
-		}
-		if maxrows, err := strconv.Atoi(maxrowstemp); err == nil && totalDataRows > maxrows {
-			c.JSON(http.StatusBadRequest, gin.H{
+		if totalDataRows > config.MaxCSVRows {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
 				"code":    "FILE_ROW_LIMIT_EXCEEDED",
-				"message": "Excel limit exceeded",
-				"limit":   maxrows,
+				"message": "Excel row limit exceeded",
+				"limit":   config.MaxCSVRows,
 				"actual":  totalDataRows,
 			})
 			return
@@ -862,38 +829,38 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 							}
 						} else if errors.Is(err, services.ErrIdempotencyInFlight) {
 							resultsMap[job.Row] = BulkResult{
-								Row:    job.Row,
-								Status: "CONFLICT",
+								Row:            job.Row,
+								Status:         "CONFLICT",
 								IdempotencyKey: idempotencyKey,
-								Error:  "idempotency key in flight — retry later",
+								Error:          "idempotency key in flight — retry later",
 							}
 						} else {
 							resultsMap[job.Row] = BulkResult{
-								Row:     job.Row,
-								Status:  "FAILED",
-								TraceID: traceID,
+								Row:            job.Row,
+								Status:         "FAILED",
+								TraceID:        traceID,
 								IdempotencyKey: idempotencyKey,
-								Error:   err.Error(),
+								Error:          err.Error(),
 							}
 						}
 					} else if duplicateID != uuid.Nil {
 						resultsMap[job.Row] = BulkResult{
-							Row:        job.Row,
-							Status:     "DUPLICATE",
-							TraceID:    traceID,
-							EnvelopeID: duplicateID.String(),
+							Row:            job.Row,
+							Status:         "DUPLICATE",
+							TraceID:        traceID,
+							EnvelopeID:     duplicateID.String(),
 							IdempotencyKey: idempotencyKey,
-							Error:      "duplicate idempotency key",
+							Error:          "duplicate idempotency key",
 						}
 					} else {
 
 						resultsMap[job.Row] = BulkResult{
-							Row:        job.Row,
-							Status:     "Accepted",
-							TraceID:    traceID,
-							EnvelopeID: storageAck.EnvelopeId,
+							Row:            job.Row,
+							Status:         "Accepted",
+							TraceID:        traceID,
+							EnvelopeID:     storageAck.EnvelopeId,
 							IdempotencyKey: idempotencyKey,
-							ReceivedAt: storageAck.ReceivedAt.Format(time.RFC3339Nano),
+							ReceivedAt:     storageAck.ReceivedAt.Format(time.RFC3339Nano),
 						}
 					}
 					resultsMu.Unlock()
@@ -1093,6 +1060,17 @@ func (h *Handler) BulkIntentHandler(c *gin.Context) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+func bulkFileContentType(ext string) string {
+	switch ext {
+	case ".csv":
+		return "text/csv"
+	case ".xlsx":
+		return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	default:
+		return "application/octet-stream"
+	}
+}
+
 // countingWriter counts total bytes written and newline characters seen.
 type countingWriter struct {
 	total    int
@@ -1265,7 +1243,12 @@ func (h *Handler) processBulkIntentRow(
 	authMethod string,
 ) (*model.AckMessage, uuid.UUID, error) {
 
-	encryptedPayload, err := vault.Encrypt(rawPayload)
+	encResult, err := vault.Encrypt(vault.EncryptionContext{
+		TenantID:          tenantID.String(),
+		ArtifactID:        artifactID,
+		ArtifactVersionID: artifactVersionID,
+		ContentType:       contentType,
+	}, rawPayload)
 	if err != nil {
 		logger.Log.Error("failed to encrypt payload for bulk row",
 			slog.String("trace_id", traceID),
@@ -1273,6 +1256,7 @@ func (h *Handler) processBulkIntentRow(
 			slog.String("error", err.Error()))
 		return nil, uuid.Nil, err
 	}
+	encryptedPayload := encResult.Ciphertext
 
 	fingerprintInput := append(rawPayload, []byte(idempotencyKey+tenantID.String())...)
 	fingerprintSum := sha256.Sum256(fingerprintInput)
@@ -1296,7 +1280,8 @@ func (h *Handler) processBulkIntentRow(
 
 		// Hardcoded values
 		ObjectEncryptionAlg:  "AES256",
-		KMSKeyVersion:        "v1",
+		KMSKeyVersion:        encResult.KeyVersion,
+		EncryptionKeyID:      encResult.KeyID,
 		IngressAPIVersion:    "v1",
 		RetentionPolicyClass: "STANDARD",
 		EventType:            "Envelope.Created",
@@ -1369,14 +1354,59 @@ func (h *Handler) processBulkIntentRow(
 	return storageAck, uuid.Nil, nil
 }
 
-// ── Sanitization Helpers ────────────────────────────────────────────────────────
+// ── Spreadsheet safety (import only) ───────────────────────────────────────────
+//
+// Edge quarantines actual formula/macro injection — not every signed value.
+// Legitimate negatives (+/- amounts), phone numbers (+91…), and signed identifiers
+// pass through; field-kind validation is handled downstream in intent-engine.
+// Export sanitization is out of scope for this service.
 
 func isCsvFormula(val string) bool {
-	trimmer := strings.TrimSpace(val)
-	if len(trimmer) == 0 {
+	trimmed := strings.TrimSpace(val)
+	if len(trimmed) == 0 {
 		return false
 	}
-	return trimmer[0] == '=' || trimmer[0] == '+' || trimmer[0] == '-' || trimmer[0] == '@'
+	if trimmed[0] == '=' || trimmed[0] == '@' || trimmed[0] == '\t' || trimmed[0] == '\r' {
+		return true
+	}
+
+	lower := strings.ToLower(trimmed)
+	if strings.Contains(lower, "cmd|") || strings.Contains(lower, "dde|") ||
+		strings.Contains(lower, "hyperlink(") {
+		return true
+	}
+
+	if trimmed[0] == '+' || trimmed[0] == '-' {
+		return isSpreadsheetFormulaExpression(trimmed)
+	}
+	return false
+}
+
+func isSpreadsheetFormulaExpression(val string) bool {
+	rest := strings.TrimLeft(val, "+-")
+	if rest == "" {
+		return false
+	}
+	for i := 1; i < len(rest); i++ {
+		if rest[i] == '(' {
+			start := i - 1
+			for start >= 0 && ((rest[start] >= 'A' && rest[start] <= 'Z') || (rest[start] >= 'a' && rest[start] <= 'z')) {
+				start--
+			}
+			if i-1-start >= 2 {
+				return true
+			}
+		}
+	}
+	if len(rest) >= 3 && rest[0] >= '0' && rest[0] <= '9' {
+		for i := 1; i < len(rest)-1; i++ {
+			if (rest[i] == '+' || rest[i] == '-' || rest[i] == '*' || rest[i] == '/') &&
+				rest[i+1] >= '0' && rest[i+1] <= '9' {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func CheckRowForFormulas(headers, row []string, rowNum int) *BulkResult {
@@ -1390,9 +1420,7 @@ func CheckRowForFormulas(headers, row []string, rowNum int) *BulkResult {
 				Row:    rowNum,
 				Status: "REJECTED",
 				Error:  fmt.Sprintf("formula injection detected in column %q", header),
-				// structured code for 3.1.4
 			}
-
 		}
 	}
 	return nil

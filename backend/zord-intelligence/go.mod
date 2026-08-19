@@ -28,6 +28,7 @@ require (
 )
 
 require (
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/pressly/goose/v3 v3.27.3
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0
 	go.opentelemetry.io/otel v1.44.0
@@ -41,6 +42,9 @@ require (
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect
 	github.com/sethvargo/go-retry v0.4.0 // indirect
+	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
+	github.com/xdg-go/scram v1.1.2 // indirect
+	github.com/xdg-go/stringprep v1.0.4 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 )
 

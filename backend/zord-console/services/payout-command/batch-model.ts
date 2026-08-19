@@ -4,6 +4,7 @@ export type BatchRowStatus = 'Success' | 'Failed' | 'Pending' | 'Processing'
 export type BatchTimelineStep = {
   label: string
   state: BatchStepState
+  description?: string
 }
 
 export type BatchRowTimelineStep = {
@@ -291,17 +292,81 @@ export const PAYMENT_PROOF_PIPELINE_STEPS = [
     label: 'Confirmation received',
     description: 'Bank/settlement/status file has been uploaded or connected.',
   },
-  { label: 'Matching completed', description: 'Zord has linked payment intents with outcome records.' },
+  {
+    label: 'Matching completed',
+    description: 'Service 5 attachment/finality confirms intents are linked to settlement outcomes.',
+  },
   {
     label: 'Ready for proof / review',
     description: 'Batch is ready for evidence export or issue review.',
   },
 ] as const
 
+/**
+ * CON-P0-14 — authoritative matching / proof signals from Services 5–6.
+ * Never infer "Matching completed" from generic processed-row counts alone.
+ */
+export type PaymentProofMatchingSignals = {
+  /** Service 5 `finality_status` / batch health finality. */
+  finalityStatus?: string | null
+  unresolvedCount?: number | null
+  ambiguousCount?: number | null
+  conflictedCount?: number | null
+  unresolvedIntendedMinor?: number | null
+  totalIntendedMinor?: number | null
+  /** Service 5 settlement observations / artifact present for the batch. */
+  settlementArtifactReceived?: boolean
+  settlementObservationCount?: number | null
+  /**
+   * Service 6 evidence pack rate (0–1 or 0–100).
+   * Used for "Ready for proof / review" — not for Matching completed.
+   */
+  evidencePackRate?: number | null
+}
+
+function normalizeEvidencePackRate(rate: number | null | undefined): number | null {
+  if (rate == null || !Number.isFinite(rate)) return null
+  return rate <= 1 ? rate : rate / 100
+}
+
+function hasMaterialUnresolvedAttachment(signals: PaymentProofMatchingSignals | null | undefined): boolean {
+  if (!signals) return false
+  if ((signals.unresolvedCount ?? 0) > 0) return true
+  if ((signals.ambiguousCount ?? 0) > 0) return true
+  if ((signals.conflictedCount ?? 0) > 0) return true
+  const intended = signals.totalIntendedMinor
+  const unresolved = signals.unresolvedIntendedMinor
+  if (
+    intended != null &&
+    Number.isFinite(intended) &&
+    intended > 0 &&
+    unresolved != null &&
+    Number.isFinite(unresolved) &&
+    unresolved / intended >= 0.01
+  ) {
+    return true
+  }
+  return false
+}
+
+/** True only when Service 5 finality + attachment coverage say matching is closed. */
+export function isMatchingCompletedFromService5(
+  signals: PaymentProofMatchingSignals | null | undefined,
+): boolean {
+  if (!signals) return false
+  const finality = String(signals.finalityStatus ?? '')
+    .trim()
+    .toUpperCase()
+  if (finality !== 'FULLY_SETTLED' && finality !== 'SETTLED') return false
+  if (hasMaterialUnresolvedAttachment(signals)) return false
+  return true
+}
+
 /** Payment proof lifecycle for Batch Command Center (no disbursement language). */
 export function derivePaymentProofTimeline(
   summary: BatchSummary,
   intake: ZordPipelineIntake,
+  matchingSignals?: PaymentProofMatchingSignals | null,
 ): BatchTimelineStep[] {
   const fileReceived =
     Boolean(intake.intentFileName) ||
@@ -321,55 +386,112 @@ export function derivePaymentProofTimeline(
     intake.intakeStep === 'intent_uploading' ||
     (intake.uploadState === 'uploading' && Boolean(intake.uploadedFileName))
 
+  // Service 2 ingest complete → intents exist / mapped.
   const intentsCreated = summary.totalRows > 0 && fileMapped
   const intentsCreating = fileMapped && summary.totalRows === 0 && !mappingInFlight
 
-  const confirmationReceived =
-    intake.settlementIngestOk || intake.intakeStep === 'closed' || Boolean(intake.settlementFileName)
-  const confirmationActive = intake.intakeStep === 'settlement_uploading'
+  // Service 5 settlement artifact received (intake upload and/or observations).
+  const settlementArtifactReceived =
+    intake.settlementIngestOk ||
+    intake.intakeStep === 'closed' ||
+    Boolean(intake.settlementFileName) ||
+    Boolean(matchingSignals?.settlementArtifactReceived) ||
+    (matchingSignals?.settlementObservationCount ?? 0) > 0
+  const confirmationReceived = settlementArtifactReceived
+  const confirmationActive = intake.intakeStep === 'settlement_uploading' && !settlementArtifactReceived
 
-  const matchingDone =
+  // CON-P0-14: Matching completed ONLY from Service 5 attachment/finality — never from processed counts.
+  const matchingDone = isMatchingCompletedFromService5(matchingSignals)
+  const unresolvedAttachment = hasMaterialUnresolvedAttachment(matchingSignals)
+  const finality = String(matchingSignals?.finalityStatus ?? '')
+    .trim()
+    .toUpperCase()
+  const rowsFullyProcessed =
+    summary.totalRows > 0 && summary.processed >= summary.totalRows
+  const matchingReviewRequired =
     confirmationReceived &&
-    summary.totalRows > 0 &&
-    summary.processed >= summary.totalRows &&
-    summary.failed === 0
+    !matchingDone &&
+    (unresolvedAttachment ||
+      finality === 'PARTIALLY_SETTLED' ||
+      finality === 'REQUIRES_REVIEW' ||
+      finality === 'FAILED' ||
+      // All rows processed is processing completion only — stay in review until S5 closes matching.
+      rowsFullyProcessed ||
+      summary.failed > 0)
   const matchingActive =
-    confirmationReceived && summary.totalRows > 0 && summary.processed < summary.totalRows
+    confirmationReceived &&
+    !matchingDone &&
+    !matchingReviewRequired &&
+    (finality === 'PROCESSING' ||
+      finality === 'PENDING' ||
+      finality === 'OPEN' ||
+      summary.pending > 0 ||
+      (summary.totalRows > 0 && summary.processed < summary.totalRows))
 
-  const readyForReview =
-    matchingDone ||
-    (intentsCreated && summary.failed > 0) ||
-    (intake.intakeStep === 'closed' && summary.totalRows > 0)
+  const evidenceRate = normalizeEvidencePackRate(matchingSignals?.evidencePackRate ?? null)
+  const evidenceReady = evidenceRate != null && evidenceRate >= 0.8
+  const readyForProofDone = matchingDone && (evidenceReady || evidenceRate == null)
+  const readyForProofWarning =
+    matchingReviewRequired || (intentsCreated && summary.failed > 0) || (matchingDone && evidenceRate != null && !evidenceReady)
 
   const steps: BatchTimelineStep[] = PAYMENT_PROOF_PIPELINE_STEPS.map((s) => ({
     label: s.label,
     state: 'upcoming' as BatchStepState,
+    description: s.description,
   }))
-  const set = (i: number, state: BatchStepState) => {
+  const set = (i: number, state: BatchStepState, label?: string, description?: string) => {
     steps[i].state = state
+    if (label) steps[i].label = label
+    if (description) steps[i].description = description
   }
 
   set(0, fileReceived ? 'done' : 'upcoming')
   if (fileMapped) set(1, 'done')
   else if (mappingInFlight) set(1, 'active')
-  else set(1, fileReceived ? 'upcoming' : 'upcoming')
+  else set(1, 'upcoming')
 
   if (intentsCreated) set(2, 'done')
   else if (intentsCreating) set(2, 'active')
-  else set(2, fileMapped ? 'upcoming' : 'upcoming')
+  else set(2, 'upcoming')
 
   if (confirmationReceived) set(3, 'done')
   else if (confirmationActive) set(3, 'active')
   else set(3, intentsCreated ? 'warning' : 'upcoming')
 
-  if (matchingDone) set(4, 'done')
-  else if (matchingActive) set(4, 'active')
-  else if (confirmationReceived && summary.failed > 0) set(4, 'warning')
-  else set(4, 'upcoming')
+  if (matchingDone) {
+    set(
+      4,
+      'done',
+      'Matching completed',
+      'Service 5 attachment/finality confirms intents are linked to settlement outcomes.',
+    )
+  } else if (matchingReviewRequired) {
+    set(
+      4,
+      'warning',
+      'Matching / Review required',
+      'Rows may be processed, but Service 5 still has unresolved or ambiguous attachment outcomes.',
+    )
+  } else if (matchingActive) {
+    set(
+      4,
+      'active',
+      'Matching in progress',
+      'Settlement artifact received — waiting for Service 5 attachment/finality.',
+    )
+  } else {
+    set(4, 'upcoming')
+  }
 
-  if (readyForReview) set(5, summary.failed > 0 && !matchingDone ? 'warning' : 'done')
-  else if (matchingActive) set(5, 'active')
-  else set(5, 'upcoming')
+  if (readyForProofDone) {
+    set(5, 'done')
+  } else if (readyForProofWarning) {
+    set(5, 'warning')
+  } else if (matchingActive || matchingDone) {
+    set(5, 'active')
+  } else {
+    set(5, 'upcoming')
+  }
 
   return steps
 }

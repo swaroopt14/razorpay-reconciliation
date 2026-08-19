@@ -10,16 +10,41 @@ import {
 
 export type DateRangePreset = 'all' | '7d' | '30d' | '90d' | 'ytd'
 
+/** Sidebar / hero settlement outcome — never derived from attachment confidence. */
+export type SettlementSidebarOutcomeLabel =
+  | 'Fully Settled'
+  | 'Partially Reconciled'
+  | 'Open'
+  | 'Failed'
+  | 'Requires Review'
+  | 'Cancelled'
+  | 'Processing'
+
 export type SettlementSidebarOutcome = {
   total: number
   settled: number
   failed: number
   settledPct: number | null
-  label: 'Settled' | 'Partial' | 'Failed'
+  label: SettlementSidebarOutcomeLabel
+  /** Raw Service 5 finality when known (e.g. FULLY_SETTLED). */
+  finalityStatus: string | null
   dotClass: string
+  /** Value/count coverage progress (0–100), not attachment confidence. */
   progressPct: number
   toneText: string
   barClass: string
+}
+
+export type SettlementFinalityCoverageInput = {
+  finalityStatus?: string | null
+  totalIntendedMinor?: number | null
+  unresolvedIntendedMinor?: number | null
+  totalConfirmedMinor?: number | null
+  totalCount?: number | null
+  unresolvedCount?: number | null
+  successCount?: number | null
+  failedCount?: number | null
+  pendingCount?: number | null
 }
 
 export const DATE_RANGE_OPTIONS: { value: DateRangePreset; label: string }[] = [
@@ -34,6 +59,9 @@ export const DATE_RANGE_OPTIONS: { value: DateRangePreset; label: string }[] = [
 export const AMOUNT_RANGE_OPTIONS = CURRENCY_NEUTRAL_AMOUNT_RANGES
 
 export type AmountRangeFilter = CurrencyNeutralAmountRange
+
+/** Material unresolved value (≥1%) blocks Fully Settled even if finality looks closed. */
+export const MATERIAL_UNRESOLVED_VALUE_RATIO = 0.01
 
 export function observationInDateRange(observationTime: string, preset: DateRangePreset): boolean {
   if (preset === 'all') return true
@@ -73,100 +101,185 @@ export function isFailedObservationStatus(statusRaw: string): boolean {
   return u.includes('FAIL') || u.includes('REJECT')
 }
 
-export function outcomeFromMatchConfidence(matchConfidence: number | null | undefined): SettlementSidebarOutcome {
-  if (matchConfidence == null || !Number.isFinite(matchConfidence)) {
-    return {
-      total: 0,
-      settled: 0,
-      failed: 0,
-      settledPct: null,
-      label: 'Partial',
-      dotClass: 'bg-slate-300',
-      progressPct: 0,
-      toneText: 'text-slate-600',
-      barClass: 'bg-slate-400',
-    }
+function parseMinor(value: number | null | undefined): number | null {
+  if (value == null || !Number.isFinite(value)) return null
+  return value
+}
+
+/** Unresolved intended value ÷ total intended value (0–1), null when unknown. */
+export function unresolvedValueRatio(input: SettlementFinalityCoverageInput): number | null {
+  const intended = parseMinor(input.totalIntendedMinor)
+  const unresolved = parseMinor(input.unresolvedIntendedMinor)
+  if (intended == null || intended <= 0 || unresolved == null) return null
+  return Math.min(1, Math.max(0, unresolved / intended))
+}
+
+/** Coverage progress from confirmed/intended or inverse of unresolved ratio. */
+export function coverageProgressPct(input: SettlementFinalityCoverageInput): number {
+  const intended = parseMinor(input.totalIntendedMinor)
+  const confirmed = parseMinor(input.totalConfirmedMinor)
+  if (intended != null && intended > 0 && confirmed != null) {
+    return Math.round(Math.min(100, Math.max(0, (confirmed / intended) * 100)))
   }
-
-  const score = matchConfidence <= 1 ? matchConfidence : matchConfidence / 100
-  const progressPct = Math.round(Math.min(100, Math.max(0, score * 100)))
-  let label: SettlementSidebarOutcome['label'] = 'Partial'
-  if (score >= 0.75) label = 'Settled'
-  else if (score < 0.5) label = 'Failed'
-
-  let dotClass = 'bg-amber-500'
-  let toneText = 'text-amber-700'
-  let barClass = 'bg-amber-500'
-  if (score >= 0.75) {
-    dotClass = 'bg-black'
-    toneText = 'text-black'
-    barClass = 'bg-black'
-  } else if (score < 0.5) {
-    dotClass = 'bg-rose-500'
-    toneText = 'text-rose-700'
-    barClass = 'bg-rose-500'
+  const unresolvedRatio = unresolvedValueRatio(input)
+  if (unresolvedRatio != null) {
+    return Math.round(Math.min(100, Math.max(0, (1 - unresolvedRatio) * 100)))
   }
+  const total = input.totalCount
+  const success = input.successCount
+  if (total != null && total > 0 && success != null && Number.isFinite(success)) {
+    return Math.round(Math.min(100, Math.max(0, (success / total) * 100)))
+  }
+  return 0
+}
 
+function toneForLabel(label: SettlementSidebarOutcomeLabel): Pick<
+  SettlementSidebarOutcome,
+  'dotClass' | 'toneText' | 'barClass'
+> {
+  if (label === 'Fully Settled') {
+    return { dotClass: 'bg-black', toneText: 'text-black', barClass: 'bg-black' }
+  }
+  if (label === 'Failed' || label === 'Cancelled') {
+    return { dotClass: 'bg-rose-500', toneText: 'text-rose-700', barClass: 'bg-rose-500' }
+  }
+  if (label === 'Requires Review') {
+    return { dotClass: 'bg-rose-500', toneText: 'text-rose-700', barClass: 'bg-rose-500' }
+  }
+  if (label === 'Open' || label === 'Processing') {
+    return { dotClass: 'bg-slate-400', toneText: 'text-slate-600', barClass: 'bg-slate-400' }
+  }
+  // Partially Reconciled
+  return { dotClass: 'bg-amber-500', toneText: 'text-amber-700', barClass: 'bg-amber-500' }
+}
+
+function emptyOutcome(label: SettlementSidebarOutcomeLabel = 'Open'): SettlementSidebarOutcome {
+  const tone = toneForLabel(label)
   return {
     total: 0,
     settled: 0,
     failed: 0,
-    settledPct: progressPct,
+    settledPct: null,
     label,
-    dotClass,
-    progressPct,
-    toneText,
-    barClass,
+    finalityStatus: null,
+    progressPct: 0,
+    ...tone,
   }
+}
+
+/**
+ * CON-P0-13 — sidebar/hero outcome from Service 5 finality + count/value coverage.
+ * Attachment / match confidence must never map to Settled/Failed.
+ */
+export function outcomeFromFinalityAndCoverage(
+  input: SettlementFinalityCoverageInput | null | undefined,
+): SettlementSidebarOutcome {
+  if (!input) return emptyOutcome('Open')
+
+  const finalityRaw = String(input.finalityStatus ?? '').trim()
+  const finality = finalityRaw.toUpperCase()
+  const unresolvedRatio = unresolvedValueRatio(input)
+  const hasMaterialUnresolvedValue =
+    unresolvedRatio != null && unresolvedRatio >= MATERIAL_UNRESOLVED_VALUE_RATIO
+  const progressPct = coverageProgressPct(input)
+  const total = input.totalCount != null && Number.isFinite(input.totalCount) ? input.totalCount : 0
+  const settled =
+    input.successCount != null && Number.isFinite(input.successCount) ? input.successCount : 0
+  const failed =
+    input.failedCount != null && Number.isFinite(input.failedCount) ? input.failedCount : 0
+  const unresolvedCount =
+    input.unresolvedCount != null && Number.isFinite(input.unresolvedCount)
+      ? input.unresolvedCount
+      : null
+  const hasUnresolvedCounts =
+    (unresolvedCount != null && unresolvedCount > 0) ||
+    (input.pendingCount != null && input.pendingCount > 0)
+
+  let label: SettlementSidebarOutcomeLabel = 'Open'
+
+  if (finality === 'FAILED') {
+    label = 'Failed'
+  } else if (finality === 'CANCELLED') {
+    label = 'Cancelled'
+  } else if (finality === 'REQUIRES_REVIEW') {
+    label = 'Requires Review'
+  } else if (finality === 'FULLY_SETTLED' || finality === 'SETTLED') {
+    // Coverage can keep an "open" commercial picture even when confidence is high.
+    label = hasMaterialUnresolvedValue || hasUnresolvedCounts ? 'Partially Reconciled' : 'Fully Settled'
+  } else if (finality === 'PARTIALLY_SETTLED') {
+    label = 'Partially Reconciled'
+  } else if (finality === 'PROCESSING') {
+    label = hasMaterialUnresolvedValue || progressPct > 0 ? 'Partially Reconciled' : 'Processing'
+  } else if (finality === 'OPEN' || finality === 'PENDING' || !finality) {
+    if (hasMaterialUnresolvedValue || hasUnresolvedCounts) {
+      label = progressPct > 0 || settled > 0 ? 'Partially Reconciled' : 'Open'
+    } else if (progressPct >= 100 && settled > 0 && failed === 0) {
+      label = 'Fully Settled'
+    } else if (progressPct > 0 || settled > 0) {
+      label = 'Partially Reconciled'
+    } else {
+      label = 'Open'
+    }
+  } else {
+    label = hasMaterialUnresolvedValue || progressPct > 0 ? 'Partially Reconciled' : 'Open'
+  }
+
+  const tone = toneForLabel(label)
+  return {
+    total,
+    settled,
+    failed,
+    settledPct: progressPct > 0 ? progressPct : null,
+    label,
+    finalityStatus: finalityRaw || null,
+    progressPct,
+    ...tone,
+  }
+}
+
+/**
+ * @deprecated CON-P0-13 — confidence is not finality. Kept only so accidental callers
+ * cannot silently get Settled/Failed from match score; always returns Open-neutral shell.
+ */
+export function outcomeFromMatchConfidence(
+  _matchConfidence: number | null | undefined,
+): SettlementSidebarOutcome {
+  return emptyOutcome('Open')
+}
+
+/** Format attachment/match confidence for separate display (never as Settled/Failed). */
+export function formatAttachmentConfidencePct(
+  matchConfidence: number | null | undefined,
+): string | null {
+  if (matchConfidence == null || !Number.isFinite(matchConfidence)) return null
+  const score = matchConfidence <= 1 ? matchConfidence : matchConfidence / 100
+  const pct = Math.round(Math.min(100, Math.max(0, score * 100)))
+  return `${pct}%`
 }
 
 export function outcomeFromObservationRows(rows: SettlementObservationTableRow[]): SettlementSidebarOutcome {
   const total = rows.length
   if (total === 0) {
-    return {
-      total: 0,
-      settled: 0,
-      failed: 0,
-      settledPct: null,
-      label: 'Partial',
-      dotClass: 'bg-slate-300',
-      progressPct: 0,
-      toneText: 'text-slate-600',
-      barClass: 'bg-slate-400',
-    }
+    return emptyOutcome('Open')
   }
   const settled = rows.filter((r) => isSettledObservationStatus(r.statusRaw)).length
   const failed = rows.filter((r) => isFailedObservationStatus(r.statusRaw)).length
   const settledPct = Math.round((settled / total) * 100)
-  let label: SettlementSidebarOutcome['label'] = 'Partial'
+  let label: SettlementSidebarOutcomeLabel = 'Partially Reconciled'
   if (failed > 0 && failed >= settled) label = 'Failed'
-  else if (settled === total) label = 'Settled'
+  else if (settled === total) label = 'Fully Settled'
+  else if (settled === 0 && failed === 0) label = 'Open'
 
-  const failedRatio = failed / total
-  const settledRatio = settled / total
-  let dotClass = 'bg-amber-500'
-  let toneText = 'text-amber-700'
-  let barClass = 'bg-amber-500'
-  if (failedRatio >= 0.5 || (failed > 0 && settled === 0)) {
-    dotClass = 'bg-rose-500'
-    toneText = 'text-rose-700'
-    barClass = 'bg-rose-500'
-  } else if (settledRatio >= 0.8 && failed === 0) {
-    dotClass = 'bg-black'
-    toneText = 'text-black'
-    barClass = 'bg-black'
-  }
-
+  const tone = toneForLabel(label)
   return {
     total,
     settled,
     failed,
     settledPct,
     label,
-    dotClass,
+    finalityStatus: null,
     progressPct: settledPct,
-    toneText,
-    barClass,
+    ...tone,
   }
 }
 
@@ -201,5 +314,52 @@ export function computeSettlementBatchSummary(rows: SettlementObservationTableRo
     totalFeesDisplay: formatMoneyBuckets(groupAmountsByCurrency(rows.map((r) => ({ amount: r.feeAmount, currency: r.currency })))),
     currency: amountAgg.ok ? amountAgg.total.currency : null,
     outcome,
+  }
+}
+
+/** Build finality/coverage input from Intelligence batch detail payloads. */
+export function finalityCoverageFromBatchDetail(detail: {
+  batch?: {
+    finality_status?: string | null
+    batch_finality_status?: string | null
+    total_intended_amount_minor?: number | string | null
+    unresolved_intended_amount_minor?: number | string | null
+    total_confirmed_amount_minor?: number | string | null
+    total_count?: number | null
+    unresolved_count?: number | null
+    success_count?: number | null
+    failed_count?: number | null
+    pending_count?: number | null
+  } | null
+  batch_health?: {
+    finality_status?: string | null
+    total_intended_amount_minor?: number | string | null
+    total_confirmed_amount_minor?: number | string | null
+    unresolved_count?: number | null
+    total_count?: number | null
+    success_count?: number | null
+    failed_count?: number | null
+    pending_count?: number | null
+  } | null
+} | null | undefined): SettlementFinalityCoverageInput {
+  const batch = detail?.batch
+  const health = detail?.batch_health
+  const toNum = (v: number | string | null | undefined): number | null => {
+    if (v == null || v === '') return null
+    const n = typeof v === 'number' ? v : Number.parseFloat(String(v).replace(/,/g, ''))
+    return Number.isFinite(n) ? n : null
+  }
+  return {
+    finalityStatus: batch?.finality_status ?? batch?.batch_finality_status ?? health?.finality_status ?? null,
+    totalIntendedMinor:
+      toNum(batch?.total_intended_amount_minor) ?? toNum(health?.total_intended_amount_minor),
+    unresolvedIntendedMinor: toNum(batch?.unresolved_intended_amount_minor),
+    totalConfirmedMinor:
+      toNum(batch?.total_confirmed_amount_minor) ?? toNum(health?.total_confirmed_amount_minor),
+    totalCount: batch?.total_count ?? health?.total_count ?? null,
+    unresolvedCount: batch?.unresolved_count ?? health?.unresolved_count ?? null,
+    successCount: batch?.success_count ?? health?.success_count ?? null,
+    failedCount: batch?.failed_count ?? health?.failed_count ?? null,
+    pendingCount: batch?.pending_count ?? health?.pending_count ?? null,
   }
 }

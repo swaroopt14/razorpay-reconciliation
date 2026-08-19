@@ -10,10 +10,10 @@ import (
 var (
 	uuidRe = regexp.MustCompile(`(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b`)
 
-	keyValIDRe          = regexp.MustCompile(`(?i)\b(intent_id|trace_id|tenant_id|session_id|envelope_id|contract_id|action_id|record_id|chunk_id|batch_id|corridor_id|idempotency[_\s]?key|account(_id|_number)?)\b\s*[:=]\s*[^,\s]+`)
-	jsonSensitivePairRe = regexp.MustCompile(`(?i)"(intent_id|trace_id|tenant_id|session_id|envelope_id|contract_id|action_id|record_id|chunk_id|batch_id|corridor_id|idempotency_key|account_id|account_number|iban|ifsc|swift|pan|vault_object_ref|payload_hash|salient_hash|request_fingerprint|provider_request_fingerprint|envelope_hash|envelope_signature|signature_value|archive_hash|encrypted_payload)"\s*:\s*"[^"]*"`)
-	sensitiveValRe      = regexp.MustCompile(`(?i)\b(idempotency[_\s]?key|account(_id|_number)?|iban|ifsc|swift|pan|vault_object_ref|payload_hash|salient_hash|request_fingerprint|provider_request_fingerprint|envelope_hash|envelope_signature|signature_value|archive_hash|encrypted_payload)\b\s*[:=]?\s*[^,\n]*`)
-	sensitiveWordRe     = regexp.MustCompile(`(?i)\b(api[_-]?key|secret|password|token|hash|encrypted|signature|cipher|vault)\b`)
+	keyValIDRe          = regexp.MustCompile(`(?i)\b(user_id|intent_id|trace_id|tenant_id|session_id|envelope_id|contract_id|action_id|record_id|chunk_id|batch_id|corridor_id|idempotency[_\s]?key|account(_id|_number)?)\b\s*[:=]\s*[^,\s]+`)
+	jsonSensitivePairRe = regexp.MustCompile(`(?i)"(user_id|intent_id|trace_id|tenant_id|session_id|envelope_id|contract_id|action_id|record_id|chunk_id|batch_id|corridor_id|idempotency_key|account_id|account_number|iban|ifsc|swift|pan|vault_object_ref|payload_hash|salient_hash|request_fingerprint|provider_request_fingerprint|envelope_hash|envelope_signature|signature_value|archive_hash|encrypted_payload)"\s*:\s*"[^"]*"`)
+	sensitiveValRe      = regexp.MustCompile(`(?i)\b(api[_\s-]?key|jwt[_\s-]?token|token|secret|password|idempotency[_\s]?key|account(_id|_number)?|iban|ifsc|swift|pan|vault_object_ref|payload_hash|salient_hash|request_fingerprint|provider_request_fingerprint|envelope_hash|envelope_signature|signature_value|archive_hash|encrypted_payload)\b\s*[:=]?\s*[^,\n]*`)
+	sensitiveWordRe     = regexp.MustCompile(`(?i)\b(api[_\s-]?key|jwt[_\s-]?token|secret|password|token|hash|encrypted|signature|cipher|vault|tenant_id|user_id|session_id|intent_id|trace_id)\b`)
 	multiSpaceRe        = regexp.MustCompile(`[^\S\n]{2,}`)
 	blankLineBlockRe    = regexp.MustCompile(`\n{3,}`)
 )

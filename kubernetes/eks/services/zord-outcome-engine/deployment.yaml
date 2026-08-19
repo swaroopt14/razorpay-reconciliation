@@ -68,6 +68,17 @@ spec:
                 configMapKeyRef:
                   name: zord-aws-config
                   key: KAFKA_BROKERS
+            # ── SASL/SCRAM Authentication (PLAT-06) ──
+            - name: KAFKA_SASL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: zord-app-secrets
+                  key: KAFKA_OUTCOME_USERNAME
+            - name: KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: zord-app-secrets
+                  key: KAFKA_OUTCOME_PASSWORD
             - name: KAFKA_TOPIC
               value: payments.dispatch.events.v1
             - name: KAFKA_INTENT_TOPIC
@@ -121,6 +132,11 @@ spec:
                 secretKeyRef:
                   name: zord-app-secrets
                   key: RELAY_SERVICES_2_AUTH_TOKEN
+            - name: JWT_SIGNING_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: zord-app-secrets
+                  key: JWT_SIGNING_SECRET
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               valueFrom:
                 configMapKeyRef:

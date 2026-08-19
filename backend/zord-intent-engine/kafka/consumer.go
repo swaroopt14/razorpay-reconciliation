@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/IBM/sarama"
@@ -44,13 +45,23 @@ type Consumer struct {
 // StartConsumer requires onPermanentFailure — R-03 makes durable failure
 // recording a precondition for offset advancement, not an optional add-on,
 // so there is no "run without it" mode to silently fall back to.
-func StartConsumer(ctx context.Context, brokers []string, groupID, topic string, handler func([]byte) error, onPermanentFailure FailureRecorder) error {
+//
+// wg (INT-08), if non-nil, is Add(1)'d before the internal consume-loop
+// goroutine starts and Done()'d via defer inside it — so a caller can
+// cancel ctx on shutdown and then wg.Wait() to know the loop has actually
+// exited (including finishing whatever message it was mid-handling), not
+// just that cancellation was requested. Pass nil to opt out (no behavior
+// change from before this parameter existed).
+func StartConsumer(ctx context.Context, brokers []string, groupID, topic string, handler func([]byte) error, onPermanentFailure FailureRecorder, wg *sync.WaitGroup) error {
 	if onPermanentFailure == nil {
 		return errors.New("kafka.StartConsumer: onPermanentFailure is required (R-03: no durable failure recording, no consumer)")
 	}
 
 	config := sarama.NewConfig()
 	config.Version = sarama.V2_8_0_0
+
+	// SASL/SCRAM-SHA-512 authentication (PLAT-06)
+	ApplySASL(config)
 
 	//Consumer Group Setting
 	config.Consumer.Group.Rebalance.GroupStrategies = []sarama.BalanceStrategy{
@@ -70,8 +81,14 @@ func StartConsumer(ctx context.Context, brokers []string, groupID, topic string,
 		onPermanentFailure: onPermanentFailure,
 	}
 
+	if wg != nil {
+		wg.Add(1)
+	}
 	go func() {
 		defer group.Close()
+		if wg != nil {
+			defer wg.Done()
+		}
 		for {
 			if ctx.Err() != nil {
 				return

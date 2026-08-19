@@ -107,9 +107,11 @@ func BuildTimeline(pack *models.EvidencePack) []models.TimelineEvent {
 			label = fmt.Sprintf("Artifact recorded: %s", oi.item.Type)
 		}
 		events = append(events, models.TimelineEvent{
-			Timestamp: ts.UTC(),
-			Event:     label,
-			NodeID:    oi.item.LeafHash,
+			Timestamp:     ts.UTC(),
+			Event:         label,
+			NodeID:        oi.item.LeafHash,
+			TraceID:       oi.item.TraceID,
+			SourceEventID: oi.item.SourceEventID,
 		})
 	}
 
@@ -175,6 +177,8 @@ func BuildLineageGraph(pack *models.EvidencePack) models.LineageGraph {
 			LeafHash:      item.LeafHash,
 			ItemRef:       item.Ref,
 			SchemaVersion: item.SchemaVersion,
+			TraceID:       item.TraceID,
+			SourceEventID: item.SourceEventID,
 		})
 	}
 

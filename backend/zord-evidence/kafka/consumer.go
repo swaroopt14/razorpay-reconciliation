@@ -113,6 +113,8 @@ func StartConsumerForTopics(ctx context.Context, brokers []string, groupID strin
 func startConsumerGroup(ctx context.Context, brokers []string, groupID string, topics []string, handler MessageHandler) (*ConsumerHandle, error) {
 	cfg := sarama.NewConfig()
 	cfg.Version = sarama.V2_6_0_0
+	// SASL/SCRAM-SHA-512 authentication (PLAT-06)
+	ApplySASL(cfg)
 	cfg.Consumer.Offsets.Initial = sarama.OffsetOldest
 	cfg.Consumer.Group.Rebalance.Strategy = sarama.NewBalanceStrategyRoundRobin()
 

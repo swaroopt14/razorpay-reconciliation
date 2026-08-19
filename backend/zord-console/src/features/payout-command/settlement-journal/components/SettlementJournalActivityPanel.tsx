@@ -20,6 +20,8 @@ import { settlementJournalCopy } from '../copy/settlementJournalCopy'
 import {
   formatClientRefDisplay,
   formatMappingConfidenceLabel,
+  mapMatchStatus,
+  matchStatusBadgeClass,
 } from '../mappers/mapMatchStatus'
 import { SettlementParseErrorsTable } from './SettlementParseErrorsTable'
 import type { SettlementParseErrorRow } from '@/services/payout-command/prod-api/settlementObservations'
@@ -43,7 +45,7 @@ const filterSelectClass =
 const ROW_SIZE_OPTIONS = [25, 50, 100, 200] as const
 const TABLE_TH =
   'px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-[#888888] whitespace-nowrap'
-const TABLE_COL_COUNT = 8
+const TABLE_COL_COUNT = 9
 
 export type SettlementJournalActivityViewModel = {
   tableSearch: string
@@ -335,7 +337,8 @@ export function SettlementJournalActivityPanel({ vm }: SettlementJournalActivity
             settlementJournalCopy.table.observedAmount,
             settlementJournalCopy.table.netSettled,
             settlementJournalCopy.table.fee,
-            settlementJournalCopy.table.matchConfidence,
+            settlementJournalCopy.table.matchStatus,
+            settlementJournalCopy.table.mappingConfidence,
             settlementJournalCopy.table.observedAt,
           ].map((h) => (
             <th key={h} className={TABLE_TH}>
@@ -385,6 +388,12 @@ export function SettlementJournalActivityPanel({ vm }: SettlementJournalActivity
                   </td>
                   <td className="px-3 py-2.5 tabular-nums text-[#64748b]">
                     {formatJournalMoney(row.feeAmount, row.currency)}
+                  </td>
+                  <td className="px-3 py-2.5">
+                    {(() => {
+                      const status = mapMatchStatus(row)
+                      return <span className={matchStatusBadgeClass(status)}>{status}</span>
+                    })()}
                   </td>
                   <td className="px-3 py-2.5 tabular-nums text-[13px] text-[#64748b]">
                     {formatMappingConfidenceLabel(row)}
@@ -479,13 +488,19 @@ export function SettlementJournalActivityPanel({ vm }: SettlementJournalActivity
                           {row.providerStatusCode} · {row.failureReasonCode}
                         </p>
                         <p>
-                          <span className="text-[#888888]">Parse / mapping confidence</span>
+                          <span className="text-[#888888]">Parse / mapping confidence (data quality)</span>
                           <br />
                           {row.parseConfidence != null ? `${(row.parseConfidence * 100).toFixed(0)}%` : '—'}{' '}
                           /{' '}
                           {row.mappingConfidence != null
                             ? `${(row.mappingConfidence * 100).toFixed(0)}%`
                             : '—'}
+                        </p>
+                        <p>
+                          <span className="text-[#888888]">Attachment decision</span>
+                          <br />
+                          {row.attachmentDecision ?? '—'}
+                          {row.candidateCount != null ? ` · candidates ${row.candidateCount}` : ''}
                         </p>
                         <p>
                           <span className="text-[#888888]">Value date</span>

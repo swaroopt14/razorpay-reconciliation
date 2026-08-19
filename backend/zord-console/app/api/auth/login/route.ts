@@ -9,10 +9,18 @@ import {
   parseJSONSafe,
   sanitizeAuthEnvelope,
 } from '@/services/auth/server'
+import { consumeBffRateLimit, rateLimitKeyForIp } from '@/services/bff/rateLimit.server'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(request: NextRequest) {
+  const rate = consumeBffRateLimit({
+    bucket: 'auth',
+    key: rateLimitKeyForIp(request),
+    message: 'Too many sign-in attempts. Try again shortly.',
+  })
+  if (!rate.ok) return rate.response
+
   let requestBody: unknown
 
   try {
@@ -59,6 +67,6 @@ export async function POST(request: NextRequest) {
   }
 
   const response = NextResponse.json(sanitizeAuthEnvelope(payload))
-  applyAuthCookies(response, payload)
+  applyAuthCookies(response, payload, request)
   return response
 }

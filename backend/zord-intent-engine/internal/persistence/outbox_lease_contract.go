@@ -79,6 +79,47 @@ var outboxLeaseColumns = []outboxLeaseColumn{
 	{"COALESCE(o.mapping_confidence_score, 0)", "mapping_confidence_score"},
 	{"COALESCE(o.schema_completeness_score, 0)", "schema_completeness_score"},
 	{"COALESCE(o.duplicate_reason_code, '')", "duplicate_reason_code"},
+	// INT-02: these 30 columns are written on every insert (see
+	// OutboxInsertColumns) but were never selected at lease time, so Relay
+	// and Service 7 always received their zero value -- silently, since the
+	// Go field is present in the JSON shape either way. schema_version and
+	// payload_hash are NOT NULL at the DB level, so no COALESCE (matches
+	// the existing convention for other NOT NULL text columns like
+	// aggregate_type/event_type above).
+	{"o.schema_version", "schema_version"},
+	{"o.payload_hash", "payload_hash"},
+	{"o.canonical_payload_hash", "canonical_payload_hash"},
+	{"COALESCE(o.source_row_ref, '')", "source_row_ref"},
+	{"COALESCE(o.source_system, '')", "source_system"},
+	{"COALESCE(o.client_batch_ref, '')", "client_batch_ref"},
+	{"COALESCE(o.salient_hash, '')", "salient_hash"},
+	{"COALESCE(o.canonical_row_hash, '')", "canonical_row_hash"},
+	{"COALESCE(o.input_facts_hash, '')", "input_facts_hash"},
+	{"COALESCE(o.raw_row_hash, '')", "raw_row_hash"},
+	{"COALESCE(o.idempotency_key, '')", "idempotency_key"},
+	{"COALESCE(o.intent_type, '')", "intent_type"},
+	{"COALESCE(o.canonical_version, '')", "canonical_version"},
+	// intended_execution_at is TIMESTAMPTZ, genuinely nullable -- left bare
+	// (no sensible COALESCE default), scanned via sql.NullTime like
+	// next_attempt_at/lease_until above.
+	{"o.intended_execution_at", "intended_execution_at"},
+	{"COALESCE(o.constraints, '{}'::jsonb)", "constraints"},
+	{"COALESCE(o.beneficiary_type, '')", "beneficiary_type"},
+	{"COALESCE(o.pii_tokens, '{}'::jsonb)", "pii_tokens"},
+	{"COALESCE(o.beneficiary, '{}'::jsonb)", "beneficiary"},
+	{"COALESCE(o.intent_status, '')", "intent_status"},
+	{"COALESCE(o.confidence_score, 0)", "confidence_score"},
+	{"COALESCE(o.canonical_snapshot_ref, '')", "canonical_snapshot_ref"},
+	{"COALESCE(o.nir_snapshot_ref, '')", "nir_snapshot_ref"},
+	{"COALESCE(o.governance_snapshot_ref, '')", "governance_snapshot_ref"},
+	{"COALESCE(o.provider_hint, '')", "provider_hint"},
+	{"COALESCE(o.request_fingerprint, '')", "request_fingerprint"},
+	{"COALESCE(o.routing_hints_json, '{}'::jsonb)", "routing_hints_json"},
+	{"COALESCE(o.business_state, '')", "business_state"},
+	{"COALESCE(o.duplicate_risk_flag, false)", "duplicate_risk_flag"},
+	{"COALESCE(o.mapping_profile_version, '')", "mapping_profile_version"},
+	{"COALESCE(o.beneficiary_fingerprint, '')", "beneficiary_fingerprint"},
+	{"COALESCE(o.aggregate_confidence_score, 0)", "aggregate_confidence_score"},
 }
 
 // OutboxLeaseColumnAliases returns just the alias list, in order — the

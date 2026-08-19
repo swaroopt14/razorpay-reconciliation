@@ -5,6 +5,7 @@ import {
   resolveSettlementUploadContext,
   TENANT_MISMATCH_BODY,
 } from '@/services/auth/resolvePayoutTenant.server'
+import { publicBffError } from '@/services/bff/publicBffError'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -58,19 +59,21 @@ export async function GET(request: NextRequest) {
       },
     })
     if (ctx.refreshedPayload) {
-      applyAuthCookies(res, ctx.refreshedPayload)
+      applyAuthCookies(res, ctx.refreshedPayload, request)
     }
-    applyRefreshedSessionCookies(res, ctx.refreshedPayload)
+    applyRefreshedSessionCookies(res, ctx.refreshedPayload, request)
     return res
   } catch (error) {
-    const res = NextResponse.json(
-      {
-        error: 'settlement observations upstream unavailable',
+    const res = publicBffError({
+      code: 'UPSTREAM_UNAVAILABLE',
+      message: 'Settlement observations are temporarily unavailable. Retry shortly.',
+      status: 502,
+      log: {
+        route: '/api/prod/settlement/observations/batches',
         upstream: url,
-        details: error instanceof Error ? error.message : 'unknown',
+        error,
       },
-      { status: 502 },
-    )
+    })
     applyRefreshedSessionCookies(res, ctx.refreshedPayload)
     return res
   }

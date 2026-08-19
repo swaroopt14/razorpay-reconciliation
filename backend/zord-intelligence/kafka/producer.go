@@ -87,6 +87,17 @@ func NewProducer(brokers string) *Producer {
 		Async: false,
 	}
 
+	// SASL/SCRAM-SHA-512 authentication (PLAT-06). NewSASLTransport returns a
+	// nil *kafka.Transport when no SASL credentials are configured. Writer.Transport
+	// is declared as the RoundTripper interface, so assigning a nil *kafka.Transport
+	// to it directly (rather than leaving the field untouched) would wrap a nil
+	// pointer in a non-nil interface value — kafka-go's own "is Transport unset?"
+	// check (`if w.Transport != nil`) would then see a non-nil interface and try to
+	// use it, panicking on first write. Only assign when there's a real transport.
+	if transport := NewSASLTransport(); transport != nil {
+		writer.Transport = transport
+	}
+
 	return &Producer{writer: writer}
 }
 

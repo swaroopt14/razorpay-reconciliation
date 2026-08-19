@@ -248,7 +248,7 @@ func (r *PolicyRepo) GetAllCronPolicies(ctx context.Context) ([]models.Policy, e
 	}
 	return result, nil
 }
-func (r *PolicyRepo) SetEnabled(ctx context.Context, policyID string, enabled bool) error {
+func (r *PolicyRepo) SetEnabled(ctx context.Context, policyID string, enabled bool, activatedBy string) error {
 	sql := `
 		UPDATE policy_registry
 		SET    enabled    = $1,
@@ -273,7 +273,7 @@ func (r *PolicyRepo) SetEnabled(ctx context.Context, policyID string, enabled bo
 		logger.Error(fmt.Sprintf("policy_repo.SetEnabled: policy_definitions lookup failed id=%s: %v", policyID, lookupErr))
 		return nil
 	}
-	if actErr := r.insertActivation(ctx, tenantID, policyRegistryID, enabled, "ops_api"); actErr != nil {
+	if actErr := r.insertActivation(ctx, tenantID, policyRegistryID, enabled, activatedBy); actErr != nil {
 		logger.Error(fmt.Sprintf("policy_repo.SetEnabled: policy_activations dual-write failed id=%s: %v", policyID, actErr))
 	}
 	return nil
