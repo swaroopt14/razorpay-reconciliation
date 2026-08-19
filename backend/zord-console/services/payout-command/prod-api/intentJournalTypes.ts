@@ -2,8 +2,14 @@
 
 export type IntentJournalBatchIdItem = {
   batch_id: string
-  /** Sum of payment_intent amounts for the batch (major INR units, from intent-engine batch-ids). */
+  /**
+   * Sum of payment_intent amounts for the batch in major INR units
+   * (intent-engine batch-ids). Convert exactly once at the journal adapter
+   * via `resolveBatchTotalAmountMinor` — never store as ambiguous `totalValue`.
+   */
   total_amount?: number
+  /** Preferred when present — already minor units (paise). */
+  total_amount_minor?: number
 }
 
 export type IntentJournalBatchIdsResponse = {

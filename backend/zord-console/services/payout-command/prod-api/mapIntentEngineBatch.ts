@@ -4,6 +4,12 @@ import type { IntelligenceBatchRow } from './intelligenceTypes'
 import { apiTrimmedString } from './coerceApiField'
 import { readIntentQualityScore } from '@/services/payout-command/prod-api/resolveIntentQualityScore'
 import { formatDlqStatusLabel, parseDlqIntentContext, normalizePspDisplayName } from './mapDlqContext'
+import {
+  JOURNAL_DEFAULT_CURRENCY,
+  majorAmountToMinor,
+  normalizeJournalCurrency,
+  parseMinorAmountField,
+} from './money/journalMoney'
 import { mapJournalIntentDecision } from '@/features/payout-command/intent-journal/mappers/mapJournalIntentDecision'
 
 export type JournalBatchType = 'Disbursement' | 'Settlement'
@@ -22,7 +28,9 @@ export type JournalBatchRecord = {
   /** Raw `type` from intent-engine sidebar (e.g. PAYOUT, COLLECTION). */
   apiType: string
   source: string
-  totalValue: number
+  /** Batch total in minor units (paise for INR). Never major INR. */
+  amountMinor: number
+  currency: string
   transactions: number
   confirmedCount: number
   /** Legacy field name — when from engine sidebar, stores rounded count fallback only. */
@@ -178,8 +186,8 @@ export function isZordProcessingPaymentIntent(intent: PaymentIntentRecord): bool
 export function mapSidebarItemToBatchRecord(it: IntentEngineBatchSidebarItem): JournalBatchRecord {
   const typeUpper = (it.type ?? '').toUpperCase()
   const batchType: JournalBatchType = typeUpper.includes('SETTLEMENT') ? 'Settlement' : 'Disbursement'
-  const tv = Number.parseFloat(String(it.totalValue ?? '').replace(/,/g, ''))
-  const totalValue = Number.isFinite(tv) ? tv : 0
+  // Intent-engine sidebar `totalValue` is major INR (same contract as batch-ids `total_amount`).
+  const amountMinor = majorAmountToMinor(it.totalValue)
   const hcRaw = it.highConfidenceCount
   const aggregateConfidenceScore =
     typeof hcRaw === 'number' && Number.isFinite(hcRaw) && hcRaw <= 1 ? hcRaw : undefined
@@ -195,7 +203,8 @@ export function mapSidebarItemToBatchRecord(it: IntentEngineBatchSidebarItem): J
     type: batchType,
     apiType: typeUpper || '—',
     source: 'Intent engine',
-    totalValue,
+    amountMinor,
+    currency: JOURNAL_DEFAULT_CURRENCY,
     transactions: it.transactions ?? 0,
     confirmedCount: it.confirmedCount ?? 0,
     highConfidenceCount,
@@ -204,12 +213,6 @@ export function mapSidebarItemToBatchRecord(it: IntentEngineBatchSidebarItem): J
     unresolvedCount: it.unresolvedCount ?? 0,
     engineSidebar: true,
   }
-}
-
-function readMinorAmount(value: number | string | undefined | null): number {
-  if (value == null || value === '') return 0
-  const n = typeof value === 'number' ? value : Number(value)
-  return Number.isFinite(n) ? n : 0
 }
 
 function readMatchConfidenceAsFraction(raw: number | undefined | null): number | undefined {
@@ -224,7 +227,8 @@ export function mapIntelligenceRowToBatchRecord(b: IntelligenceBatchRow): Journa
     type: 'Disbursement',
     apiType: '—',
     source: inferBatchSource(b.batch_id, b.finality_status),
-    totalValue: readMinorAmount(b.total_intended_amount_minor),
+    amountMinor: parseMinorAmountField(b.total_intended_amount_minor),
+    currency: normalizeJournalCurrency(JOURNAL_DEFAULT_CURRENCY),
     transactions: b.total_count ?? 0,
     confirmedCount: b.success_count ?? 0,
     highConfidenceCount: 0,
