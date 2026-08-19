@@ -20,7 +20,7 @@ import {
   type ReprocessReason,
 } from '@/services/payout-command/batch-intake/reprocessReason'
 import { BatchUploadErrorDialog } from './BatchUploadErrorDialog'
-import { ReprocessWhyDialog, type ReprocessTarget } from './ReprocessWhyDialog'
+import { ReprocessWhyDialog } from './ReprocessWhyDialog'
 
 const INTENT_FILE_ACCEPT =
   '.csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -49,10 +49,12 @@ function ReprocessFileControl({
   checked,
   onToggle,
   inputName,
+  helper,
 }: {
   checked: boolean
   onToggle: (next: boolean) => void
   inputName: string
+  helper: string
 }) {
   const c = BATCH_REVIEW_COPY
   return (
@@ -71,7 +73,7 @@ function ReprocessFileControl({
           />
           {c.fields.reprocess}
         </span>
-        <span className="text-[11px] text-[#64748b]">{c.fields.reprocessHelper}</span>
+        <span className="text-[11px] text-[#64748b]">{helper}</span>
       </span>
     </label>
   )
@@ -154,7 +156,6 @@ export function BatchIntakePanel({
   const [sourceSystem, setSourceSystem] = useState('')
   const [psp, setPsp] = useState(() => process.env.NEXT_PUBLIC_ZORD_SETTLEMENT_PSP ?? 'razorpay')
   const [bulkForceReprocess, setBulkForceReprocess] = useState(false)
-  const [reprocessReason, setReprocessReason] = useState<ReprocessReason | ''>('')
   const [uploadError, setUploadError] = useState<{
     kind: 'intent' | 'settlement'
     message: string
@@ -162,7 +163,7 @@ export function BatchIntakePanel({
   } | null>(null)
   const [settlementForceReprocess, setSettlementForceReprocess] = useState(false)
   const [settlementForceReason, setSettlementForceReason] = useState<ReprocessReason | ''>('')
-  const [reprocessDialogTarget, setReprocessDialogTarget] = useState<ReprocessTarget | null>(null)
+  const [settlementReasonDialogOpen, setSettlementReasonDialogOpen] = useState(false)
   const [selectedIntentFile, setSelectedIntentFile] = useState<File | null>(null)
   const [selectedSettlementFile, setSelectedSettlementFile] = useState<File | null>(null)
   const [intentFileName, setIntentFileName] = useState<string | null>(null)
@@ -277,9 +278,6 @@ export function BatchIntakePanel({
       if (bulkForceReprocess && !userBatchId) {
         throw new Error('Reprocess requires a batch reference in the field above.')
       }
-      if (bulkForceReprocess && !reprocessReason) {
-        throw new Error('Select a reprocess reason before uploading the file.')
-      }
       const parsed = await parseUploadedSheet(file)
       const result = await postIntentBulkIngest({
         file,
@@ -287,7 +285,6 @@ export function BatchIntakePanel({
         sourceSystem: sourceSystem.trim() || undefined,
         optionalBatchId: userBatchId || undefined,
         forceReprocess: bulkForceReprocess,
-        reprocessReason: bulkForceReprocess ? reprocessReason || undefined : undefined,
       })
       if (!result.ok) {
         const batchToKeep = userBatchId || result.batchIdFromBody
@@ -296,9 +293,7 @@ export function BatchIntakePanel({
           if (batchToKeep !== draftBatchRef.trim()) commitBatchRefImmediately(batchToKeep)
           onIntentUploadFailed?.(batchToKeep)
         }
-        const detail = result.errorMessage?.trim() || `HTTP ${result.httpStatus}`
-        const extra = result.responseText.trim().slice(0, 280)
-        throw new Error(extra && !detail.includes(extra) ? `${detail} — ${extra}` : detail)
+        throw new Error(result.errorMessage?.trim() || result.responseText.trim().slice(0, 500) || `HTTP ${result.httpStatus}`)
       }
       const ingestAckParsed = parseBulkIngestAcceptedResponse(result.responseText)
       if (ingestAckParsed && ingestAckParsed.accepted === 0) {
@@ -338,7 +333,6 @@ export function BatchIntakePanel({
   }, [
     draftBatchRef,
     bulkForceReprocess,
-    reprocessReason,
     commitBatchRefImmediately,
     onIntentIngestSuccess,
     onIntentUploadFailed,
@@ -359,36 +353,19 @@ export function BatchIntakePanel({
     [intakeStep, reportUploadStatus],
   )
 
-  const applyReprocessChoice = useCallback(
-    (payload: { target: ReprocessTarget; reason: ReprocessReason }) => {
-      if (payload.target === 'intent') {
-        setBulkForceReprocess(true)
-        setReprocessReason(payload.reason)
-        setSettlementForceReprocess(false)
-        setSettlementForceReason('')
-      } else {
-        setSettlementForceReprocess(true)
-        setSettlementForceReason(payload.reason)
-        setBulkForceReprocess(false)
-        setReprocessReason('')
-      }
-      setReprocessDialogTarget(null)
-    },
-    [],
-  )
+  const onConfirmSettlementReason = useCallback((reason: ReprocessReason) => {
+    setSettlementForceReprocess(true)
+    setSettlementForceReason(reason)
+    setSettlementReasonDialogOpen(false)
+  }, [])
 
   const onToggleIntentReprocess = useCallback((next: boolean) => {
-    if (next) {
-      setReprocessDialogTarget('intent')
-      return
-    }
-    setBulkForceReprocess(false)
-    setReprocessReason('')
+    setBulkForceReprocess(next)
   }, [])
 
   const onToggleSettlementReprocess = useCallback((next: boolean) => {
     if (next) {
-      setReprocessDialogTarget('settlement')
+      setSettlementReasonDialogOpen(true)
       return
     }
     setSettlementForceReprocess(false)
@@ -447,12 +424,11 @@ export function BatchIntakePanel({
           settlementMode === 'new' ? undefined : settlementForceReason,
       })
       if (!result.ok) {
-        const detail = result.errorMessage?.trim() || `HTTP ${result.httpStatus || 'error'}`
-        const extra = result.responseText.trim().slice(0, 400)
-        const parts = [detail]
-        if (extra && !detail.includes(extra)) parts.push(extra)
-        if (result.httpStatus) parts.unshift(`[${result.httpStatus}]`)
-        throw new Error(parts.join(' — '))
+        throw new Error(
+          result.errorMessage?.trim() ||
+            result.responseText.trim().slice(0, 500) ||
+            `HTTP ${result.httpStatus || 'error'}`,
+        )
       }
       setSettlementIngestOk(true)
       reportUploadStatus(
@@ -566,9 +542,10 @@ export function BatchIntakePanel({
             <p className="mt-0.5 text-[12px] font-medium text-[#64748b]">{c.intake.step1Short}</p>
             <p className="mt-1 text-[12px] text-[#64748b]">{c.intake.step1Helper}</p>
             <ReprocessFileControl
-              checked={bulkForceReprocess || reprocessDialogTarget === 'intent'}
+              checked={bulkForceReprocess}
               onToggle={onToggleIntentReprocess}
               inputName="Reprocess payment instruction file"
+              helper={c.fields.reprocessHelper}
             />
             <div className="mt-3">
               <BatchPortalUploadZone
@@ -606,9 +583,10 @@ export function BatchIntakePanel({
             <p className="mt-0.5 text-[12px] font-medium text-[#64748b]">{c.intake.step2Short}</p>
             <p className="mt-1 text-[12px] text-[#64748b]">{c.intake.step2Helper}</p>
             <ReprocessFileControl
-              checked={settlementForceReprocess || reprocessDialogTarget === 'settlement'}
+              checked={settlementForceReprocess || settlementReasonDialogOpen}
               onToggle={onToggleSettlementReprocess}
               inputName="Reprocess settlement confirmation file"
+              helper={c.fields.reprocessSettlementHelper}
             />
             <div className="mt-3">
               <BatchPortalUploadZone
@@ -647,11 +625,10 @@ export function BatchIntakePanel({
           </div>
         </div>
       </Card>
-      {reprocessDialogTarget ? (
+      {settlementReasonDialogOpen ? (
         <ReprocessWhyDialog
-          initialTarget={reprocessDialogTarget}
-          onCancel={() => setReprocessDialogTarget(null)}
-          onConfirm={applyReprocessChoice}
+          onCancel={() => setSettlementReasonDialogOpen(false)}
+          onConfirm={onConfirmSettlementReason}
         />
       ) : null}
       {uploadError ? (

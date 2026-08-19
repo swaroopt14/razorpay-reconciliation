@@ -62,14 +62,10 @@ async function prepareBatchPage(page: Page, context: BrowserContext) {
   await expect(page.getByRole('heading', { name: 'Payment Batch Review' })).toBeVisible()
 }
 
-async function confirmReprocess(
-  page: Page,
-  target: 'Payment instruction file' | 'Bank / settlement confirmation file',
-  reason: string,
-) {
+async function confirmSettlementReprocessReason(page: Page, reason: string) {
   const dialog = page.getByRole('dialog', { name: 'Why do you want to reprocess?' })
   await expect(dialog).toBeVisible()
-  await dialog.getByRole('radio', { name: target }).check()
+  await expect(dialog.getByRole('radio')).toHaveCount(0)
   await dialog.getByLabel('Reprocess reason').selectOption(reason)
   await dialog.getByRole('button', { name: 'Continue' }).click()
   await expect(dialog).toHaveCount(0)
@@ -104,7 +100,7 @@ test.describe('intent and settlement reprocess controls', () => {
     expect(reasonHeader).toBeUndefined()
   })
 
-  test('intent reprocess prompt asks why and sends force headers', async ({ page }) => {
+  test('intent reprocess is checkbox-only and sends force without a reason', async ({ page }) => {
     let forceHeader: string | undefined
     let reasonHeader: string | undefined
     await page.route('**/api/bulk-ingest', async (route) => {
@@ -119,15 +115,34 @@ test.describe('intent and settlement reprocess controls', () => {
 
     await page.getByLabel('Batch reference optional').fill('batch-reprocess-1')
     await page.getByRole('checkbox', { name: 'Reprocess payment instruction file' }).check()
-    await confirmReprocess(page, 'Payment instruction file', 'PARSER_FIX')
+    await expect(page.getByRole('dialog', { name: 'Why do you want to reprocess?' })).toHaveCount(0)
     await page.getByLabel('Upload payment instruction file').setInputFiles(CSV_FILE)
     await page.getByRole('button', { name: 'Upload payment file', exact: true }).last().click()
     await expect(page.getByRole('dialog', { name: 'Payment file uploaded' })).toBeVisible()
     expect(forceHeader).toBe('true')
-    expect(reasonHeader).toBe('PARSER_FIX')
+    expect(reasonHeader).toBeUndefined()
   })
 
-  test('forced settlement upload sends selected reason and displays backend failure', async ({ page }) => {
+  test('intent upload failure shows an error popup', async ({ page }) => {
+    await page.route('**/api/bulk-ingest', async (route) => {
+      await route.fulfill({
+        status: 400,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'Payment file is missing the amount column.' }),
+      })
+    })
+
+    await page.getByLabel('Upload payment instruction file').setInputFiles(CSV_FILE)
+    await page.getByRole('button', { name: 'Upload payment file', exact: true }).last().click()
+
+    const dialog = page.getByRole('dialog', {
+      name: 'Payment file is missing the amount column.',
+    })
+    await expect(dialog).toBeVisible()
+    await expect(dialog).toContainText('This error occurred while uploading the payment instruction file')
+  })
+
+  test('forced settlement upload asks only for a reason and displays backend failure', async ({ page }) => {
     let forceHeader: string | undefined
     let reasonHeader: string | undefined
     await page.route('**/api/settlement/upload?**', async (route) => {
@@ -142,13 +157,15 @@ test.describe('intent and settlement reprocess controls', () => {
 
     await page.getByLabel('Batch reference optional').fill('batch-settlement-1')
     await page.getByRole('checkbox', { name: 'Reprocess settlement confirmation file' }).check()
-    await confirmReprocess(page, 'Bank / settlement confirmation file', 'PARSER_FIX')
+    await confirmSettlementReprocessReason(page, 'PARSER_FIX')
     await page.getByLabel('Upload bank / settlement confirmation file').setInputFiles(CSV_FILE)
     await page.getByTestId('settlement-upload-submit').click()
 
-    const dialog = page.getByRole('dialog', { name: 'Settlement confirmation upload failed' })
+    const dialog = page.getByRole('dialog', {
+      name: 'Settlement file is missing the bank reference column.',
+    })
     await expect(dialog).toBeVisible()
-    await expect(dialog).toContainText('Settlement file is missing the bank reference column.')
+    await expect(dialog).toContainText('This error occurred while uploading the settlement confirmation file')
     expect(forceHeader).toBe('true')
     expect(reasonHeader).toBe('PARSER_FIX')
   })

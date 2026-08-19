@@ -1,32 +1,22 @@
 'use client'
 
-import { useEffect, useId, useState } from 'react'
+import { useId, useState } from 'react'
 import { BATCH_REVIEW_COPY } from '../copy/batchCommandCenterCopy'
 import {
   REPROCESS_REASONS,
   type ReprocessReason,
 } from '@/services/payout-command/batch-intake/reprocessReason'
 
-export type ReprocessTarget = 'intent' | 'settlement'
-
 type ReprocessWhyDialogProps = {
-  initialTarget: ReprocessTarget
   onCancel: () => void
-  onConfirm: (payload: { target: ReprocessTarget; reason: ReprocessReason }) => void
+  onConfirm: (reason: ReprocessReason) => void
 }
 
-export function ReprocessWhyDialog({ initialTarget, onCancel, onConfirm }: ReprocessWhyDialogProps) {
+export function ReprocessWhyDialog({ onCancel, onConfirm }: ReprocessWhyDialogProps) {
   const titleId = useId()
   const reasonId = useId()
-  const [target, setTarget] = useState<ReprocessTarget>(initialTarget)
   const [reason, setReason] = useState<ReprocessReason | ''>('')
   const c = BATCH_REVIEW_COPY
-  const canContinue = Boolean(reason)
-
-  useEffect(() => {
-    setTarget(initialTarget)
-    setReason('')
-  }, [initialTarget])
 
   return (
     <div
@@ -48,32 +38,6 @@ export function ReprocessWhyDialog({ initialTarget, onCancel, onConfirm }: Repro
           {c.dialogs.reprocessWhyTitle}
         </h2>
         <p className="mt-2 text-[13px] leading-relaxed text-[#64748b]">{c.dialogs.reprocessWhyBody}</p>
-
-        <fieldset className="mt-4 space-y-2">
-          <legend className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#888888]">
-            {c.dialogs.reprocessTargetLegend}
-          </legend>
-          {(
-            [
-              { value: 'intent' as const, label: c.dialogs.reprocessTargetIntent },
-              { value: 'settlement' as const, label: c.dialogs.reprocessTargetSettlement },
-            ]
-          ).map((option) => (
-            <label
-              key={option.value}
-              className="flex cursor-pointer items-center gap-2 rounded-lg border border-[#E5E5E5] bg-white px-3 py-2 text-[13px] text-[#0A0A0A]"
-            >
-              <input
-                type="radio"
-                name="reprocess-target"
-                className="h-4 w-4"
-                checked={target === option.value}
-                onChange={() => setTarget(option.value)}
-              />
-              {option.label}
-            </label>
-          ))}
-        </fieldset>
 
         <label className="mt-4 flex flex-col gap-1" htmlFor={reasonId}>
           <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#888888]">
@@ -98,10 +62,10 @@ export function ReprocessWhyDialog({ initialTarget, onCancel, onConfirm }: Repro
         <div className="mt-5 flex flex-wrap gap-2">
           <button
             type="button"
-            disabled={!canContinue}
+            disabled={!reason}
             onClick={() => {
               if (!reason) return
-              onConfirm({ target, reason })
+              onConfirm(reason)
             }}
             className="h-9 rounded-lg bg-[#2563eb] px-4 text-[13px] font-semibold text-white hover:bg-[#1d4ed8] disabled:cursor-not-allowed disabled:bg-[#94a3b8]"
           >
