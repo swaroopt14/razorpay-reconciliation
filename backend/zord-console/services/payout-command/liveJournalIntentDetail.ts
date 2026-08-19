@@ -20,6 +20,7 @@ import type {
 } from '@/services/payout-command/intent-journal-types'
 import type { ApiProdIntentDetailPayload } from '@/services/payout-command/prod-api/prodApiTypes'
 import { generateBenToken, tokenizeBeneficiaryFull } from '@/services/payout-command/tokenize'
+import { normalizeCurrency } from '@/services/payout-command/money/money'
 
 export type LiveJournalDrawerRowInput = {
   requestId: string
@@ -28,13 +29,15 @@ export type LiveJournalDrawerRowInput = {
   clientPayoutRef?: string
   sourceRowNum?: number | null
   amount: number
+  /** ISO currency from live adapters; missing → UNKNOWN (never invent INR). */
+  currency?: string | null
   method: 'Bank Transfer' | 'LSM' | 'NACH' | '—'
   rail?: string
   beneficiaryName?: string | null
   paymentPartner: string
   bank: string
   /** Table row status label */
-  uiStatus: 'Ready to Process' | 'Confirmed' | 'Pending' | 'Needs Review' | 'In Progress'
+  uiStatus: 'Ready to Process' | 'Confirmed' | 'Pending' | 'Needs Review' | 'In Progress' | 'Decision unavailable'
 }
 
 function hashToLast4(seed: string): string {
@@ -51,6 +54,7 @@ function uiStatusToLifecycle(ui: LiveJournalDrawerRowInput['uiStatus']): IntentL
   if (ui === 'Needs Review') return 'ambiguous'
   if (ui === 'In Progress') return 'processing'
   if (ui === 'Ready to Process') return 'created'
+  if (ui === 'Decision unavailable') return 'ambiguous'
   return 'pending'
 }
 
@@ -175,7 +179,9 @@ export function buildLiveIntentDetailFromRowAndApi(
   const parsed =
     typeof rawAmt === 'string' ? parseFloat(rawAmt) : typeof rawAmt === 'number' ? rawAmt : Number.NaN
   const amount = Number.isFinite(parsed) ? parsed : row.amount
-  const currency = (api?.canonical?.amount?.currency as string | undefined)?.trim() || 'INR'
+  const currency = normalizeCurrency(
+    (api?.canonical?.amount?.currency as string | undefined) ?? row.currency,
+  )
 
   const ingestedAt = api?.created_at?.trim() || new Date().toISOString()
   const dispatchedAt = ingestedAt

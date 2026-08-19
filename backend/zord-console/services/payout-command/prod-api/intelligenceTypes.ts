@@ -316,6 +316,12 @@ export type BatchContractKpiResponse = {
   variance_amount?: MinorAmountField
   orphan_amount?: MinorAmountField
   unmatch_amount?: MinorAmountField
+  /**
+   * Authoritative matched settlement value for live KPIs (CON-P0-24).
+   * Do not substitute `total_confirmed_amount` — different semantic.
+   */
+  confirmed_matched_value_minor?: MinorAmountField
+  /** Confirmed amount present on contract — not a stand-in for matched value. */
   total_confirmed_amount?: MinorAmountField
   match_confidence?: number | null
   missing_reference_rate?: string | number

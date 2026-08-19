@@ -1,10 +1,9 @@
 """
 Kafka consumer for ml.request.events.
 
-Provides at-least-once delivery via manual commit.  Uses exponential back-off
-on transient errors so a Kafka restart does not kill the service.  Poison
-messages (parse failures) are committed and skipped — they are never retried —
-to prevent a single bad message from blocking the entire partition.
+Provides at-least-once delivery via manual commit. Offsets are committed only
+after successful handling, or after an invalid message is acknowledged by the
+DLQ. Retryable failures rewind the partition to the failed offset.
 """
 
 from __future__ import annotations
@@ -12,11 +11,12 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Callable
+from typing import Callable, Optional
 
-from confluent_kafka import Consumer, KafkaError, KafkaException
+from confluent_kafka import Consumer, KafkaError, KafkaException, TopicPartition
 
 from app import config
+from app.exceptions import NonRetryableMessageError
 from app.schemas import MLRequest
 
 logger = logging.getLogger(__name__)
@@ -27,14 +27,18 @@ _POLL_TIMEOUT = 3.0
 
 
 class MLConsumer:
-    def __init__(self, handler: Callable[[MLRequest], None]) -> None:
+    def __init__(
+        self,
+        handler: Callable[[MLRequest], None],
+        dead_letter_handler: Optional[Callable[[bytes, str, str, int, int], None]] = None,
+    ) -> None:
         self._handler = handler
-
+        self._dead_letter_handler = dead_letter_handler
         kafka_config = {
             "bootstrap.servers": ",".join(config.KAFKA_BROKERS),
             "group.id": config.KAFKA_GROUP_ID,
             "auto.offset.reset": "earliest",
-            "enable.auto.commit": False,      # manual commit — at-least-once
+            "enable.auto.commit": False,
             "max.poll.interval.ms": 300_000,
             "session.timeout.ms": 30_000,
             "heartbeat.interval.ms": 10_000,
@@ -65,11 +69,11 @@ class MLConsumer:
                 self._poll_loop()
                 backoff = _INITIAL_BACKOFF
             except KafkaException as exc:
-                logger.error("ml_consumer: kafka error — retrying in %ds: %s", backoff, exc)
+                logger.error("ml_consumer: kafka error - retrying in %ds: %s", backoff, exc)
                 time.sleep(backoff)
                 backoff = min(backoff * 2, _MAX_BACKOFF)
-            except Exception as exc:
-                logger.exception("ml_consumer: unexpected error — retrying in %ds", backoff)
+            except Exception:
+                logger.exception("ml_consumer: unexpected error - retrying in %ds", backoff)
                 time.sleep(backoff)
                 backoff = min(backoff * 2, _MAX_BACKOFF)
 
@@ -91,16 +95,58 @@ class MLConsumer:
                     continue
                 raise KafkaException(msg.error())
 
-            try:
-                raw = json.loads(msg.value().decode("utf-8"))
-                req = MLRequest.from_dict(raw)
-                logger.debug("ml_consumer: dispatching event_id=%s type=%s", req.event_id, req.event_type)
-                self._handler(req)
-            except Exception as exc:
-                # Log and commit so the bad message doesn't block the partition
-                logger.error(
-                    "ml_consumer: failed to process offset=%d: %s",
-                    msg.offset(), exc,
-                )
-            finally:
-                self._consumer.commit(message=msg, asynchronous=False)
+            self._process_message(msg)
+
+    def _process_message(self, msg) -> None:
+        raw_payload = msg.value() or b""
+        try:
+            raw = json.loads(raw_payload.decode("utf-8"))
+            req = MLRequest.from_dict(raw)
+        except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            self._dead_letter_and_commit(msg, raw_payload, exc)
+            return
+
+        try:
+            logger.debug("ml_consumer: dispatching event_id=%s type=%s", req.event_id, req.event_type)
+            self._handler(req)
+        except NonRetryableMessageError as exc:
+            self._dead_letter_and_commit(msg, raw_payload, exc)
+            return
+        except Exception:
+            self._rewind(msg)
+            logger.exception(
+                "ml_consumer: retryable processing failure topic=%s partition=%d offset=%d",
+                msg.topic(), msg.partition(), msg.offset(),
+            )
+            raise
+
+        try:
+            self._consumer.commit(message=msg, asynchronous=False)
+        except Exception:
+            self._rewind(msg)
+            raise
+
+    def _dead_letter_and_commit(self, msg, raw_payload: bytes, exc: Exception) -> None:
+        if self._dead_letter_handler is None:
+            self._rewind(msg)
+            raise exc
+
+        try:
+            self._dead_letter_handler(
+                raw_payload,
+                f"{type(exc).__name__}: {exc}",
+                msg.topic(),
+                msg.partition(),
+                msg.offset(),
+            )
+            self._consumer.commit(message=msg, asynchronous=False)
+            logger.warning(
+                "ml_consumer: dead-lettered topic=%s partition=%d offset=%d error=%s",
+                msg.topic(), msg.partition(), msg.offset(), exc,
+            )
+        except Exception:
+            self._rewind(msg)
+            raise
+
+    def _rewind(self, msg) -> None:
+        self._consumer.seek(TopicPartition(msg.topic(), msg.partition(), msg.offset()))

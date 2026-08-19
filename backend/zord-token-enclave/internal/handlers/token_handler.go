@@ -19,9 +19,10 @@ func NewTokenHandler(s *services.TokenService) *TokenHandler {
 
 func (h *TokenHandler) Tokenize(c *gin.Context) {
 	var req struct {
-		TenantID string            `json:"tenant_id"`
-		TraceID  string            `json:"trace_id"`
-		PII      map[string]string `json:"pii"`
+		TraceID       string            `json:"trace_id"`
+		ObjectRef     string            `json:"object_ref"`
+		CorrelationID string            `json:"correlation_id"`
+		PII           map[string]string `json:"pii"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -29,23 +30,26 @@ func (h *TokenHandler) Tokenize(c *gin.Context) {
 		return
 	}
 
-	if req.TenantID == "" || len(req.PII) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "tenant_id and pii required"})
-		return
-	}
-
-	// Actor comes from the authenticated caller header (set by middleware)
+	// TOK-04: tenant_id/caller/purpose_code come SOLELY from the verified
+	// service JWT (set by serviceAuthMiddleware) -- never from the request
+	// body. object_ref/correlation_id are still caller-supplied (they're
+	// tracing identifiers, not identity/authorization claims) but are now
+	// mandatory ("enforce object_ref and correlation"); a missing one is
+	// denied and audited, not silently allowed through.
+	tenantID := c.GetString("tenant_id")
 	actor := c.GetString("caller_id")
-	if actor == "" {
-		actor = c.GetHeader("X-Zord-Caller-ID")
-	}
-	if actor == "" {
-		actor = "unknown"
+	purposeCode := c.GetString("purpose_code")
+
+	if len(req.PII) == 0 || req.ObjectRef == "" || req.CorrelationID == "" {
+		h.svc.WriteAuthzDenialAudit(c.Request.Context(), tenantID, actor, "AUTHZ_DENIED",
+			purposeCode, req.ObjectRef, req.CorrelationID, "pii, object_ref, and correlation_id are required")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "pii, object_ref, and correlation_id are required"})
+		return
 	}
 
 	tokens, err := h.svc.TokenizePII(
 		c.Request.Context(),
-		req.TenantID,
+		tenantID,
 		req.TraceID,
 		actor,
 		req.PII,

@@ -22,6 +22,7 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"zord-intent-engine/db"
+	"zord-intent-engine/internal/auth"
 	"zord-intent-engine/internal/canonicalizer"
 	"zord-intent-engine/internal/models"
 	"zord-intent-engine/internal/normalizer"
@@ -418,11 +419,23 @@ func parseAmount(value string) (decimal.Decimal, error) {
 	return decimal.NewFromString(v) // exact decimal, no rounding
 }
 
+// TOK-04: tenant_id is intentionally NOT part of this request body anymore
+// -- the enclave now derives it solely from the verified service JWT minted
+// below (kept as a plain function argument to MintServiceToken instead).
+// object_ref/correlation_id are new mandatory fields the enclave enforces.
 type enclaveTokenizeRequest struct {
-	TenantID string            `json:"tenant_id"`
-	TraceID  string            `json:"trace_id"`
-	PII      map[string]string `json:"pii"`
+	TenantID      string            `json:"-"`
+	TraceID       string            `json:"trace_id"`
+	ObjectRef     string            `json:"object_ref"`
+	CorrelationID string            `json:"correlation_id"`
+	PII           map[string]string `json:"pii"`
 }
+
+// enclavePurposeCode is the one purpose_code this service is allowed to use
+// against zord-token-enclave's TOK-04 issuer allow-list -- must match the
+// enclave's own internal/serviceauth allowedPurposeCodes entry for
+// "zord-intent-engine" exactly.
+const enclavePurposeCode = "INTENT_PROCESSING"
 
 func callEnclaveTokenize(ctx context.Context, req enclaveTokenizeRequest) (map[string]string, error) {
 	var lastErr error
@@ -459,9 +472,18 @@ func callEnclaveTokenizeOnce(ctx context.Context, req enclaveTokenizeRequest) (m
 	if err != nil {
 		return nil, err
 	}
+
+	// TOK-04: a short-lived, signed service JWT scoped to exactly this
+	// tenant/purpose replaces the old static ENCLAVE_INTERNAL_TOKEN shared
+	// secret -- the enclave derives tenant_id/caller/purpose_code from this
+	// verified claim, never from the request body above.
+	serviceTok, err := auth.MintServiceToken(req.TenantID, enclavePurposeCode)
+	if err != nil {
+		return nil, fmt.Errorf("mint service token: %w", err)
+	}
+
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Zord-Internal-Token", os.Getenv("ENCLAVE_INTERNAL_TOKEN"))
-	httpReq.Header.Set("X-Zord-Caller-ID", "zord-intent-engine")
+	httpReq.Header.Set("X-Zord-Internal-Token", serviceTok)
 
 	resp, err := enclaveHTTPClient.Do(httpReq)
 	if err != nil {
@@ -2127,8 +2149,10 @@ func (s *IntentService) processIncomingIntentInternal(
 	// -------- STEP 8: TOKENIZATION --------
 
 	tokenReq := enclaveTokenizeRequest{
-		TenantID: in.TenantID.String(),
-		TraceID:  in.TraceID.String(),
+		TenantID:      in.TenantID.String(),
+		TraceID:       in.TraceID.String(),
+		ObjectRef:     intentID,
+		CorrelationID: in.TraceID.String(),
 		PII: map[string]string{
 			"account_number": canonicalInput.AccountNumber,
 			"ifsc":           canonicalInput.Beneficiary.Instrument.IFSC,

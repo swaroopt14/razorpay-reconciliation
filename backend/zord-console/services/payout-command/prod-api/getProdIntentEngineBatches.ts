@@ -51,6 +51,8 @@ export type PaymentIntentRecord = {
   batchid?: string
   source_row_num?: number
   governance_state?: string
+  governance_decision?: string | null
+  intent_lifecycle_state?: string | null
   business_state?: string
   duplicate_risk_flag?: boolean
   aggregate_confidence_score?: number

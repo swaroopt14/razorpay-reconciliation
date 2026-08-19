@@ -9,6 +9,7 @@ import (
 
 	"zord-outcome-engine/db"
 	"zord-outcome-engine/models"
+	"zord-outcome-engine/services"
 
 	"github.com/google/uuid"
 )
@@ -84,6 +85,22 @@ func HandleIntentEvent(msg []byte) error {
 	if payload.TenantID == "" {
 		payload.TenantID = event.TenantID
 	}
+	if event.TenantID == "" {
+		event.TenantID = payload.TenantID
+	}
+
+	if strings.TrimSpace(event.EventID) == "" {
+		if dlqErr := persistDeadLetter(context.Background(), event.EventID, event.EventType, event.SchemaVersion, event.TenantID, event.TraceID, msg, "missing event_id", "MISSING_EVENT_ID"); dlqErr != nil {
+			return dlqErr
+		}
+		return nil
+	}
+	if strings.TrimSpace(event.TenantID) == "" {
+		if dlqErr := persistDeadLetter(context.Background(), event.EventID, event.EventType, event.SchemaVersion, event.TenantID, event.TraceID, msg, "missing tenant_id", "MISSING_TENANT_ID"); dlqErr != nil {
+			return dlqErr
+		}
+		return nil
+	}
 
 	intent, err := canonicalIntentFromPayload(payload, event.TraceID)
 	if err != nil {
@@ -92,7 +109,10 @@ func HandleIntentEvent(msg []byte) error {
 		}
 		return nil
 	}
-	if err := upsertCanonicalIntent(context.Background(), intent); err != nil {
+
+	payloadHash := services.HashPayload(event.Payload)
+	outcome, err := acceptIntentEvent(context.Background(), event, intent, payloadHash)
+	if err != nil {
 		// Transient persistence failures must not be dead-lettered here:
 		// kafka.ConsumeClaim retries in place, then writes a durable
 		// consumer_failure_receipts row before marking. Returning err
@@ -100,7 +120,7 @@ func HandleIntentEvent(msg []byte) error {
 		// exists (OUT-02).
 		return err
 	}
-	log.Printf("canonical_intents upserted from topic event_id=%s intent_id=%s", event.EventID, payload.IntentID)
+	log.Printf("canonical_intents.%s from topic event_id=%s intent_id=%s", outcome, event.EventID, payload.IntentID)
 	return nil
 }
 

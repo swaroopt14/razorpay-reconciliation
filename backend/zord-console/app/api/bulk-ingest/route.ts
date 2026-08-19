@@ -2,8 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { assertCookieMutationProtection } from '@/services/auth/assertSameOrigin.server'
 import {
   applyRefreshedSessionCookies,
+  getTenantIdForBearerAuthorizationHeader,
   resolveBulkIngestForwardAuthorization,
 } from '@/services/auth/resolvePayoutTenant.server'
+import {
+  consumeBffRateLimit,
+  rateLimitKeyForIp,
+  rateLimitKeyForTenant,
+} from '@/services/bff/rateLimit.server'
 import { publicBffError } from '@/services/bff/publicBffError'
 import { isReprocessReason, REPROCESS_REASONS } from '@/services/payout-command/batch-intake/reprocessReason'
 
@@ -30,6 +36,17 @@ export async function POST(req: NextRequest) {
 
   const authResolution = await resolveBulkIngestForwardAuthorization(req)
   if (!authResolution.ok) return authResolution.response
+
+  const bearerTenant = await getTenantIdForBearerAuthorizationHeader(authResolution.authorization)
+  const rate = consumeBffRateLimit({
+    bucket: 'reprocess',
+    key: bearerTenant ? rateLimitKeyForTenant(bearerTenant) : rateLimitKeyForIp(req),
+    message: 'Too many ingest/reprocess requests. Try again shortly.',
+  })
+  if (!rate.ok) {
+    applyRefreshedSessionCookies(rate.response, authResolution.refreshedPayload)
+    return rate.response
+  }
 
   const bodyBuffer = Buffer.from(await req.arrayBuffer())
   const sourceType =

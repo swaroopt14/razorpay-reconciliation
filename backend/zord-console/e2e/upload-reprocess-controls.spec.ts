@@ -118,10 +118,10 @@ test.describe('intent and settlement reprocess controls', () => {
     })
 
     await page.getByLabel('Batch reference optional').fill('batch-settlement-1')
-    await page.getByRole('checkbox', { name: 'Reprocess this file' }).check()
-    await page.getByRole('combobox', { name: 'Reprocess reason' }).selectOption('PARSER_FIX')
+    await page.getByRole('radio', { name: /Reprocess existing version/ }).check()
+    await page.getByTestId('settlement-force-reason').selectOption('PARSER_FIX')
     await page.getByLabel('Upload bank / settlement confirmation file').setInputFiles(CSV_FILE)
-    await page.getByRole('button', { name: 'Upload confirmation file', exact: true }).click()
+    await page.getByTestId('settlement-upload-submit').click()
 
     const dialog = page.getByRole('dialog', { name: 'Settlement confirmation upload failed' })
     await expect(dialog).toBeVisible()

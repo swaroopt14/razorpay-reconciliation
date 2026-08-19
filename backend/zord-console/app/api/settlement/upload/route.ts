@@ -5,6 +5,7 @@ import {
   applyRefreshedSessionCookies,
   resolveSettlementUploadContext,
 } from '@/services/auth/resolvePayoutTenant.server'
+import { consumeBffRateLimit, rateLimitKeyForTenant } from '@/services/bff/rateLimit.server'
 import { publicBffError } from '@/services/bff/publicBffError'
 import { isReprocessReason, REPROCESS_REASONS } from '@/services/payout-command/batch-intake/reprocessReason'
 
@@ -26,7 +27,8 @@ function settlementBase() {
 /**
  * Proxies browser multipart upload to:
  * POST /v1/settlement/upload?tenant_id=<session>&psp=<query>&batch_id=<header optional>
- * Headers: Batch-Id, X-Zord-Force-Reprocess, X-Zord-Force-Reprocess-Reason, Authorization
+ * Headers: Batch-Id, Authorization; optional X-Zord-Force-Reprocess(+Reason) only when explicit.
+ * CON-P0-03: missing force is treated as false — never default to correction/reprocess.
  */
 
 export async function POST(req: NextRequest) {
@@ -42,6 +44,16 @@ export async function POST(req: NextRequest) {
   // CON-P0-02: session and/or explicit Authorization only — no ZORD_*_API_KEY fallback.
   const ctx = await resolveSettlementUploadContext(req)
   if (!ctx.ok) return ctx.response
+
+  const rate = consumeBffRateLimit({
+    bucket: 'reprocess',
+    key: rateLimitKeyForTenant(ctx.tenantId),
+    message: 'Too many settlement upload/reprocess requests. Try again shortly.',
+  })
+  if (!rate.ok) {
+    applyRefreshedSessionCookies(rate.response, ctx.refreshedPayload)
+    return rate.response
+  }
 
   const psp = req.nextUrl.searchParams.get('psp')
   if (!psp?.trim()) {
@@ -65,11 +77,19 @@ export async function POST(req: NextRequest) {
 
   if (batchId?.trim()) headers['Batch-Id'] = batchId.trim()
 
-  const forceReprocess = req.headers.get('x-zord-force-reprocess')?.trim().toLowerCase() === 'true'
+  // CON-P0-03: never default force/correction. Only forward when the client
+  // explicitly opts into reprocess/correction (Outcome Engine distinguishes new /
+  // duplicate / same-content reprocess / changed-content correction).
+  const forceRaw = req.headers.get('x-zord-force-reprocess')?.trim().toLowerCase()
+  const forceReprocess = forceRaw === 'true'
   const reason = req.headers.get('x-zord-force-reprocess-reason')?.trim() || null
+
   if (forceReprocess && !isReprocessReason(reason)) {
     return NextResponse.json(
-      { error: `A valid reprocess reason is required: ${REPROCESS_REASONS.join(', ')}.` },
+      {
+        error: `A valid reprocess reason is required: ${REPROCESS_REASONS.join(', ')}.`,
+        allowed: [...REPROCESS_REASONS],
+      },
       { status: 400 },
     )
   }
@@ -80,6 +100,12 @@ export async function POST(req: NextRequest) {
     )
   }
   if (forceReprocess && reason) {
+    if (!batchId?.trim()) {
+      return NextResponse.json(
+        { error: 'Batch-Id (or batch_id) is required for reprocess/correction uploads.' },
+        { status: 400 },
+      )
+    }
     headers['X-Zord-Force-Reprocess'] = 'true'
     headers['X-Zord-Force-Reprocess-Reason'] = reason
   }

@@ -87,11 +87,15 @@ spec:
               value: pii.tokenize.result
             - name: ZORD_PII_ENCLAVE_URL
               value: http://zord-token-enclave:8087
-            - name: ENCLAVE_INTERNAL_TOKEN
+            # TOK-04: replaces ENCLAVE_INTERNAL_TOKEN -- mints a scoped
+            # service JWT for each tokenize call instead of sending a static
+            # shared secret. Must match SERVICE_JWT_SIGNING_SECRET in
+            # zord-token-enclave's deployment (same zord-app-secrets key).
+            - name: SERVICE_JWT_SIGNING_SECRET
               valueFrom:
                 secretKeyRef:
                   name: zord-app-secrets
-                  key: ENCLAVE_INTERNAL_TOKEN
+                  key: SERVICE_JWT_SIGNING_SECRET
             - name: DB_HOST
               valueFrom:
                 configMapKeyRef:

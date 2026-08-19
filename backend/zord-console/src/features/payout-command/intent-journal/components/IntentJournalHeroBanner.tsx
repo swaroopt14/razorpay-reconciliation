@@ -1,15 +1,16 @@
-'use client'
+﻿'use client'
 
 import { JournalIntelligenceKpiHero } from '../../command-center/JournalIntelligenceKpiHero'
 import { useJournalBatchSelection } from '../context/JournalBatchSelectionContext'
 import { useJournalBatchMetrics } from '../hooks/useJournalBatchMetrics'
 import { intentJournalCopy } from '../copy/intentJournalCopy'
-import { fmtInrFromMinorExact } from '../../command-center/commandCenterFormat'
 import { formatConfidencePct } from '../intentJournalSidebarUtils'
 import { useDlqManualReviewCount } from '../hooks/useDlqManualReviewCount'
 import { IntentJournalExportMenu } from './IntentJournalExportMenu'
-
-const INTENDED_VALUE_SUB = 'Sum of payment instruction amounts'
+import {
+  formatJournalMoneyFromMinor,
+  JOURNAL_DEFAULT_CURRENCY,
+} from '@/services/payout-command/prod-api/money/journalMoney'
 
 type IntentJournalHeroBannerProps = {
   onExportIntents: () => void
@@ -33,7 +34,8 @@ export function IntentJournalHeroBanner({
 }: IntentJournalHeroBannerProps) {
   const { selectedBatchId, journalEnabled } = useJournalBatchSelection()
   const { batch, metrics, loading } = useJournalBatchMetrics(selectedBatchId, journalEnabled)
-  const totalAmount = batch?.totalValue ?? metrics?.intendedValue ?? null
+  const amountMinor = batch?.amountMinor ?? metrics?.intendedAmountMinor ?? null
+  const currency = batch?.currency ?? metrics?.currency ?? JOURNAL_DEFAULT_CURRENCY
   const { displayCount: manualReviewCount, loading: manualReviewLoading } = useDlqManualReviewCount(
     journalEnabled,
     selectedBatchId,
@@ -42,12 +44,11 @@ export function IntentJournalHeroBanner({
   const instructionCount = metrics?.instructionCount ?? null
   const instructionCountDisplay = formatApiCount(instructionCount, loading)
   const valueLabel =
-    loading && totalAmount == null
+    loading && amountMinor == null
       ? '—'
-      : totalAmount != null
-        ? fmtInrFromMinorExact(totalAmount)
+      : amountMinor != null
+        ? formatJournalMoneyFromMinor(amountMinor, currency)
         : '—'
-  const intendedValueSub = totalAmount != null ? INTENDED_VALUE_SUB : '—'
   const qualityPct = formatConfidencePct(metrics?.batchAggregateConfidenceScore ?? null)
   const needsReviewDisplay =
     manualReviewCount != null ? manualReviewCount.toLocaleString('en-IN') : manualReviewLoading ? '…' : '—'
@@ -108,3 +109,5 @@ export function IntentJournalHeroBanner({
     />
   )
 }
+
+
