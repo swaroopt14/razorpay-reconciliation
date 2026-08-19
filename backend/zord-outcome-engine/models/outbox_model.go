@@ -21,6 +21,10 @@ type OutboxEvent struct {
 	SourceSystem  *string   `json:"source_system,omitempty" db:"source_system"`
 	CorridorID    *string   `json:"corridor_id,omitempty" db:"corridor_id"`
 
+	// EventVersion is stamped in the Lease handler from the local
+	// EventVersionV1 constant — it is constant per producer, not per-row
+	// data, so it has no backing DB column (mirrors zord-intent-engine).
+	EventVersion  string          `json:"event_version"`
 	SchemaVersion string          `json:"schema_version" db:"schema_version"`
 	Amount        decimal.Decimal `json:"amount" db:"amount"`
 	Currency      string          `json:"currency" db:"currency"`

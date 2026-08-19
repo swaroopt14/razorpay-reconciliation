@@ -89,11 +89,14 @@ spec:
                 configMapKeyRef:
                   name: zord-aws-config
                   key: DB_SSLMODE
-            - name: MASTER_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: zord-app-secrets
-                  key: MASTER_KEY
+            # TOK-03: MASTER_KEY replaced with KMS_KEY_ID -- the CMK ARN
+            # used to envelope-encrypt tenant DEKs. Not a Secret: an ARN
+            # alone grants no access, IAM does that (zord-aws-access must
+            # be granted kms:Encrypt/kms:Decrypt/kms:DescribeKey on this
+            # key before rollout -- see the TOK-03 report for the exact
+            # ARN).
+            - name: KMS_KEY_ID
+              value: "arn:aws:kms:ap-south-1:522189039032:key/99851fd6-8fd2-45eb-9817-8d1fbca90a5f"
             - name: TOKEN_SECRET
               valueFrom:
                 secretKeyRef:
@@ -104,15 +107,30 @@ spec:
                 configMapKeyRef:
                   name: zord-aws-config
                   key: KAFKA_BROKERS
+            # ── SASL/SCRAM Authentication (PLAT-06) ──
+            - name: KAFKA_SASL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: zord-app-secrets
+                  key: KAFKA_EDGE_USERNAME
+            - name: KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: zord-app-secrets
+                  key: KAFKA_EDGE_PASSWORD
             - name: KAFKA_TOPIC_PII_TOKENIZE_REQUEST
               value: pii.tokenize.request
             - name: KAFKA_TOPIC_PII_TOKENIZE_RESULT
               value: pii.tokenize.result
-            - name: ENCLAVE_INTERNAL_TOKEN
+            # TOK-04: replaces ENCLAVE_INTERNAL_TOKEN -- verifies the scoped
+            # service JWT callers now mint instead of a static shared secret.
+            # Must match SERVICE_JWT_SIGNING_SECRET in zord-intent-engine's
+            # deployment (same zord-app-secrets key, shared value).
+            - name: SERVICE_JWT_SIGNING_SECRET
               valueFrom:
                 secretKeyRef:
                   name: zord-app-secrets
-                  key: ENCLAVE_INTERNAL_TOKEN
+                  key: SERVICE_JWT_SIGNING_SECRET
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               valueFrom:
                 configMapKeyRef:

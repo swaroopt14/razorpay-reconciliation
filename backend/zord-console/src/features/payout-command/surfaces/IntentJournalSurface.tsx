@@ -61,7 +61,13 @@ const JOURNAL_SUBTLE_BG = 'bg-slate-50'
 const JOURNAL_BORDER = 'border-slate-200/90'
 
 type TabKey = 'transactions' | 'failures'
-type IntentStatus = 'Ready to Process' | 'Confirmed' | 'Pending' | 'Needs Review' | 'In Progress'
+type IntentStatus =
+  | 'Ready to Process'
+  | 'Confirmed'
+  | 'Pending'
+  | 'Needs Review'
+  | 'In Progress'
+  | 'Decision unavailable'
 type IntentMatch = 'Matched' | 'Likely Matched' | 'Awaiting' | 'Mismatch' | 'Not Found'
 
 type IntentRow = {

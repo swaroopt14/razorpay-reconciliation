@@ -65,6 +65,17 @@ spec:
           env:
             - name: RELAY_KAFKA_BROKERS
               value: zord-kafka:9092
+            # ── SASL/SCRAM Authentication (PLAT-06) ──
+            - name: RELAY_KAFKA_SASL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: zord-app-secrets
+                  key: RELAY_KAFKA_SASL_USERNAME
+            - name: RELAY_KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: zord-app-secrets
+                  key: RELAY_KAFKA_SASL_PASSWORD
             - name: RELAY_DB_URL
               valueFrom:
                 secretKeyRef:

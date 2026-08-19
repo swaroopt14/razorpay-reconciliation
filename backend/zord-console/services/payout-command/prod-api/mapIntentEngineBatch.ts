@@ -10,9 +10,16 @@ import {
   normalizeJournalCurrency,
   parseMinorAmountField,
 } from './money/journalMoney'
+import { mapJournalIntentDecision } from '@/features/payout-command/intent-journal/mappers/mapJournalIntentDecision'
 
 export type JournalBatchType = 'Disbursement' | 'Settlement'
-export type JournalIntentStatus = 'Ready to Process' | 'Confirmed' | 'Pending' | 'Needs Review' | 'In Progress'
+export type JournalIntentStatus =
+  | 'Ready to Process'
+  | 'Confirmed'
+  | 'Pending'
+  | 'Needs Review'
+  | 'In Progress'
+  | 'Decision unavailable'
 export type JournalIntentMatch = 'Matched' | 'Likely Matched' | 'Awaiting' | 'Mismatch' | 'Not Found'
 
 export type JournalBatchRecord = {
@@ -246,27 +253,19 @@ export function mapPaymentIntentToIntentRow(
   const amount = typeof raw === 'string' ? parseFloat(raw) : Number(raw ?? 0)
   const safe = Number.isFinite(amount) ? amount : 0
   const stRaw = String(intent.status ?? '').trim()
-  const gov = String(intent.governance_state ?? '').toUpperCase()
-  const biz = String(intent.business_state ?? '').toUpperCase()
-  const st = stRaw.toUpperCase()
-
-  let status: JournalIntentStatus = 'Ready to Process'
-  if (st.includes('FAIL') || st.includes('REJECT') || st.includes('ERROR') || gov === 'FLAGGED') {
-    status = 'Needs Review'
-  } else if (st.includes('CONFIRM') || st.includes('SUCCESS') || st === 'COMPLETED' || st === 'SETTLED') {
-    status = 'Confirmed'
-  } else if (st.includes('PROCESS') || st.includes('DISPAT') || st === 'IN_FLIGHT' || biz === 'PROCESSING') {
-    status = 'In Progress'
-  } else if (st.includes('PEND') || st.includes('CREAT')) {
-    status = 'Pending'
-  }
-
+  const gov = String(intent.governance_state ?? '').trim()
+  const mapped = mapJournalIntentDecision({
+    status: intent.status,
+    governance_state: intent.governance_state,
+    governance_decision: intent.governance_decision,
+    intent_lifecycle_state: intent.intent_lifecycle_state,
+    business_state: intent.business_state,
+  })
+  const status = mapped.status
   const conf = intent.aggregate_confidence_score
-  let match: JournalIntentMatch = 'Awaiting'
-  if (status === 'Confirmed') match = 'Matched'
-  else if (status === 'Needs Review') match = 'Not Found'
-  else if (typeof conf === 'number' && conf >= 0.8) match = 'Likely Matched'
-  else if (typeof conf === 'number' && conf < 0.5) match = 'Mismatch'
+  let match: JournalIntentMatch = mapped.match
+  if (status === 'Ready to Process' && typeof conf === 'number' && conf >= 0.8) match = 'Likely Matched'
+  else if (status === 'Ready to Process' && typeof conf === 'number' && conf < 0.5) match = 'Mismatch'
 
   const created = intent.created_at ? new Date(intent.created_at) : new Date()
   const instrument =
@@ -302,7 +301,7 @@ export function mapPaymentIntentToIntentRow(
     paymentPartner: instrument || '—',
     bank: instrument || '—',
     paymentMethodDetail,
-    engineStatus: [stRaw, gov, biz].filter(Boolean).join(' · ') || undefined,
+    engineStatus: mapped.engineStatus || [stRaw, gov].filter(Boolean).join(' · ') || undefined,
     currency: apiTrimmedString(intent.currency ?? 'INR') || 'INR',
     tenantId: apiTrimmedString(intent.tenant_id) || apiTrimmedString(sessionTenantId) || '—',
     intendedExecutionAt: formatJournalExecutionAt(intent.intended_execution_at),
@@ -312,7 +311,12 @@ export function mapPaymentIntentToIntentRow(
     provider: resolveProvider(intent),
     confidenceScore,
     confidenceLabel: formatConfidenceLabel(confidenceScore ?? undefined),
-    infoSummary: buildIntentInfoSummary(intent),
+    infoSummary:
+      status === 'Decision unavailable'
+        ? 'Decision unavailable'
+        : status === 'Ready to Process'
+          ? 'Ready for dispatch'
+          : buildIntentInfoSummary(intent),
     rawIntent: intent,
   }
 }

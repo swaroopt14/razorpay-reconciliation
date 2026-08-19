@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { BACKEND_SERVICES } from '@/config/api.endpoints'
 import {
-  ACCESS_COOKIE_NAME,
   BackendAuthEnvelope,
   BackendAuthUser,
   BackendErrorEnvelope,
-  REFRESH_COOKIE_NAME,
   applyAuthCookies,
   applyCsrfCookie,
   applySessionMarkerCookies,
@@ -13,8 +11,12 @@ import {
   buildForwardHeaders,
   clearAuthCookies,
   edgeAuthUrl,
+  getAccessTokenFromRequest,
+  getRefreshTokenFromRequest,
   parseJSONSafe,
+  readSessionTenantRegistry,
   refreshFailureResponse,
+  resolveRequestedSessionTenantId,
 } from '@/services/auth/server'
 
 export const dynamic = 'force-dynamic'
@@ -23,7 +25,7 @@ export const dynamic = 'force-dynamic'
 function jsonNoStore<T>(body: T, init?: ResponseInit): NextResponse {
   const res = NextResponse.json(body, init)
   res.headers.set('Cache-Control', 'private, no-store, max-age=0, must-revalidate')
-  res.headers.set('Vary', 'Cookie')
+  res.headers.set('Vary', 'Cookie, X-Zord-Session-Tenant')
   return res
 }
 
@@ -39,12 +41,16 @@ interface BackendMeEnvelope {
 }
 
 export async function GET(request: NextRequest) {
-  const accessToken = request.cookies.get(ACCESS_COOKIE_NAME)?.value
-  const refreshToken = request.cookies.get(REFRESH_COOKIE_NAME)?.value
+  const accessToken = getAccessTokenFromRequest(request)
+  const refreshToken = getRefreshTokenFromRequest(request)
+  const sessionTenant = resolveRequestedSessionTenantId(request)
 
   if (!accessToken && !refreshToken) {
     const response = jsonNoStore({ code: 'INVALID_SESSION', message: 'Session expired' }, { status: 401 })
-    clearAuthCookies(response)
+    clearAuthCookies(response, {
+      tenantId: sessionTenant,
+      registry: readSessionTenantRegistry(request),
+    })
     return response
   }
 
@@ -66,7 +72,6 @@ export async function GET(request: NextRequest) {
       if (payload) {
         const response = jsonNoStore(payload)
         applySessionMarkerCookies(response, payload.user.role)
-        // CON-P1-01: ensure CSRF cookie exists for cookie-authenticated mutations.
         applyCsrfCookie(response, accessToken)
         return response
       }
@@ -80,7 +85,10 @@ export async function GET(request: NextRequest) {
 
   if (!refreshToken) {
     const response = jsonNoStore({ code: 'INVALID_SESSION', message: 'Session expired' }, { status: 401 })
-    clearAuthCookies(response)
+    clearAuthCookies(response, {
+      tenantId: sessionTenant,
+      registry: readSessionTenantRegistry(request),
+    })
     return response
   }
 
@@ -113,6 +121,6 @@ export async function GET(request: NextRequest) {
     user: payload.user,
     session: payload.session,
   })
-  applyAuthCookies(response, payload)
+  applyAuthCookies(response, payload, request)
   return response
 }

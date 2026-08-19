@@ -102,7 +102,8 @@ func VerifyWebhookSignature() gin.HandlerFunc {
 		}
 
 		ts, err := strconv.ParseInt(timestampHeader, 10, 64)
-		if err != nil || time.Now().Unix()-ts > 300 {
+		diff := time.Now().Unix() - ts
+		if err != nil || diff > 300 || diff < -300 {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "timestamp out of range"})
 			c.Abort()
 			return

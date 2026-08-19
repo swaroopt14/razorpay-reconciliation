@@ -18,6 +18,7 @@ type RawIntentMessage struct {
 	MappingProfileHint   *string
 	ObjectEncryptionAlg  string
 	KMSKeyVersion        string
+	EncryptionKeyID      string
 	ParserClassification *string
 	TransportRequestID   *string
 	ClientReferenceHint  *string
@@ -35,4 +36,6 @@ type RawIntentMessage struct {
 	FileUploadChannel    *string
 	SourceRowRef         *string
 	BatchID              *string
+	PrincipalID          string
+	AuthMethod           string
 }

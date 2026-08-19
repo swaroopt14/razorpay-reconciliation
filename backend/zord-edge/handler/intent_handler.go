@@ -11,6 +11,7 @@ import (
 
 	"zord-edge/db"
 	"zord-edge/logger"
+	"zord-edge/middleware"
 	"zord-edge/model"
 	"zord-edge/services"
 	"zord-edge/vault"
@@ -107,6 +108,19 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 	}
 	tenantName := context.GetString("tenant_name")
 
+	principalType, _ := middleware.GetPrincipalType(context)
+	authMethod := string(principalType)
+
+	var principalID string
+	if uid, exists := context.Get("user_id"); exists {
+		if id, ok := uid.(uuid.UUID); ok {
+			principalID = id.String()
+		}
+	}
+	if principalID == "" {
+		principalID = tenantID.String()
+	}
+
 	envelopeID := uuid.Must(uuid.NewV7()).String()
 	receivedAt := time.Now().UTC()
 	// A single-intent submission has no separate "file" artifact — it is its
@@ -118,7 +132,12 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 	headersHashSum := sha256.Sum256(headersBytes)
 	headersHash := headersHashSum[:]
 
-	encryptedPayload, err := vault.Encrypt(rawPayload)
+	encResult, err := vault.Encrypt(vault.EncryptionContext{
+		TenantID:          rawIntent.TenantID,
+		ArtifactID:        artifactID,
+		ArtifactVersionID: artifactVersionID,
+		ContentType:       contentType,
+	}, rawPayload)
 	if err != nil {
 		logger.Log.Error("payload encryption failed",
 			slog.String("trace_id", traceID),
@@ -127,6 +146,7 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 		context.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encrypt payload"})
 		return
 	}
+	encryptedPayload := encResult.Ciphertext
 
 	rawIntent.TraceID = traceID
 	rawIntent.PayloadSize = payloadSize
@@ -138,10 +158,13 @@ func (h *Handler) IntentHandler(context *gin.Context) {
 	rawIntent.TenantName = tenantName
 	rawIntent.RequestHeadersHash = headersHash
 	rawIntent.SchemaHint = nil
+	rawIntent.PrincipalID = principalID
+	rawIntent.AuthMethod = authMethod
 
 	// Hardcoded values
 	rawIntent.ObjectEncryptionAlg = "AES256"
-	rawIntent.KMSKeyVersion = "v1"
+	rawIntent.KMSKeyVersion = encResult.KeyVersion
+	rawIntent.EncryptionKeyID = encResult.KeyID
 	rawIntent.IngressAPIVersion = "v1"
 	rawIntent.RetentionPolicyClass = "STANDARD"
 	rawIntent.EventType = "Envelope.Created"

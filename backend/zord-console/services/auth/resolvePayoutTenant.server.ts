@@ -12,9 +12,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { BACKEND_SERVICES } from '@/config/api.endpoints'
 import { normalizeAuthorizationHeader } from '@/services/payout-command/batch-intake/intakeHttpShared'
 import {
-  ACCESS_COOKIE_NAME,
   applyAuthCookies,
   authorizedEdgeFetch,
+  getAccessTokenFromRequest,
   parseJSONSafe,
   type BackendAuthEnvelope,
 } from '@/services/auth/server'
@@ -32,7 +32,27 @@ const UNAUTHORIZED_NO_CREDENTIALS = {
 
 export type SessionTenantResult = {
   tenantId: string | null
+  /** Session JWT for upstream Kong/service auth (cookie or post-refresh). */
+  accessToken?: string
   refreshedPayload?: BackendAuthEnvelope
+}
+
+function accessTokenFromSession(
+  request: NextRequest,
+  refreshedPayload?: BackendAuthEnvelope,
+): string | undefined {
+  const fromRefresh = refreshedPayload?.access_token?.trim()
+  if (fromRefresh) return fromRefresh
+  return getAccessTokenFromRequest(request)?.trim() || undefined
+}
+
+/** Headers for BFF → upstream service calls (session JWT + tenant claim header). */
+export function sessionUpstreamHeaders(tenantId: string, accessToken: string): Record<string, string> {
+  return {
+    'content-type': 'application/json',
+    'x-tenant-id': tenantId,
+    Authorization: `Bearer ${accessToken}`,
+  }
 }
 
 export async function getSessionTenantIdFromRequest(request: NextRequest): Promise<SessionTenantResult> {
@@ -42,14 +62,24 @@ export async function getSessionTenantIdFromRequest(request: NextRequest): Promi
     { method: 'GET' },
   )
   if (errorResponse) return { tenantId: null }
-  if (!edgeResponse?.ok) return { tenantId: null, refreshedPayload }
+  if (!edgeResponse?.ok) {
+    return {
+      tenantId: null,
+      accessToken: accessTokenFromSession(request, refreshedPayload),
+      refreshedPayload,
+    }
+  }
   const payload = await parseJSONSafe<{
     user?: { tenant_id?: string }
     session?: { tenant_id?: string }
   }>(edgeResponse)
   const tid =
     payload?.session?.tenant_id?.trim() || payload?.user?.tenant_id?.trim() || null
-  return { tenantId: tid, refreshedPayload }
+  return {
+    tenantId: tid,
+    accessToken: accessTokenFromSession(request, refreshedPayload),
+    refreshedPayload,
+  }
 }
 
 /** Resolves tenant UUID string for a Bearer token (JWT or API key) via zord-edge. */
@@ -121,11 +151,11 @@ export async function resolveSettlementUploadContext(
 export async function requireSessionTenantForProdProxy(
   request: NextRequest,
 ): Promise<
-  | { ok: true; tenantId: string; refreshedPayload?: BackendAuthEnvelope }
+  | { ok: true; tenantId: string; accessToken: string; refreshedPayload?: BackendAuthEnvelope }
   | { ok: false; response: NextResponse }
 > {
-  const { tenantId, refreshedPayload } = await getSessionTenantIdFromRequest(request)
-  if (!tenantId?.trim()) {
+  const { tenantId, accessToken, refreshedPayload } = await getSessionTenantIdFromRequest(request)
+  if (!tenantId?.trim() || !accessToken) {
     return {
       ok: false,
       response: NextResponse.json(
@@ -134,15 +164,89 @@ export async function requireSessionTenantForProdProxy(
       ),
     }
   }
-  return { ok: true, tenantId: tenantId.trim(), refreshedPayload }
+  return {
+    ok: true,
+    tenantId: tenantId.trim(),
+    accessToken,
+    refreshedPayload,
+  }
+}
+
+export type SessionIdentityResult =
+  | {
+      ok: true
+      tenantId: string
+      userId: string
+      sessionId: string
+      accessToken?: string
+      refreshedPayload?: BackendAuthEnvelope
+    }
+  | { ok: false; response: NextResponse }
+
+/**
+ * CON-P0-04 — full session identity from Edge `/v1/auth/me`.
+ * Used by Prompt Layer BFF so tenant/user/session are never taken from client headers.
+ * Do not remove when merging error-normalization / CSRF changes into this helper's callers.
+ */
+export async function requireSessionIdentityForProdProxy(
+  request: NextRequest,
+): Promise<SessionIdentityResult> {
+  const { edgeResponse, errorResponse, refreshedPayload } = await authorizedEdgeFetch(
+    request,
+    BACKEND_SERVICES.EDGE.ENDPOINTS.AUTH_ME,
+    { method: 'GET' },
+  )
+  if (errorResponse) return { ok: false, response: errorResponse }
+  if (!edgeResponse?.ok) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { code: 'UNAUTHORIZED', message: 'Session required for this resource.' },
+        { status: 401 },
+      ),
+    }
+  }
+
+  const payload = await parseJSONSafe<{
+    user?: { id?: string; tenant_id?: string }
+    session?: { tenant_id?: string; session_id?: string }
+  }>(edgeResponse)
+
+  const tenantId =
+    payload?.session?.tenant_id?.trim() || payload?.user?.tenant_id?.trim() || ''
+  const userId = payload?.user?.id?.trim() || ''
+  const sessionId = payload?.session?.session_id?.trim() || ''
+
+  if (!tenantId || !userId) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { code: 'UNAUTHORIZED', message: 'Session identity incomplete. Sign in again.' },
+        { status: 401 },
+      ),
+    }
+  }
+
+  const accessToken =
+    refreshedPayload?.access_token?.trim() || getAccessTokenFromRequest(request)?.trim() || undefined
+
+  return {
+    ok: true,
+    tenantId,
+    userId,
+    sessionId,
+    accessToken,
+    refreshedPayload,
+  }
 }
 
 /** Apply rotated access/refresh cookies when authorizedEdgeFetch refreshed the session. */
 export function applyRefreshedSessionCookies(
   response: NextResponse,
   refreshedPayload?: BackendAuthEnvelope,
+  request?: NextRequest,
 ): void {
-  if (refreshedPayload) applyAuthCookies(response, refreshedPayload)
+  if (refreshedPayload) applyAuthCookies(response, refreshedPayload, request)
 }
 
 export type ProxyForwardAuthResolution =
@@ -165,7 +269,7 @@ export async function resolveProxyForwardAuthorization(
 ): Promise<ProxyForwardAuthResolution> {
   const { tenantId: sessionTenant, refreshedPayload } = await getSessionTenantIdFromRequest(request)
   const incoming = normalizeAuthorizationHeader(request.headers.get('authorization') ?? '')
-  const accessCookie = request.cookies.get(ACCESS_COOKIE_NAME)?.value
+  const accessCookie = getAccessTokenFromRequest(request)
   const cookieBearer = accessCookie?.trim() ? `Bearer ${accessCookie.trim()}` : null
 
   if (incoming) {

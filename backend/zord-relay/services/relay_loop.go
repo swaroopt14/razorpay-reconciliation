@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -9,6 +11,7 @@ import (
 	"time"
 	"zord-relay/kafka"
 	"zord-relay/logger"
+	"zord-relay/model"
 
 	"go.uber.org/zap"
 )
@@ -21,6 +24,7 @@ type RelayLoopConfig struct {
 	DispatchEventsTopic    string
 	PublishFailureDLQTopic string
 	PoisonEventDLQTopic    string
+	MaxPublishAttempts     int // default 20
 }
 
 // RelayLoop reads PENDING events from relay_outbox and publishes them to Kafka.
@@ -33,13 +37,17 @@ type RelayLoopConfig struct {
 //   - Poison event DLQ: payload too large, invalid JSON, schema mismatch.
 //     The event is moved to DLQ and marked PUBLISHED so it is not retried.
 type RelayLoop struct {
-	outboxRepo *RelayOutboxRepo
-	producer   *kafka.Producer
-	cfg        *RelayLoopConfig
+	outboxRepo      *RelayOutboxRepo
+	failureRepo     *PublishFailureRepo
+	producer        *kafka.Producer
+	cfg             *RelayLoopConfig
 }
 
-func NewRelayLoop(outboxRepo *RelayOutboxRepo, producer *kafka.Producer, cfg *RelayLoopConfig) *RelayLoop {
-	return &RelayLoop{outboxRepo: outboxRepo, producer: producer, cfg: cfg}
+func NewRelayLoop(outboxRepo *RelayOutboxRepo, failureRepo *PublishFailureRepo, producer *kafka.Producer, cfg *RelayLoopConfig) *RelayLoop {
+	if cfg.MaxPublishAttempts <= 0 {
+		cfg.MaxPublishAttempts = 20
+	}
+	return &RelayLoop{outboxRepo: outboxRepo, failureRepo: failureRepo, producer: producer, cfg: cfg}
 }
 
 // Start launches cfg.WorkerCount relay workers.
@@ -77,8 +85,6 @@ func (r *RelayLoop) worker(ctx context.Context, workerID int) {
 			r.sleep(ctx, r.cfg.PollInterval)
 			continue
 		}
-
-		var publishedIDs []string
 
 		for _, e := range events {
 			log := logger.Logger.With(
@@ -133,22 +139,26 @@ func (r *RelayLoop) worker(ctx context.Context, workerID int) {
 					zap.Error(err),
 				)
 
-				// Poison events are unrecoverable — mark as published so they
-				// are not retried from relay_outbox. The DLQ holds the record.
+				// Check if this is a poison event - write to failure ledger and mark FAILED
 				if poison {
-					publishedIDs = append(publishedIDs, e.EventID)
+					terminalAck := r.recordFailureAndMarkTerminal(ctx, e, poison, dlqTopic, err, headers)
+					if terminalAck {
+						publishedIDs := []string{e.EventID}
+						if err := r.outboxRepo.MarkPublished(ctx, publishedIDs); err != nil {
+							logger.Logger.Error("relay_loop: mark published failed",
+								zap.Int("worker_id", workerID),
+								zap.Int("count", len(publishedIDs)),
+								zap.Error(err),
+							)
+						}
+					}
 				}
 				// Non-poison (Kafka transient) events stay PENDING for retry.
 				continue
 			}
 
-			publishedIDs = append(publishedIDs, e.EventID)
-			log.Info("relay_loop: published",
-				zap.String("topic", r.cfg.DispatchEventsTopic),
-			)
-		}
-
-		if len(publishedIDs) > 0 {
+			// Success - mark as published
+			publishedIDs := []string{e.EventID}
 			if err := r.outboxRepo.MarkPublished(ctx, publishedIDs); err != nil {
 				logger.Logger.Error("relay_loop: mark published failed",
 					zap.Int("worker_id", workerID),
@@ -156,8 +166,71 @@ func (r *RelayLoop) worker(ctx context.Context, workerID int) {
 					zap.Error(err),
 				)
 			}
+			log.Info("relay_loop: published",
+				zap.String("topic", r.cfg.DispatchEventsTopic),
+			)
 		}
 	}
+}
+
+// recordFailureAndMarkTerminal writes a durable failure record and marks the outbox event as FAILED
+func (r *RelayLoop) recordFailureAndMarkTerminal(ctx context.Context, e model.RelayOutboxRow, poison bool, dlqTopic string, cause error, headers map[string]string) bool {
+	if r.failureRepo == nil {
+		logger.Logger.Error("CRITICAL: no publish-failure repo configured — cannot durably record failure",
+			zap.String("event_id", e.EventID),
+		)
+		return false
+	}
+
+	// Build headers for the failure record
+	headerBytes, _ := json.Marshal(headers)
+
+	replayStatus := ReplayStatusPending
+	failureClass := "KAFKA_PUBLISH_FAILED"
+	if poison {
+		replayStatus = ReplayStatusQuarantined
+		failureClass = classifyError(cause)
+	}
+
+	sum := sha256.Sum256(e.Payload)
+	payloadHash := hex.EncodeToString(sum[:])
+
+	err := r.failureRepo.Record(ctx, PublishFailureRecord{
+		SourceEventID:    e.EventID,
+		SourceService:    "zord-relay",
+		Topic:            "",
+		DestinationTopic: r.cfg.DispatchEventsTopic,
+		PayloadHash:      payloadHash,
+		MessageKey:       e.DispatchID,
+		MessageValue:     e.Payload,
+		HeadersJSON:      headerBytes,
+		AttemptCount:     e.RetryCount + 1,
+		FailureClass:     failureClass,
+		LastError:        cause.Error(),
+		FailureSource:    FailureSourceRelayOutbox,
+		PublishKind:      "generic",
+		TenantID:         e.TenantID,
+		TraceID:          e.TraceID,
+		ReplayStatus:     replayStatus,
+	})
+	if err != nil {
+		logger.Logger.Error("CRITICAL: failed to durably persist publish failure record",
+			zap.String("event_id", e.EventID),
+			zap.Error(err),
+		)
+		return false
+	}
+
+	// Mark the outbox event as FAILED
+	if err := r.outboxRepo.MarkFailed(ctx, e.EventID); err != nil {
+		logger.Logger.Error("relay_loop: mark failed failed",
+			zap.String("event_id", e.EventID),
+			zap.Error(err),
+		)
+		return false
+	}
+
+	return true
 }
 
 // dlqEnvelope is the payload written to the DLQ topic.

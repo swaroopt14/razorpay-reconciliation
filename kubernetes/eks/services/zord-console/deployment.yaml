@@ -65,6 +65,9 @@ spec:
           env:
             - name: NODE_ENV
               value: production
+            # CON-P1-04: trust ingress-appended XFF rightmost hop / X-Real-IP for Edge audit IP.
+            - name: TRUST_PROXY_HEADERS
+              value: "true"
             - name: NEXT_TELEMETRY_DISABLED
               value: "1"
             - name: PORT

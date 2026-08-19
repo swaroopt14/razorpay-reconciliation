@@ -2,8 +2,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { assertCookieMutationProtection } from '@/services/auth/assertSameOrigin.server'
 import {
   applyRefreshedSessionCookies,
+  getTenantIdForBearerAuthorizationHeader,
   resolveBulkIngestForwardAuthorization,
 } from '@/services/auth/resolvePayoutTenant.server'
+import {
+  consumeBffRateLimit,
+  rateLimitKeyForIp,
+  rateLimitKeyForTenant,
+} from '@/services/bff/rateLimit.server'
+import { publicBffError } from '@/services/bff/publicBffError'
 
 /** Proxies multipart bulk file to zord-edge `POST /v1/bulk-ingest` only (never zord-intelligence).
  * Requires signed-in session JWT and/or explicit Authorization (CON-P0-02).
@@ -28,6 +35,17 @@ export async function POST(req: NextRequest) {
 
   const authResolution = await resolveBulkIngestForwardAuthorization(req)
   if (!authResolution.ok) return authResolution.response
+
+  const bearerTenant = await getTenantIdForBearerAuthorizationHeader(authResolution.authorization)
+  const rate = consumeBffRateLimit({
+    bucket: 'reprocess',
+    key: bearerTenant ? rateLimitKeyForTenant(bearerTenant) : rateLimitKeyForIp(req),
+    message: 'Too many ingest/reprocess requests. Try again shortly.',
+  })
+  if (!rate.ok) {
+    applyRefreshedSessionCookies(rate.response, authResolution.refreshedPayload)
+    return rate.response
+  }
 
   const bodyBuffer = Buffer.from(await req.arrayBuffer())
   const sourceType =
@@ -94,14 +112,16 @@ export async function POST(req: NextRequest) {
   }
 
   if (!lastResponse) {
-    const res = NextResponse.json(
-      {
-        error: 'Bulk ingest upstream unavailable',
+    const res = publicBffError({
+      code: 'UPSTREAM_UNAVAILABLE',
+      message: 'Bulk ingest is temporarily unavailable. Retry shortly.',
+      status: 502,
+      log: {
+        route: '/api/bulk-ingest',
         upstream: lastUrl,
-        details: lastError instanceof Error ? lastError.message : 'Unknown upstream error',
+        error: lastError,
       },
-      { status: 502 },
-    )
+    })
     applyRefreshedSessionCookies(res, authResolution.refreshedPayload)
     return res
   }

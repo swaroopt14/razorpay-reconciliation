@@ -83,11 +83,16 @@ export function deriveIntentBatchMetrics(
     if (score == null) return false
     return normalizeQualityPct(score) < READINESS_REVIEW_THRESHOLD * 100
   }).length
+  const governedHoldCount = paymentIntents.filter((item) => {
+    const gov = String(item.governance_state ?? '').trim().toUpperCase()
+    const lifecycle = String(item.intent_lifecycle_state ?? '').trim().toUpperCase()
+    return gov === 'REQUIRES_REVIEW' || gov === 'FLAGGED' || lifecycle === 'FLAGGED_FOR_REVIEW'
+  }).length
   const dlqCount = dlqItems.length
   const manualReviewCount = dlqItems.filter(
     (item) => String(item.dlq_status ?? '').trim() === 'NEEDS_MANUAL_REVIEW',
   ).length
-  const needsReviewCount = dlqCount + lowReadinessCount
+  const needsReviewCount = dlqCount + lowReadinessCount + governedHoldCount
 
   return {
     instructionCount,

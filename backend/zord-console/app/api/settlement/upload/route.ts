@@ -5,9 +5,17 @@ import {
   applyRefreshedSessionCookies,
   resolveSettlementUploadContext,
 } from '@/services/auth/resolvePayoutTenant.server'
+import { consumeBffRateLimit, rateLimitKeyForTenant } from '@/services/bff/rateLimit.server'
+import { publicBffError } from '@/services/bff/publicBffError'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
+
+/**
+ * Settlement upload BFF.
+ * MERGE RULE: keep assertCookieMutationProtection + session auth (no env API-key
+ * fallback) + publicBffError on upstream failure. Never restore leaky upstream JSON.
+ */
 
 /** Outcome-engine settlement ingest (default local: :8081). */
 function settlementBase() {
@@ -18,7 +26,8 @@ function settlementBase() {
 /**
  * Proxies browser multipart upload to:
  * POST /v1/settlement/upload?tenant_id=<session>&psp=<query>&batch_id=<header optional>
- * Headers: Batch-Id, X-Zord-Force-Reprocess, X-Zord-Force-Reprocess-Reason, Authorization
+ * Headers: Batch-Id, Authorization; optional X-Zord-Force-Reprocess(+Reason) only when explicit.
+ * CON-P0-03: missing force is treated as false — never default to correction/reprocess.
  */
 
 export async function POST(req: NextRequest) {
@@ -34,6 +43,16 @@ export async function POST(req: NextRequest) {
   // CON-P0-02: session and/or explicit Authorization only — no ZORD_*_API_KEY fallback.
   const ctx = await resolveSettlementUploadContext(req)
   if (!ctx.ok) return ctx.response
+
+  const rate = consumeBffRateLimit({
+    bucket: 'reprocess',
+    key: rateLimitKeyForTenant(ctx.tenantId),
+    message: 'Too many settlement upload/reprocess requests. Try again shortly.',
+  })
+  if (!rate.ok) {
+    applyRefreshedSessionCookies(rate.response, ctx.refreshedPayload)
+    return rate.response
+  }
 
   const psp = req.nextUrl.searchParams.get('psp')
   if (!psp?.trim()) {
@@ -57,11 +76,32 @@ export async function POST(req: NextRequest) {
 
   if (batchId?.trim()) headers['Batch-Id'] = batchId.trim()
 
-  const force = req.headers.get('x-zord-force-reprocess') ?? 'true'
-  headers['X-Zord-Force-Reprocess'] = force
+  // CON-P0-03: never default force/correction. Only forward when the client
+  // explicitly opts into reprocess/correction (Outcome Engine distinguishes new /
+  // duplicate / same-content reprocess / changed-content correction).
+  const forceRaw = req.headers.get('x-zord-force-reprocess')?.trim().toLowerCase()
+  const forceReprocess = forceRaw === 'true'
+  const reason = req.headers.get('x-zord-force-reprocess-reason')?.trim() || ''
 
-  const reason = req.headers.get('x-zord-force-reprocess-reason') ?? 'CLIENT_CORRECTED_FILE'
-  headers['X-Zord-Force-Reprocess-Reason'] = reason
+  if (forceReprocess) {
+    if (!reason) {
+      return NextResponse.json(
+        {
+          error: 'X-Zord-Force-Reprocess-Reason is required when force reprocessing.',
+          allowed: ['CLIENT_CORRECTED_FILE', 'PARSER_FIX', 'BACKFILL', 'MANUAL'],
+        },
+        { status: 400 },
+      )
+    }
+    if (!batchId?.trim()) {
+      return NextResponse.json(
+        { error: 'Batch-Id (or batch_id) is required for reprocess/correction uploads.' },
+        { status: 400 },
+      )
+    }
+    headers['X-Zord-Force-Reprocess'] = 'true'
+    headers['X-Zord-Force-Reprocess-Reason'] = reason
+  }
 
   let lastError: unknown = null
   try {
@@ -80,23 +120,25 @@ export async function POST(req: NextRequest) {
       },
     })
     if (ctx.refreshedPayload) {
-      applyAuthCookies(res, ctx.refreshedPayload)
+      applyAuthCookies(res, ctx.refreshedPayload, req)
     }
-    applyRefreshedSessionCookies(res, ctx.refreshedPayload)
+    applyRefreshedSessionCookies(res, ctx.refreshedPayload, req)
     return res
   } catch (error) {
     lastError = error
   }
 
-  const res = NextResponse.json(
-    {
-      error: 'Settlement upload upstream unavailable',
+  const res = publicBffError({
+    code: 'UPSTREAM_UNAVAILABLE',
+    message: 'Settlement upload is temporarily unavailable. Retry shortly.',
+    status: 502,
+    log: {
+      route: '/api/settlement/upload',
       upstream: url,
-      details: lastError instanceof Error ? lastError.message : 'Unknown upstream error',
+      error: lastError,
     },
-    { status: 502 },
-  )
-  if (ctx.refreshedPayload) applyAuthCookies(res, ctx.refreshedPayload)
-  applyRefreshedSessionCookies(res, ctx.refreshedPayload)
+  })
+  if (ctx.refreshedPayload) applyAuthCookies(res, ctx.refreshedPayload, req)
+  applyRefreshedSessionCookies(res, ctx.refreshedPayload, req)
   return res
 }

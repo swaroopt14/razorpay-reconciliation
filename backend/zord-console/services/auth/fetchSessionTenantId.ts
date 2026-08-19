@@ -1,5 +1,13 @@
 'use client'
 
+import {
+  installSessionTenantFetchPatch,
+  readTabSessionTenantId,
+  sessionTenantHeaders,
+  writeTabSessionTenantId,
+} from '@/services/auth/tenantSessionBrowser'
+import { SESSION_TENANT_QUERY } from '@/services/auth/tenantSessionConstants'
+
 export type SessionTenantSource = 'auth_me' | 'sandbox_workspace_keys' | 'none'
 
 export type SessionTenantMode = 'live' | 'sandbox'
@@ -58,13 +66,23 @@ export async function fetchSessionTenantId(options?: {
   mode?: SessionTenantMode
 }): Promise<SessionTenantFetchResult> {
   const mode: SessionTenantMode = options?.mode === 'sandbox' ? 'sandbox' : 'live'
+  installSessionTenantFetchPatch()
+  const tabTenant = readTabSessionTenantId()
+  const mePath = tabTenant
+    ? `/api/auth/me?${SESSION_TENANT_QUERY}=${encodeURIComponent(tabTenant)}`
+    : '/api/auth/me'
 
   try {
-    const res = await fetch('/api/auth/me', { credentials: 'include', cache: 'no-store' })
+    const res = await fetch(mePath, {
+      credentials: 'include',
+      cache: 'no-store',
+      headers: sessionTenantHeaders(tabTenant),
+    })
     if (res.ok) {
       const data = await res.json().catch(() => null)
       const tid = parseAuthMeTenant(data)
       if (tid) {
+        writeTabSessionTenantId(tid)
         return {
           tenantId: tid,
           ok: true,
