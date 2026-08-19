@@ -90,7 +90,7 @@ export async function POST(req: NextRequest) {
     req.headers.get('x-zord-force-reprocess')?.trim().toLowerCase() === 'true' ||
     req.headers.get('X-Zord-Force-Reprocess')?.trim().toLowerCase() === 'true'
   const reprocessReason = req.headers.get('x-zord-force-reprocess-reason')?.trim() || null
-  if (forceReprocess && !isReprocessReason(reprocessReason)) {
+  if (reprocessReason && !isReprocessReason(reprocessReason)) {
     return NextResponse.json(
       { error: `A valid reprocess reason is required: ${REPROCESS_REASONS.join(', ')}.` },
       { status: 400 },
@@ -102,9 +102,9 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     )
   }
-  if (forceReprocess && reprocessReason) {
+  if (forceReprocess) {
     headers['X-Zord-Force-Reprocess'] = 'true'
-    headers['X-Zord-Force-Reprocess-Reason'] = reprocessReason
+    if (reprocessReason) headers['X-Zord-Force-Reprocess-Reason'] = reprocessReason
   }
 
   const candidateUrls = candidateEdgeBases().map((base) => `${base.replace(/\/$/, '')}/v1/bulk-ingest`)

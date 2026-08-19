@@ -1,5 +1,7 @@
 'use client'
 
+import { BATCH_REVIEW_COPY } from '../copy/batchCommandCenterCopy'
+
 type BatchUploadErrorDialogProps = {
   kind: 'intent' | 'settlement'
   message: string
@@ -13,7 +15,9 @@ export function BatchUploadErrorDialog({
   fileName,
   onClose,
 }: BatchUploadErrorDialogProps) {
-  const uploadLabel = kind === 'intent' ? 'Payment instruction' : 'Settlement confirmation'
+  const c = BATCH_REVIEW_COPY.dialogs
+  const context = kind === 'intent' ? c.uploadErrorIntentTitle : c.uploadErrorSettlementTitle
+  const errorText = message.trim() || c.uploadErrorFallback
 
   return (
     <div
@@ -28,34 +32,31 @@ export function BatchUploadErrorDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="batch-upload-error-title"
-        aria-describedby="batch-upload-error-detail"
-        className="w-full max-w-md rounded-2xl border border-red-200 bg-white p-6 shadow-xl"
+        aria-describedby="batch-upload-error-context"
+        className="w-full max-w-lg rounded-2xl border border-red-200 bg-white p-6"
         onClick={(event) => event.stopPropagation()}
       >
-        <h2 id="batch-upload-error-title" className="text-[18px] font-bold text-[#991b1b]">
-          {uploadLabel} upload failed
-        </h2>
-        <p className="mt-2 text-[13px] text-[#64748b]">
-          The file was not uploaded. Review the reason below, correct it, and try again.
+        <p id="batch-upload-error-context" className="text-[13px] font-medium text-[#64748b]">
+          {context}
         </p>
         {fileName ? (
-          <p className="mt-3 truncate font-mono text-[12px] text-[#475569]" title={fileName}>
+          <p className="mt-1 break-all font-mono text-[12px] text-[#475569]" title={fileName}>
             {fileName}
           </p>
         ) : null}
-        <div
-          id="batch-upload-error-detail"
-          className="mt-3 rounded-lg border border-red-100 bg-red-50 p-3 text-[13px] leading-relaxed text-[#7f1d1d]"
+        <h2
+          id="batch-upload-error-title"
+          className="mt-3 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-[16px] font-semibold leading-relaxed text-[#991b1b]"
         >
-          {message}
-        </div>
+          {errorText}
+        </h2>
         <button
           type="button"
           autoFocus
           onClick={onClose}
           className="mt-5 h-9 rounded-lg bg-[#991b1b] px-4 text-[13px] font-semibold text-white hover:bg-[#7f1d1d]"
         >
-          Close
+          {c.close}
         </button>
       </div>
     </div>
