@@ -164,11 +164,27 @@ func main() {
 	// ── Step 6: Create services ────────────────────────────────────────────
 	// PHASE 5 (refactor): Signer abstraction for action_contract signatures
 	// (clarification §5). Only DevSigner exists today (no KMS-backed Signer
-	// built yet) — NewSignerForEnvironment refuses to start in
-	// environment=production rather than silently using it there
-	// (corrective-action-report P0-07).
-	signer := services.NewSignerForEnvironment(cfg.Environment)
-	log.Printf("main: action-contract integrity digest initialized (environment=%s, algorithm=DEV_SHA256, NOT a cryptographic signature)", cfg.Environment)
+	// built yet).
+	//
+	// INTEL-09 (P1): a missing production signer used to log.Fatal here and
+	// take the whole service down — recommendations and projections included,
+	// even though they never needed a signer. Now it degrades instead: signer
+	// is nil, every intelligence/recommendation service below still boots
+	// normally, and ActionService (services.NewActionService) fails closed
+	// only on the specific decisions that could reach the actuation outbox
+	// (see resolveSignature in action_service.go). Advisory-only actions keep
+	// getting created with an unsigned placeholder digest.
+	//
+	// RBAC + a real KMS-backed Signer are expected to land later from
+	// upstream; wire the KMS Signer in here for environment=="production"
+	// when it exists (see services.NewSignerForEnvironment).
+	signer, signerErr := services.NewSignerForEnvironment(cfg.Environment)
+	if signerErr != nil {
+		log.Printf("main: WARNING actuation disabled (INTEL-09 fail-closed) — %v — "+
+			"recommendation and projection intelligence remain fully available", signerErr)
+	} else {
+		log.Printf("main: action-contract integrity digest initialized (environment=%s, algorithm=DEV_SHA256, NOT a cryptographic signature)", cfg.Environment)
+	}
 	actionService := services.NewActionService(actionRepo, outboxRepo, pool, signer)
 	policyService := services.NewPolicyService(policyRepo, projRepo, actionService)
 
