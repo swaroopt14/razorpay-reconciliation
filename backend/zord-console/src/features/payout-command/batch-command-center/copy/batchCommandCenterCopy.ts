@@ -138,7 +138,10 @@ export const BATCH_REVIEW_COPY = {
         label: 'Confirmation received',
         description: 'Bank/settlement/status file has been uploaded or connected.',
       },
-      { label: 'Matching completed', description: 'Zord has linked payment intents with outcome records.' },
+      {
+        label: 'Matching completed',
+        description: 'Service 5 attachment/finality confirms intents are linked to settlement outcomes.',
+      },
       {
         label: 'Ready for proof / review',
         description: 'Batch is ready for evidence export or issue review.',

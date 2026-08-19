@@ -17,8 +17,10 @@ import {
   derivePaymentProofTimeline,
   paymentProofProgressPct,
   type BatchSummary,
+  type PaymentProofMatchingSignals,
 } from '@/services/payout-command/batch-model'
 import { useBatchOperationsFeed } from '@/services/payout-command/batch-operations/useBatchOperationsFeed'
+import { isDataAvailable } from '@/services/payout-command/prod-api/intelligenceTypes'
 import { BATCH_REVIEW_COPY } from '../copy/batchCommandCenterCopy'
 import { BatchAdvancedDetails } from './BatchAdvancedDetails'
 import { BatchIngestSuccessDialog } from './BatchIngestSuccessDialog'
@@ -200,9 +202,38 @@ export default function BatchCommandCenterClient() {
     [intakeSnapshot, uploadStatus.state, feed.detailLoading, activeBatchId],
   )
 
+  const matchingSignals = useMemo((): PaymentProofMatchingSignals => {
+    const batch = feed.intelBatchDetail?.batch
+    const health = feed.intelBatchDetail?.batch_health
+    const defensibility = isDataAvailable(feed.defensibilityKpi) ? feed.defensibilityKpi : null
+    const toMinor = (v: unknown): number | null => {
+      if (v == null || v === '') return null
+      const n = typeof v === 'number' ? v : Number.parseFloat(String(v).replace(/,/g, ''))
+      return Number.isFinite(n) ? n : null
+    }
+    return {
+      finalityStatus: batch?.finality_status ?? health?.finality_status ?? null,
+      unresolvedCount: health?.unresolved_count ?? null,
+      ambiguousCount: health?.ambiguous_count ?? null,
+      conflictedCount: health?.conflicted_count ?? null,
+      unresolvedIntendedMinor: toMinor(batch?.unresolved_intended_amount_minor),
+      totalIntendedMinor:
+        toMinor(batch?.total_intended_amount_minor) ?? toMinor(health?.total_intended_amount_minor),
+      settlementArtifactReceived:
+        intakeSnapshot.settlementIngestOk || (feed.settlementSummary?.observationCount ?? 0) > 0,
+      settlementObservationCount: feed.settlementSummary?.observationCount ?? null,
+      evidencePackRate: defensibility?.evidence_pack_rate ?? null,
+    }
+  }, [
+    feed.intelBatchDetail,
+    feed.defensibilityKpi,
+    feed.settlementSummary,
+    intakeSnapshot.settlementIngestOk,
+  ])
+
   const pipelineSteps = useMemo(
-    () => derivePaymentProofTimeline(statCardsSummary, intakeSnapshot),
-    [statCardsSummary, intakeSnapshot],
+    () => derivePaymentProofTimeline(statCardsSummary, intakeSnapshot, matchingSignals),
+    [statCardsSummary, intakeSnapshot, matchingSignals],
   )
 
   const pipelineProgressPct = useMemo(
