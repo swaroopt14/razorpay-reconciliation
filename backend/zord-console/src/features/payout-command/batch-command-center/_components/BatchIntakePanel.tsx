@@ -12,19 +12,15 @@ import { parseBulkIngestAcceptedResponse } from '@/services/payout-command/batch
 import {
   postSettlementFileUpload,
   SETTLEMENT_FILE_ACCEPT,
-  SETTLEMENT_FORCE_REASONS,
-  type SettlementBaselineInfo,
-  type SettlementForceReason,
-  type SettlementUploadMode,
 } from '@/services/payout-command/batch-intake/postSettlementFileUpload'
 import { BatchPortalUploadZone } from './portal/BatchPortalUploadZone'
 import { PORTAL_BLUE_TITLE, PORTAL_PRIMARY_BTN } from './portal/batchPortalTokens'
 import { BATCH_REVIEW_COPY, type SourceTypeOption } from '../copy/batchCommandCenterCopy'
 import {
-  REPROCESS_REASONS,
   type ReprocessReason,
 } from '@/services/payout-command/batch-intake/reprocessReason'
 import { BatchUploadErrorDialog } from './BatchUploadErrorDialog'
+import { ReprocessWhyDialog, type ReprocessTarget } from './ReprocessWhyDialog'
 
 const INTENT_FILE_ACCEPT =
   '.csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -46,6 +42,38 @@ function Card({ children, className = '' }: { children: ReactNode; className?: s
     <div className={`rounded-2xl border border-[#E5E5E5] bg-white shadow-[0_2px_12px_rgba(15,23,42,0.04)] ${className}`}>
       {children}
     </div>
+  )
+}
+
+function ReprocessFileControl({
+  checked,
+  onToggle,
+  inputName,
+}: {
+  checked: boolean
+  onToggle: (next: boolean) => void
+  inputName: string
+}) {
+  const c = BATCH_REVIEW_COPY
+  return (
+    <label className="mt-3 flex flex-col justify-end gap-1">
+      <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#888888]">
+        {c.fields.reprocess}
+      </span>
+      <span className="flex min-h-9 flex-col justify-center gap-0.5 rounded-lg border border-[#E5E5E5] bg-white px-2.5 py-1.5 text-[13px] text-[#0A0A0A]">
+        <span className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={checked}
+            aria-label={inputName}
+            onChange={(event) => onToggle(event.target.checked)}
+            className="h-4 w-4 rounded border-[#cbd5e1]"
+          />
+          {c.fields.reprocess}
+        </span>
+        <span className="text-[11px] text-[#64748b]">{c.fields.reprocessHelper}</span>
+      </span>
+    </label>
   )
 }
 
@@ -132,10 +160,9 @@ export function BatchIntakePanel({
     message: string
     fileName: string | null
   } | null>(null)
-  const [settlementMode, setSettlementMode] = useState<SettlementUploadMode>('new')
-  const [settlementForceReason, setSettlementForceReason] = useState<SettlementForceReason>('MANUAL')
-  const [settlementBaseline, setSettlementBaseline] = useState<SettlementBaselineInfo | null>(null)
-  const [correctionConfirmOpen, setCorrectionConfirmOpen] = useState(false)
+  const [settlementForceReprocess, setSettlementForceReprocess] = useState(false)
+  const [settlementForceReason, setSettlementForceReason] = useState<ReprocessReason | ''>('')
+  const [reprocessDialogTarget, setReprocessDialogTarget] = useState<ReprocessTarget | null>(null)
   const [selectedIntentFile, setSelectedIntentFile] = useState<File | null>(null)
   const [selectedSettlementFile, setSelectedSettlementFile] = useState<File | null>(null)
   const [intentFileName, setIntentFileName] = useState<string | null>(null)
@@ -326,22 +353,47 @@ export function BatchIntakePanel({
       if (!file) return
       setSelectedSettlementFile(file)
       setSettlementIngestOk(false)
-      setCorrectionConfirmOpen(false)
       reportUploadStatus('idle', null)
       if (intakeStep === 'closed') setIntakeStep('intent_ready')
     },
     [intakeStep, reportUploadStatus],
   )
 
-  useEffect(() => {
-    if (settlementMode === 'correction') {
-      setSettlementForceReason('CLIENT_CORRECTED_FILE')
+  const applyReprocessChoice = useCallback(
+    (payload: { target: ReprocessTarget; reason: ReprocessReason }) => {
+      if (payload.target === 'intent') {
+        setBulkForceReprocess(true)
+        setReprocessReason(payload.reason)
+        setSettlementForceReprocess(false)
+        setSettlementForceReason('')
+      } else {
+        setSettlementForceReprocess(true)
+        setSettlementForceReason(payload.reason)
+        setBulkForceReprocess(false)
+        setReprocessReason('')
+      }
+      setReprocessDialogTarget(null)
+    },
+    [],
+  )
+
+  const onToggleIntentReprocess = useCallback((next: boolean) => {
+    if (next) {
+      setReprocessDialogTarget('intent')
       return
     }
-    if (settlementMode === 'reprocess') {
-      setSettlementForceReason((prev) => (prev === 'CLIENT_CORRECTED_FILE' ? 'MANUAL' : prev))
+    setBulkForceReprocess(false)
+    setReprocessReason('')
+  }, [])
+
+  const onToggleSettlementReprocess = useCallback((next: boolean) => {
+    if (next) {
+      setReprocessDialogTarget('settlement')
+      return
     }
-  }, [settlementMode])
+    setSettlementForceReprocess(false)
+    setSettlementForceReason('')
+  }, [])
 
   const runSettlementBatchUpload = useCallback(async () => {
     const file = selectedSettlementFile
@@ -355,16 +407,32 @@ export function BatchIntakePanel({
       setUploadError({ kind: 'settlement', message: detail, fileName: file.name })
       return
     }
-    if ((settlementMode === 'reprocess' || settlementMode === 'correction') && !bid) {
-      reportUploadStatus('failed', 'Reprocess and correction require a batch reference.')
+    if (settlementForceReprocess && !bid) {
+      reportUploadStatus('failed', 'Settlement reprocess requires a batch reference.')
+      setUploadError({
+        kind: 'settlement',
+        message: 'Settlement reprocess requires a batch reference.',
+        fileName: file.name,
+      })
       return
     }
-    if ((settlementMode === 'reprocess' || settlementMode === 'correction') && !settlementForceReason) {
-      reportUploadStatus('failed', 'Choose a reprocess/correction reason before uploading.')
+    if (settlementForceReprocess && !settlementForceReason) {
+      reportUploadStatus('failed', 'Choose a reprocess reason before uploading.')
+      setUploadError({
+        kind: 'settlement',
+        message: 'Choose a reprocess reason before uploading.',
+        fileName: file.name,
+      })
       return
     }
 
-    setCorrectionConfirmOpen(false)
+    const settlementMode =
+      !settlementForceReprocess
+        ? 'new'
+        : settlementForceReason === 'CLIENT_CORRECTED_FILE'
+          ? 'correction'
+          : 'reprocess'
+
     setSettlementFileName(file.name)
     setIntakeStep('settlement_uploading')
     reportUploadStatus('syncing', BATCH_REVIEW_COPY.intake.uploadSettlementBusy)
@@ -378,7 +446,6 @@ export function BatchIntakePanel({
         forceReprocessReason:
           settlementMode === 'new' ? undefined : settlementForceReason,
       })
-      if (result.baseline) setSettlementBaseline(result.baseline)
       if (!result.ok) {
         const detail = result.errorMessage?.trim() || `HTTP ${result.httpStatus || 'error'}`
         const extra = result.responseText.trim().slice(0, 400)
@@ -417,24 +484,14 @@ export function BatchIntakePanel({
     settlementBatchId,
     settlementBlockedReason,
     settlementForceReason,
-    settlementMode,
+    settlementForceReprocess,
     tenantReady,
   ])
 
-  const onSettlementBatchUpload = useCallback(() => {
-    if (settlementMode === 'correction') {
-      setCorrectionConfirmOpen(true)
-      return
-    }
-    void runSettlementBatchUpload()
-  }, [runSettlementBatchUpload, settlementMode])
-
   const settlementActionLabel = useMemo(() => {
     if (intakeStep === 'settlement_uploading') return BATCH_REVIEW_COPY.intake.uploadSettlementBusy
-    if (settlementMode === 'reprocess') return BATCH_REVIEW_COPY.intake.uploadSettlementReprocess
-    if (settlementMode === 'correction') return BATCH_REVIEW_COPY.intake.uploadSettlementCorrection
-    return BATCH_REVIEW_COPY.intake.uploadSettlementNew
-  }, [intakeStep, settlementMode])
+    return BATCH_REVIEW_COPY.intake.uploadSettlement
+  }, [intakeStep])
 
   const c = BATCH_REVIEW_COPY
 
@@ -487,44 +544,6 @@ export function BatchIntakePanel({
               className="h-9 rounded-lg border border-[#E5E5E5] bg-white px-2.5 text-[13px] text-[#0A0A0A] outline-none focus:border-[#6366f1]/50"
             />
           </label>
-          <label className="flex flex-col justify-end gap-1 sm:col-span-2 lg:col-span-1">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#888888]">
-              {c.fields.reprocess}
-            </span>
-            <span className="flex min-h-9 flex-col justify-center gap-0.5 rounded-lg border border-[#E5E5E5] bg-white px-2.5 py-1.5 text-[13px] text-[#0A0A0A]">
-              <span className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={bulkForceReprocess}
-                  onChange={(e) => {
-                    setBulkForceReprocess(e.target.checked)
-                    if (!e.target.checked) setReprocessReason('')
-                  }}
-                  aria-describedby="reprocess-helper"
-                  className="h-4 w-4 rounded border-[#cbd5e1]"
-                />
-                {c.fields.reprocess}
-              </span>
-              <span id="reprocess-helper" className="text-[11px] text-[#64748b]">{c.fields.reprocessHelper}</span>
-            </span>
-          </label>
-          <label className="flex flex-col justify-end gap-1 sm:col-span-2 lg:col-span-1">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#888888]">
-              {c.fields.reprocessReason}
-            </span>
-            <select
-              value={reprocessReason}
-              disabled={!bulkForceReprocess}
-              required={bulkForceReprocess}
-              onChange={(event) => setReprocessReason(event.target.value as ReprocessReason | '')}
-              className="h-9 rounded-lg border border-[#E5E5E5] bg-white px-2.5 text-[13px] text-[#0A0A0A] outline-none focus:border-[#6366f1]/50 disabled:cursor-not-allowed disabled:bg-[#f8fafc] disabled:text-[#94a3b8]"
-            >
-              <option value="">{c.fields.reprocessReasonPlaceholder}</option>
-              {REPROCESS_REASONS.map((reason) => (
-                <option key={reason} value={reason}>{reason}</option>
-              ))}
-            </select>
-          </label>
         </div>
         {settlementBatchIdResolved ? (
           <p className="mt-3 text-[12px] text-[#1A1A1A]">
@@ -546,6 +565,11 @@ export function BatchIntakePanel({
             <p className={PORTAL_BLUE_TITLE}>{c.intake.uploadFilesLabel}</p>
             <p className="mt-0.5 text-[12px] font-medium text-[#64748b]">{c.intake.step1Short}</p>
             <p className="mt-1 text-[12px] text-[#64748b]">{c.intake.step1Helper}</p>
+            <ReprocessFileControl
+              checked={bulkForceReprocess || reprocessDialogTarget === 'intent'}
+              onToggle={onToggleIntentReprocess}
+              inputName="Reprocess payment instruction file"
+            />
             <div className="mt-3">
               <BatchPortalUploadZone
                 accept={INTENT_FILE_ACCEPT}
@@ -581,77 +605,11 @@ export function BatchIntakePanel({
             <p className={PORTAL_BLUE_TITLE}>{c.intake.uploadFilesLabel}</p>
             <p className="mt-0.5 text-[12px] font-medium text-[#64748b]">{c.intake.step2Short}</p>
             <p className="mt-1 text-[12px] text-[#64748b]">{c.intake.step2Helper}</p>
-
-            <fieldset className="mt-3 space-y-2" disabled={!settlementFilePickerEnabled && !selectedSettlementFile}>
-              <legend className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#888888]">
-                {c.fields.settlementMode}
-              </legend>
-              {(
-                [
-                  {
-                    value: 'new' as const,
-                    label: c.fields.settlementModeNew,
-                    helper: c.fields.settlementModeNewHelper,
-                  },
-                  {
-                    value: 'reprocess' as const,
-                    label: c.fields.settlementModeReprocess,
-                    helper: c.fields.settlementModeReprocessHelper,
-                  },
-                  {
-                    value: 'correction' as const,
-                    label: c.fields.settlementModeCorrection,
-                    helper: c.fields.settlementModeCorrectionHelper,
-                  },
-                ] as const
-              ).map((option) => (
-                <label
-                  key={option.value}
-                  className="flex cursor-pointer items-start gap-2 rounded-lg border border-[#E5E5E5] bg-white px-2.5 py-2 text-[12px] text-[#0A0A0A]"
-                >
-                  <input
-                    type="radio"
-                    name="settlement-upload-mode"
-                    className="mt-0.5 h-4 w-4"
-                    checked={settlementMode === option.value}
-                    onChange={() => {
-                      setSettlementMode(option.value)
-                      setCorrectionConfirmOpen(false)
-                    }}
-                    data-testid={`settlement-mode-${option.value}`}
-                  />
-                  <span>
-                    <span className="block font-medium text-[#0f172a]">{option.label}</span>
-                    <span className="mt-0.5 block text-[11px] text-[#64748b]">{option.helper}</span>
-                  </span>
-                </label>
-              ))}
-            </fieldset>
-
-            {settlementMode === 'reprocess' || settlementMode === 'correction' ? (
-              <label className="mt-3 flex flex-col gap-1">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#888888]">
-                  {c.fields.settlementReason}
-                </span>
-                <select
-                  value={settlementForceReason}
-                  onChange={(e) => setSettlementForceReason(e.target.value as SettlementForceReason)}
-                  aria-label={c.fields.settlementReason}
-                  className="h-9 rounded-lg border border-[#E5E5E5] bg-white px-2.5 text-[13px] text-[#0A0A0A] outline-none focus:border-[#6366f1]/50"
-                  data-testid="settlement-force-reason"
-                >
-                  {(settlementMode === 'correction'
-                    ? (['CLIENT_CORRECTED_FILE'] as const)
-                    : SETTLEMENT_FORCE_REASONS.filter((r) => r !== 'CLIENT_CORRECTED_FILE')
-                  ).map((reason) => (
-                    <option key={reason} value={reason}>
-                      {reason}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-
+            <ReprocessFileControl
+              checked={settlementForceReprocess || reprocessDialogTarget === 'settlement'}
+              onToggle={onToggleSettlementReprocess}
+              inputName="Reprocess settlement confirmation file"
+            />
             <div className="mt-3">
               <BatchPortalUploadZone
                 accept={SETTLEMENT_FILE_ACCEPT}
@@ -663,72 +621,11 @@ export function BatchIntakePanel({
                 onFileChosen={onSettlementFileChosen}
               />
             </div>
-
-            {correctionConfirmOpen && selectedSettlementFile ? (
-              <div
-                className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-[12px] text-amber-950"
-                data-testid="settlement-correction-confirm"
-                role="dialog"
-                aria-label={c.dialogs.settlementCorrectionConfirmTitle}
-              >
-                <p className="font-semibold">{c.dialogs.settlementCorrectionConfirmTitle}</p>
-                <p className="mt-1 text-amber-900/90">{c.dialogs.settlementCorrectionConfirmBody}</p>
-                <dl className="mt-2 space-y-1 font-mono text-[11px] text-amber-950">
-                  <div className="flex justify-between gap-2">
-                    <dt>Batch</dt>
-                    <dd>{settlementBatchIdResolved || '—'}</dd>
-                  </div>
-                  <div className="flex justify-between gap-2">
-                    <dt>PSP</dt>
-                    <dd>{psp.trim().toLowerCase() || '—'}</dd>
-                  </div>
-                  <div className="flex justify-between gap-2">
-                    <dt>Artifact</dt>
-                    <dd>{settlementBaseline?.outcomeArtifactId || 'current active (server)'}</dd>
-                  </div>
-                  <div className="flex justify-between gap-2">
-                    <dt>Version</dt>
-                    <dd>{settlementBaseline?.outcomeArtifactVersionId || 'current active (server)'}</dd>
-                  </div>
-                  <div className="flex justify-between gap-2">
-                    <dt>Active run</dt>
-                    <dd>
-                      {settlementBaseline?.activeRunId ||
-                        (settlementBaseline?.runNumber != null
-                          ? `run #${settlementBaseline.runNumber}`
-                          : 'current active (server)')}
-                    </dd>
-                  </div>
-                  <div className="flex justify-between gap-2">
-                    <dt>Reason</dt>
-                    <dd>{settlementForceReason}</dd>
-                  </div>
-                </dl>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void runSettlementBatchUpload()}
-                    className={PORTAL_PRIMARY_BTN}
-                    data-testid="settlement-correction-confirm-btn"
-                  >
-                    {c.dialogs.settlementCorrectionConfirm}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setCorrectionConfirmOpen(false)}
-                    className="rounded-lg border border-[#E5E5E5] bg-white px-3 py-2 text-[12px] font-medium text-[#334155]"
-                  >
-                    {c.dialogs.settlementCorrectionCancel}
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
-            {selectedSettlementFile && !correctionConfirmOpen ? (
+            {selectedSettlementFile ? (
               <button
                 type="button"
                 disabled={!settlementUploadEnabled}
-                onClick={() => onSettlementBatchUpload()}
+                onClick={() => void runSettlementBatchUpload()}
                 className={`mt-3 w-full justify-center ${PORTAL_PRIMARY_BTN}`}
                 data-testid="settlement-upload-submit"
               >
@@ -750,6 +647,13 @@ export function BatchIntakePanel({
           </div>
         </div>
       </Card>
+      {reprocessDialogTarget ? (
+        <ReprocessWhyDialog
+          initialTarget={reprocessDialogTarget}
+          onCancel={() => setReprocessDialogTarget(null)}
+          onConfirm={applyReprocessChoice}
+        />
+      ) : null}
       {uploadError ? (
         <BatchUploadErrorDialog
           kind={uploadError.kind}

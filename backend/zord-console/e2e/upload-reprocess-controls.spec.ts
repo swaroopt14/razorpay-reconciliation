@@ -62,12 +62,25 @@ async function prepareBatchPage(page: Page, context: BrowserContext) {
   await expect(page.getByRole('heading', { name: 'Payment Batch Review' })).toBeVisible()
 }
 
+async function confirmReprocess(
+  page: Page,
+  target: 'Payment instruction file' | 'Bank / settlement confirmation file',
+  reason: string,
+) {
+  const dialog = page.getByRole('dialog', { name: 'Why do you want to reprocess?' })
+  await expect(dialog).toBeVisible()
+  await dialog.getByRole('radio', { name: target }).check()
+  await dialog.getByLabel('Reprocess reason').selectOption(reason)
+  await dialog.getByRole('button', { name: 'Continue' }).click()
+  await expect(dialog).toHaveCount(0)
+}
+
 test.describe('intent and settlement reprocess controls', () => {
   test.beforeEach(async ({ page, context }) => {
     await prepareBatchPage(page, context)
   })
 
-  test('normal intent upload omits force headers and reason is a gated dropdown', async ({ page }) => {
+  test('normal intent upload omits force headers', async ({ page }) => {
     let forceHeader: string | undefined
     let reasonHeader: string | undefined
     await page.route('**/api/bulk-ingest', async (route) => {
@@ -80,10 +93,8 @@ test.describe('intent and settlement reprocess controls', () => {
       })
     })
 
-    const checkbox = page.getByRole('checkbox', { name: 'Reprocess this file' })
-    const reason = page.getByRole('combobox', { name: 'Reprocess reason' })
-    await expect(checkbox).not.toBeChecked()
-    await expect(reason).toBeDisabled()
+    await expect(page.getByRole('checkbox', { name: 'Reprocess payment instruction file' })).not.toBeChecked()
+    await expect(page.getByRole('checkbox', { name: 'Reprocess settlement confirmation file' })).not.toBeChecked()
 
     await page.getByLabel('Upload payment instruction file').setInputFiles(CSV_FILE)
     await page.getByRole('button', { name: 'Upload payment file', exact: true }).last().click()
@@ -91,17 +102,29 @@ test.describe('intent and settlement reprocess controls', () => {
     await expect(successDialog).toBeVisible()
     expect(forceHeader).toBeUndefined()
     expect(reasonHeader).toBeUndefined()
-    await successDialog.getByRole('button', { name: 'Close' }).click()
+  })
 
-    await checkbox.check()
-    await expect(reason).toBeEnabled()
-    await expect(reason.locator('option')).toHaveText([
-      'Select a reason',
-      'CLIENT_CORRECTED_FILE',
-      'PARSER_FIX',
-      'BACKFILL',
-      'MANUAL',
-    ])
+  test('intent reprocess prompt asks why and sends force headers', async ({ page }) => {
+    let forceHeader: string | undefined
+    let reasonHeader: string | undefined
+    await page.route('**/api/bulk-ingest', async (route) => {
+      forceHeader = route.request().headers()['x-zord-force-reprocess']
+      reasonHeader = route.request().headers()['x-zord-force-reprocess-reason']
+      await route.fulfill({
+        status: 202,
+        contentType: 'application/json',
+        body: JSON.stringify({ batch_id: 'batch-reprocess-1' }),
+      })
+    })
+
+    await page.getByLabel('Batch reference optional').fill('batch-reprocess-1')
+    await page.getByRole('checkbox', { name: 'Reprocess payment instruction file' }).check()
+    await confirmReprocess(page, 'Payment instruction file', 'PARSER_FIX')
+    await page.getByLabel('Upload payment instruction file').setInputFiles(CSV_FILE)
+    await page.getByRole('button', { name: 'Upload payment file', exact: true }).last().click()
+    await expect(page.getByRole('dialog', { name: 'Payment file uploaded' })).toBeVisible()
+    expect(forceHeader).toBe('true')
+    expect(reasonHeader).toBe('PARSER_FIX')
   })
 
   test('forced settlement upload sends selected reason and displays backend failure', async ({ page }) => {
@@ -118,8 +141,8 @@ test.describe('intent and settlement reprocess controls', () => {
     })
 
     await page.getByLabel('Batch reference optional').fill('batch-settlement-1')
-    await page.getByRole('radio', { name: /Reprocess existing version/ }).check()
-    await page.getByTestId('settlement-force-reason').selectOption('PARSER_FIX')
+    await page.getByRole('checkbox', { name: 'Reprocess settlement confirmation file' }).check()
+    await confirmReprocess(page, 'Bank / settlement confirmation file', 'PARSER_FIX')
     await page.getByLabel('Upload bank / settlement confirmation file').setInputFiles(CSV_FILE)
     await page.getByTestId('settlement-upload-submit').click()
 
