@@ -3,6 +3,11 @@
  *
  *   POST {ZORD_SETTLEMENT_URL}/v1/settlement/upload?tenant_id=<session>&psp=<psp>&batch_id=<optional>
  *
+ * Headers forwarded by BFF:
+ *   Content-Type: multipart/form-data
+ *   Batch-Id: <client batch id>
+ *   X-Zord-Force-Reprocess / Reason: only when explicitly selected in the UI
+ *
  * CON-P0-03 — normal uploads send no force headers. Reprocess/correction only when
  * the operator explicitly chooses that mode (force=true + reason).
  *
@@ -12,6 +17,7 @@
  */
 import { csrfMutationHeaders } from '@/services/auth/csrfBrowser'
 import { errorMessageFromProxyResponse, normalizeAuthorizationHeader } from './intakeHttpShared'
+import type { ReprocessReason } from './reprocessReason'
 
 export const SETTLEMENT_UPLOAD_PROXY_PATH = '/api/settlement/upload'
 
@@ -64,7 +70,7 @@ export type PostSettlementFileUploadParams = {
    * Required when mode is `reprocess` or `correction`.
    * Correction defaults to `CLIENT_CORRECTED_FILE` when omitted.
    */
-  forceReprocessReason?: SettlementForceReason | string
+  forceReprocessReason?: SettlementForceReason | string | ReprocessReason
   /** Override for tests */
   endpointPath?: string
 }

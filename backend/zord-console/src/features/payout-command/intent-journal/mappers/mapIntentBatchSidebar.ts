@@ -1,4 +1,4 @@
-﻿import type { IntentJournalBatchIdItem } from '@/services/payout-command/prod-api/intentJournalTypes'
+import type { IntentJournalBatchIdItem } from '@/services/payout-command/prod-api/intentJournalTypes'
 import type { JournalBatchRecord } from '@/services/payout-command/prod-api/mapIntentEngineBatch'
 import {
   JOURNAL_DEFAULT_CURRENCY,

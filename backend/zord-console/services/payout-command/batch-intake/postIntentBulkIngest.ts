@@ -14,6 +14,7 @@ import {
   extractBatchIdFromBulkIngestResponse,
   normalizeAuthorizationHeader,
 } from './intakeHttpShared'
+import type { ReprocessReason } from './reprocessReason'
 
 export const INTENT_BULK_INGEST_PROXY_PATH = '/api/bulk-ingest'
 
@@ -39,6 +40,8 @@ export type PostIntentBulkIngestParams = {
   sourceSystem?: string
   /** When true, forwards X-Zord-Force-Reprocess (Batch-Id required upstream). */
   forceReprocess?: boolean
+  /** Required by the BFF when forceReprocess is true. */
+  reprocessReason?: ReprocessReason
   /** Override for tests or non-Next callers */
   endpointPath?: string
 }
@@ -73,7 +76,10 @@ export async function postIntentBulkIngest(params: PostIntentBulkIngestParams): 
   if (idempotencyKey) headers['X-Idempotency-Key'] = idempotencyKey
   const sourceSystem = params.sourceSystem?.trim()
   if (sourceSystem) headers['X-Zord-Source-System'] = sourceSystem
-  if (params.forceReprocess) headers['X-Zord-Force-Reprocess'] = 'true'
+  if (params.forceReprocess) {
+    headers['X-Zord-Force-Reprocess'] = 'true'
+    if (params.reprocessReason) headers['X-Zord-Force-Reprocess-Reason'] = params.reprocessReason
+  }
 
   let response: Response
   try {

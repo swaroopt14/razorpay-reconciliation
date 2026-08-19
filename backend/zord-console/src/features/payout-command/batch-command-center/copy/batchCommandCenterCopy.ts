@@ -78,6 +78,8 @@ export const BATCH_REVIEW_COPY = {
     batchReferencePlaceholder: 'Leave blank if you want Zord to create one automatically',
     reprocess: 'Reprocess this file',
     reprocessHelper: 'Intent reprocess only. Settlement force modes are chosen under Step 2.',
+    reprocessReason: 'Reprocess reason',
+    reprocessReasonPlaceholder: 'Select a reason',
     settlementMode: 'Settlement upload mode',
     settlementModeNew: 'Upload new settlement file',
     settlementModeNewHelper:

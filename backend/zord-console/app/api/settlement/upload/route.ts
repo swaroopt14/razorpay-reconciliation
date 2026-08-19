@@ -7,6 +7,7 @@ import {
 } from '@/services/auth/resolvePayoutTenant.server'
 import { consumeBffRateLimit, rateLimitKeyForTenant } from '@/services/bff/rateLimit.server'
 import { publicBffError } from '@/services/bff/publicBffError'
+import { isReprocessReason, REPROCESS_REASONS } from '@/services/payout-command/batch-intake/reprocessReason'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -81,18 +82,24 @@ export async function POST(req: NextRequest) {
   // duplicate / same-content reprocess / changed-content correction).
   const forceRaw = req.headers.get('x-zord-force-reprocess')?.trim().toLowerCase()
   const forceReprocess = forceRaw === 'true'
-  const reason = req.headers.get('x-zord-force-reprocess-reason')?.trim() || ''
+  const reason = req.headers.get('x-zord-force-reprocess-reason')?.trim() || null
 
-  if (forceReprocess) {
-    if (!reason) {
-      return NextResponse.json(
-        {
-          error: 'X-Zord-Force-Reprocess-Reason is required when force reprocessing.',
-          allowed: ['CLIENT_CORRECTED_FILE', 'PARSER_FIX', 'BACKFILL', 'MANUAL'],
-        },
-        { status: 400 },
-      )
-    }
+  if (forceReprocess && !isReprocessReason(reason)) {
+    return NextResponse.json(
+      {
+        error: `A valid reprocess reason is required: ${REPROCESS_REASONS.join(', ')}.`,
+        allowed: [...REPROCESS_REASONS],
+      },
+      { status: 400 },
+    )
+  }
+  if (!forceReprocess && reason) {
+    return NextResponse.json(
+      { error: 'A reprocess reason may only be sent when force reprocess is enabled.' },
+      { status: 400 },
+    )
+  }
+  if (forceReprocess && reason) {
     if (!batchId?.trim()) {
       return NextResponse.json(
         { error: 'Batch-Id (or batch_id) is required for reprocess/correction uploads.' },
