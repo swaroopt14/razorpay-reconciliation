@@ -54,6 +54,13 @@ type Config struct {
 	KafkaBrokers string
 	KafkaGroupID string
 
+	// LegacySchemaAllowedSources (INTEL-06) — comma-separated source_service
+	// values permitted to send an empty or literal "legacy" schema_version on
+	// live (non-exempt) topics. Empty by default: fail closed on current
+	// production topics. An ops-run backfill/replay tool opts in by setting
+	// its own source_service to a value on this list.
+	LegacySchemaAllowedSources string
+
 	// ── Kafka Input Topics (ZPI reads FROM these) ────────────────
 	TopicIntentCreated      string
 	TopicDispatchCreated    string
@@ -95,6 +102,13 @@ type Config struct {
 	// BEFORE the row's dead_lettered_at is set, mirroring TopicIntelligenceDLQ's
 	// discipline for the outbound side.
 	TopicOutboxDLQ string
+
+	// IntelligenceDLQReplayStallThresholdSeconds (INTEL-07) — if the oldest
+	// unreplayed row in intelligence_dlq_local_receipts is older than this
+	// many seconds, the replay worker logs a CRITICAL stall alert every
+	// tick. Signals a Kafka outage (or some other replay-blocking condition)
+	// that has outlasted a brief blip and now needs operator attention.
+	IntelligenceDLQReplayStallThresholdSeconds int
 
 	// ── ML Service Topics ─────────────────────────────────────────
 	// Go publishes ML requests to TopicMLRequest; Python publishes
@@ -138,6 +152,8 @@ func Load() *Config {
 		KafkaBrokers: getRequired("KAFKA_BROKERS"),
 		KafkaGroupID: getWithDefault("KAFKA_GROUP_ID", "zord-intelligence-group"),
 
+		LegacySchemaAllowedSources: getWithDefault("LEGACY_SCHEMA_ALLOWED_SOURCES", ""),
+
 		// ── Kafka Input Topics ───────────────────────────────────
 		TopicIntentCreated:      getWithDefault("TOPIC_INTENT_CREATED", "payments.intent.events.v1"),
 		TopicDispatchCreated:    getWithDefault("TOPIC_DISPATCH_CREATED", "dispatch.attempt.created"),
@@ -168,9 +184,11 @@ func Load() *Config {
 		TopicIntelligenceDLQ:     getWithDefault("TOPIC_INTELLIGENCE_DLQ", "zord-intelligence.dlq.v1"),
 		TopicOutboxDLQ:           getWithDefault("TOPIC_OUTBOX_DLQ", "zord-intelligence.outbox-dlq.v1"),
 
+		IntelligenceDLQReplayStallThresholdSeconds: getIntWithDefault("INTELLIGENCE_DLQ_REPLAY_STALL_THRESHOLD_SECONDS", 300),
+
 		// ── ML Service Topics ────────────────────────────────────────
-		TopicMLRequest:                  getWithDefault("TOPIC_ML_REQUEST", "ml.request.events"),
-		TopicMLResult:                   getWithDefault("TOPIC_ML_RESULT", "ml.result.events"),
+		TopicMLRequest: getWithDefault("TOPIC_ML_REQUEST", "ml.request.events"),
+		TopicMLResult:  getWithDefault("TOPIC_ML_RESULT", "ml.result.events"),
 		// ── PHASE 6: Intelligence Mode ────────────────────────────
 		IntelligenceMode: mode,
 	}

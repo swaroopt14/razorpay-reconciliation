@@ -31,12 +31,30 @@ pipeline {
     GIT_REPO_URL = 'https://github.com/Arealis-network/Arealis-Zord-intent.git'
     PIPELINE_SCRIPT_PATH = 'jenkins/Jenkinsfile.all-services-ecr'
     PIPELINE_SIGNATURE = 'all-services-ecr-2026-05-05-sonar-v1'
+
+    // ── Cache directories (persist across builds) ──────────────────────────
+    GOPATH = '/var/jenkins_home/go'
+    GOCACHE = '/var/jenkins_home/.cache/go-build'
+    GOMODCACHE = '/var/jenkins_home/go/pkg/mod'
+    NPM_CONFIG_CACHE = '/var/jenkins_home/.cache/npm'
+    TRIVY_CACHE_DIR = '/var/jenkins_home/.cache/trivy'
+    DOCKER_BUILDKIT = '0'
   }
 
   stages {
     stage('Checkout') {
       steps {
-        checkout scm
+        script {
+          def targetBranch = params.GIT_BRANCH?.trim() ?: 'main'
+          checkout([
+            $class: 'GitSCM',
+            branches: [[name: "*/${targetBranch}"]],
+            userRemoteConfigs: [[
+              url: env.GIT_REPO_URL,
+              credentialsId: env.GIT_CREDENTIALS_ID
+            ]]
+          ])
+        }
       }
     }
 
@@ -154,7 +172,8 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
                     -Dsonar.tests=. \
                     -Dsonar.test.inclusions="${sonar_test_inclusions}" \
                     -Dsonar.exclusions="**/node_modules/**,**/.next/**,**/coverage/**,**/public/**,**/assets/models/**,**/*.png,**/*.jpg,**/*.jpeg,**/*.gif,**/*.svg,**/*.webp,**/*.pdf,**/*.tmpl,**/test_output*.txt,**/test_output*.log" \
-                    -Dsonar.coverage.exclusions="**/*_test.go,**/*.spec.ts,**/*.test.ts,**/*.test.tsx,**/cmd/**,**/db/**,**/docs/**,**/public/**"
+                    -Dsonar.coverage.exclusions="**/*_test.go,**/*.spec.ts,**/*.test.ts,**/*.test.tsx,**/cmd/**,**/db/**,**/docs/**,**/public/**" \
+                    -Dsonar.go.coverage.reportPaths="coverage.out"
                 done
               '''
             }
@@ -163,11 +182,55 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
       }
     }
 
-    stage('Run Tests') {
+    stage('Lint') {
       steps {
         script {
           sh '''
             set -euo pipefail
+
+            # Install golangci-lint if not present
+            if ! command -v golangci-lint >/dev/null 2>&1; then
+              echo "=== Installing golangci-lint ==="
+              curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin v1.61.0
+            fi
+
+            for service in ${SERVICE_LIST}; do
+              service_dir="backend/${service}"
+
+              if [ ! -d "${service_dir}" ]; then
+                continue
+              fi
+
+              echo "========================================"
+              echo "Linting ${service}"
+              echo "========================================"
+
+              if [ -f "${service_dir}/go.mod" ]; then
+                echo "=== golangci-lint (${service}) ==="
+                (cd "${service_dir}" && go mod download && golangci-lint run --timeout 3m ./...) || true
+
+              elif [ -f "${service_dir}/package.json" ]; then
+                echo "=== npm lint (${service}) ==="
+                (cd "${service_dir}" && npm ci --prefer-offline && npm run lint)
+
+              elif [ -f "${service_dir}/requirements.txt" ]; then
+                echo "=== Python lint (${service}) ==="
+                (cd "${service_dir}" && python3 -m py_compile app/ml_service.py && python3 -m py_compile app/config.py)
+              fi
+            done
+          '''
+        }
+      }
+    }
+
+    stage('Unit Tests') {
+      steps {
+        script {
+          sh '''
+            set -euo pipefail
+
+            COVERAGE_DIR="coverage-reports"
+            mkdir -p "${COVERAGE_DIR}"
 
             for service in ${SERVICE_LIST}; do
               service_dir="backend/${service}"
@@ -182,28 +245,28 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
               echo "========================================"
 
               if [ -f "${service_dir}/go.mod" ]; then
-                # Go service — run go vet + go test
+                # Go service
+                echo "=== Go Mod Download (${service}) ==="
+                (cd "${service_dir}" && go mod download)
                 echo "=== Go Vet (${service}) ==="
                 (cd "${service_dir}" && go vet ./...)
                 echo "=== Go Test (${service}) ==="
                 (cd "${service_dir}" && go test ./... -count=1 -timeout 120s -v)
+
+                # Print coverage inline (Go shows per-package coverage automatically)
                 echo "=== Tests Passed (${service}) ==="
 
               elif [ -f "${service_dir}/package.json" ]; then
-                # Node.js service — run lint + type check
-                echo "=== npm ci (${service}) ==="
-                (cd "${service_dir}" && npm ci --prefer-offline)
-                echo "=== Lint (${service}) ==="
-                (cd "${service_dir}" && npm run lint)
+                # Node.js service
                 echo "=== Type Check (${service}) ==="
                 (cd "${service_dir}" && npx tsc --noEmit || true)
                 echo "=== Checks Passed (${service}) ==="
 
               elif [ -f "${service_dir}/requirements.txt" ]; then
-                # Python service — run syntax check
+                # Python service
                 echo "=== Python Syntax Check (${service}) ==="
-                (cd "${service_dir}" && python -m py_compile app/ml_service.py)
-                (cd "${service_dir}" && python -m py_compile app/config.py)
+                (cd "${service_dir}" && python3 -m py_compile app/ml_service.py)
+                (cd "${service_dir}" && python3 -m py_compile app/config.py)
                 echo "=== Checks Passed (${service}) ==="
 
               else
@@ -300,6 +363,45 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
       }
     }
 
+    stage('Trivy Image Scan') {
+      steps {
+        script {
+          sh '''
+            set -euo pipefail
+
+            # Install Trivy if not present
+            if ! command -v trivy >/dev/null 2>&1; then
+              echo "=== Installing Trivy ==="
+              curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+            fi
+
+            for service in ${SERVICE_LIST}; do
+              if [ -n "${ECR_REPOSITORY_PREFIX}" ]; then
+                repository="${ECR_REPOSITORY_PREFIX}/${service}"
+              else
+                repository="${service}"
+              fi
+              image_uri="${ECR_REGISTRY}/${repository}:${RESOLVED_IMAGE_TAG}"
+
+              echo "========================================"
+              echo "Trivy scanning: ${image_uri}"
+              echo "========================================"
+
+              trivy image \
+                --severity HIGH,CRITICAL \
+                --exit-code 0 \
+                --no-progress \
+                --cache-dir "${TRIVY_CACHE_DIR}" \
+                --format table \
+                "${image_uri}" || true
+            done
+
+            echo "=== Trivy Scan Complete ==="
+          '''
+        }
+      }
+    }
+
     stage('Commit Manifest Changes') {
       when {
         expression { return params.PUSH_MANIFEST_CHANGES }
@@ -365,6 +467,16 @@ Resolved git push ref: ${env.GIT_PUSH_REF}
           docker logout "${ECR_REGISTRY}" >/dev/null 2>&1 || true
         fi
       '''
+    }
+    success {
+      script {
+        currentBuild.description = "✅ Build Successful | Branch: ${env.CHECKOUT_BRANCH} | Tag: ${env.RESOLVED_IMAGE_TAG} | Services: ${env.SERVICE_LIST}"
+      }
+    }
+    failure {
+      script {
+        currentBuild.description = "❌ FAILED | Branch: ${env.CHECKOUT_BRANCH ?: 'unknown'} | Tag: ${env.RESOLVED_IMAGE_TAG ?: 'unknown'}"
+      }
     }
   }
 }

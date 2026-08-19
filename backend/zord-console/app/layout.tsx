@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { Suspense } from 'react'
 import './globals.css'
 import { AuthSessionBootstrap } from '@/components/auth/AuthSessionBootstrap'
 import { SessionManager } from '@/components/auth/SessionManager'
@@ -22,7 +23,9 @@ export default function RootLayout({
     // React hydration warnings in dev (e.g. data-liner-extension-version).
     <html lang="en" suppressHydrationWarning>
       <body suppressHydrationWarning>
-        <AuthSessionBootstrap />
+        <Suspense fallback={null}>
+          <AuthSessionBootstrap />
+        </Suspense>
         <SessionManager />
         {children}
       </body>

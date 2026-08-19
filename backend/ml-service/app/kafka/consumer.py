@@ -29,7 +29,8 @@ _POLL_TIMEOUT = 3.0
 class MLConsumer:
     def __init__(self, handler: Callable[[MLRequest], None]) -> None:
         self._handler = handler
-        self._consumer = Consumer({
+
+        kafka_config = {
             "bootstrap.servers": ",".join(config.KAFKA_BROKERS),
             "group.id": config.KAFKA_GROUP_ID,
             "auto.offset.reset": "earliest",
@@ -37,7 +38,20 @@ class MLConsumer:
             "max.poll.interval.ms": 300_000,
             "session.timeout.ms": 30_000,
             "heartbeat.interval.ms": 10_000,
-        })
+        }
+
+        # SASL/SCRAM-SHA-512 authentication (PLAT-06)
+        sasl_username = config.KAFKA_SASL_USERNAME
+        sasl_password = config.KAFKA_SASL_PASSWORD
+        if sasl_username and sasl_password:
+            kafka_config.update({
+                "security.protocol": "SASL_PLAINTEXT",
+                "sasl.mechanism": "SCRAM-SHA-512",
+                "sasl.username": sasl_username,
+                "sasl.password": sasl_password,
+            })
+
+        self._consumer = Consumer(kafka_config)
 
     def start(self) -> None:
         """Block forever, consuming messages and dispatching to handler."""

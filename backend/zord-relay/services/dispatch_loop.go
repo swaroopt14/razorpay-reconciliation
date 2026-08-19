@@ -249,7 +249,7 @@ func (l *DispatchLoop) processEvent(ctx context.Context, workerID int, e model.O
 			ContractID:    contractID,
 			DispatchID:    dispatchID,
 			TraceID:       traceID,
-			SchemaVersion: "v1",
+			SchemaVersion: model.SchemaVersionV1,
 			CreatedAt:     time.Now().UTC(),
 			Payload: model.DispatchCreatedPayload{
 				DispatchID:          dispatchID,
@@ -324,7 +324,7 @@ func (l *DispatchLoop) runSteps2to5(ctx context.Context, workerID int, d *model.
 		ContractID:    contractID,
 		DispatchID:    dispatchID,
 		TraceID:       traceID,
-		SchemaVersion: "v1",
+		SchemaVersion: model.SchemaVersionV1,
 		CreatedAt:     time.Now().UTC(),
 		Payload: model.DispatchGovernanceEvaluatedPayload{
 			DispatchID:  dispatchID,
@@ -403,7 +403,7 @@ func (l *DispatchLoop) runSteps2to5(ctx context.Context, workerID int, d *model.
 		ContractID:    contractID,
 		DispatchID:    dispatchID,
 		TraceID:       traceID,
-		SchemaVersion: "v1",
+		SchemaVersion: model.SchemaVersionV1,
 		CreatedAt:     asSentAt,
 		Payload: model.AttemptSentPayload{
 			DispatchID:   dispatchID,
@@ -500,7 +500,7 @@ func (l *DispatchLoop) runSteps2to5(ctx context.Context, workerID int, d *model.
 		ContractID:    contractID,
 		DispatchID:    dispatchID,
 		TraceID:       traceID,
-		SchemaVersion: "v1",
+		SchemaVersion: model.SchemaVersionV1,
 		CreatedAt:     ackedAt,
 		Payload: model.ProviderAckedPayload{
 			DispatchID:        dispatchID,
@@ -648,7 +648,7 @@ func (l *DispatchLoop) markFailedRetryable(
 	dfEvent := model.DispatchFailedEvent{
 		EventID: uuid.New().String(), EventType: "DispatchFailed",
 		TenantID: tenantID, IntentID: intentID, ContractID: contractID,
-		DispatchID: dispatchID, TraceID: traceID, SchemaVersion: "v1",
+		DispatchID: dispatchID, TraceID: traceID, SchemaVersion: model.SchemaVersionV1,
 		CreatedAt: failedAt,
 		Payload: model.DispatchFailedPayload{
 			DispatchID: dispatchID, AttemptCount: attemptCount,
@@ -686,7 +686,7 @@ func (l *DispatchLoop) markFailedTerminal(
 	dfEvent := model.DispatchFailedEvent{
 		EventID: uuid.New().String(), EventType: "DispatchFailed",
 		TenantID: tenantID, IntentID: intentID, ContractID: contractID,
-		DispatchID: dispatchID, TraceID: traceID, SchemaVersion: "v1",
+		DispatchID: dispatchID, TraceID: traceID, SchemaVersion: model.SchemaVersionV1,
 		CreatedAt: failedAt,
 		Payload: model.DispatchFailedPayload{
 			DispatchID: dispatchID, AttemptCount: 1,
@@ -721,7 +721,7 @@ func (l *DispatchLoop) markAwaitingProviderSignal(
 	awaitEvent := model.DispatchAwaitingProviderSignalEvent{
 		EventID: uuid.New().String(), EventType: "DispatchAwaitingProviderSignal",
 		TenantID: tenantID, IntentID: intentID, ContractID: contractID,
-		DispatchID: dispatchID, TraceID: traceID, SchemaVersion: "v1",
+		DispatchID: dispatchID, TraceID: traceID, SchemaVersion: model.SchemaVersionV1,
 		CreatedAt: time.Now().UTC(),
 		Payload: model.DispatchAwaitingProviderSignalPayload{
 			DispatchID:             dispatchID,
@@ -864,14 +864,14 @@ func (l *DispatchLoop) verifyDispatchPayloadHash(
 	vr, err := l.hashVerifier.VerifyPayload(ctx,
 		dispatchHashServiceName,
 		e.EventID, e.EventType, e.LeaseID,
-		e.Payload, e.PayloadHash,
+		e.Payload, e.CanonicalPayloadHash,
 	)
 
 	if err != nil {
 		log.Error("dispatch_loop: payload_hash verification: verifier error — " +
 			"SKIPPING PSP dispatch (integrity layer failure, do not publish externally)",
 			zap.Error(err),
-			zap.String("expected_hash", e.PayloadHash),
+			zap.String("expected_hash", e.CanonicalPayloadHash),
 			zap.String("computed_hash", vr.ComputedHash),
 		)
 		metrics.DispatchTotal.WithLabelValues("hash_verifier_error").Inc()
@@ -879,7 +879,7 @@ func (l *DispatchLoop) verifyDispatchPayloadHash(
 	}
 
 	if vr.OK {
-		if e.PayloadHash == "" {
+		if e.CanonicalPayloadHash == "" {
 			metrics.PayloadHashSkippedTotal.WithLabelValues(dispatchHashServiceName).Inc()
 			log.Warn("dispatch_loop: payload_hash empty — verification skipped (strict=false). " +
 				"Enable strict=true once zord-intent-engine guarantees payload_hash on every dispatch event.")

@@ -1,0 +1,761 @@
+{
+  "_generated_by": "testing/generate_outbox_contract_inventory.py",
+  "_generated_at": "2026-08-13T06:20:59Z",
+  "_source": "db/migrations/*.sql (schema) + internal/persistence/outbox_insert_contract.go and outbox_lease_contract.go (Go contract lists)",
+  "table": "outbox",
+  "total_columns": 92,
+  "columns": [
+    {
+      "name": "event_id",
+      "type": "UUID PRIMARY KEY DEFAULT gen_random_uuid()",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "trace_id",
+      "type": "UUID NOT NULL",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "envelope_id",
+      "type": "UUID NOT NULL",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "tenant_id",
+      "type": "UUID NOT NULL",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "contract_id",
+      "type": "UUID NOT NULL",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "lease_id",
+      "type": "UUID",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "leased_by",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "lease_until",
+      "type": "TIMESTAMPTZ",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "aggregate_type",
+      "type": "TEXT NOT NULL DEFAULT 'intent'",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "aggregate_id",
+      "type": "UUID NOT NULL",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "event_type",
+      "type": "TEXT NOT NULL",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "schema_version",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "amount",
+      "type": "NUMERIC",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "currency",
+      "type": "CHAR(3)",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "idempotency_key",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "salient_hash",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "intent_type",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "canonical_version",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "intended_execution_at",
+      "type": "TIMESTAMPTZ",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "constraints",
+      "type": "JSONB",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "beneficiary_type",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "pii_tokens",
+      "type": "JSONB",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "beneficiary",
+      "type": "JSONB",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "intent_status",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "confidence_score",
+      "type": "NUMERIC(5,2)",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "canonical_hash",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "canonical_snapshot_ref",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "nir_snapshot_ref",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "governance_snapshot_ref",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "governance_hash",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "client_payout_ref",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "provider_hint",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "request_fingerprint",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "routing_hints_json",
+      "type": "JSONB",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "governance_state",
+      "type": "TEXT NOT NULL DEFAULT 'VALID'",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "business_state",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "duplicate_risk_flag",
+      "type": "BOOLEAN",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "mapping_profile_id",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "mapping_profile_version",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "source_system",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "business_idempotency_key",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "beneficiary_fingerprint",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "proof_readiness_score",
+      "type": "NUMERIC(5,2)",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "matchability_score",
+      "type": "NUMERIC(5,2)",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "intent_quality_score",
+      "type": "NUMERIC(5,2)",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "mapping_confidence_score",
+      "type": "NUMERIC(5,2)",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "schema_completeness_score",
+      "type": "NUMERIC(5,2)",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "governance_reason_codes_json",
+      "type": "JSONB NOT NULL DEFAULT '{}'",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "duplicate_reason_code",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "client_batch_ref",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "payload",
+      "type": "JSONB NOT NULL",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "payload_hash",
+      "type": "TEXT NOT NULL",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "status",
+      "type": "TEXT NOT NULL DEFAULT 'PENDING'",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "retry_count",
+      "type": "INT NOT NULL DEFAULT 0",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "next_attempt_at",
+      "type": "TIMESTAMPTZ",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "created_at",
+      "type": "TIMESTAMPTZ NOT NULL DEFAULT now()",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "sent_at",
+      "type": "TIMESTAMPTZ",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "batchid",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "source_row_num",
+      "type": "INT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "aggregate_confidence_score",
+      "type": "NUMERIC(5,2)",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "required_fields_status",
+      "type": "BOOLEAN",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "tokenization_status",
+      "type": "BOOLEAN",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "governance_decision",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "reference_quality_score",
+      "type": "NUMERIC(6,2)",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "duplicate_risk_score",
+      "type": "NUMERIC(6,2)",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "score_version",
+      "type": "TEXT DEFAULT 'service2_score_v2.0'",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "score_validity_status",
+      "type": "TEXT DEFAULT 'NOT_SCORED'",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "score_breakdown_json",
+      "type": "JSONB DEFAULT '{}'",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "score_reason_codes_json",
+      "type": "JSONB DEFAULT '[]'",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "scored_at",
+      "type": "TIMESTAMPTZ",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "batch_quality_score",
+      "type": "NUMERIC(6,2)",
+      "deprecated": true,
+      "deprecation_note": "DEPRECATED (R-10): batch-level aggregate, not applicable to a per-intent row. Never written by application code. Do not confuse with canonical_batches.batch_quality_score, which is the real, actively-maintained batch aggregate."
+    },
+    {
+      "name": "avg_reference_quality",
+      "type": "NUMERIC(6,2)",
+      "deprecated": true,
+      "deprecation_note": "DEPRECATED (R-10): dead column, no application code path writes it, and no equivalent aggregate exists anywhere else in the system either."
+    },
+    {
+      "name": "avg_duplicate_risk",
+      "type": "NUMERIC(6,2)",
+      "deprecated": true,
+      "deprecation_note": "DEPRECATED (R-10): dead column, no application code path writes it, and no equivalent aggregate exists anywhere else in the system either."
+    },
+    {
+      "name": "low_matchability_count",
+      "type": "INT DEFAULT 0",
+      "deprecated": true,
+      "deprecation_note": "DEPRECATED (R-10): batch-level aggregate, not applicable to a per-intent row. Never written by application code. Do not confuse with canonical_batches.low_matchability_count, which is the real, actively-maintained batch aggregate."
+    },
+    {
+      "name": "duplicate_risk_count",
+      "type": "INT DEFAULT 0",
+      "deprecated": true,
+      "deprecation_note": "DEPRECATED (R-10): batch-level aggregate, not applicable to a per-intent row. Never written by application code. Do not confuse with canonical_batches.duplicate_risk_count, which is the real, actively-maintained batch aggregate."
+    },
+    {
+      "name": "payment_instruction_received",
+      "type": "TIMESTAMPTZ",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "canonical_intent_created",
+      "type": "TIMESTAMPTZ",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "intent_lifecycle_state",
+      "type": "TEXT NOT NULL DEFAULT 'RECEIVED'",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "mapping_profile_hash",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "policy_source",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "policy_version",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "policy_hash",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "source_row_ref",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "canonical_row_hash",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "input_facts_hash",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "tokenized_data_hash",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "raw_row_evidence_leaf_hash",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "canonical_row_evidence_leaf_hash",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "raw_row_hash",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "artifact_id",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "artifact_version_id",
+      "type": "TEXT",
+      "deprecated": false,
+      "deprecation_note": null
+    },
+    {
+      "name": "canonical_payload_hash",
+      "type": "TEXT\n    GENERATED ALWAYS AS (encode(sha256(payload::text::bytea), 'hex')) STORED\n    NOT NULL",
+      "deprecated": false,
+      "deprecation_note": null
+    }
+  ],
+  "deprecated_columns": [
+    "avg_duplicate_risk",
+    "avg_reference_quality",
+    "batch_quality_score",
+    "duplicate_risk_count",
+    "low_matchability_count"
+  ],
+  "app_managed_insert_columns": [
+    "trace_id",
+    "envelope_id",
+    "tenant_id",
+    "contract_id",
+    "aggregate_type",
+    "aggregate_id",
+    "event_type",
+    "schema_version",
+    "amount",
+    "currency",
+    "idempotency_key",
+    "salient_hash",
+    "intent_type",
+    "canonical_version",
+    "intended_execution_at",
+    "constraints",
+    "beneficiary_type",
+    "pii_tokens",
+    "beneficiary",
+    "intent_status",
+    "confidence_score",
+    "canonical_hash",
+    "canonical_snapshot_ref",
+    "nir_snapshot_ref",
+    "governance_snapshot_ref",
+    "governance_hash",
+    "client_payout_ref",
+    "provider_hint",
+    "request_fingerprint",
+    "routing_hints_json",
+    "governance_state",
+    "business_state",
+    "duplicate_risk_flag",
+    "mapping_profile_id",
+    "mapping_profile_version",
+    "source_system",
+    "business_idempotency_key",
+    "beneficiary_fingerprint",
+    "proof_readiness_score",
+    "matchability_score",
+    "intent_quality_score",
+    "mapping_confidence_score",
+    "schema_completeness_score",
+    "governance_reason_codes_json",
+    "duplicate_reason_code",
+    "client_batch_ref",
+    "payload",
+    "payload_hash",
+    "status",
+    "retry_count",
+    "next_attempt_at",
+    "created_at",
+    "batchid",
+    "source_row_num",
+    "aggregate_confidence_score",
+    "required_fields_status",
+    "tokenization_status",
+    "governance_decision",
+    "payment_instruction_received",
+    "canonical_intent_created",
+    "intent_lifecycle_state",
+    "mapping_profile_hash",
+    "policy_source",
+    "policy_version",
+    "policy_hash",
+    "reference_quality_score",
+    "duplicate_risk_score",
+    "score_version",
+    "score_validity_status",
+    "score_breakdown_json",
+    "score_reason_codes_json",
+    "scored_at",
+    "source_row_ref",
+    "canonical_row_hash",
+    "input_facts_hash",
+    "tokenized_data_hash",
+    "raw_row_evidence_leaf_hash",
+    "canonical_row_evidence_leaf_hash",
+    "raw_row_hash",
+    "artifact_id",
+    "artifact_version_id"
+  ],
+  "app_managed_insert_column_count": 81,
+  "lease_exposed_columns": [
+    "event_id",
+    "envelope_id",
+    "trace_id",
+    "tenant_id",
+    "contract_id",
+    "aggregate_type",
+    "aggregate_id",
+    "event_type",
+    "amount",
+    "currency",
+    "corridor_id",
+    "retry_count",
+    "next_attempt_at",
+    "payload",
+    "status",
+    "created_at",
+    "lease_id",
+    "leased_by",
+    "lease_until",
+    "batchid",
+    "source_row_num",
+    "canonical_hash",
+    "governance_state",
+    "governance_hash",
+    "mapping_profile_id",
+    "required_fields_status",
+    "tokenization_status",
+    "governance_decision",
+    "payment_instruction_received",
+    "canonical_intent_created",
+    "client_payout_ref",
+    "intent_lifecycle_state",
+    "mapping_profile_hash",
+    "policy_source",
+    "policy_version",
+    "policy_hash",
+    "raw_row_evidence_leaf_hash",
+    "canonical_row_evidence_leaf_hash",
+    "business_idempotency_key",
+    "tokenized_data_hash",
+    "artifact_id",
+    "artifact_version_id",
+    "governance_reason_codes_json",
+    "score_version",
+    "score_validity_status",
+    "score_breakdown_json",
+    "score_reason_codes_json",
+    "scored_at",
+    "reference_quality_score",
+    "duplicate_risk_score",
+    "proof_readiness_score",
+    "matchability_score",
+    "intent_quality_score",
+    "mapping_confidence_score",
+    "schema_completeness_score",
+    "duplicate_reason_code",
+    "schema_version",
+    "payload_hash",
+    "canonical_payload_hash",
+    "source_row_ref",
+    "source_system",
+    "client_batch_ref",
+    "salient_hash",
+    "canonical_row_hash",
+    "input_facts_hash",
+    "raw_row_hash",
+    "idempotency_key",
+    "intent_type",
+    "canonical_version",
+    "intended_execution_at",
+    "constraints",
+    "beneficiary_type",
+    "pii_tokens",
+    "beneficiary",
+    "intent_status",
+    "confidence_score",
+    "canonical_snapshot_ref",
+    "nir_snapshot_ref",
+    "governance_snapshot_ref",
+    "provider_hint",
+    "request_fingerprint",
+    "routing_hints_json",
+    "business_state",
+    "duplicate_risk_flag",
+    "mapping_profile_version",
+    "beneficiary_fingerprint",
+    "aggregate_confidence_score"
+  ],
+  "lease_exposed_column_count": 87,
+  "migrations_touching_outbox": [
+    "20260707095144_create_outbox.sql",
+    "20260709060000_add_intent_lifecycle_state_and_dlq_status_check.sql",
+    "20260709100000_mapping_profile_policy_wiring.sql",
+    "20260710080000_governance_policy_engine.sql",
+    "20260714100000_add_row_hash_to_outbox.sql",
+    "20260714110000_add_governance_tokenized_evidence_hashes.sql",
+    "20260715130000_add_raw_row_hash.sql",
+    "20260715140000_add_artifact_id_to_payment_intents_and_outbox.sql",
+    "20260723070000_deprecate_outbox_batch_aggregate_columns.sql",
+    "20260812150000_add_canonical_payload_hash_to_outbox.sql"
+  ],
+  "_consistency_checks": {
+    "deprecated_columns_match_schema_comments": true,
+    "no_deprecated_column_in_insert_list": true,
+    "no_deprecated_column_in_lease_list": true,
+    "all_insert_columns_exist_in_schema": true,
+    "all_lease_columns_exist_in_schema_or_are_computed": true
+  }
+}

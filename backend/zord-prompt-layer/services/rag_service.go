@@ -300,7 +300,7 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 	if s.intelligence != nil {
 		log.Printf("[prompt-layer][rca] fetching tenant RCA clusters tenant=%s", req.TenantID)
 
-		rcaClusters, rcaErr = s.intelligence.FetchRCAClusters(req.TenantID)
+		rcaClusters, rcaErr = s.intelligence.FetchRCAClusters(req.TenantID, req.AuthorizationHeader)
 		if rcaErr != nil {
 			log.Printf("[prompt-layer][rca] clusters fetch failed tenant=%s err=%v", req.TenantID, rcaErr)
 		} else {
@@ -352,7 +352,9 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 			NextActions:   nextActions,
 		}
 
-		s.persistConversationMemory(ctx, req, memorySummary, answer)
+		resp = enforceAdvisoryResponseGuard(resp, class, chunks)
+		s.persistConversationMemory(ctx, req, memorySummary, resp.Answer)
+
 		return resp, nil
 	}
 	if class == classEvidence {
@@ -385,7 +387,8 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 			NextActions:   utils.SanitizeActions(ev.NextSteps),
 		}
 
-		s.persistConversationMemory(ctx, req, memorySummary, answer)
+		resp = enforceAdvisoryResponseGuard(resp, class, chunks)
+		s.persistConversationMemory(ctx, req, memorySummary, resp.Answer)
 		return resp, nil
 	}
 
@@ -451,15 +454,18 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 	if shouldReturnCitations(class, chunks, conf) {
 		finalCitations = citations
 	}
-	s.persistConversationMemory(ctx, req, memorySummary, answer)
-
-	return dto.QueryResponse{
+	resp := dto.QueryResponse{
 		Answer:        answer,
 		Confidence:    conf,
 		EntitiesFound: entities,
 		Citations:     finalCitations,
 		NextActions:   nextActions,
 		Visualization: viz,
-	}, nil
+	}
+
+	resp = enforceAdvisoryResponseGuard(resp, class, chunks)
+	s.persistConversationMemory(ctx, req, memorySummary, resp.Answer)
+
+	return resp, nil
 
 }

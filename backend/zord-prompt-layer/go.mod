@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/IBM/sarama v1.47.0
 	github.com/gin-gonic/gin v1.12.0
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.10.9
 	github.com/redis/go-redis/v9 v9.19.0

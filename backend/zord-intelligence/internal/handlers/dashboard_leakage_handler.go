@@ -178,7 +178,7 @@ func (h *DashboardLeakageHandler) GetLeakageKPIs(w http.ResponseWriter, r *http.
 	resp.WindowEnd = &snap.WindowEnd
 	resp.ComputedAt = &snap.CreatedAt
 	resp.TotalIntendedAmountMinor = kpis.TotalIntendedAmountMinor
-	resp.TotalObservedSettledAmountMinor = kpis.TotalObservedSettledAmountMinor.Truncate(2)
+	resp.TotalObservedSettledAmountMinor = roundMinor(kpis.TotalObservedSettledAmountMinor)
 	resp.UnmatchedAmountMinor = kpis.UnmatchedAmountMinor
 	resp.UnderSettlementAmountMinor = kpis.UnderSettlementAmountMinor
 	resp.OrphanAmountMinor = kpis.OrphanAmountMinor
@@ -230,7 +230,7 @@ func (h *DashboardLeakageHandler) GetLeakageKPIs(w http.ResponseWriter, r *http.
 				ambiguityRiskWeight = 0.60
 			}
 			weightedRisk := ambKPIs.AmbiguousAmountMinor.Mul(decimal.NewFromFloat(ambiguityRiskWeight))
-			resp.RiskAdjustedLeakageMinor = kpis.TotalAmountMinor.Add(weightedRisk)
+			resp.RiskAdjustedLeakageMinor = roundMinor(kpis.TotalAmountMinor.Add(weightedRisk))
 		}
 	}
 

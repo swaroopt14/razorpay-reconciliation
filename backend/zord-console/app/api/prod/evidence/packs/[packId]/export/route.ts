@@ -5,6 +5,7 @@ import {
   requireSessionTenantForProdProxy,
 } from '@/services/auth/resolvePayoutTenant.server'
 import { consumeBffRateLimit, rateLimitKeyForTenant } from '@/services/bff/rateLimit.server'
+import { publicBffError } from '@/services/bff/publicBffError'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -131,6 +132,7 @@ export async function GET(
       headers: {
         'content-type': 'application/json',
         'x-tenant-id': gate.tenantId,
+        Authorization: `Bearer ${gate.accessToken}`,
       },
       cache: 'no-store',
     })
@@ -175,13 +177,16 @@ export async function GET(
     applyRefreshedSessionCookies(res, gate.refreshedPayload)
     return res
   } catch (error) {
-    const res = NextResponse.json(
-      {
-        error: 'evidence export service unreachable',
-        details: error instanceof Error ? error.message : 'unknown',
+    const res = publicBffError({
+      code: 'UPSTREAM_UNAVAILABLE',
+      message: 'Evidence export is temporarily unavailable. Retry shortly.',
+      status: 502,
+      log: {
+        route: '/api/prod/evidence/packs/[packId]/export',
+        upstream: upstreamUrl,
+        error,
       },
-      { status: 502 },
-    )
+    })
     applyRefreshedSessionCookies(res, gate.refreshedPayload)
     return res
   }

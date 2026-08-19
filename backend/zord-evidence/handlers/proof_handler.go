@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"zord-evidence/internal/middleware"
 	"zord-evidence/models"
 	"zord-evidence/repositories"
 	"zord-evidence/services"
@@ -38,10 +39,15 @@ func NewProofHandler(
 // Upstream lineage signals (Service 2 / Service 5) are present on the embedded EvidencePack
 // fields (payment_instruction_received, bank_reference, etc.) — not duplicated as nested objects.
 func (h *ProofHandler) GetEnrichedPack(c *gin.Context) {
+	tenantID := middleware.GetTenantID(c)
 	packID := c.Param("packID")
 	pack, err := h.svc.GetPack(c.Request.Context(), packID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	if pack.TenantID != tenantID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "cross-tenant access denied"})
 		return
 	}
 	enriched := services.BuildEnrichedPack(pack)
@@ -75,10 +81,15 @@ func (h *ProofHandler) GetEnrichedPack(c *gin.Context) {
 // GET /v1/evidence/packs/:packID/timeline
 // Spec §5 Engine A — operational timeline for business-facing display.
 func (h *ProofHandler) GetTimeline(c *gin.Context) {
+	tenantID := middleware.GetTenantID(c)
 	packID := c.Param("packID")
 	pack, err := h.svc.GetPack(c.Request.Context(), packID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	if pack.TenantID != tenantID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "cross-tenant access denied"})
 		return
 	}
 	timeline := services.BuildTimeline(pack)
@@ -92,10 +103,15 @@ func (h *ProofHandler) GetTimeline(c *gin.Context) {
 // GET /v1/evidence/packs/:packID/lineage-graph
 // Spec §5 Engine B — Merkle DAG for auditor-facing display.
 func (h *ProofHandler) GetLineageGraph(c *gin.Context) {
+	tenantID := middleware.GetTenantID(c)
 	packID := c.Param("packID")
 	pack, err := h.svc.GetPack(c.Request.Context(), packID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	if pack.TenantID != tenantID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "cross-tenant access denied"})
 		return
 	}
 	graph := services.BuildLineageGraph(pack)
@@ -105,10 +121,15 @@ func (h *ProofHandler) GetLineageGraph(c *gin.Context) {
 // POST /v1/evidence/packs/:packID/verify
 // Spec §7 — re-hash live DB entries and compare against stored Merkle root.
 func (h *ProofHandler) VerifyPack(c *gin.Context) {
+	tenantID := middleware.GetTenantID(c)
 	packID := c.Param("packID")
 	pack, err := h.svc.GetPack(c.Request.Context(), packID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	if pack.TenantID != tenantID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "cross-tenant verification denied"})
 		return
 	}
 
@@ -258,7 +279,18 @@ func (h *ProofHandler) VerifyPack(c *gin.Context) {
 // verification history is inspectable even after a later check overwrites
 // the single mutable evidence_packs.verification_status field.
 func (h *ProofHandler) GetVerificationRuns(c *gin.Context) {
+	tenantID := middleware.GetTenantID(c)
 	packID := c.Param("packID")
+
+	pack, err := h.svc.GetPack(c.Request.Context(), packID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	if pack.TenantID != tenantID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "cross-tenant access denied"})
+		return
+	}
 
 	limit := 50
 	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
@@ -291,10 +323,11 @@ func statusLabel(passed bool) string {
 // Returns the structured JSON view for a given export_type without producing a file.
 // Query params: export_type, payment_reference (or evidence_pack_id), tenant_id.
 func (h *ProofHandler) ExportPreview(c *gin.Context) {
+	tenantID := middleware.GetTenantID(c)
 	req := models.DisputeExportRequest{
 		ExportType:       strings.ToUpper(c.Query("export_type")),
 		PaymentReference: c.Query("payment_reference"),
-		TenantID:         c.Query("tenant_id"),
+		TenantID:         tenantID, // override with JWT tenant
 		EvidencePackID:   c.Query("evidence_pack_id"),
 		DisputeReason:    c.Query("dispute_reason"),
 	}
@@ -305,10 +338,6 @@ func (h *ProofHandler) ExportPreview(c *gin.Context) {
 	}
 	if req.ExportType == models.ExportTypeRawJSON {
 		c.JSON(http.StatusForbidden, gin.H{"error": "RAW_JSON does not support preview"})
-		return
-	}
-	if req.TenantID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "tenant_id query param is required"})
 		return
 	}
 
@@ -359,12 +388,23 @@ func (h *ProofHandler) ExportPreview(c *gin.Context) {
 // GET /v1/evidence/packs/:packID/exports
 // P2-02 admin/ops: list who exported this pack, when, and with which file hash.
 func (h *ProofHandler) ListPackExports(c *gin.Context) {
+	tenantID := middleware.GetTenantID(c)
 	if c.GetHeader("X-Admin-Token") == "" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "listing exports requires X-Admin-Token header"})
 		return
 	}
 
 	packID := c.Param("packID")
+	pack, err := h.svc.GetPack(c.Request.Context(), packID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "evidence pack not found"})
+		return
+	}
+	if pack.TenantID != tenantID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "cross-tenant access denied"})
+		return
+	}
+
 	resp, err := h.svc.ListPackExports(c.Request.Context(), packID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || strings.Contains(err.Error(), "not found") {
@@ -380,11 +420,15 @@ func (h *ProofHandler) ListPackExports(c *gin.Context) {
 // POST /v1/dispute/export
 // Spec §6 — multi-tier dispute export engine.
 func (h *ProofHandler) DisputeExport(c *gin.Context) {
+	tenantID := middleware.GetTenantID(c)
 	var req models.DisputeExportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	// Force tenant scoping from JWT
+	req.TenantID = tenantID
 
 	// Override or set ExportType from query parameter if provided
 	if qType := c.Query("export_type"); qType != "" {

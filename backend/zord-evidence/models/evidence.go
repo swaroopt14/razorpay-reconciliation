@@ -87,6 +87,7 @@ type PendingLeafCandidate struct {
 	ItemRef           string  `json:"item_ref" db:"item_ref"`
 	Hash              string  `json:"hash" db:"hash"`
 	SchemaVersion     string  `json:"schema_version" db:"schema_version"`
+	EventVersion      string  `json:"event_version" db:"event_version"`
 	SourceTopic       string  `json:"source_topic" db:"source_topic"`
 
 	// SourceEventID is the event_id from the upstream RelayEvent that produced
@@ -94,6 +95,12 @@ type PendingLeafCandidate struct {
 	// deliveries of the same upstream event share the same SourceEventID, so the
 	// receipt INSERT can use ON CONFLICT DO NOTHING to deduplicate exactly.
 	SourceEventID string `json:"source_event_id,omitempty" db:"source_event_id"`
+
+	// TraceID is the causation/source trace from the upstream RelayEvent that
+	// produced this leaf — preserved through to EvidenceItem and the leaf
+	// receipt so a sealed pack's lineage/timeline can be traced back to the
+	// exact originating operation, independent of the pack-generation trace.
+	TraceID string `json:"trace_id,omitempty" db:"trace_id"`
 
 	// Metadata carried from RelayEvent (traceability & governance).
 	PaymentInstructionReceived *time.Time `json:"payment_instruction_received,omitempty" db:"payment_instruction_received"`
@@ -135,6 +142,8 @@ type RelayEvent struct {
 	ArtifactID        string          `json:"artifact_id,omitempty"`
 	ArtifactVersionID string          `json:"artifact_version_id,omitempty"`
 	EventType         string          `json:"event_type"`
+	EventVersion      string          `json:"event_version,omitempty"`
+	SchemaVersion     string          `json:"schema_version,omitempty"`
 	Payload           json.RawMessage `json:"payload"`
 	EnvelopeHash      string          `json:"envelope_hash,omitempty"`
 	CanonicalHash     string          `json:"canonical_hash,omitempty"`
@@ -175,13 +184,34 @@ type RelayEvent struct {
 }
 
 // EvidenceItem is one proof artifact that becomes a typed leaf in the Merkle tree.
-// leaf_hash = SHA256(type || ref || hash || schema_version)
+// leaf_hash = SHA256(type || ref || hash || schema_version) — EventVersion,
+// TraceID, and SourceEventID are informational metadata only and must never
+// be folded into this formula, since that would break Merkle-proof
+// recomputation for already-sealed packs.
+//
+// hash_type indicates the commitment style: "SHA256", "HMAC", or "NONE"
+// version tracks the Merkle scheme / canonicalization version: "v1" or "v2"
 type EvidenceItem struct {
 	Type          string `json:"type"`
 	Ref           string `json:"ref"`
 	Hash          string `json:"hash,omitempty"`
 	SchemaVersion string `json:"schema_version"`
+	EventVersion  string `json:"event_version,omitempty" db:"event_version"`
 	LeafHash      string `json:"leaf_hash,omitempty"`
+
+	// hash_type indicates the commitment style: "SHA256", "HMAC", or "NONE"
+	HashType string `json:"hash_type,omitempty"`
+
+	// version tracks the Merkle scheme / canonicalization version: "v1" or "v2"
+	Version string `json:"version,omitempty"`
+
+	// TraceID / SourceEventID preserve this leaf's causation/source trace —
+	// the upstream trace_id and event_id that produced it — so pack
+	// lineage/timeline views can link every leaf back to its originating
+	// operation. Distinct from EvidencePack.TraceID (the pack-generation
+	// request's own trace).
+	TraceID       string `json:"trace_id,omitempty"`
+	SourceEventID string `json:"source_event_id,omitempty"`
 }
 
 // Pack signature canonicalization versions — identify how signed_payload was formed.
@@ -221,11 +251,44 @@ type Signature struct {
 	SignedPayload string `json:"signed_payload,omitempty"`
 }
 
+// PackManifestV1 is the canonical form used for signature binding.
+// It includes exactly the fields that were signed to create SignedPayloadHash,
+// so that verification can reconstruct the same bytes from the current pack
+// state and compare the digest before verifying the ed25519 signature.
+//
+// The serialization format matches the original signPayload construction:
+//
+//	packID|merkleRoot|intent_or_batch_id|created_at_iso|ruleset_version
+//
+// For intent packs: packID|merkleRoot|intentID|contractID|created_at|rulesetVersion
+// For batch packs: packID|merkleRoot|batchID|created_at|rulesetVersion
+//
+// canonicalization_version indicates the payload formation version: "v1" or "v2"
+type PackManifestV1 struct {
+	EvidencePackID string `json:"evidence_pack_id"`
+	TenantID       string `json:"tenant_id"`
+	MerkleRoot     string `json:"merkle_root"`
+	// The third field is intent_id for intent mode or batch_id for batch mode
+	ScopeID        string `json:"scope_id"`
+	CreatedAt      string `json:"created_at"`
+	RulesetVersion string `json:"ruleset_version"`
+	// CanonicalizationVersion indicates the payload formation version used
+	// when the signature was created. Used to ensure verification uses
+	// the correct canonical form.
+	CanonicalizationVersion string `json:"canonicalization_version"`
+}
+
 // EvidencePack is the canonical committed proof bundle for one payment lifecycle.
 // Mode: INTELLIGENCE_ATTACH | SECONDARY_DISPATCH | FULL_CONTROL
 type EvidencePack struct {
-	EvidencePackID                    string            `json:"evidence_pack_id"`
-	TenantID                          string            `json:"tenant_id"`
+	EvidencePackID string `json:"evidence_pack_id"`
+	TenantID       string `json:"tenant_id"`
+	// TraceID is the trace of the request/job that generated this pack —
+	// distinct from each item's own causation TraceID/SourceEventID (see
+	// EvidenceItem). Never a zero/placeholder UUID: intent packs already
+	// carry the real upstream trace; batch packs pick the first available
+	// leaf's trace rather than fabricating one.
+	TraceID                           string            `json:"trace_id,omitempty"`
 	IntentID                          string            `json:"intent_id"`
 	ContractID                        string            `json:"contract_id"`
 	ClientBatchID                     string            `json:"batch_id"`
@@ -428,26 +491,26 @@ type ListPacksResponse struct {
 }
 
 type EvidencePackSummary struct {
-	EvidencePackID                    string  `json:"evidence_pack_id"`
-	TenantID                          string  `json:"tenant_id"`
-	IntentID                          string  `json:"intent_id"`
-	ContractID                        string  `json:"contract_id"`
-	ClientBatchID                     string  `json:"batch_id,omitempty"`
-	ArtifactID                        string  `json:"artifact_id,omitempty"`
-	ArtifactVersionID                 string  `json:"artifact_version_id,omitempty"`
-	Mode                              string  `json:"mode"`
-	PackStatus                        string  `json:"pack_status"`
-	MerkleRoot                        string  `json:"merkle_root"`
-	RulesetVersion                    string  `json:"ruleset_version"`
-	SupersedesPackID                  string  `json:"supersedes_pack_id,omitempty"`
-	SupersedesByPackID                string  `json:"superseded_by_pack_id,omitempty"`
-	RevisionReason                    string  `json:"revision_reason,omitempty"`
+	EvidencePackID                    string            `json:"evidence_pack_id"`
+	TenantID                          string            `json:"tenant_id"`
+	IntentID                          string            `json:"intent_id"`
+	ContractID                        string            `json:"contract_id"`
+	ClientBatchID                     string            `json:"batch_id,omitempty"`
+	ArtifactID                        string            `json:"artifact_id,omitempty"`
+	ArtifactVersionID                 string            `json:"artifact_version_id,omitempty"`
+	Mode                              string            `json:"mode"`
+	PackStatus                        string            `json:"pack_status"`
+	MerkleRoot                        string            `json:"merkle_root"`
+	RulesetVersion                    string            `json:"ruleset_version"`
+	SupersedesPackID                  string            `json:"supersedes_pack_id,omitempty"`
+	SupersedesByPackID                string            `json:"superseded_by_pack_id,omitempty"`
+	RevisionReason                    string            `json:"revision_reason,omitempty"`
 	BasedOnVersions                   map[string]string `json:"based_on_versions,omitempty"`
-	PackCompletenessScore             float64 `json:"pack_completeness_score"`
-	LeafCount                         int     `json:"leaf_count"`
-	RequiredLeafCount                 int     `json:"required_leaf_count"`
-	SettlementLeafPresentFlag         bool    `json:"settlement_leaf_present_flag"`
-	AttachmentDecisionLeafPresentFlag bool    `json:"attachment_decision_leaf_present_flag"`
+	PackCompletenessScore             float64           `json:"pack_completeness_score"`
+	LeafCount                         int               `json:"leaf_count"`
+	RequiredLeafCount                 int               `json:"required_leaf_count"`
+	SettlementLeafPresentFlag         bool              `json:"settlement_leaf_present_flag"`
+	AttachmentDecisionLeafPresentFlag bool              `json:"attachment_decision_leaf_present_flag"`
 
 	// Traceability & governance fields.
 	PaymentInstructionReceived *time.Time `json:"payment_instruction_received,omitempty"`

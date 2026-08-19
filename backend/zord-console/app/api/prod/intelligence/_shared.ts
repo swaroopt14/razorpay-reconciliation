@@ -3,7 +3,9 @@ import { BACKEND_SERVICES } from '@/config/api.endpoints'
 import {
   applyRefreshedSessionCookies,
   requireSessionTenantForProdProxy,
+  sessionUpstreamHeaders,
 } from '@/services/auth/resolvePayoutTenant.server'
+import { publicBffError } from '@/services/bff/publicBffError'
 
 const JSON_NO_STORE = { 'cache-control': 'no-store' } as const
 
@@ -76,6 +78,7 @@ export async function forwardIntelligence(request: NextRequest, path: string): P
   const gate = await requireSessionTenantForProdProxy(request)
   if (!gate.ok) return gate.response
   const tenantId = gate.tenantId
+  const accessToken = gate.accessToken
 
   const params = new URLSearchParams(request.nextUrl.searchParams)
   params.delete('tenant_id')
@@ -86,10 +89,7 @@ export async function forwardIntelligence(request: NextRequest, path: string): P
   try {
     const upstream = await fetch(url, {
       method: 'GET',
-      headers: {
-        'content-type': 'application/json',
-        'x-tenant-id': tenantId,
-      },
+      headers: sessionUpstreamHeaders(tenantId, accessToken),
       cache: 'no-store',
     })
     const text = await upstream.text()
@@ -132,19 +132,21 @@ export async function forwardIntelligence(request: NextRequest, path: string): P
     applyRefreshedSessionCookies(res, gate.refreshedPayload)
     return res
   } catch (error) {
+    // CON-P1-06: never put error.message / upstream hosts into customer-facing bodies.
+    console.error('[zord-bff]', {
+      route: '/api/prod/intelligence',
+      upstream: url,
+      error: error instanceof Error ? error.message : 'unknown',
+    })
     if (isKpiDashboardPath(path) || isOperationsOrExceptionsPath(path)) {
-      const res = emptyKpiResponse(
-        `Intelligence service unreachable (${error instanceof Error ? error.message : 'unknown'}).`,
-      )
+      const res = emptyKpiResponse('Intelligence service is temporarily unavailable.')
       applyRefreshedSessionCookies(res, gate.refreshedPayload)
       return res
     }
     if (isPatternDetailPath(path)) {
       const res = path === BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.PATTERN_HISTORY
         ? emptyPatternHistoryResponse(tenantId)
-        : emptyPatternResponse(
-            `Pattern intelligence unreachable (${error instanceof Error ? error.message : 'unknown'}).`,
-          )
+        : emptyPatternResponse('Pattern intelligence is temporarily unavailable.')
       applyRefreshedSessionCookies(res, gate.refreshedPayload)
       return res
     }
@@ -153,13 +155,16 @@ export async function forwardIntelligence(request: NextRequest, path: string): P
       applyRefreshedSessionCookies(res, gate.refreshedPayload)
       return res
     }
-    const res = NextResponse.json(
-      {
-        error: 'intelligence service unreachable',
-        details: error instanceof Error ? error.message : 'unknown',
+    const res = publicBffError({
+      code: 'UPSTREAM_UNAVAILABLE',
+      message: 'Intelligence service is temporarily unavailable. Retry shortly.',
+      status: 502,
+      log: {
+        route: '/api/prod/intelligence',
+        upstream: url,
+        error,
       },
-      { status: 502 },
-    )
+    })
     applyRefreshedSessionCookies(res, gate.refreshedPayload)
     return res
   }

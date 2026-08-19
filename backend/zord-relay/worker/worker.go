@@ -23,12 +23,12 @@ import (
 // Backpressure is handled via a weighted semaphore: if Kafka is saturated,
 // no new leases are taken until in-flight publishes complete.
 type Worker struct {
-	svcCfg     config.ServiceConfig
-	relayCfg   config.RelayConfig
-	outbox     *client.OutboxClient
-	proc       *processor
-	sema       *semaphore.Weighted
-	log        *zap.Logger
+	svcCfg   config.ServiceConfig
+	relayCfg config.RelayConfig
+	outbox   *client.OutboxClient
+	proc     *processor
+	sema     *semaphore.Weighted
+	log      *zap.Logger
 }
 
 // NewWorker constructs a Worker for one upstream service.
@@ -39,6 +39,7 @@ func NewWorker(
 	log *zap.Logger,
 	failureRepo *services.PublishFailureRepo,
 	hashVerifier services.PayloadHashVerifier,
+	guard *RouteGuard,
 ) *Worker {
 	workerLog := log.With(zap.String("service", svcCfg.Name))
 
@@ -51,7 +52,7 @@ func NewWorker(
 		workerLog,
 	)
 
-	proc := newProcessor(pub, svcCfg, relayCfg.InstanceID, workerLog, failureRepo, hashVerifier)
+	proc := newProcessor(pub, svcCfg, relayCfg.InstanceID, workerLog, failureRepo, hashVerifier, guard)
 
 	concurrency := int64(relayCfg.MaxPublishConcurrency)
 	if concurrency <= 0 {
@@ -172,8 +173,19 @@ func (w *Worker) runCycle(ctx context.Context) int {
 		case result.isPoison:
 			// Poison events: ack them out of the outbox so they don't
 			// re-enter the lease cycle. They are already on the poison DLQ.
+			if result.terminalAck {
+				toAck = append(toAck, result.eventID)
+				log.Warn("poison event acked from outbox and routed to DLQ",
+					zap.String("event_id", result.eventID),
+				)
+			} else {
+				// Durable record failed; withhold ACK.
+				toNack = append(toNack, result.eventID)
+			}
+		case result.terminalAck:
+			// Exhausted publish failures with durable record -> terminal ACK.
 			toAck = append(toAck, result.eventID)
-			log.Warn("poison event acked from outbox and routed to DLQ",
+			log.Warn("exhausted publish failure acked from outbox after durable ledger record",
 				zap.String("event_id", result.eventID),
 			)
 		default:
@@ -251,8 +263,17 @@ func (w *Worker) runEdgeCycle(ctx context.Context) int {
 		case result.success:
 			toAck = append(toAck, result.eventID)
 		case result.isPoison:
+			if result.terminalAck {
+				toAck = append(toAck, result.eventID)
+				log.Warn("poison edge event acked from outbox and routed to DLQ",
+					zap.String("event_id", result.eventID),
+				)
+			} else {
+				toNack = append(toNack, result.eventID)
+			}
+		case result.terminalAck:
 			toAck = append(toAck, result.eventID)
-			log.Warn("poison edge event acked from outbox and routed to DLQ",
+			log.Warn("exhausted edge publish failure acked from outbox after durable ledger record",
 				zap.String("event_id", result.eventID),
 			)
 		default:
@@ -327,8 +348,17 @@ func (w *Worker) runIntentCycle(ctx context.Context) int {
 		case result.success:
 			toAck = append(toAck, result.eventID)
 		case result.isPoison:
+			if result.terminalAck {
+				toAck = append(toAck, result.eventID)
+				log.Warn("poison intent event acked from outbox and routed to DLQ",
+					zap.String("event_id", result.eventID),
+				)
+			} else {
+				toNack = append(toNack, result.eventID)
+			}
+		case result.terminalAck:
 			toAck = append(toAck, result.eventID)
-			log.Warn("poison intent event acked from outbox and routed to DLQ",
+			log.Warn("exhausted intent publish failure acked from outbox after durable ledger record",
 				zap.String("event_id", result.eventID),
 			)
 		default:

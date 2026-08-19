@@ -13,6 +13,7 @@
  *
  * `tenant_id` is never sent from the browser — the BFF injects it from the signed-in session.
  */
+import { csrfMutationHeaders } from '@/services/auth/csrfBrowser'
 import { errorMessageFromProxyResponse, normalizeAuthorizationHeader } from './intakeHttpShared'
 
 export const SETTLEMENT_UPLOAD_PROXY_PATH = '/api/settlement/upload'
@@ -23,7 +24,10 @@ export const SETTLEMENT_FILE_ACCEPT =
 
 export type PostSettlementFileUploadParams = {
   file: File
-  /** Optional; server uses `ZORD_SETTLEMENT_API_KEY` or `ZORD_BULK_INGEST_API_KEY` when unset. */
+  /**
+   * Optional explicit Authorization. When empty, `/api/settlement/upload` uses the
+   * signed-in session cookie only — never a server env ingest key (CON-P0-02).
+   */
   apiKeyRaw?: string
   /** Ignored by BFF: tenant is injected from the signed-in session. */
   tenantId?: string
@@ -54,10 +58,10 @@ export async function postSettlementFileUpload(params: PostSettlementFileUploadP
   const formData = new FormData()
   formData.append('file', params.file, params.file.name)
 
-  const uploadHeaders: Record<string, string> = {
+  const uploadHeaders: Record<string, string> = csrfMutationHeaders({
     'X-Zord-Force-Reprocess': 'true',
     'X-Zord-Force-Reprocess-Reason': 'CLIENT_CORRECTED_FILE',
-  }
+  })
   if (batchId) uploadHeaders['Batch-Id'] = batchId
   if (auth) uploadHeaders.authorization = auth
 

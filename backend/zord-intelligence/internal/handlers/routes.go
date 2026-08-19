@@ -54,6 +54,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/zord/zord-intelligence/internal/auth"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
@@ -84,6 +85,7 @@ func NewRouter(
 	dashRCAH *DashboardRCAHandler,
 	dashBubbleMapH *DashboardBubbleMapHandler,
 	dashBatchContractH *DashboardBatchContractHandler,
+	traceH *TraceHandler,
 ) http.Handler {
 
 	r := chi.NewRouter()
@@ -93,15 +95,22 @@ func NewRouter(
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
 
-	// Phase 7 Issue 7 Fix: Attach global Tenant Validation Header injection guarding routes.
-	r.Use(TenantIsolationMiddleware)
-
 	// ── Health check endpoints ─────────────────────────────────────────────
+	// Registered before the auth group below so k8s liveness/readiness
+	// probes stay unauthenticated (INTEL-01 fix: these were previously
+	// incidentally caught by the old global TenantIsolationMiddleware).
 	r.Get("/healthz", healthH.Liveness)
 	r.Get("/readyz", healthH.Readiness)
 
 	// ── API v1 routes ──────────────────────────────────────────────────────
 	r.Route("/v1/intelligence", func(r chi.Router) {
+		// INTEL-01: every route under /v1/intelligence requires a
+		// cryptographically verified JWT, and any caller-supplied tenant_id
+		// (query or header) must match the verified principal's tenant.
+		// Replaces the old TenantIsolationMiddleware, which only compared
+		// two client-supplied values against each other.
+		r.Use(chiMW(auth.RequireAuth))
+		r.Use(chiMW(auth.RequireTenantMatch))
 
 		// ── KPI / Projection endpoints (Grade B gated in kpi_handler.go) ───
 
@@ -182,6 +191,11 @@ func NewRouter(
 		r.Get("/explanations/{snapshot_id}", explanationH.GetExplanation)
 		r.Post("/explain-batch", explanationH.ExplainBatch)
 
+		// ── INTEL-04: trace drilldown endpoint ─────────────────────────────
+		// GET /v1/intelligence/trace/{trace_id}?tenant_id=X
+		// Every event_receipts row sharing this trace_id, chronological order.
+		r.Get("/trace/{trace_id}", traceH.GetTrace)
+
 		// ── Dashboard KPI endpoints (frontend-facing) ─────────────────────
 		//
 		// All paths contain /dashboard/ so they are identifiable as
@@ -208,13 +222,15 @@ func NewRouter(
 		})
 
 		// ── Policy endpoints ───────────────────────────────────────────────
+		// INTEL-02: mutating policy operations require the POLICY_ADMIN role.
+		// Reads (list/get) stay auth-only.
 		r.Route("/policies", func(r chi.Router) {
 			r.Get("/", policyH.ListPolicies)
-			r.Post("/", policyH.CreatePolicy)
+			r.With(chiMW(auth.RequireRole(auth.RolePolicyAdmin))).Post("/", policyH.CreatePolicy)
 			r.Route("/{id}", func(r chi.Router) {
 				r.Get("/", policyH.GetPolicy)
-				r.Post("/enable", policyH.EnablePolicy)
-				r.Post("/disable", policyH.DisablePolicy)
+				r.With(chiMW(auth.RequireRole(auth.RolePolicyAdmin))).Post("/enable", policyH.EnablePolicy)
+				r.With(chiMW(auth.RequireRole(auth.RolePolicyAdmin))).Post("/disable", policyH.DisablePolicy)
 			})
 		})
 
@@ -236,10 +252,11 @@ func NewRouter(
 			// GET /v1/intelligence/actions?tenant_id=X&policy_family=LEAKAGE
 			r.Get("/", actionH.ListActions)
 
+			// INTEL-02: approve/dismiss require the ACTION_APPROVER role.
 			r.Route("/{action_id}", func(r chi.Router) {
 				r.Get("/", actionH.GetAction)
-				r.Post("/approve", actionH.ApproveAction)
-				r.Post("/dismiss", actionH.DismissAction)
+				r.With(chiMW(auth.RequireRole(auth.RoleActionApprover))).Post("/approve", actionH.ApproveAction)
+				r.With(chiMW(auth.RequireRole(auth.RoleActionApprover))).Post("/dismiss", actionH.DismissAction)
 			})
 		})
 	})

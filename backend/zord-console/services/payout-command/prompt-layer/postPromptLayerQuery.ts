@@ -2,6 +2,8 @@
  * Ask Zord workspace → `/api/prompt-layer/query` (RAG / evidence layer).
  * Breakpoint-friendly: request + JSON parse live here.
  */
+import { csrfMutationHeaders } from '@/services/auth/csrfBrowser'
+
 export const PROMPT_LAYER_QUERY_PATH = '/api/prompt-layer/query'
 
 /** Session tenant required for prompt-layer — no demo / mock fallback. */
@@ -59,16 +61,16 @@ export type PostPromptLayerQueryResult = {
 
 export async function postPromptLayerQuery(
   body: PostPromptLayerQueryBody,
-  ctx: PromptLayerRequestContext,
+  _ctx: PromptLayerRequestContext,
 ): Promise<PostPromptLayerQueryResult> {
+  // CON-P0-04: identity is derived server-side from the session cookie.
+  // Do not send x-tenant-id / x-user-id / x-session-id / Authorization from the browser.
+  // CON-P1-01: still send CSRF double-submit header when the cookie is present.
   const response = await fetch(PROMPT_LAYER_QUERY_PATH, {
     method: 'POST',
-    headers: {
-  'content-type': 'application/json',
-  'x-tenant-id': ctx.tenantId,
-  'x-session-id': ctx.sessionId,
-  ...(ctx.userId?.trim() ? { 'x-user-id': ctx.userId.trim() } : {}),
-},
+    headers: csrfMutationHeaders({
+      'content-type': 'application/json',
+    }),
     credentials: 'include',
     cache: 'no-store',
     body: JSON.stringify(body),

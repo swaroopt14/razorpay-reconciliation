@@ -30,11 +30,13 @@ package handlers
 //   GET  /v1/intelligence/actions?tenant_id=X&scope_field=contract_id&scope_value=ctr_01
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/zord/zord-intelligence/internal/auth"
 	"github.com/zord/zord-intelligence/internal/models"
 	"github.com/zord/zord-intelligence/internal/persistence"
 	"github.com/zord/zord-intelligence/internal/services"
@@ -168,12 +170,18 @@ func (h *ActionHandler) ListActions(w http.ResponseWriter, r *http.Request) {
 // GetAction handles GET /v1/intelligence/actions/{action_id}
 func (h *ActionHandler) GetAction(w http.ResponseWriter, r *http.Request) {
 	actionID := chi.URLParam(r, "action_id")
-	if actionID == "" {
-		writeError(w, http.StatusBadRequest, "action_id is required")
+	tenantID := r.URL.Query().Get("tenant_id")
+	if actionID == "" || tenantID == "" {
+		writeError(w, http.StatusBadRequest, "action_id and tenant_id are required")
 		return
 	}
 
-	action, err := h.actionRepo.GetByID(r.Context(), actionID)
+	// INTEL-02: tenant-scoped lookup — an action_id is not secret, so an
+	// unscoped GetByID would let any caller who can guess/enumerate an ID
+	// read another tenant's action. RequireTenantMatch has already rejected
+	// any tenant_id that doesn't belong to the verified principal by the
+	// time this handler runs, so tenantID here is trustworthy.
+	action, err := h.actionRepo.GetByIDForTenant(r.Context(), tenantID, actionID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to fetch action")
 		return
@@ -233,16 +241,18 @@ func (h *ActionHandler) ApproveAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	approved, err := h.actionService.ApproveAction(r.Context(), tenantID, actionID)
+	approved, err := h.actionService.ApproveAction(r.Context(), tenantID, actionID, actorFromRequest(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to approve action")
 		return
 	}
 	if !approved {
 		// Either not found, wrong tenant, or not in PENDING_APPROVAL.
-		// We check existence first to give a precise status code.
-		action, lookupErr := h.actionRepo.GetByID(r.Context(), actionID)
-		if lookupErr != nil || action == nil || action.TenantID != tenantID {
+		// We check existence first to give a precise status code. Tenant
+		// scoping happens at the query level now (INTEL-02) instead of a
+		// manual TenantID comparison after an unscoped fetch.
+		action, lookupErr := h.actionRepo.GetByIDForTenant(r.Context(), tenantID, actionID)
+		if lookupErr != nil || action == nil {
 			writeError(w, http.StatusNotFound, "action not found")
 			return
 		}
@@ -277,14 +287,14 @@ func (h *ActionHandler) DismissAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dismissed, err := h.actionService.DismissAction(r.Context(), tenantID, actionID)
+	dismissed, err := h.actionService.DismissAction(r.Context(), tenantID, actionID, actorFromRequest(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to dismiss action")
 		return
 	}
 	if !dismissed {
-		action, lookupErr := h.actionRepo.GetByID(r.Context(), actionID)
-		if lookupErr != nil || action == nil || action.TenantID != tenantID {
+		action, lookupErr := h.actionRepo.GetByIDForTenant(r.Context(), tenantID, actionID)
+		if lookupErr != nil || action == nil {
 			writeError(w, http.StatusNotFound, "action not found")
 			return
 		}
@@ -301,6 +311,28 @@ func (h *ActionHandler) DismissAction(w http.ResponseWriter, r *http.Request) {
 }
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
+
+// actorFromRequest builds the ActorInfo INTEL-02's audit trail records for
+// an approve/dismiss decision: identity comes from the verified principal
+// RequireAuth already put on context (never client-supplied), and an
+// optional {"reason": "..."} JSON body supplies the reason. A missing or
+// empty body is fine — reason is recorded as "" rather than rejected, since
+// requiring it would be a client-visible breaking API change beyond this
+// ticket's scope.
+func actorFromRequest(r *http.Request) services.ActorInfo {
+	principal, _ := auth.FromContext(r.Context())
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&body) // best-effort; empty/absent body is fine
+	}
+	return services.ActorInfo{
+		SubjectID: principal.SubjectID,
+		Roles:     principal.Roles,
+		Reason:    body.Reason,
+	}
+}
 
 // parseLimit parses the limit query param with a safe default and max.
 func parseLimit(s string) int {

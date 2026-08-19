@@ -1,3 +1,4 @@
+import { csrfMutationHeaders } from '@/services/auth/csrfBrowser'
 import { apiTrimmedString } from './coerceApiField'
 import type { EvidencePackVerifyResponse } from './evidenceTypes'
 
@@ -22,7 +23,7 @@ export async function postEvidencePackVerify(packId: string): Promise<EvidencePa
     const response = await fetch(path, {
       method: 'POST',
       credentials: 'include',
-      headers: { 'content-type': 'application/json' },
+      headers: csrfMutationHeaders({ 'content-type': 'application/json' }),
       body: '{}',
       cache: 'no-store',
     })

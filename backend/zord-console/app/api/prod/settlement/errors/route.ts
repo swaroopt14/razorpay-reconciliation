@@ -4,6 +4,7 @@ import {
   resolveSettlementUploadContext,
   TENANT_MISMATCH_BODY,
 } from '@/services/auth/resolvePayoutTenant.server'
+import { publicBffError } from '@/services/bff/publicBffError'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -15,10 +16,7 @@ function settlementBase() {
 
 /** Proxy: GET /api/prod/settlement/errors → outcome-engine settlement parse errors. */
 export async function GET(request: NextRequest) {
-  const ctx = await resolveSettlementUploadContext(
-    request,
-    process.env.ZORD_SETTLEMENT_API_KEY ?? process.env.ZORD_BULK_INGEST_API_KEY,
-  )
+  const ctx = await resolveSettlementUploadContext(request)
   if (!ctx.ok) return ctx.response
   const tenantId = ctx.tenantId
 
@@ -61,14 +59,16 @@ export async function GET(request: NextRequest) {
     applyRefreshedSessionCookies(res, ctx.refreshedPayload)
     return res
   } catch (error) {
-    const res = NextResponse.json(
-      {
-        error: 'settlement parse errors upstream unavailable',
+    const res = publicBffError({
+      code: 'UPSTREAM_UNAVAILABLE',
+      message: 'Settlement parse errors are temporarily unavailable. Retry shortly.',
+      status: 502,
+      log: {
+        route: '/api/prod/settlement/errors',
         upstream: url,
-        details: error instanceof Error ? error.message : 'unknown',
+        error,
       },
-      { status: 502 },
-    )
+    })
     applyRefreshedSessionCookies(res, ctx.refreshedPayload)
     return res
   }

@@ -121,7 +121,7 @@ func TestPolicyRepo_SetEnabled_AppendsActivationHistory(t *testing.T) {
 	// toggle ON, then OFF, then ON again — 4 activation rows total
 	// (1 initial-disabled from Insert + 3 toggles).
 	for _, enabled := range []bool{true, false, true} {
-		if err := repo.SetEnabled(ctx, policyID, enabled); err != nil {
+		if err := repo.SetEnabled(ctx, policyID, enabled, "test_actor"); err != nil {
 			t.Fatalf("SetEnabled(%v): %v", enabled, err)
 		}
 	}

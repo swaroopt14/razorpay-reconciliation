@@ -38,6 +38,19 @@ type Config struct {
 	ReadTimeout         time.Duration
 	WriteTimeout        time.Duration
 	ShutdownTimeout     time.Duration
+
+	// InternalServiceKey gates the /internal/evidence/* endpoints.
+	// Must be a long random secret, never exposed publicly.
+	// Loaded from EVIDENCE_INTERNAL_KEY env var.
+	InternalServiceKey string
+
+	// JWTSigningSecret is the shared secret used to validate tokens from zord-edge.
+	// Loaded from JWT_SIGNING_SECRET env var.
+	JWTSigningSecret string
+
+	// RelayAuthToken gates the /internal/outbox/* endpoints — must match the
+	// auth_token zord-relay sends via X-Relay-Token. Loaded from RELAY_AUTH_TOKEN.
+	RelayAuthToken string
 }
 
 func Load() (*Config, error) {
@@ -115,6 +128,9 @@ func Load() (*Config, error) {
 		ReadTimeout:         10 * time.Second,
 		WriteTimeout:        20 * time.Second,
 		ShutdownTimeout:     time.Duration(shutdownSec) * time.Second,
+		InternalServiceKey:  os.Getenv("EVIDENCE_INTERNAL_KEY"),
+		JWTSigningSecret:    os.Getenv("JWT_SIGNING_SECRET"),
+		RelayAuthToken:      os.Getenv("RELAY_AUTH_TOKEN"),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -144,6 +160,15 @@ func (c *Config) validate() error {
 	}
 	if strings.TrimSpace(c.ArchiveEncryptKey) == "" {
 		errs = append(errs, "EVIDENCE_ARCHIVE_ENCRYPTION_KEY_BASE64 is required in production")
+	}
+	if strings.TrimSpace(c.InternalServiceKey) == "" {
+		errs = append(errs, "EVIDENCE_INTERNAL_KEY is required in production")
+	}
+	if strings.TrimSpace(c.JWTSigningSecret) == "" {
+		errs = append(errs, "JWT_SIGNING_SECRET is required in production")
+	}
+	if strings.TrimSpace(c.RelayAuthToken) == "" {
+		errs = append(errs, "RELAY_AUTH_TOKEN is required in production")
 	}
 
 	if len(errs) > 0 {

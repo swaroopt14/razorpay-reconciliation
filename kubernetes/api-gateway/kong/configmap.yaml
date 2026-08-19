@@ -35,8 +35,8 @@ data:
       - name: zord-edge
         url: http://zord-edge.zord.svc.cluster.local:8080
         connect_timeout: 10000
-        write_timeout: 60000
-        read_timeout: 60000
+        write_timeout: 1800000
+        read_timeout: 1800000
         retries: 3
         routes:
           - name: edge-admin
@@ -401,6 +401,8 @@ data:
           require_content_length: false
 
       # ── Response Transformer (Security Headers) ─────────────────────────────
+      # CON-P1-02: HSTS stays at ingress; CSP/Permissions-Policy align with
+      # backend/zord-console/security-headers.js (console also sets these in next.config).
       - name: response-transformer
         config:
           add:
@@ -410,6 +412,8 @@ data:
               - "X-XSS-Protection: 1; mode=block"
               - "Strict-Transport-Security: max-age=31536000; includeSubDomains"
               - "Referrer-Policy: strict-origin-when-cross-origin"
+              - "Permissions-Policy: accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+              - "Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests"
           remove:
             headers:
               - Server
