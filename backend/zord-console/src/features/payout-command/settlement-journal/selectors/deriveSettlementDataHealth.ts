@@ -1,4 +1,4 @@
-﻿import type { SettlementObservationTableRow } from '@/services/payout-command/prod-api/settlementObservations'
+import type { SettlementObservationTableRow } from '@/services/payout-command/prod-api/settlementObservations'
 import { mapMatchStatus, settlementMappingConfidence } from '../mappers/mapMatchStatus'
 import { formatJournalMoney } from '../../intent-journal/formatJournalMoney'
 

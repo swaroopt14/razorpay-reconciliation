@@ -1,4 +1,4 @@
-﻿import type { IntentJournalPaymentIntentItem, IntentJournalDlqItem } from '@/services/payout-command/prod-api/intentJournalTypes'
+import type { IntentJournalPaymentIntentItem, IntentJournalDlqItem } from '@/services/payout-command/prod-api/intentJournalTypes'
 import { readIntentQualityScore } from '@/services/payout-command/prod-api/resolveIntentQualityScore'
 import { READINESS_REVIEW_THRESHOLD } from '../mappers/mapIntentTableRow'
 import {

@@ -1,4 +1,4 @@
-﻿'use client'
+'use client'
 
 import { JournalIntelligenceKpiHero } from '../../command-center/JournalIntelligenceKpiHero'
 import { useJournalBatchSelection } from '../context/JournalBatchSelectionContext'

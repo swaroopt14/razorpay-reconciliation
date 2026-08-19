@@ -1,4 +1,4 @@
-﻿import type { IntentEngineBatchSidebarItem, PaymentIntentRecord } from './getProdIntentEngineBatches'
+import type { IntentEngineBatchSidebarItem, PaymentIntentRecord } from './getProdIntentEngineBatches'
 import type { ApiDlqRow } from './prodApiTypes'
 import type { IntelligenceBatchRow } from './intelligenceTypes'
 import { apiTrimmedString } from './coerceApiField'
