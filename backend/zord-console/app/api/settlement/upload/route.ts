@@ -26,7 +26,8 @@ function settlementBase() {
 /**
  * Proxies browser multipart upload to:
  * POST /v1/settlement/upload?tenant_id=<session>&psp=<query>&batch_id=<header optional>
- * Headers: Batch-Id, X-Zord-Force-Reprocess, X-Zord-Force-Reprocess-Reason, Authorization
+ * Headers: Batch-Id, Authorization; optional X-Zord-Force-Reprocess(+Reason) only when explicit.
+ * CON-P0-03: missing force is treated as false — never default to correction/reprocess.
  */
 
 export async function POST(req: NextRequest) {
@@ -75,11 +76,32 @@ export async function POST(req: NextRequest) {
 
   if (batchId?.trim()) headers['Batch-Id'] = batchId.trim()
 
-  const force = req.headers.get('x-zord-force-reprocess') ?? 'true'
-  headers['X-Zord-Force-Reprocess'] = force
+  // CON-P0-03: never default force/correction. Only forward when the client
+  // explicitly opts into reprocess/correction (Outcome Engine distinguishes new /
+  // duplicate / same-content reprocess / changed-content correction).
+  const forceRaw = req.headers.get('x-zord-force-reprocess')?.trim().toLowerCase()
+  const forceReprocess = forceRaw === 'true'
+  const reason = req.headers.get('x-zord-force-reprocess-reason')?.trim() || ''
 
-  const reason = req.headers.get('x-zord-force-reprocess-reason') ?? 'CLIENT_CORRECTED_FILE'
-  headers['X-Zord-Force-Reprocess-Reason'] = reason
+  if (forceReprocess) {
+    if (!reason) {
+      return NextResponse.json(
+        {
+          error: 'X-Zord-Force-Reprocess-Reason is required when force reprocessing.',
+          allowed: ['CLIENT_CORRECTED_FILE', 'PARSER_FIX', 'BACKFILL', 'MANUAL'],
+        },
+        { status: 400 },
+      )
+    }
+    if (!batchId?.trim()) {
+      return NextResponse.json(
+        { error: 'Batch-Id (or batch_id) is required for reprocess/correction uploads.' },
+        { status: 400 },
+      )
+    }
+    headers['X-Zord-Force-Reprocess'] = 'true'
+    headers['X-Zord-Force-Reprocess-Reason'] = reason
+  }
 
   let lastError: unknown = null
   try {
