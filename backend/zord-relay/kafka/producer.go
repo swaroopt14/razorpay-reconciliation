@@ -76,6 +76,10 @@ func (p *Producer) Publish(topic, key string, value interface{}, headers map[str
 	return nil
 }
 
+func (p *Producer) InternalProducer() sarama.SyncProducer {
+	return p.p
+}
+
 func (p *Producer) Close() error {
 	return p.p.Close()
 }

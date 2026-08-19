@@ -22,6 +22,9 @@ type OutboxEvent struct {
 	RawRowHash        *string    `json:"raw_row_hash,omitempty" db:"raw_row_hash"`
 	EnvelopeHash      string     `json:"envelope_hash" db:"envelope_hash"`
 	EnvelopeSignature string     `json:"envelope_signature" db:"envelope_signature"`
+	ContentType       string     `json:"content_type" db:"content_type"`
+	KMSKeyVersion     string     `json:"kms_key_version" db:"kms_key_version"`
+	EncryptionKeyID   string     `json:"encryption_key_id" db:"encryption_key_id"`
 	Topic             string     `json:"topic" db:"topic"`
 	Status            string     `json:"status" db:"status"`
 	Attempts          int        `json:"retry_count" db:"attempts"`
@@ -29,6 +32,11 @@ type OutboxEvent struct {
 	LeaseID           *uuid.UUID `json:"lease_id" db:"lease_id"`
 	LeasedBy          *string    `json:"leased_by" db:"leased_by"`
 	EventType         string     `json:"event_type" db:"event_type"`
+	// EventVersion / SchemaVersion are stamped in the Lease handler — they
+	// are constant per producer, not per-row data, so they have no backing
+	// DB column (mirrors zord-intent-engine/zord-outcome-engine).
+	EventVersion      string     `json:"event_version,omitempty"`
+	SchemaVersion     string     `json:"schema_version,omitempty"`
 	LeaseUntil        *time.Time `json:"lease_until" db:"lease_until"`
 	CreatedAt         time.Time  `json:"created_at" db:"created_at"`
 	UpdatedAt         *time.Time `json:"updated_at" db:"updated_at"`

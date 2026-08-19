@@ -77,6 +77,17 @@ spec:
                 configMapKeyRef:
                   name: zord-aws-config
                   key: KAFKA_BROKERS
+            # ── SASL/SCRAM Authentication (PLAT-06) ──
+            - name: KAFKA_SASL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: zord-app-secrets
+                  key: KAFKA_INTELLIGENCE_USERNAME
+            - name: KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: zord-app-secrets
+                  key: KAFKA_INTELLIGENCE_PASSWORD
             - name: KAFKA_GROUP_ID
               value: zord-intelligence-group
             - name: INTELLIGENCE_MODE
@@ -88,6 +99,17 @@ spec:
                   key: OTEL_EXPORTER_OTLP_ENDPOINT
             - name: OTEL_SERVICE_NAME
               value: zord-intelligence
+            # INTEL-01: same shared secret zord-edge signs access tokens with
+            # and Kong verifies at the gateway — already exists in
+            # zord-app-secrets (see zord-intent-engine/deployment.yaml), just
+            # mounting it into one more deployment.
+            - name: JWT_SIGNING_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: zord-app-secrets
+                  key: JWT_SIGNING_SECRET
+            - name: JWT_ISSUER
+              value: zord-edge
           readinessProbe:
             httpGet:
               path: /readyz

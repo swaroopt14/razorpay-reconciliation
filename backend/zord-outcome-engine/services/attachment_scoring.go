@@ -234,7 +234,7 @@ func ScoreCandidate(
 	if intent.ClientPayoutRef != nil && obs.ClientReferenceCandidate != nil &&
 		strings.EqualFold(*intent.ClientPayoutRef, *obs.ClientReferenceCandidate) &&
 		*intent.ClientPayoutRef != "" {
-		bd.BusinessReferenceScore += 100
+		bd.BusinessReferenceScore += 110
 		cs.ClientRefMatch = true
 		cs.ExactRefMatch = true
 	}
@@ -243,7 +243,7 @@ func ScoreCandidate(
 	if intent.BusinessIdempotencyKey != nil && obs.ClientReferenceCandidate != nil &&
 		strings.EqualFold(*intent.BusinessIdempotencyKey, *obs.ClientReferenceCandidate) &&
 		*intent.BusinessIdempotencyKey != "" {
-		bd.BusinessReferenceScore += 95
+		bd.BusinessReferenceScore += 100
 		cs.ExactRefMatch = true
 	}
 
@@ -251,7 +251,7 @@ func ScoreCandidate(
 	if intent.SourceRowNum != nil && obs.SourceRowRef != "" {
 		if sourceRowRef, err := strconv.Atoi(obs.SourceRowRef); err == nil &&
 			*intent.SourceRowNum == sourceRowRef {
-			bd.BatchContextScore += 50
+			bd.BatchContextScore += 80
 			cs.BatchMatch = true
 			// Intentionally NOT setting cs.ExactRefMatch.
 		}
@@ -259,7 +259,7 @@ func ScoreCandidate(
 
 	// Bank reference: +85 (presence only; cannot grant ExactRefMatch alone)
 	if obs.BankReference != nil && *obs.BankReference != "" {
-		bd.ProviderBankReferenceScore += 85
+		bd.ProviderBankReferenceScore += 30
 		cs.BankRefMatch = true
 	}
 
@@ -267,7 +267,7 @@ func ScoreCandidate(
 	if intent.BeneficiaryFingerprint != nil && obs.BeneficiaryFingerprint != nil &&
 		strings.EqualFold(*intent.BeneficiaryFingerprint, *obs.BeneficiaryFingerprint) &&
 		*intent.BeneficiaryFingerprint != "" {
-		bd.QualityModifiers += 35
+		bd.QualityModifiers += 45
 	}
 
 	// ── LAYER 2: Composite / soft matching ───────────────────────────────────

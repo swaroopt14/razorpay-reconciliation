@@ -495,6 +495,35 @@ func (p *KafkaPublisher) Close() error {
 	return p.producer.Close()
 }
 
+func (p *KafkaPublisher) BuildProducerMessage(topic string, key string, value []byte, headers []sarama.RecordHeader) *sarama.ProducerMessage {
+	return &sarama.ProducerMessage{
+		Topic:   topic,
+		Key:     sarama.StringEncoder(key),
+		Value:   sarama.ByteEncoder(value),
+		Headers: headers,
+	}
+}
+
+func (p *KafkaPublisher) SendMessage(msg *sarama.ProducerMessage) (partition int32, offset int64, err error) {
+	return p.producer.SendMessage(msg)
+}
+
+func (p *KafkaPublisher) BuildHeaders(ctx context.Context, event *model.OutboxEvent) []sarama.RecordHeader {
+	return p.buildHeaders(ctx, event)
+}
+
+func (p *KafkaPublisher) BuildEdgeHeaders(ctx context.Context, event *model.EdgeOutboxEvent) []sarama.RecordHeader {
+	return p.buildEdgeHeaders(ctx, event)
+}
+
+func (p *KafkaPublisher) BuildIntentHeaders(ctx context.Context, event *model.IntentOutboxEvent) []sarama.RecordHeader {
+	return p.buildIntentHeaders(ctx, event)
+}
+
+func (p *KafkaPublisher) BuildDLQHeaders(ctx context.Context, event *model.DLQItemEvent) []sarama.RecordHeader {
+	return p.buildDLQHeaders(ctx, event)
+}
+
 func (p *KafkaPublisher) buildHeaders(ctx context.Context, event *model.OutboxEvent) []sarama.RecordHeader {
 	headers := []sarama.RecordHeader{
 		{Key: []byte("trace_id"), Value: []byte(event.TraceID)},

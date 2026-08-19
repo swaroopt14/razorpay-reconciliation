@@ -41,6 +41,9 @@ services:
       # --- Production mode (secrets must be set in .env) ---
       - APP_ENV=production
 
+      # --- Relay auth (must match zord-relay config.yaml's evidence-service auth_token) ---
+      - RELAY_AUTH_TOKEN=dev-dummy-token-123
+
       # --- Secrets (set in .env — service will not start without these) ---
       # EVIDENCE_ARCHIVE_ENCRYPTION_KEY_BASE64=
 

@@ -3,25 +3,26 @@ package vault
 import (
 	"crypto/aes"
 	"crypto/cipher"
-	"encoding/base64"
 	"errors"
 )
 
-var encryptionKey []byte
+// DecryptPayload opens context-bound ciphertext produced by zord-edge.
+// Legacy blobs without the bound marker are opened with nil AAD (pre-EDGE-06).
+func DecryptPayload(ctx EncryptionContext, ciphertext []byte, _ string) ([]byte, error) {
+	if len(encryptionKey) == 0 {
+		return nil, errors.New("vault is not initialized")
+	}
+	if len(ciphertext) == 0 {
+		return nil, errors.New("ciphertext is empty")
+	}
 
-func InitVaultKey(base64Key string) error {
-	key, err := base64.StdEncoding.DecodeString(base64Key)
-	if err != nil {
-		return err
+	if ciphertext[0] == ciphertextBoundMarker {
+		return open(ciphertext[1:], ctx.AAD())
 	}
-	if len(key) != 32 {
-		return errors.New("vault key must be 32 bytes")
-	}
-	encryptionKey = key
-	return nil
+	return open(ciphertext, nil)
 }
 
-func DecryptPayload(ciphertext []byte) ([]byte, error) {
+func open(ciphertext, aad []byte) ([]byte, error) {
 	block, err := aes.NewCipher(encryptionKey)
 	if err != nil {
 		return nil, err
@@ -30,22 +31,11 @@ func DecryptPayload(ciphertext []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	nonceSize := aesGCM.NonceSize()
-
-	if len(ciphertext) < nonceSize {
+	if len(ciphertext) < aesGCM.NonceSize() {
 		return nil, errors.New("ciphertext too short")
 	}
 
-	nonce := ciphertext[:nonceSize]
-	encryptedData := ciphertext[nonceSize:]
-
-	nonce = ciphertext[:nonceSize]
-	encryptedData = ciphertext[nonceSize:]
-
-	plaintext, err := aesGCM.Open(nil, nonce, encryptedData, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return plaintext, nil
+	nonce := ciphertext[:aesGCM.NonceSize()]
+	encryptedData := ciphertext[aesGCM.NonceSize():]
+	return aesGCM.Open(nil, nonce, encryptedData, aad)
 }

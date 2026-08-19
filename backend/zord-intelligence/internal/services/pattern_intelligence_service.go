@@ -898,6 +898,14 @@ func (s *PatternIntelligenceService) computeVariancePatterns(
 	return
 }
 
+// roundMinor rounds a money value to whole minor currency units (e.g. whole
+// paise). Minor units are by definition the smallest currency subdivision, so
+// a fractional minor-unit value is noise from intermediate arithmetic (Mul/Div)
+// that must be cleaned up before the value reaches a JSON response.
+func roundMinor(d decimal.Decimal) decimal.Decimal {
+	return d.Round(0)
+}
+
 // computeManualReviewSummary aggregates tenant-level manual review KPIs (section F).
 // Reads all source projections and aggregates reason breakdowns.
 func (s *PatternIntelligenceService) computeManualReviewSummary(
@@ -941,7 +949,7 @@ func (s *PatternIntelligenceService) computeManualReviewSummary(
 		topReasons = append(topReasons, ReasonBreakdown{
 			ReasonCode:  code,
 			Count:       cnt,
-			AmountMinor: reasonAmounts[code],
+			AmountMinor: roundMinor(reasonAmounts[code]),
 			Rate:        rate,
 		})
 	}

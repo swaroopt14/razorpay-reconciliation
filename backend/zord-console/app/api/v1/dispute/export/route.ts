@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import ExcelJS from 'exceljs'
+import { assertCookieMutationProtection } from '@/services/auth/assertSameOrigin.server'
 import {
   applyEvidenceGateCookies,
   gateEvidenceTenant,
@@ -155,25 +156,30 @@ function pickPackFromList(reference: string, rows: EvidencePackSummaryRow[]): Ev
   return rows[0] ?? null
 }
 
-async function resolvePack(tenantId: string, paymentReference: string): Promise<EvidencePackFull | null> {
-  const byId = await getEvidencePackById(tenantId, paymentReference)
+async function resolvePack(
+  tenantId: string,
+  accessToken: string,
+  paymentReference: string,
+): Promise<EvidencePackFull | null> {
+  const byId = await getEvidencePackById(tenantId, accessToken, paymentReference)
   if (byId.ok) return byId.data
 
   const directIntent = await listEvidencePacksByQuery(
     tenantId,
+    accessToken,
     new URLSearchParams({ intent_id: paymentReference }),
   )
   if (directIntent.ok && (directIntent.data.packs?.length ?? 0) > 0) {
     const first = directIntent.data.packs[0]
-    const full = await getEvidencePackById(tenantId, first.evidence_pack_id)
+    const full = await getEvidencePackById(tenantId, accessToken, first.evidence_pack_id)
     if (full.ok) return full.data
   }
 
-  const broad = await listEvidencePacksByQuery(tenantId, new URLSearchParams())
+  const broad = await listEvidencePacksByQuery(tenantId, accessToken, new URLSearchParams())
   if (broad.ok && (broad.data.packs?.length ?? 0) > 0) {
     const match = pickPackFromList(paymentReference, broad.data.packs)
     if (match) {
-      const full = await getEvidencePackById(tenantId, match.evidence_pack_id)
+      const full = await getEvidencePackById(tenantId, accessToken, match.evidence_pack_id)
       if (full.ok) return full.data
     }
   }
@@ -182,6 +188,9 @@ async function resolvePack(tenantId: string, paymentReference: string): Promise<
 }
 
 export async function POST(request: NextRequest) {
+  const csrf = assertCookieMutationProtection(request)
+  if (!csrf.ok) return csrf.response
+
   const gate = await gateEvidenceTenant(request)
   if (!gate.ok) return gate.response
 
@@ -209,7 +218,7 @@ export async function POST(request: NextRequest) {
     return res
   }
 
-  const pack = await resolvePack(gate.tenantId, paymentReference)
+  const pack = await resolvePack(gate.tenantId, gate.accessToken, paymentReference)
   if (!pack) {
     const res = NextResponse.json(
       { error: `No evidence pack found for payment_reference ${paymentReference}` },

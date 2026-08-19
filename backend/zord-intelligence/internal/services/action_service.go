@@ -34,6 +34,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -74,6 +75,15 @@ func NewActionService(
 //
 // PHASE 5: RequiresManualApproval, PolicyFamily, Severity are new.
 // They come from the Policy row that triggered this action.
+// ActorInfo identifies who is approving/dismissing an action and why
+// (INTEL-02 audit trail). Sourced from the verified auth.AuthPrincipal on
+// the request — never from client-supplied identity.
+type ActorInfo struct {
+	SubjectID string
+	Roles     []string
+	Reason    string
+}
+
 type CreateActionRequest struct {
 	TenantID       string
 	PolicyID       string
@@ -308,6 +318,7 @@ func (s *ActionService) CreateAction(
 func (s *ActionService) ApproveAction(
 	ctx context.Context,
 	tenantID, actionID string,
+	actor ActorInfo,
 ) (approved bool, err error) {
 	// Fetch the current contract to get the decision type and payload
 	contract, err := s.actionRepo.GetByID(ctx, actionID)
@@ -331,8 +342,12 @@ func (s *ActionService) ApproveAction(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Transition to APPROVED
-	updated, err := s.actionRepo.UpdateStatus(ctx, actionID, models.ContractStatusApproved)
+	// Transition to APPROVED. Uses UpdateStatusTx (not UpdateStatus) so the
+	// status change is actually part of this transaction, atomic with the
+	// outbox insert and audit decision row below — previously this called
+	// the non-tx UpdateStatus here, so a later failure/rollback in this same
+	// tx could leave contract_status=APPROVED with no outbox entry.
+	updated, err := s.actionRepo.UpdateStatusTx(ctx, tx, actionID, models.ContractStatusApproved)
 	if err != nil {
 		return false, fmt.Errorf("action_service.ApproveAction UpdateStatus action=%s: %w", actionID, err)
 	}
@@ -374,6 +389,19 @@ func (s *ActionService) ApproveAction(
 		return false, fmt.Errorf("action_service.ApproveAction insert outbox: %w", err)
 	}
 
+	if err := s.actionRepo.RecordDecisionTx(ctx, tx, models.ActionContractDecision{
+		ActionID:             actionID,
+		TenantID:             contract.TenantID,
+		Decision:             "APPROVED",
+		ActorSubjectID:       actor.SubjectID,
+		ActorRoles:           strings.Join(actor.Roles, ","),
+		Reason:               actor.Reason,
+		PriorContractStatus:  string(contract.ContractStatus),
+		PriorIntegrityDigest: contract.IntegrityDigest,
+	}); err != nil {
+		return false, fmt.Errorf("action_service.ApproveAction record decision: %w", err)
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return false, fmt.Errorf("action_service.ApproveAction commit: %w", err)
 	}
@@ -394,6 +422,7 @@ func (s *ActionService) ApproveAction(
 func (s *ActionService) DismissAction(
 	ctx context.Context,
 	tenantID, actionID string,
+	actor ActorInfo,
 ) (dismissed bool, err error) {
 	contract, err := s.actionRepo.GetByID(ctx, actionID)
 	if err != nil {
@@ -406,19 +435,47 @@ func (s *ActionService) DismissAction(
 		return false, nil
 	}
 
-	updated, err := s.actionRepo.UpdateStatus(ctx, actionID, models.ContractStatusDismissed)
+	// Open a transaction: status update + audit decision row must be atomic
+	// (INTEL-02) — previously this called UpdateStatus with no transaction
+	// at all.
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("action_service.DismissAction begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	updated, err := s.actionRepo.UpdateStatusTx(ctx, tx, actionID, models.ContractStatusDismissed)
 	if err != nil {
 		return false, fmt.Errorf("action_service.DismissAction UpdateStatus action=%s: %w", actionID, err)
 	}
-
-	if updated {
-		logger.Info("action dismissed",
-			"action_id", actionID,
-			"tenant_id", tenantID,
-			"decision", string(contract.Decision),
-		)
+	if !updated {
+		// Race condition: another goroutine already processed this dismissal
+		return false, nil
 	}
-	return updated, nil
+
+	if err := s.actionRepo.RecordDecisionTx(ctx, tx, models.ActionContractDecision{
+		ActionID:             actionID,
+		TenantID:             contract.TenantID,
+		Decision:             "DISMISSED",
+		ActorSubjectID:       actor.SubjectID,
+		ActorRoles:           strings.Join(actor.Roles, ","),
+		Reason:               actor.Reason,
+		PriorContractStatus:  string(contract.ContractStatus),
+		PriorIntegrityDigest: contract.IntegrityDigest,
+	}); err != nil {
+		return false, fmt.Errorf("action_service.DismissAction record decision: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("action_service.DismissAction commit: %w", err)
+	}
+
+	logger.Info("action dismissed",
+		"action_id", actionID,
+		"tenant_id", tenantID,
+		"decision", string(contract.Decision),
+	)
+	return true, nil
 }
 
 // ── Private helpers ────────────────────────────────────────────────────────────

@@ -104,7 +104,41 @@ CREATE INDEX idx_ac_scope_type_ref
 CREATE INDEX idx_ac_policy_registry
 	ON action_contracts (policy_registry_id);
 
+-- INTEL-02: append-only audit trail for action approve/dismiss decisions.
+-- action_contracts above is immutable by design (only contract_status may
+-- change) so actor/reason/prior-state facts live in their own table rather
+-- than as columns bolted onto that row — same shape as policy_activations.
+CREATE TABLE action_contract_decisions (
+	decision_id            UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+	action_id              TEXT         NOT NULL REFERENCES action_contracts(action_id),
+	tenant_id              TEXT         NOT NULL,
+	decision               TEXT         NOT NULL
+	                       CHECK (decision IN ('APPROVED', 'DISMISSED')),
+	actor_subject_id       TEXT         NOT NULL,
+	actor_roles            TEXT,
+	reason                 TEXT,
+	-- Status immediately before this decision — always 'PENDING_APPROVAL'
+	-- today (the only state approve/dismiss can transition out of), captured
+	-- as TEXT rather than hardcoded so a future additional transition path
+	-- doesn't require a migration to represent it.
+	prior_contract_status  TEXT         NOT NULL,
+	-- action_contracts.integrity_digest at decision time -- "prior hash":
+	-- self-contained proof of exactly which immutable contract version was
+	-- acted on, independent of anything that changes on the parent row later.
+	prior_integrity_digest TEXT         NOT NULL,
+	decided_at             TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_action_contract_decisions_action
+	ON action_contract_decisions (action_id, decided_at DESC);
+
+CREATE INDEX idx_action_contract_decisions_tenant
+	ON action_contract_decisions (tenant_id, decided_at DESC);
+
 -- +goose Down
+DROP INDEX idx_action_contract_decisions_tenant;
+DROP INDEX idx_action_contract_decisions_action;
+DROP TABLE action_contract_decisions;
 DROP INDEX idx_ac_policy_registry;
 DROP INDEX idx_ac_scope_type_ref;
 DROP INDEX idx_ac_status_created;

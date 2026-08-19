@@ -1,6 +1,23 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
+import { assertCookieMutationProtection } from '@/services/auth/assertSameOrigin.server'
+import {
+  applyRefreshedSessionCookies,
+  requireSessionIdentityForProdProxy,
+} from '@/services/auth/resolvePayoutTenant.server'
+import { publicBffError } from '@/services/bff/publicBffError'
 
-// Always proxy at request time (no caching), since this depends on runtime env + backend state.
+/**
+ * CON-P0-04 + CON-P1-01 + CON-P1-06 — Ask Zord / Prompt Layer BFF.
+ *
+ * MERGE RULE (do not regress on conflict resolution):
+ * 1) CSRF / same-origin via assertCookieMutationProtection (CON-P1-01)
+ * 2) Identity ONLY from requireSessionIdentityForProdProxy — never client
+ *    Authorization / x-tenant-id / x-user-id / x-session-id (CON-P0-04)
+ * 3) Public errors via publicBffError only — no upstream URLs in body (CON-P1-06)
+ * When merging with master, keep ALL three behaviors; never accept a side that
+ * restores client identity forwarding or drops CSRF / publicBffError.
+ */
+
 export const dynamic = 'force-dynamic'
 
 function normalizePromptLayerBase(base: string) {
@@ -8,8 +25,6 @@ function normalizePromptLayerBase(base: string) {
 }
 
 function upstreamCandidates() {
-  // In Docker, the service DNS name is the most reliable target.
-  // Keep host and localhost fallbacks for local/frontend-only development.
   return Array.from(
     new Set(
       [
@@ -24,42 +39,116 @@ function upstreamCandidates() {
   )
 }
 
-export async function POST(req: Request) {
-  const candidateUrls = upstreamCandidates().map((base) => `${normalizePromptLayerBase(base)}/query`)
+/** Simple per-tenant sliding window for expensive Ask Zord / prompt-layer calls. */
+const rateBuckets = new Map<string, { count: number; resetAt: number }>()
+
+function consumePromptRateLimit(tenantId: string): { ok: true } | { ok: false; retryAfterSec: number } {
+  const windowMs = 60_000
+  const maxPerMin = Math.max(
+    1,
+    Number.parseInt(process.env.PROMPT_LAYER_RATE_LIMIT_PER_MIN || '30', 10) || 30,
+  )
+  const now = Date.now()
+  let bucket = rateBuckets.get(tenantId)
+  if (!bucket || now >= bucket.resetAt) {
+    bucket = { count: 0, resetAt: now + windowMs }
+    rateBuckets.set(tenantId, bucket)
+  }
+  bucket.count += 1
+  if (bucket.count > maxPerMin) {
+    return { ok: false, retryAfterSec: Math.max(1, Math.ceil((bucket.resetAt - now) / 1000)) }
+  }
+  return { ok: true }
+}
+
+export async function POST(req: NextRequest) {
+  // CON-P1-01: cookie mutations must be same-origin (+ CSRF when session present).
+  const csrf = assertCookieMutationProtection(req)
+  if (!csrf.ok) return csrf.response
+
+  // CON-P0-04: session identity only — ignore browser identity headers.
+  const identity = await requireSessionIdentityForProdProxy(req)
+  if (!identity.ok) return identity.response
+
+  const rate = consumePromptRateLimit(identity.tenantId)
+  if (!rate.ok) {
+    const res = publicBffError({
+      code: 'RATE_LIMITED',
+      message: 'Too many Ask Zord requests. Try again shortly.',
+      status: 429,
+      log: { route: '/api/prompt-layer/query', extra: { tenantId: identity.tenantId } },
+    })
+    res.headers.set('retry-after', String(rate.retryAfterSec))
+    applyRefreshedSessionCookies(res, identity.refreshedPayload, req)
+    return res
+  }
 
   let body: unknown
   try {
     body = await req.json()
   } catch {
-    return NextResponse.json({ details: 'Invalid JSON body' }, { status: 400 })
+    const res = publicBffError({
+      code: 'INVALID_BODY',
+      message: 'Request body must be valid JSON.',
+      status: 400,
+      log: { route: '/api/prompt-layer/query' },
+    })
+    applyRefreshedSessionCookies(res, identity.refreshedPayload, req)
+    return res
   }
 
-  let res: Response | null = null
+  // Never trust client-supplied tenant/user/session fields inside the JSON body.
+  if (body && typeof body === 'object' && !Array.isArray(body)) {
+    const next = { ...(body as Record<string, unknown>) }
+    delete next.tenant_id
+    delete next.tenantId
+    delete next.user_id
+    delete next.userId
+    delete next.session_id
+    delete next.sessionId
+    body = next
+  }
+
+  const serviceToken = process.env.PROMPT_LAYER_SERVICE_TOKEN?.trim()
+  const bearer = serviceToken || identity.accessToken
+  if (!bearer) {
+    const res = publicBffError({
+      code: 'UNAUTHORIZED',
+      message: 'Session required for this resource.',
+      status: 401,
+      log: { route: '/api/prompt-layer/query' },
+    })
+    applyRefreshedSessionCookies(res, identity.refreshedPayload, req)
+    return res
+  }
+
+  const candidateUrls = upstreamCandidates().map((base) => `${normalizePromptLayerBase(base)}/query`)
+  let resUpstream: Response | null = null
   let lastError: unknown = null
   let lastUrl = candidateUrls[candidateUrls.length - 1]
+
+  const forwardHeaders: Record<string, string> = {
+    'content-type': 'application/json',
+    authorization: `Bearer ${bearer}`,
+    // Derived from Edge session only — never from the browser request.
+    'x-tenant-id': identity.tenantId,
+    'x-user-id': identity.userId,
+  }
+  if (identity.sessionId) {
+    forwardHeaders['x-session-id'] = identity.sessionId
+  }
 
   for (const url of candidateUrls) {
     lastUrl = url
     try {
-      const auth = req.headers.get('authorization') || ''
-      const tenant = req.headers.get('x-tenant-id') || ''
-      const userId = req.headers.get('x-user-id') || ''
-      const sessionId = req.headers.get('x-session-id') || ''
-
-      res = await fetch(url, {
+      resUpstream = await fetch(url, {
         method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          ...(auth ? { authorization: auth } : {}),
-          ...(tenant ? { 'x-tenant-id': tenant } : {}),
-          ...(userId ? { 'x-user-id': userId } : {}),
-          ...(sessionId ? { 'x-session-id': sessionId } : {}),
-        },
+        headers: forwardHeaders,
         body: JSON.stringify(body),
         cache: 'no-store',
       })
 
-      if (res.ok || res.status < 500) {
+      if (resUpstream.ok || resUpstream.status < 500) {
         break
       }
     } catch (error) {
@@ -67,28 +156,34 @@ export async function POST(req: Request) {
     }
   }
 
-  if (!res) {
-    return NextResponse.json(
-      {
-        details: 'Prompt-layer service unavailable',
+  if (!resUpstream) {
+    // CON-P1-06: never put upstream URL / exception text in the customer body.
+    const res = publicBffError({
+      code: 'UPSTREAM_UNAVAILABLE',
+      message: 'Ask Zord is temporarily unavailable. Retry shortly.',
+      status: 502,
+      log: {
+        route: '/api/prompt-layer/query',
         upstream: lastUrl,
-        error: lastError instanceof Error ? lastError.message : 'Unknown upstream error',
+        error: lastError,
       },
-      { status: 502 },
-    )
+    })
+    applyRefreshedSessionCookies(res, identity.refreshedPayload, req)
+    return res
   }
 
-  const text = await res.text()
-  return new NextResponse(text, {
-    status: res.status,
+  const text = await resUpstream.text()
+  const res = new NextResponse(text, {
+    status: resUpstream.status,
     headers: {
-      'content-type': res.headers.get('content-type') || 'application/json; charset=utf-8',
+      'content-type': resUpstream.headers.get('content-type') || 'application/json; charset=utf-8',
       'cache-control': 'no-store',
     },
   })
+  applyRefreshedSessionCookies(res, identity.refreshedPayload, req)
+  return res
 }
 
 export async function OPTIONS() {
-  // Same-origin calls to /api/... typically don't require CORS, but OPTIONS may happen in some setups.
   return new NextResponse(null, { status: 204 })
 }

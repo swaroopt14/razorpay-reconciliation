@@ -3,6 +3,7 @@ package routes
 import (
 	"github.com/gin-gonic/gin"
 
+	"zord-edge/config"
 	"zord-edge/handler"
 	"zord-edge/middleware"
 	"zord-edge/validator"
@@ -27,7 +28,11 @@ func Routes(router *gin.Engine, h *handler.Handler) {
 
 	// Webhook routes
 	webhooks := router.Group("/v1/raw/envelopes")
-	webhooks.Use(middleware.VerifyWebhookSignature(), middleware.TransportValidation()) //Need to check with sudarshan
+	webhooks.Use(
+		middleware.VerifyWebhookSignature(),
+		middleware.TransportValidation(),
+		middleware.MaxRequestBodyBytes(middleware.MaxIngestBodyBytes),
+	)
 	{
 		webhooks.POST("/webhooks/:provider/:connectorID", h.WebhookHandler)
 	}
@@ -46,6 +51,7 @@ func Routes(router *gin.Engine, h *handler.Handler) {
 	// JSON ingest (needs JSON validation + idempotency header)
 	protected.POST(
 		"/ingest",
+		middleware.MaxRequestBodyBytes(middleware.MaxIngestBodyBytes),
 		middleware.ValidateIntentRequest(),
 		middleware.GetIdempotencyKey(),
 		h.IntentHandler,
@@ -54,6 +60,7 @@ func Routes(router *gin.Engine, h *handler.Handler) {
 	// Bulk ingest (multipart, so no JSON validation, no header idempotency)
 	protected.POST(
 		"/bulk-ingest",
+		middleware.MaxRequestBodyBytes(config.MaxBulkUploadBytes),
 		h.BulkIntentHandler,
 	)
 

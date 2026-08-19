@@ -1,12 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { assertCookieMutationProtection } from '@/services/auth/assertSameOrigin.server'
 import { applyAuthCookies } from '@/services/auth/server'
 import {
   applyRefreshedSessionCookies,
   resolveSettlementUploadContext,
 } from '@/services/auth/resolvePayoutTenant.server'
+import { publicBffError } from '@/services/bff/publicBffError'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
+
+/**
+ * Settlement upload BFF.
+ * MERGE RULE: keep assertCookieMutationProtection + session auth (no env API-key
+ * fallback) + publicBffError on upstream failure. Never restore leaky upstream JSON.
+ */
 
 /** Outcome-engine settlement ingest (default local: :8081). */
 function settlementBase() {
@@ -21,15 +29,17 @@ function settlementBase() {
  */
 
 export async function POST(req: NextRequest) {
+  // Cookie browser path: same-origin + CSRF. Explicit Authorization (API key) bypasses.
+  const csrf = assertCookieMutationProtection(req, { allowBearerBypass: true })
+  if (!csrf.ok) return csrf.response
+
   const contentType = req.headers.get('content-type')
   if (!contentType?.toLowerCase().includes('multipart/form-data')) {
     return NextResponse.json({ error: 'Expected multipart/form-data with file.' }, { status: 400 })
   }
 
-  const ctx = await resolveSettlementUploadContext(
-    req,
-    process.env.ZORD_SETTLEMENT_API_KEY ?? process.env.ZORD_BULK_INGEST_API_KEY,
-  )
+  // CON-P0-02: session and/or explicit Authorization only — no ZORD_*_API_KEY fallback.
+  const ctx = await resolveSettlementUploadContext(req)
   if (!ctx.ok) return ctx.response
 
   const psp = req.nextUrl.searchParams.get('psp')
@@ -77,23 +87,25 @@ export async function POST(req: NextRequest) {
       },
     })
     if (ctx.refreshedPayload) {
-      applyAuthCookies(res, ctx.refreshedPayload)
+      applyAuthCookies(res, ctx.refreshedPayload, req)
     }
-    applyRefreshedSessionCookies(res, ctx.refreshedPayload)
+    applyRefreshedSessionCookies(res, ctx.refreshedPayload, req)
     return res
   } catch (error) {
     lastError = error
   }
 
-  const res = NextResponse.json(
-    {
-      error: 'Settlement upload upstream unavailable',
+  const res = publicBffError({
+    code: 'UPSTREAM_UNAVAILABLE',
+    message: 'Settlement upload is temporarily unavailable. Retry shortly.',
+    status: 502,
+    log: {
+      route: '/api/settlement/upload',
       upstream: url,
-      details: lastError instanceof Error ? lastError.message : 'Unknown upstream error',
+      error: lastError,
     },
-    { status: 502 },
-  )
-  if (ctx.refreshedPayload) applyAuthCookies(res, ctx.refreshedPayload)
-  applyRefreshedSessionCookies(res, ctx.refreshedPayload)
+  })
+  if (ctx.refreshedPayload) applyAuthCookies(res, ctx.refreshedPayload, req)
+  applyRefreshedSessionCookies(res, ctx.refreshedPayload, req)
   return res
 }
