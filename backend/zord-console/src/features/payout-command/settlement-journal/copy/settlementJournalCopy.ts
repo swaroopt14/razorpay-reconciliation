@@ -36,7 +36,9 @@ export const settlementJournalCopy = {
     sourceStatus: 'Source Status',
     matchStatus: 'Match Status',
     matchedPayment: 'Matched Payment',
-    matchConfidence: 'Match Confidence',
+    /** Data-quality metric only — not attachment Match Status (CON-P0-12). */
+    matchConfidence: 'Mapping confidence',
+    mappingConfidence: 'Mapping confidence',
     observedAt: 'Observed At',
     missingClientRef: 'Missing Client Ref',
     missingBankRef: 'Missing Bank Ref',
