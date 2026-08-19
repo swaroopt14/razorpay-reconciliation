@@ -25,6 +25,17 @@ type PaymentIntentLiteUpstream = {
   source_row_num?: number | string | null
   beneficiary_type?: string | null
   beneficiary?: Record<string, unknown> | null
+  status?: string | null
+  governance_state?: string | null
+  governance_decision?: string | null
+  intent_lifecycle_state?: string | null
+  business_state?: string | null
+  reason_codes?: unknown
+  governance_reason_codes?: unknown
+  score_reason_codes?: unknown
+  duplicate_reason_code?: string | null
+  remediability?: string | null
+  duplicate_risk_flag?: boolean | null
 }
 
 function coerceScore(value: unknown): number | null {
@@ -34,6 +45,12 @@ function coerceScore(value: unknown): number | null {
     return Number.isFinite(n) ? n : null
   }
   return null
+}
+
+function asTrimmedOrNull(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const t = value.trim()
+  return t ? t : null
 }
 
 function inferRailHint(item: PaymentIntentLiteUpstream): string | undefined {
@@ -113,6 +130,8 @@ export async function GET(request: NextRequest) {
         (typeof item.batch_id === 'string' && item.batch_id.trim()) ||
         batchId
 
+      const reasonCodes = item.governance_reason_codes ?? item.reason_codes ?? null
+
       return {
         tenant_id: item.tenant_id ?? gate.tenantId,
         amount: item.amount,
@@ -134,6 +153,18 @@ export async function GET(request: NextRequest) {
         beneficiary_type: item.beneficiary_type ?? null,
         beneficiary: item.beneficiary ?? null,
         rail_hint: inferRailHint(item) ?? null,
+        // CON-P0-10 — pass through authoritative decision fields (never invent Ready).
+        status: asTrimmedOrNull(item.status),
+        governance_state: asTrimmedOrNull(item.governance_state),
+        governance_decision: asTrimmedOrNull(item.governance_decision),
+        intent_lifecycle_state: asTrimmedOrNull(item.intent_lifecycle_state),
+        business_state: asTrimmedOrNull(item.business_state),
+        reason_codes: reasonCodes,
+        governance_reason_codes: reasonCodes,
+        score_reason_codes: item.score_reason_codes ?? null,
+        duplicate_reason_code: asTrimmedOrNull(item.duplicate_reason_code),
+        remediability: asTrimmedOrNull(item.remediability),
+        duplicate_risk_flag: item.duplicate_risk_flag === true,
       }
     })
 
