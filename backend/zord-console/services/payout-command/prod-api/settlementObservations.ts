@@ -1,5 +1,6 @@
 import { fetchProdJsonGetWithMeta, type ProdJsonGetResult } from './fetchProdJsonGet'
 import { apiTrimmedString } from './coerceApiField'
+import { normalizeCurrency } from '@/services/payout-command/money/money'
 
 export type SettlementObservationBatchListItem = {
   client_batch_id: string
@@ -410,7 +411,7 @@ export function mapObservationToTableRow(
     settledAmount: parseMoney(full.settled_amount ?? slim.settled_amount),
     feeAmount: parseMoney(full.fee_amount ?? slim.fee_amount),
     deductionAmount: parseMoney(full.deduction_amount ?? slim.deduction_amount),
-    currency: apiTrimmedString(full.currency_code ?? slim.currency_code ?? 'INR') || 'INR',
+    currency: normalizeCurrency(full.currency_code ?? slim.currency_code),
     statusRaw,
     status: statusRaw ? statusRaw.replace(/_/g, ' ') : '—',
     sourceSystem: displayOrDash(full.source_system ?? slim.source_system),

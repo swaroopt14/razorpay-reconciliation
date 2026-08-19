@@ -135,7 +135,7 @@ export async function GET(request: NextRequest) {
       return {
         tenant_id: item.tenant_id ?? gate.tenantId,
         amount: item.amount,
-        currency: item.currency ?? 'INR',
+        currency: item.currency ?? null,
         intended_execution_at: item.intended_execution_at ?? null,
         provider_hint: item.provider_hint ?? null,
         intent_quality_score: readIntentQualityScore(item),
