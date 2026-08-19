@@ -175,8 +175,8 @@ export const BATCH_REVIEW_COPY = {
     bankConfirmed: {
       title: 'Bank-Confirmed Value',
       subtitle: 'Payments matched with bank, settlement, or status confirmation.',
-      empty: 'Waiting for confirmation file',
-      emptyHelper: 'Upload bank/settlement data to confirm outcomes.',
+      empty: 'Unavailable',
+      emptyHelper: 'Unavailable — bank-confirmed amount not returned for this batch.',
     },
     pending: {
       title: 'Pending Confirmation',
