@@ -4,11 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
+	"regexp"
+	"strings"
+	"zord-prompt-layer/dto"
 	"zord-prompt-layer/model"
 	"zord-prompt-layer/utils"
 )
 
-func (r *LiveSQLRetriever) fetchFromEvidence(tenantID string, topK int, failureOnly bool, scope utils.QueryScope) ([]model.RetrievedChunk, error) {
+func (r *LiveSQLRetriever) fetchFromEvidence(req dto.QueryRequest, tenantID string, topK int, failureOnly bool, scope utils.QueryScope) ([]model.RetrievedChunk, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
 	defer cancel()
 
@@ -16,7 +20,64 @@ func (r *LiveSQLRetriever) fetchFromEvidence(tenantID string, topK int, failureO
 		topK = 5
 	}
 	out := make([]model.RetrievedChunk, 0, topK*2)
+	batchID := evidenceBatchIDFromRequest(req)
 
+	if batchID != "" {
+		var totalPacks, activePacks, proofReadyPacks, intentLevelPacks, batchLevelPacks int
+		var firstCreated, lastUpdated sql.NullString
+
+		err := r.evidenceDB.QueryRowContext(ctx, `
+			SELECT
+				COUNT(*)::int,
+				COUNT(*) FILTER (WHERE UPPER(COALESCE(pack_status, '')) = 'ACTIVE')::int,
+				COUNT(*) FILTER (WHERE UPPER(COALESCE(proof_status, '')) IN ('PROOF_READY', 'READY', 'VERIFIED', 'PROOF_ASSEMBLED'))::int,
+				COUNT(*) FILTER (WHERE intent_id IS NOT NULL)::int,
+				COUNT(*) FILTER (WHERE intent_id IS NULL AND batch_id IS NOT NULL)::int,
+				MIN(created_at)::text,
+				MAX(updated_at)::text
+			FROM evidence_packs
+			WHERE tenant_id = $1
+			  AND batch_id = $2
+		`, tenantID, batchID).Scan(
+			&totalPacks,
+			&activePacks,
+			&proofReadyPacks,
+			&intentLevelPacks,
+			&batchLevelPacks,
+			&firstCreated,
+			&lastUpdated,
+		)
+		if err != nil {
+			logSafeEvidenceCountError(tenantID, batchID, err)
+		} else {
+			log.Printf(
+				"[prompt-layer][evidence-db] exact counts used tenant=%s batch=%s total=%d active=%d proof_ready_or_assembled=%d intent_level=%d batch_level=%d",
+				tenantID,
+				batchID,
+				totalPacks,
+				activePacks,
+				proofReadyPacks,
+				intentLevelPacks,
+				batchLevelPacks,
+			)
+
+			out = append(out, model.RetrievedChunk{
+				SourceType: "evidence_batch_exact_counts",
+				Score:      1.25,
+				Text: fmt.Sprintf(
+					"Evidence batch exact count summary: Batch reference=%s. Total evidence packs generated=%d. Active evidence packs=%d. Proof-ready or assembled evidence packs=%d. Intent-level evidence packs=%d. Batch-level evidence packs=%d. First created=%s. Last updated=%s. Use this SQL aggregate as the source of truth for evidence pack count questions.",
+					batchID,
+					totalPacks,
+					activePacks,
+					proofReadyPacks,
+					intentLevelPacks,
+					batchLevelPacks,
+					nullText(firstCreated),
+					nullText(lastUpdated),
+				),
+			})
+		}
+	}
 	{
 		args := []any{}
 		q := `
@@ -110,4 +171,32 @@ func (r *LiveSQLRetriever) fetchFromEvidence(tenantID string, topK int, failureO
 	}
 
 	return out, nil
+}
+
+var evidenceBatchRefRe = regexp.MustCompile(`(?i)\bbatch(?:\s*id|\s*reference|\s*ref)?\s*[:#-]?\s*([A-Za-z0-9._-]+)\b`)
+
+func evidenceBatchIDFromRequest(req dto.QueryRequest) string {
+	if req.UIContext != nil {
+		if s := strings.TrimSpace(req.UIContext.BatchID); s != "" {
+			return s
+		}
+	}
+
+	matches := evidenceBatchRefRe.FindStringSubmatch(req.Query)
+	if len(matches) < 2 {
+		return ""
+	}
+
+	candidate := strings.Trim(matches[1], " .,?;:")
+	if !strings.ContainsAny(candidate, "0123456789") {
+		return ""
+	}
+	return candidate
+}
+
+func logSafeEvidenceCountError(tenantID, batchID string, err error) {
+	if err == sql.ErrNoRows {
+		return
+	}
+	fmt.Printf("[prompt-layer][evidence-db] exact count query failed tenant=%s batch=%s err=%v\n", tenantID, batchID, err)
 }

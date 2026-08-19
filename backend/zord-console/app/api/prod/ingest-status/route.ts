@@ -3,6 +3,7 @@ import { BACKEND_SERVICES } from '@/config/api.endpoints'
 import {
   applyRefreshedSessionCookies,
   requireSessionTenantForProdProxy,
+  sessionUpstreamHeaders,
 } from '@/services/auth/resolvePayoutTenant.server'
 
 export const dynamic = 'force-dynamic'
@@ -16,10 +17,10 @@ type IngestSource = {
   detail?: string
 }
 
-async function probeJson<T>(url: string, tenantId: string): Promise<T | null> {
+async function probeJson<T>(url: string, tenantId: string, accessToken: string): Promise<T | null> {
   try {
     const res = await fetch(url, {
-      headers: { 'content-type': 'application/json', 'x-tenant-id': tenantId },
+      headers: sessionUpstreamHeaders(tenantId, accessToken),
       cache: 'no-store',
     })
     if (!res.ok) return null
@@ -33,6 +34,7 @@ export async function GET(request: NextRequest) {
   const gate = await requireSessionTenantForProdProxy(request)
   if (!gate.ok) return gate.response
   const tenantId = gate.tenantId
+  const accessToken = gate.accessToken
 
   const intentBase = BACKEND_SERVICES.INTENT_ENGINE.BASE_URL
   const intelBase = BACKEND_SERVICES.INTELLIGENCE.BASE_URL
@@ -42,22 +44,27 @@ export async function GET(request: NextRequest) {
     probeJson<{ pagination?: { total?: number }; items?: unknown[] }>(
       `${intentBase}/v1/intents?page=1&page_size=1&tenant_id=${encodeURIComponent(tenantId)}`,
       tenantId,
+      accessToken,
     ),
     probeJson<{ items?: unknown[]; observations?: unknown[] }>(
       `${(process.env.ZORD_SETTLEMENT_URL || 'http://localhost:8081').replace(/\/$/, '')}/v1/settlement/observations/batches?tenant_id=${encodeURIComponent(tenantId)}`,
       tenantId,
+      accessToken,
     ),
     probeJson<{ packs?: unknown[] }>(
       `${evidenceBase}${BACKEND_SERVICES.EVIDENCE.ENDPOINTS.PACKS}?tenant_id=${encodeURIComponent(tenantId)}&limit=1`,
       tenantId,
+      accessToken,
     ),
     probeJson<{ data_available?: boolean; bank_confirmed_rate?: number }>(
       `${intelBase}${BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.DEFENSIBILITY}?tenant_id=${encodeURIComponent(tenantId)}`,
       tenantId,
+      accessToken,
     ),
     probeJson<{ data_available?: boolean; total_count?: number }>(
       `${intelBase}${BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.PATTERNS}?tenant_id=${encodeURIComponent(tenantId)}`,
       tenantId,
+      accessToken,
     ),
   ])
 

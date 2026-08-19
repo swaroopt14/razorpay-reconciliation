@@ -4,7 +4,10 @@ import { assertCookieMutationProtection } from '@/services/auth/assertSameOrigin
 import {
   applyRefreshedSessionCookies,
   requireSessionTenantForProdProxy,
+  sessionUpstreamHeaders,
 } from '@/services/auth/resolvePayoutTenant.server'
+import { consumeBffRateLimit, rateLimitKeyForTenant } from '@/services/bff/rateLimit.server'
+import { publicBffError } from '@/services/bff/publicBffError'
 
 export const dynamic = 'force-dynamic'
 
@@ -17,7 +20,17 @@ export async function POST(
 
   const gate = await requireSessionTenantForProdProxy(request)
   if (!gate.ok) return gate.response
+  const rate = consumeBffRateLimit({
+    bucket: 'evidence_verify',
+    key: rateLimitKeyForTenant(gate.tenantId),
+    message: 'Too many evidence verify requests. Try again shortly.',
+  })
+  if (!rate.ok) {
+    applyRefreshedSessionCookies(rate.response, gate.refreshedPayload)
+    return rate.response
+  }
   const tenantId = gate.tenantId
+  const accessToken = gate.accessToken
   const { packId } = await context.params
   const encoded = encodeURIComponent(packId)
 
@@ -26,10 +39,7 @@ export async function POST(
   try {
     const upstream = await fetch(url, {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-tenant-id': tenantId,
-      },
+      headers: sessionUpstreamHeaders(tenantId, accessToken),
       body: await request.text(),
       cache: 'no-store',
     })
@@ -44,12 +54,17 @@ export async function POST(
     applyRefreshedSessionCookies(res, gate.refreshedPayload)
     return res
   } catch (error) {
-    const res = NextResponse.json({
-      data_available: false,
-      reason: 'evidence_verify_unreachable',
-      pack_id: packId,
-      detail: error instanceof Error ? error.message : 'unknown',
-    }, { status: 502 })
+    const res = publicBffError({
+      code: 'UPSTREAM_UNAVAILABLE',
+      message: 'Evidence verification is temporarily unavailable. Retry shortly.',
+      status: 502,
+      log: {
+        route: '/api/prod/evidence/packs/[packId]/verify',
+        upstream: url,
+        error,
+        extra: { pack_id: packId },
+      },
+    })
     applyRefreshedSessionCookies(res, gate.refreshedPayload)
     return res
   }

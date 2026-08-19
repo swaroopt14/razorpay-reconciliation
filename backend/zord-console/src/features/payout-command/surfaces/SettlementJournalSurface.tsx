@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -19,7 +19,8 @@ import { downloadCsv, observationsToCsv } from '../settlement-journal/settlement
 import {
   observationInDateRange,
   matchesAmountRange,
-  outcomeFromMatchConfidence,
+  outcomeFromFinalityAndCoverage,
+  finalityCoverageFromBatchDetail,
   type AmountRangeFilter,
   type DateRangePreset,
   type SettlementSidebarOutcome,
@@ -43,8 +44,7 @@ import {
   type SettlementParseErrorRow,
 } from '@/services/payout-command/prod-api/settlementObservations'
 import { markSandboxSetupStep } from '@/services/payout-command/sandbox-setup-guide'
-import { getBatchContractKpis } from '@/services/payout-command/prod-api/getIntelligenceKpis'
-import { parseMatchConfidence } from '../settlement-journal/selectors/resolveSettlementIntelligenceKpis'
+import { getIntelligenceBatchDetail } from '@/services/payout-command/prod-api/getIntelligenceKpis'
 import { LiveDataHint } from '../shared'
 import { useRegisterPayoutPageActions } from '../layout/PayoutPageActionsContext'
 
@@ -137,7 +137,7 @@ function SettlementJournalSurfaceContent({
 }) {
   const { mode } = useEnvironment()
   const batchCommandCenterHref = payoutBatchCommandCenterHref(mode === 'sandbox')
-  const { kpis } = useSettlementBatchIntelligence(selectedClientBatchId, tenantReady)
+  const { batchDetail } = useSettlementBatchIntelligence(selectedClientBatchId, tenantReady)
 
   const [tableSearch, setTableSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<'All' | string>('All')
@@ -197,22 +197,22 @@ function SettlementJournalSurfaceContent({
     }
   }, [mode, feedLoaded, observationTotal])
 
-  // Pre-populate sidebar status for the first page of batches (not the full catalogue).
+  // Pre-populate sidebar outcome from Service 5 finality + coverage (not match confidence).
   useEffect(() => {
     if (!feedLoaded || !tenantReady || clientBatches.length === 0) return
     const idsToPrefetch = clientBatches.slice(0, BATCH_CONTRACT_PREFETCH_CAP)
     void (async () => {
       try {
         const results = await Promise.allSettled(
-          idsToPrefetch.map((bid) => getBatchContractKpis(bid)),
+          idsToPrefetch.map((bid) => getIntelligenceBatchDetail(bid)),
         )
         const entries: Record<string, SettlementSidebarOutcome> = {}
         for (let i = 0; i < idsToPrefetch.length; i++) {
           const result = results[i]
           if (result?.status !== 'fulfilled' || !result.value) continue
-          const confidence = parseMatchConfidence(result.value.match_confidence)
-          if (confidence == null) continue
-          entries[idsToPrefetch[i]!] = outcomeFromMatchConfidence(confidence)
+          entries[idsToPrefetch[i]!] = outcomeFromFinalityAndCoverage(
+            finalityCoverageFromBatchDetail(result.value),
+          )
         }
         if (Object.keys(entries).length > 0) {
           setBatchMatchOutcomeCache((prev) => ({ ...entries, ...prev }))
@@ -223,13 +223,13 @@ function SettlementJournalSurfaceContent({
 
   useEffect(() => {
     if (!selectedClientBatchId) return
-    const outcome = outcomeFromMatchConfidence(kpis.matchConfidence)
+    const outcome = outcomeFromFinalityAndCoverage(finalityCoverageFromBatchDetail(batchDetail))
     setBatchMatchOutcomeCache((prev) => ({ ...prev, [selectedClientBatchId]: outcome }))
-  }, [selectedClientBatchId, kpis.matchConfidence])
+  }, [selectedClientBatchId, batchDetail])
 
   const liveMatchOutcome = useMemo(
-    () => outcomeFromMatchConfidence(kpis.matchConfidence),
-    [kpis.matchConfidence],
+    () => outcomeFromFinalityAndCoverage(finalityCoverageFromBatchDetail(batchDetail)),
+    [batchDetail],
   )
 
   useEffect(() => {
@@ -544,3 +544,5 @@ function SettlementJournalSurfaceContent({
     </div>
   )
 }
+
+

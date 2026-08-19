@@ -45,8 +45,16 @@ type IntentOutboxEvent struct {
 	LeasedBy    string          `json:"leased_by,omitempty"`
 	LeaseUntil  *time.Time      `json:"lease_until,omitempty"`
 	PayloadHash string          `json:"payload_hash"`
-	BatchID     *string         `json:"batchid,omitempty"`
-	CorridorID  *string         `json:"corridor_id,omitempty"`
+	// CanonicalPayloadHash is SHA-256 of the exact bytes in Payload (the
+	// canonical, post-transformation intent JSON), computed by Postgres as
+	// a GENERATED column on zord-intent-engine's outbox table -- distinct
+	// from PayloadHash, which is SHA-256 of the raw, pre-transformation
+	// ingest payload and describes a different byte sequence entirely.
+	// VerifyPayload must compare against this field, since Payload's bytes
+	// are all this service ever receives.
+	CanonicalPayloadHash string  `json:"canonical_payload_hash"`
+	BatchID              *string `json:"batchid,omitempty"`
+	CorridorID           *string `json:"corridor_id,omitempty"`
 
 	// Intent metadata (synchronized from payment_intents).
 	IdempotencyKey      string          `json:"idempotency_key,omitempty"`

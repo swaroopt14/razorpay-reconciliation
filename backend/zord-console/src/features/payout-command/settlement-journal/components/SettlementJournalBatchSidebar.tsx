@@ -101,22 +101,29 @@ export function SettlementJournalBatchSidebar({
                     {batchId}
                   </span>
                 </div>
-                {liveOutcome && liveOutcome.progressPct > 0 ? (
+                {liveOutcome && (liveOutcome.progressPct > 0 || liveOutcome.finalityStatus) ? (
                   <span className={`shrink-0 text-[14px] font-semibold tabular-nums ${liveOutcome.toneText}`}>
-                    {liveOutcome.progressPct}%
+                    {liveOutcome.progressPct > 0 ? `${liveOutcome.progressPct}%` : liveOutcome.label}
                   </span>
                 ) : null}
               </div>
               <p className="mt-0.5 pl-4 text-[13px] text-[#64748b]">{observationCountLine}</p>
-              {selected && liveOutcome && liveOutcome.progressPct > 0 ? (
+              {selected && liveOutcome ? (
                 <div className="mt-2 space-y-1.5 pl-4">
-                  <div className="h-1 w-full overflow-hidden rounded-full bg-[#E5E5E5]">
-                    <div
-                      className={`h-full rounded-full ${liveOutcome.barClass}`}
-                      style={{ width: `${liveOutcome.progressPct}%` }}
-                    />
-                  </div>
-                  <p className={`text-[13px] font-semibold ${liveOutcome.toneText}`}>{liveOutcome.label}</p>
+                  {liveOutcome.progressPct > 0 ? (
+                    <div className="h-1 w-full overflow-hidden rounded-full bg-[#E5E5E5]">
+                      <div
+                        className={`h-full rounded-full ${liveOutcome.barClass}`}
+                        style={{ width: `${liveOutcome.progressPct}%` }}
+                      />
+                    </div>
+                  ) : null}
+                  <p className={`text-[13px] font-semibold ${liveOutcome.toneText}`}>
+                    {liveOutcome.label}
+                    {liveOutcome.finalityStatus ? (
+                      <span className="ml-1 font-medium text-[#64748b]">· {liveOutcome.finalityStatus}</span>
+                    ) : null}
+                  </p>
                 </div>
               ) : null}
             </button>

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"zord-outcome-engine/models"
 	"zord-outcome-engine/storage"
 
 	"github.com/google/uuid"
@@ -90,6 +91,14 @@ func (h *OutboxHandler) Lease(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "failed to lease outbox events", http.StatusInternalServerError)
 		return
+	}
+
+	// Stamp the standard cross-service envelope fields (event_version,
+	// schema_version) that aren't outbox DB columns — they're constant per
+	// producer, not per-row data. Mirrors zord-intent-engine's outbox handler.
+	for i := range events {
+		events[i].EventVersion = models.EventVersionV1
+		events[i].SchemaVersion = models.SchemaVersionV1
 	}
 
 	writeJSON(w, http.StatusOK, leaseResponse{

@@ -26,9 +26,15 @@ func (h *KeyHandler) RotateKey(c *gin.Context) {
 		return
 	}
 
-	err := h.svc.RotateKey(c.Request.Context(), req.TenantID, req.Actor)
+	rotated, err := h.svc.RotateKey(c.Request.Context(), req.TenantID, req.Actor)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	if !rotated {
+		// Another replica is already rotating this tenant right now
+		// (TOK-07 advisory lock) -- not a failure, just not our turn.
+		c.JSON(409, gin.H{"error": "rotation already in progress for this tenant"})
 		return
 	}
 

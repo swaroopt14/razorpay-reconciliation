@@ -22,6 +22,7 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"zord-intent-engine/db"
+	"zord-intent-engine/internal/auth"
 	"zord-intent-engine/internal/canonicalizer"
 	"zord-intent-engine/internal/models"
 	"zord-intent-engine/internal/normalizer"
@@ -291,6 +292,72 @@ func (s *IntentService) EmitDLQVectorIndexRequest(dlq models.DLQEntry) {
 		},
 	)
 }
+func (s *IntentService) maybeEmitCompletedBatchVectorIndex(ctx context.Context, tenantID, batchID string) {
+	tenantID = strings.TrimSpace(tenantID)
+	batchID = strings.TrimSpace(batchID)
+
+	if s == nil || s.vectorPublisher == nil || tenantID == "" || batchID == "" {
+		return
+	}
+
+	var totalRows, acceptedRows, failedRows, duplicateRows int
+	var status string
+
+	err := s.db.QueryRowContext(ctx, `
+		SELECT
+			COALESCE(total_rows, 0),
+			COALESCE(accepted_rows, 0),
+			COALESCE(failed_rows, 0),
+			COALESCE(duplicate_rows, 0),
+			COALESCE(status, '')
+		FROM intent_ingest_runs
+		WHERE tenant_id = $1::uuid
+		  AND batch_id = $2
+	`, tenantID, batchID).Scan(
+		&totalRows,
+		&acceptedRows,
+		&failedRows,
+		&duplicateRows,
+		&status,
+	)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			log.Printf("[intent-engine][vector-index] completion check failed tenant=%s batch_id=%s err=%v", tenantID, batchID, err)
+		}
+		return
+	}
+
+	processedRows := acceptedRows + failedRows + duplicateRows
+	if totalRows <= 0 || processedRows < totalRows || !strings.EqualFold(status, "COMPLETED") {
+		log.Printf("[intent-engine][vector-index] batch not complete tenant=%s batch_id=%s processed=%d total=%d status=%s", tenantID, batchID, processedRows, totalRows, status)
+		return
+	}
+
+	log.Printf("[intent-engine][vector-index] final batch emit tenant=%s entity=intent_batch id=%s processed=%d total=%d accepted=%d failed=%d duplicate=%d",
+		tenantID,
+		batchID,
+		processedRows,
+		totalRows,
+		acceptedRows,
+		failedRows,
+		duplicateRows,
+	)
+
+	s.emitVectorIndexRequest(
+		"intent_batch.updated.v1",
+		tenantID,
+		"intent_batch",
+		batchID,
+		batchID,
+		map[string]string{
+			"vector_summary_scope": "batch",
+			"total_rows":           strconv.Itoa(totalRows),
+			"accepted_rows":        strconv.Itoa(acceptedRows),
+			"failed_rows":          strconv.Itoa(failedRows),
+			"duplicate_rows":       strconv.Itoa(duplicateRows),
+		},
+	)
+}
 
 // resolveBusinessDate returns tenantID's business_date for now, via the
 // per-tenant timezone configured in tenant_business_date_config (4.2.7),
@@ -352,11 +419,23 @@ func parseAmount(value string) (decimal.Decimal, error) {
 	return decimal.NewFromString(v) // exact decimal, no rounding
 }
 
+// TOK-04: tenant_id is intentionally NOT part of this request body anymore
+// -- the enclave now derives it solely from the verified service JWT minted
+// below (kept as a plain function argument to MintServiceToken instead).
+// object_ref/correlation_id are new mandatory fields the enclave enforces.
 type enclaveTokenizeRequest struct {
-	TenantID string            `json:"tenant_id"`
-	TraceID  string            `json:"trace_id"`
-	PII      map[string]string `json:"pii"`
+	TenantID      string            `json:"-"`
+	TraceID       string            `json:"trace_id"`
+	ObjectRef     string            `json:"object_ref"`
+	CorrelationID string            `json:"correlation_id"`
+	PII           map[string]string `json:"pii"`
 }
+
+// enclavePurposeCode is the one purpose_code this service is allowed to use
+// against zord-token-enclave's TOK-04 issuer allow-list -- must match the
+// enclave's own internal/serviceauth allowedPurposeCodes entry for
+// "zord-intent-engine" exactly.
+const enclavePurposeCode = "INTENT_PROCESSING"
 
 func callEnclaveTokenize(ctx context.Context, req enclaveTokenizeRequest) (map[string]string, error) {
 	var lastErr error
@@ -393,9 +472,18 @@ func callEnclaveTokenizeOnce(ctx context.Context, req enclaveTokenizeRequest) (m
 	if err != nil {
 		return nil, err
 	}
+
+	// TOK-04: a short-lived, signed service JWT scoped to exactly this
+	// tenant/purpose replaces the old static ENCLAVE_INTERNAL_TOKEN shared
+	// secret -- the enclave derives tenant_id/caller/purpose_code from this
+	// verified claim, never from the request body above.
+	serviceTok, err := auth.MintServiceToken(req.TenantID, enclavePurposeCode)
+	if err != nil {
+		return nil, fmt.Errorf("mint service token: %w", err)
+	}
+
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Zord-Internal-Token", os.Getenv("ENCLAVE_INTERNAL_TOKEN"))
-	httpReq.Header.Set("X-Zord-Caller-ID", "zord-intent-engine")
+	httpReq.Header.Set("X-Zord-Internal-Token", serviceTok)
 
 	resp, err := enclaveHTTPClient.Do(httpReq)
 	if err != nil {
@@ -417,6 +505,27 @@ func callEnclaveTokenizeOnce(ctx context.Context, req enclaveTokenizeRequest) (m
 	return out.Tokens, nil
 }
 
+// computeBeneficiaryFingerprint hashes the raw TOKEN VALUES zord-token-
+// enclave returned (not the underlying PII itself) into a stable
+// fingerprint, used by business_idempotency_registry to detect duplicate
+// payment intents for the same beneficiary (SAME_BENEFICIARY_AMOUNT_TIME).
+//
+// TOK-08 dependency (found during zord-token-enclave's "field-kind-specific
+// normalization and versioned token semantics" ticket): this function's
+// correctness depends entirely on the enclave computing the SAME token for
+// the SAME real-world account_number/ifsc/vpa every time. The enclave now
+// has real, explicit normalization versioning (internal/crypto/
+// deterministic.go's CurrentNormalizationVersion), but keeps its ACTIVE
+// version ("v1") bit-for-bit identical to its original behavior specifically
+// so this function's existing fingerprints stay valid. If that ever changes
+// -- i.e. a future ticket activates a new normalization version as the
+// default -- every fingerprint computed from tokens produced under the new
+// version will differ from what's already stored here for the same real
+// beneficiary, and this table's lookup will silently stop finding genuine
+// duplicates. business_idempotency_registry.token_normalization_version
+// (added by db/migrations/20260817120000_...) exists as a forward-
+// compatible hook for that future ticket to populate/reconcile against --
+// it is not populated by this code path today.
 func (s *IntentService) computeBeneficiaryFingerprint(tokens map[string]string) string {
 	// FIX: deterministic fingerprint using tokens
 	// beneficiary_fingerprint = SHA256(account_number_token + ifsc_token + vpa_token)
@@ -1252,6 +1361,9 @@ func (s *IntentService) processIncomingIntentInternal(
 		RawRowHash:        event.RawRowHash,
 		ArtifactID:        event.ArtifactID,
 		ArtifactVersionID: event.ArtifactVersionID,
+		ContentType:       event.ContentType,
+		KMSKeyVersion:     event.KMSKeyVersion,
+		EncryptionKeyID:   event.EncryptionKeyID,
 		ReceivedAt:        event.ReceivedAt,
 		BatchID:           event.BatchID,
 		SourceRowRef:      event.SourceRowRef,
@@ -1378,9 +1490,20 @@ func (s *IntentService) processIncomingIntentInternal(
 	}
 
 	// -------- STEP 5: Parse raw payload into domain model --------
-	decryptedPayload, err = vault.DecryptPayload(in.EncryptedPayload)
+	contentType := in.ContentType
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	encCtx := vault.EncryptionContext{
+		TenantID:          in.TenantID.String(),
+		ArtifactID:        in.ArtifactID.String(),
+		ArtifactVersionID: in.ArtifactVersionID,
+		ContentType:       contentType,
+	}
+	decryptedPayload, err = vault.DecryptPayload(encCtx, in.EncryptedPayload, in.KMSKeyVersion)
 	if err != nil {
-		log.Printf("⚠️ Payload decryption failed for EnvelopeID=%s: %v", in.EnvelopeID, err)
+		log.Printf("vault decrypt failed envelope_id=%s tenant_id=%s artifact_id=%s artifact_version_id=%s content_type=%s err=%v",
+			in.EnvelopeID, encCtx.TenantID, encCtx.ArtifactID, encCtx.ArtifactVersionID, encCtx.ContentType, err)
 		retIn = in
 		retProfile = resolvedProfile
 		retDecrypted = decryptedPayload
@@ -1398,6 +1521,8 @@ func (s *IntentService) processIncomingIntentInternal(
 		}
 		return
 	}
+	log.Printf("vault decrypt ok envelope_id=%s tenant_id=%s artifact_id=%s artifact_version_id=%s content_type=%s",
+		in.EnvelopeID, encCtx.TenantID, encCtx.ArtifactID, encCtx.ArtifactVersionID, encCtx.ContentType)
 
 	rawAuditPayload = append([]byte(nil), decryptedPayload...)
 	sourceRowRef := ""
@@ -2024,8 +2149,10 @@ func (s *IntentService) processIncomingIntentInternal(
 	// -------- STEP 8: TOKENIZATION --------
 
 	tokenReq := enclaveTokenizeRequest{
-		TenantID: in.TenantID.String(),
-		TraceID:  in.TraceID.String(),
+		TenantID:      in.TenantID.String(),
+		TraceID:       in.TraceID.String(),
+		ObjectRef:     intentID,
+		CorrelationID: in.TraceID.String(),
 		PII: map[string]string{
 			"account_number": canonicalInput.AccountNumber,
 			"ifsc":           canonicalInput.Beneficiary.Instrument.IFSC,
@@ -2627,7 +2754,7 @@ func (s *IntentService) ProcessIncomingIntent(
 		}
 
 		runStatus := "PROCESSING"
-		if hasTotalRows && processedRows >= totalRows {
+		if processedRows > 0 && processedRows >= totalRows {
 			runStatus = "COMPLETED"
 		}
 
@@ -2645,6 +2772,17 @@ func (s *IntentService) ProcessIncomingIntent(
 		)
 		if errUpsert != nil {
 			log.Printf("⚠️ Audit: failed to upsert run audit for batch=%s: %v", *in.BatchID, errUpsert)
+		}
+		if errUpsert == nil && runStatus == "COMPLETED" {
+			batchKey := fmt.Sprintf("%s|%s", in.TenantID.String(), *in.BatchID)
+			_, aggErr, _ := batchAggregateGroup.Do(batchKey, func() (interface{}, error) {
+				return s.repo.UpdateBatchAggregateConfidence(context.Background(), in.TenantID.String(), *in.BatchID)
+			})
+			if aggErr != nil {
+				log.Printf("âš ï¸ Failed to update batch aggregate confidence before vector emit for batch=%s: %v", *in.BatchID, aggErr)
+			}
+
+			s.maybeEmitCompletedBatchVectorIndex(ctx, in.TenantID.String(), *in.BatchID)
 		}
 	}()
 
@@ -2749,16 +2887,9 @@ func (s *IntentService) ProcessIncomingIntent(
 	}
 
 	if batchID != "" {
-		s.emitVectorIndexRequest(
-			"intent_batch.updated.v1",
-			saved.TenantID,
-			"intent_batch",
-			batchID,
-			batchID,
-			map[string]string{
-				"vector_summary_scope": "batch",
-			},
-		)
+		// Batch-level vector indexing is emitted once from the batch completion path.
+		// Do not emit one vector event per row here, otherwise large uploads create noisy duplicate events.
+		log.Printf("[intent-engine][vector-index] defer batch vector emit tenant=%s batch_id=%s intent_id=%s", saved.TenantID, batchID, saved.IntentID)
 	} else {
 		s.emitVectorIndexRequest(
 			"payment_intent.saved.v1",
@@ -2981,8 +3112,8 @@ func (s *IntentService) ProcessIncomingIntentsBatch(
 		}
 
 		runStatus := "COMPLETED"
-		if firstIn.RowCountEstimate != nil && *firstIn.RowCountEstimate > actualAccepted+actualFailed {
-			// Declared file size exceeds what we wrote — still more rows expected.
+		processedRows := actualAccepted + actualFailed + actualDuplicate
+		if firstIn.RowCountEstimate != nil && *firstIn.RowCountEstimate > processedRows {
 			runStatus = "PROCESSING"
 		}
 
@@ -3032,21 +3163,11 @@ func (s *IntentService) ProcessIncomingIntentsBatch(
 			continue
 		}
 
-		// Non-batch DLQ items still need direct indexing because there is no batch summary key.
-		s.EmitDLQVectorIndexRequest(dlq)
 	}
 
 	for batchID, tenantID := range emittedBatches {
-		s.emitVectorIndexRequest(
-			"intent_batch.updated.v1",
-			tenantID,
-			"intent_batch",
-			batchID,
-			batchID,
-			map[string]string{
-				"vector_summary_scope": "batch",
-			},
-		)
+		log.Printf("[intent-engine][vector-index] checking final batch emit tenant=%s batch_id=%s", tenantID, batchID)
+		s.maybeEmitCompletedBatchVectorIndex(ctx, tenantID, batchID)
 	}
 	return savedIntents, savedDLQs, nil
 }

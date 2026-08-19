@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/zord/zord-intelligence/internal/auth"
 	"github.com/zord/zord-intelligence/internal/models"
 	"github.com/zord/zord-intelligence/internal/persistence"
 )
@@ -131,8 +132,9 @@ func (h *PolicyHandler) CreatePolicy(w http.ResponseWriter, r *http.Request) {
 // EnablePolicy handles POST /v1/intelligence/policies/{id}/enable
 func (h *PolicyHandler) EnablePolicy(w http.ResponseWriter, r *http.Request) {
 	policyID := chi.URLParam(r, "id")
+	principal, _ := auth.FromContext(r.Context())
 
-	if err := h.policyRepo.SetEnabled(r.Context(), policyID, true); err != nil {
+	if err := h.policyRepo.SetEnabled(r.Context(), policyID, true, principal.SubjectID); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			writeError(w, http.StatusNotFound, "policy not found")
 			return
@@ -150,8 +152,9 @@ func (h *PolicyHandler) EnablePolicy(w http.ResponseWriter, r *http.Request) {
 // DisablePolicy handles POST /v1/intelligence/policies/{id}/disable
 func (h *PolicyHandler) DisablePolicy(w http.ResponseWriter, r *http.Request) {
 	policyID := chi.URLParam(r, "id")
+	principal, _ := auth.FromContext(r.Context())
 
-	if err := h.policyRepo.SetEnabled(r.Context(), policyID, false); err != nil {
+	if err := h.policyRepo.SetEnabled(r.Context(), policyID, false, principal.SubjectID); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			writeError(w, http.StatusNotFound, "policy not found")
 			return

@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS relay_payload_conflicts (
     resolved_at          TIMESTAMPTZ               -- NULL until ACKed or eventually succeeds
 );
 
-CREATE INDEX IF NOT EXISTS idx_relay_payload_conflicts_event
+CREATE UNIQUE INDEX IF NOT EXISTS idx_relay_payload_conflicts_event
     ON relay_payload_conflicts (service_name, event_id);
 
 CREATE INDEX IF NOT EXISTS idx_relay_payload_conflicts_detected
@@ -121,10 +121,19 @@ CREATE TABLE IF NOT EXISTS relay_publish_failures (
     topic              TEXT        NOT NULL DEFAULT '',  -- topic carried on the source event, if any
     destination_topic  TEXT        NOT NULL,              -- Kafka topic the publish was attempted against
     payload_hash       TEXT        NOT NULL,               -- SHA-256 over raw payload bytes
+    failure_source     TEXT NOT NULL DEFAULT 'UPSTREAM_OUTBOX',  -- UPSTREAM_OUTBOX | RELAY_OUTBOX | BATCH
+    publish_kind       TEXT NOT NULL DEFAULT 'generic',
+    tenant_id          TEXT,
+    trace_id           TEXT,
+    message_key        TEXT NOT NULL DEFAULT '',
+    message_value      BYTEA NOT NULL DEFAULT '',          -- replay source; never returned in list API
+    headers_json       JSONB,
     attempt_count      INTEGER     NOT NULL DEFAULT 1,
     failure_class      TEXT        NOT NULL,               -- reason code, e.g. INVALID_PAYLOAD, KAFKA_MAX_RETRIES_EXCEEDED
     last_error         TEXT        NOT NULL,
-    replay_status      TEXT        NOT NULL DEFAULT 'PENDING', -- PENDING | REPLAYED
+    replay_status      TEXT        NOT NULL DEFAULT 'PENDING', -- PENDING | REPLAYING | REPLAYED | QUARANTINED
+    first_failure_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_failure_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     detected_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     replayed_at        TIMESTAMPTZ
@@ -134,5 +143,27 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_relay_publish_failures_event
     ON relay_publish_failures (source_service, source_event_id, destination_topic);
 
 CREATE INDEX IF NOT EXISTS idx_relay_publish_failures_pending
-    ON relay_publish_failures (detected_at ASC)
+    ON relay_publish_failures (last_failure_at ASC)
     WHERE replay_status = 'PENDING';
+
+CREATE INDEX IF NOT EXISTS idx_relay_publish_failures_search
+    ON relay_publish_failures (replay_status, last_failure_at);
+
+CREATE INDEX IF NOT EXISTS idx_relay_publish_failures_tenant
+    ON relay_publish_failures (tenant_id);
+
+CREATE TABLE IF NOT EXISTS relay_publish_failure_replays (
+    replay_id     BIGSERIAL PRIMARY KEY,
+    failure_id    BIGINT NOT NULL REFERENCES relay_publish_failures(failure_id),
+    operator_id   TEXT NOT NULL,
+    reason        TEXT NOT NULL,
+    outcome       TEXT NOT NULL CHECK (outcome IN ('SUCCESS','FAILED')),
+    error_message TEXT,
+    replayed_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_relay_failure_replays_failure 
+    ON relay_publish_failure_replays (failure_id, replayed_at DESC);
+
+-- status values: PENDING | PUBLISHED | FAILED
+-- retry_count already exists; wire it in RelayOutboxRepo

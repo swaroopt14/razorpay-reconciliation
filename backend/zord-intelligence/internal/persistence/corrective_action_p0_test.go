@@ -228,7 +228,7 @@ func TestPolicyActivations_NoOverlap(t *testing.T) {
 	}
 
 	for _, enabled := range []bool{true, false, true, false} {
-		if err := repo.SetEnabled(ctx, policyID, enabled); err != nil {
+		if err := repo.SetEnabled(ctx, policyID, enabled, "test_actor"); err != nil {
 			t.Fatalf("SetEnabled(%v): %v", enabled, err)
 		}
 	}

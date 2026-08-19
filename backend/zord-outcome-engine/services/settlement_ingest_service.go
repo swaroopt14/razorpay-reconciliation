@@ -86,7 +86,14 @@ func (s *SettlementIngestService) FindBatchByClientID(
             r.outcome_artifact_version_id
         FROM settlement_batches b
         LEFT JOIN settlement_ingest_runs r
-            ON r.ingest_run_id = b.current_active_run_id
+            ON r.ingest_run_id = COALESCE(
+                NULLIF(b.current_active_run_id, ''),
+                (SELECT r2.ingest_run_id
+                 FROM settlement_ingest_runs r2
+                 WHERE r2.settlement_batch_id = b.settlement_batch_id
+                 ORDER BY r2.run_number DESC
+                 LIMIT 1)
+            )
         WHERE b.tenant_id = $1 AND b.psp = $2 AND b.client_batch_id = $3
         LIMIT 1`,
 		tenantID, psp, clientBatchID,
@@ -152,8 +159,11 @@ func (s *SettlementIngestService) RegisterBatchAndRun(
 	} else {
 		settlementBatchID = existingBatch.SettlementBatchID
 		runNumber = existingBatch.LatestRunNumber + 1
-		artID = existingBatch.OutcomeArtifactID
-		if existingBatch.ActiveRunFileSHA256 == fileSHA256 {
+		artID = strings.TrimSpace(existingBatch.OutcomeArtifactID)
+		if artID == "" {
+			artID = uuid.New().String()
+		}
+		if existingBatch.ActiveRunFileSHA256 == fileSHA256 && strings.TrimSpace(existingBatch.OutcomeArtifactVersionID) != "" {
 			artVerID = existingBatch.OutcomeArtifactVersionID
 		} else {
 			artVerID = uuid.New().String()

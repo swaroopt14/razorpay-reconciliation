@@ -20,6 +20,7 @@ type QueryRequest struct {
 	TenantID                   string     `json:"tenant_id,omitempty"`
 	UserID                     string     `json:"-"`
 	SessionID                  string     `json:"-"`
+	AuthorizationHeader        string     `json:"-"`
 	Query                      string     `json:"query" binding:"required"`
 	IntentID                   string     `json:"intent_id,omitempty"`
 	TraceID                    string     `json:"trace_id,omitempty"`

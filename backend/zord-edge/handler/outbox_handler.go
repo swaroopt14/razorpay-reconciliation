@@ -84,6 +84,14 @@ func (h *OutboxHandler) Lease(c *gin.Context) {
 		return
 	}
 
+	// Stamp the standard cross-service envelope fields (event_version,
+	// schema_version) that aren't outbox DB columns — they're constant per
+	// producer, not per-row data (mirrors zord-intent-engine/zord-outcome-engine).
+	for i := range events {
+		events[i].EventVersion = "v1"
+		events[i].SchemaVersion = "v1"
+	}
+
 	c.JSON(http.StatusOK, leaseResponse{
 		LeaseID:    leaseID,
 		LeaseUntil: leaseUntil,

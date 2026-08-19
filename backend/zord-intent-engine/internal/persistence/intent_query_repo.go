@@ -1,8 +1,10 @@
 package persistence
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -671,9 +673,20 @@ func (r *IntentQueryRepo) ListPaymentIntentLiteByBatch(
 			aggregate_confidence_score,
 			intent_id::text,
 			COALESCE(client_payout_ref, '') AS client_payout_ref,
+			COALESCE(client_batch_ref, '') AS client_batch_ref,
+			COALESCE(batchid, '') AS batch_id,
 			source_row_num,
 			COALESCE(beneficiary_type, '') AS beneficiary_type,
-			COALESCE(beneficiary, '{}'::jsonb) AS beneficiary
+			COALESCE(beneficiary, '{}'::jsonb) AS beneficiary,
+			COALESCE(status, '') AS status,
+			COALESCE(governance_state, '') AS governance_state,
+			governance_decision,
+			COALESCE(intent_lifecycle_state, '') AS intent_lifecycle_state,
+			COALESCE(business_state, '') AS business_state,
+			COALESCE(governance_reason_codes_json, '[]'::jsonb) AS governance_reason_codes_json,
+			COALESCE(score_reason_codes_json, '[]'::jsonb) AS score_reason_codes_json,
+			COALESCE(duplicate_reason_code, '') AS duplicate_reason_code,
+			COALESCE(duplicate_risk_flag, false) AS duplicate_risk_flag
 		FROM payment_intents
 		WHERE tenant_id = $1
 		  AND batchid = $2
@@ -696,6 +709,9 @@ func (r *IntentQueryRepo) ListPaymentIntentLiteByBatch(
 		var quality sql.NullFloat64
 		var aggregate sql.NullFloat64
 		var sourceRow sql.NullInt64
+		var govDecision sql.NullString
+		var govReasons []byte
+		var scoreReasons []byte
 
 		if err := rows.Scan(
 			&row.TenantID,
@@ -707,9 +723,20 @@ func (r *IntentQueryRepo) ListPaymentIntentLiteByBatch(
 			&aggregate,
 			&row.IntentID,
 			&row.ClientPayoutRef,
+			&row.ClientBatchRef,
+			&row.BatchID,
 			&sourceRow,
 			&row.BeneficiaryType,
 			&row.Beneficiary,
+			&row.Status,
+			&row.GovernanceState,
+			&govDecision,
+			&row.IntentLifecycleState,
+			&row.BusinessState,
+			&govReasons,
+			&scoreReasons,
+			&row.DuplicateReasonCode,
+			&row.DuplicateRiskFlag,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan payment intent lite row: %w", err)
 		}
@@ -730,6 +757,18 @@ func (r *IntentQueryRepo) ListPaymentIntentLiteByBatch(
 			n := int(sourceRow.Int64)
 			row.SourceRowNum = &n
 		}
+		if govDecision.Valid {
+			d := govDecision.String
+			row.GovernanceDecision = &d
+		}
+		if len(govReasons) > 0 {
+			row.GovernanceReasonCodes = json.RawMessage(govReasons)
+			row.ReasonCodes = json.RawMessage(govReasons)
+		}
+		if len(scoreReasons) > 0 {
+			row.ScoreReasonCodes = json.RawMessage(scoreReasons)
+		}
+		row.Remediability = remediabilityForLiteRow(row.GovernanceState, row.DuplicateReasonCode, govReasons)
 
 		items = append(items, row)
 	}
@@ -738,6 +777,19 @@ func (r *IntentQueryRepo) ListPaymentIntentLiteByBatch(
 	}
 
 	return items, nil
+}
+
+// remediabilityForLiteRow exposes a coarse remediability signal for journal UI.
+// Held/flagged rows are tenant-fixable when a reason is present; otherwise unknown.
+func remediabilityForLiteRow(governanceState, duplicateReason string, reasonJSON []byte) string {
+	gov := strings.ToUpper(strings.TrimSpace(governanceState))
+	if gov != "REQUIRES_REVIEW" && gov != "FLAGGED" {
+		return ""
+	}
+	if strings.TrimSpace(duplicateReason) != "" || len(bytes.TrimSpace(reasonJSON)) > 2 {
+		return models.StrictModeRemediabilityTenantFixable
+	}
+	return "UNKNOWN"
 }
 
 func (r *IntentQueryRepo) ListDLQItemsByBatchSimple(

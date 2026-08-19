@@ -5,6 +5,7 @@ import { Fragment, useState, type Dispatch, type SetStateAction } from 'react'
 import { EntityLogo } from '../../entity-logo'
 import { BankingInformationTokensBlock } from '../IntentDrawerSections'
 import { formatJournalMoney } from '../formatJournalMoney'
+import { CURRENCY_NEUTRAL_AMOUNT_RANGES, type CurrencyNeutralAmountRange } from '@/services/payout-command/money/money'
 import { downloadFailuresCsv } from '../journalExport'
 import { IntentEngineDetailPanel } from '../IntentEngineDetailPanel'
 import type { IntentDetail } from '@/services/payout-command/intent-journal-types'
@@ -28,7 +29,13 @@ const JOURNAL_FILTER_LABEL =
   'mb-1 block text-[11px] font-semibold uppercase tracking-[0.08em] text-[#888888]'
 
 type TabKey = 'transactions' | 'failures'
-type IntentStatus = 'Ready to Process' | 'Confirmed' | 'Pending' | 'Needs Review' | 'In Progress'
+type IntentStatus =
+  | 'Ready to Process'
+  | 'Confirmed'
+  | 'Pending'
+  | 'Needs Review'
+  | 'In Progress'
+  | 'Decision unavailable'
 type DateRangePreset = 'all' | '7d' | '30d' | '90d' | 'ytd'
 
 const DATE_RANGE_OPTIONS: { value: DateRangePreset; label: string }[] = [
@@ -42,13 +49,8 @@ const DATE_RANGE_OPTIONS: { value: DateRangePreset; label: string }[] = [
 const CONNECTOR_OPTIONS: Array<'All' | string> = ['All', 'Razorpay', 'Cashfree', 'PayU']
 const DISPATCH_OPTIONS = ['All', 'Bank Transfer', 'LSM', 'NACH'] as const
 
-const AMOUNT_RANGE_OPTIONS = [
-  'All',
-  'Under ₹10,000',
-  '₹10,000 – ₹1,00,000',
-  'Over ₹1,00,000',
-] as const
-type AmountRangeFilter = (typeof AMOUNT_RANGE_OPTIONS)[number]
+const AMOUNT_RANGE_OPTIONS = CURRENCY_NEUTRAL_AMOUNT_RANGES
+type AmountRangeFilter = CurrencyNeutralAmountRange
 
 type FailureRow = JournalFailureRow
 type StateSetter<T> = Dispatch<SetStateAction<T>>
@@ -65,12 +67,14 @@ function intentStatusClass(status: IntentStatus) {
   if (status === 'Pending') return 'text-amber-600'
   if (status === 'Needs Review') return 'text-orange-600'
   if (status === 'In Progress') return 'text-sky-700'
+  if (status === 'Decision unavailable') return 'text-slate-500'
   return 'text-slate-700'
 }
 
 function intentStatusLabel(status: IntentStatus) {
   if (status === 'Pending') return intentJournalCopy.status.awaitingBankConfirmation
   if (status === 'Ready to Process') return intentJournalCopy.status.readyForDispatch
+  if (status === 'Decision unavailable') return intentJournalCopy.status.decisionUnavailable
   return intentRowCustomerStatus(status)
 }
 
@@ -306,6 +310,11 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                     <select value={intentStatusFilter} onChange={(e) => setIntentStatusFilter(e.target.value as 'All' | IntentStatus)} className={filterSelectClass}>
                       <option value="All">All statuses</option>
                       <option value="Ready to Process">Ready to process</option>
+                      <option value="Needs Review">Needs review</option>
+                      <option value="Decision unavailable">Decision unavailable</option>
+                      <option value="Confirmed">Confirmed</option>
+                      <option value="Pending">Pending</option>
+                      <option value="In Progress">In progress</option>
                     </select>
                   ) : (
                     <select
@@ -422,10 +431,7 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                                 {row.reference}
                               </td>
                               <td className="px-3 py-2.5 tabular-nums whitespace-nowrap">
-                                {formatJournalMoney(
-                                  row.amount,
-                                  row.currency ?? (journalUsesBackendFeed ? 'INR' : 'USD'),
-                                )}
+                                {formatJournalMoney(row.amount, row.currency)}
                               </td>
                               <td className="px-3 py-2.5">
                                 <span className={`text-[13px] font-medium ${intentStatusClass(row.status)}`}>
@@ -653,7 +659,7 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                           </td>
                           <td className="px-3 py-2.5 tabular-nums">
                             {Number.isFinite(row.amount)
-                              ? formatJournalMoney(row.amount, row.currency ?? 'INR')
+                              ? formatJournalMoney(row.amount, row.currency)
                               : '—'}
                           </td>
                           <td className="px-3 py-2.5">

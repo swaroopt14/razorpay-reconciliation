@@ -27,7 +27,7 @@ export function ManualReviewEscalationModal({
 
   const beneficiary = row.beneficiaryName?.trim() || row.paymentPartner?.trim() || '—'
   const amountLabel = Number.isFinite(row.amount)
-    ? formatJournalMoney(row.amount, row.currency ?? 'INR')
+    ? formatJournalMoney(row.amount, row.currency)
     : '—'
   const errorDetail = row.failureReason?.trim() || '—'
 

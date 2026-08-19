@@ -32,9 +32,20 @@ export function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  const hasAccessToken = Boolean(request.cookies.get('zord_access_token')?.value)
-  const hasRefreshToken = Boolean(request.cookies.get('zord_refresh_token')?.value)
-  if (!hasAccessToken && !hasRefreshToken) {
+  // Allow any global or tenant-scoped session cookie (multi-tab Tenant A + B).
+  const hasGlobalSession =
+    Boolean(request.cookies.get('zord_access_token')?.value) ||
+    Boolean(request.cookies.get('zord_refresh_token')?.value)
+  const registry = (request.cookies.get('zord_session_tenants')?.value || '')
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean)
+  const hasScopedSession = registry.some(
+    (tid) =>
+      Boolean(request.cookies.get(`zord_access_token__${tid}`)?.value) ||
+      Boolean(request.cookies.get(`zord_refresh_token__${tid}`)?.value),
+  )
+  if (!hasGlobalSession && !hasScopedSession) {
     return NextResponse.redirect(loginRedirectUrl(request, pathname))
   }
 
