@@ -1,0 +1,124 @@
+{
+  "scenarios": [
+    {
+      "name": "exact",
+      "decision_type": "MATCH_EXACT",
+      "reason_code": "SINGLE_EXACT_CARRIER",
+      "confidence_bucket": "EXACT",
+      "top_total": 235,
+      "candidate_count": 1
+    },
+    {
+      "name": "high",
+      "decision_type": "MATCH_HIGH_CONFIDENCE",
+      "reason_code": "DOMINANT_HIGH_CONFIDENCE",
+      "confidence_bucket": "HIGH",
+      "top_total": 155,
+      "candidate_count": 2
+    },
+    {
+      "name": "ambiguous",
+      "decision_type": "MATCH_AMBIGUOUS",
+      "reason_code": "SINGLE_MEDIUM_CANDIDATE",
+      "confidence_bucket": "MEDIUM",
+      "top_total": 95,
+      "candidate_count": 1
+    },
+    {
+      "name": "conflict",
+      "decision_type": "MATCH_CONFLICTED",
+      "reason_code": "CONFLICTING_EXACT_CARRIERS",
+      "confidence_bucket": "MEDIUM",
+      "top_total": 235,
+      "candidate_count": 2
+    },
+    {
+      "name": "orphan",
+      "decision_type": "MATCH_UNRESOLVED",
+      "reason_code": "NO_CANDIDATES",
+      "top_total": 0,
+      "candidate_count": 0
+    },
+    {
+      "name": "one_to_many",
+      "decision_type": "MATCH_EXACT",
+      "reason_code": "DOMINANT_EXACT_CARRIER",
+      "confidence_bucket": "EXACT",
+      "top_total": 235,
+      "candidate_count": 2
+    },
+    {
+      "name": "many_to_one",
+      "decision_type": "MATCH_EXACT",
+      "reason_code": "SINGLE_EXACT_CARRIER",
+      "confidence_bucket": "EXACT",
+      "top_total": 235,
+      "candidate_count": 1
+    },
+    {
+      "name": "partial",
+      "decision_type": "MATCH_AMBIGUOUS",
+      "reason_code": "SINGLE_MEDIUM_CANDIDATE",
+      "confidence_bucket": "MEDIUM",
+      "top_total": 155,
+      "candidate_count": 1,
+      "variance_type": "UNDER_SETTLEMENT",
+      "variance_severity": "MEDIUM"
+    },
+    {
+      "name": "reversal",
+      "decision_type": "MATCH_EXACT",
+      "reason_code": "SINGLE_EXACT_CARRIER",
+      "confidence_bucket": "EXACT",
+      "top_total": 235,
+      "candidate_count": 1,
+      "variance_type": "STATUS_MISMATCH",
+      "variance_severity": "CRITICAL"
+    },
+    {
+      "name": "fees",
+      "decision_type": "MATCH_AMBIGUOUS",
+      "reason_code": "SINGLE_MEDIUM_CANDIDATE",
+      "confidence_bucket": "MEDIUM",
+      "top_total": 155,
+      "candidate_count": 1,
+      "variance_type": "FEE_DEDUCTION",
+      "variance_severity": "LOW"
+    },
+    {
+      "name": "duplicates",
+      "decision_type": "MATCH_CONFLICTED",
+      "reason_code": "CONFLICTING_EXACT_CARRIERS",
+      "confidence_bucket": "MEDIUM",
+      "top_total": 235,
+      "candidate_count": 2
+    },
+    {
+      "name": "currency_mismatch",
+      "decision_type": "MATCH_UNRESOLVED",
+      "reason_code": "SINGLE_LOW_CONFIDENCE",
+      "confidence_bucket": "INVALID",
+      "top_total": 125,
+      "candidate_count": 1,
+      "variance_type": "NO_VARIANCE",
+      "variance_severity": "LOW"
+    },
+    {
+      "name": "reprocess",
+      "decision_type": "MATCH_EXACT",
+      "reason_code": "SINGLE_EXACT_CARRIER",
+      "confidence_bucket": "EXACT",
+      "top_total": 235,
+      "candidate_count": 1,
+      "notes": "same input twice yields identical decision"
+    },
+    {
+      "name": "exact_zord_signature",
+      "decision_type": "MATCH_EXACT",
+      "reason_code": "SINGLE_EXACT_CARRIER",
+      "confidence_bucket": "EXACT",
+      "top_total": 245,
+      "candidate_count": 1
+    }
+  ]
+}
