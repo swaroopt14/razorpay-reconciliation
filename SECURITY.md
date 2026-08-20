@@ -53,7 +53,7 @@ The highest-priority reports for this repository include:
 This repository includes multiple backend services, a console app, Docker/Kubernetes manifests, and local-development helpers. Before exposing any deployment to real traffic:
 
 - Replace all development, demo, or fallback secrets with unique production-managed secrets.
-- Store sensitive values such as `ZORD_VAULT_KEY`, `MASTER_KEY`, database credentials, webhook secrets, and signing keys in a proper secret manager or encrypted deployment secret store.
+- Store sensitive values such as `ZORD_VAULT_KEY`, database credentials, webhook secrets, and signing keys in a proper secret manager or encrypted deployment secret store. zord-token-enclave no longer holds a static master key at all -- it wraps tenant DEKs via AWS KMS (`KMS_KEY_ID`, a non-secret ARN) using its IAM role, so the credential surface to protect there is the IAM grant itself, not an application-level secret.
 - Do not rely on mock or browser-local authentication patterns for internet-exposed environments.
 - Keep `/metrics`, health endpoints, admin surfaces, and internal service ports restricted to trusted networks.
 - Enforce TLS at the edge and for service-to-service paths where required by your environment.

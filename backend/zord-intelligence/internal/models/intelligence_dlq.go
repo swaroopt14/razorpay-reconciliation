@@ -53,3 +53,23 @@ const (
 	// real schema_version).
 	DLQErrorClassUnapprovedLegacySchema = "UNAPPROVED_LEGACY_SCHEMA"
 )
+
+// LocalDLQReceipt — INTEL-07: a row in intelligence_dlq_local_receipts.
+//
+// Written by kafka/consumer.go in place of the old blocking retry-loop
+// publish straight to TopicIntelligenceDLQ (corrective-action-report P0-02).
+// A local Postgres insert is fast and independent of Kafka's health, so the
+// source offset can advance immediately after this succeeds instead of
+// stalling for as long as the Kafka broker is unreachable. A background
+// worker (internal/worker/intelligence_dlq_replay_worker.go) polls rows with
+// ReplayedAt == nil and republishes them to TopicIntelligenceDLQ, setting
+// ReplayedAt once that publish is confirmed — mirroring how OutboxRepo /
+// OutboxWorker already decouple actuation delivery from the caller.
+type LocalDLQReceipt struct {
+	ID              int64
+	Record          IntelligenceDLQRecord
+	CreatedAt       time.Time
+	Attempts        int
+	LastReplayError string
+	ReplayedAt      *time.Time
+}

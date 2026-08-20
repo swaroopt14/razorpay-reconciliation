@@ -20,8 +20,8 @@ import (
 // required for detokenize lookups and duplicate-value detection to work at all.
 func TestTOK06_CryptoDeterministicTokenIsStable(t *testing.T) {
 	secret := []byte("stable-secret")
-	a := crypto.GenerateDeterministicToken(secret, "tenant-1", "email", "same@example.com")
-	b := crypto.GenerateDeterministicToken(secret, "tenant-1", "email", "same@example.com")
+	a := crypto.GenerateDeterministicToken(secret, "tenant-1", "email", "v1", "same@example.com")
+	b := crypto.GenerateDeterministicToken(secret, "tenant-1", "email", "v1", "same@example.com")
 	if a != b {
 		t.Fatalf("GenerateDeterministicToken produced different tokens for identical input: %q vs %q", a, b)
 	}
@@ -32,8 +32,8 @@ func TestTOK06_CryptoDeterministicTokenIsStable(t *testing.T) {
 // tenant can never be correlated to another tenant's data.
 func TestTOK06_CryptoTenantIsolation(t *testing.T) {
 	secret := []byte("stable-secret")
-	tokenA := crypto.GenerateDeterministicToken(secret, "tenant-A", "email", "same@example.com")
-	tokenB := crypto.GenerateDeterministicToken(secret, "tenant-B", "email", "same@example.com")
+	tokenA := crypto.GenerateDeterministicToken(secret, "tenant-A", "email", "v1", "same@example.com")
+	tokenB := crypto.GenerateDeterministicToken(secret, "tenant-B", "email", "v1", "same@example.com")
 	if tokenA == tokenB {
 		t.Fatalf("GenerateDeterministicToken produced the SAME token for two different tenants (tenant-A, tenant-B) given the same value -- cross-tenant linkability")
 	}
@@ -44,8 +44,8 @@ func TestTOK06_CryptoTenantIsolation(t *testing.T) {
 // same string) produces different tokens -- prevents cross-field correlation.
 func TestTOK06_CryptoKindIsolation(t *testing.T) {
 	secret := []byte("stable-secret")
-	tokenPhone := crypto.GenerateDeterministicToken(secret, "tenant-1", "phone", "same-value")
-	tokenEmail := crypto.GenerateDeterministicToken(secret, "tenant-1", "email", "same-value")
+	tokenPhone := crypto.GenerateDeterministicToken(secret, "tenant-1", "phone", "v1", "same-value")
+	tokenEmail := crypto.GenerateDeterministicToken(secret, "tenant-1", "email", "v1", "same-value")
 	if tokenPhone == tokenEmail {
 		t.Fatalf("GenerateDeterministicToken produced the SAME token for two different kinds given the same value")
 	}
@@ -63,7 +63,7 @@ func TestTOK06_CryptoPinnedVector(t *testing.T) {
 	value := crypto.NormalizeValue("  1234567890  ")
 
 	const want = "d5ed25b30c233c54e3bb468ed0c9a0508a3c9dc3988d812e83f55210a9c23a31"
-	got := crypto.GenerateDeterministicToken(secret, tenantID, kind, value)
+	got := crypto.GenerateDeterministicToken(secret, tenantID, kind, "v1", value)
 	if got != want {
 		t.Fatalf("GenerateDeterministicToken(...) = %q, want pinned vector %q -- the algorithm's output changed", got, want)
 	}

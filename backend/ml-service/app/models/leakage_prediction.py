@@ -8,10 +8,10 @@ from typing import Any
 import joblib
 import numpy as np
 import pandas as pd
-from catboost import CatBoostRegressor
+from catboost import CatBoostRegressor, Pool
 
 from app import config
-from app.leakage_training_repo import LeakageTrainingRepo
+from app.leakage_training_repo import LeakageTrainingDataset, LeakageTrainingRepo
 
 logger = logging.getLogger(__name__)
 
@@ -72,13 +72,13 @@ MISSING_CATEGORY_TOKENS = {"", "unknown", "na", "n/a", "null", "none"}
 
 
 class LeakagePredictionModel:
-    def __init__(self) -> None:
+    def __init__(self, model_path: str | None = None) -> None:
         self._lock = threading.RLock()
         self._repo = LeakageTrainingRepo()
         self._bundle: dict[str, Any] = _base_bundle()
         self._retraining = False
         self._last_trained_row_count = 0
-        self._model_path = Path(config.LEAKAGE_MODEL_PATH)
+        self._model_path = Path(model_path or config.LEAKAGE_MODEL_PATH)
 
         self._ensure_model_dir()
         self._load_bundle()
@@ -102,6 +102,9 @@ class LeakagePredictionModel:
             }
 
         frame, diagnostics = self._frame_from_features(raw_features, bundle)
+        feature_contributions = self._feature_contributions(
+            model, frame, list(bundle.get("categorical_columns") or CATEGORICAL_COLUMNS)
+        )
         rate = float(np.clip(model.predict(frame)[0], 0.0, 1.0))
         intended = float(frame["batch_total_intended_amount_minor"].iloc[0])
         amount = rate * max(intended, 0.0)
@@ -116,7 +119,46 @@ class LeakagePredictionModel:
             "fallback_feature_count": diagnostics["fallback_feature_count"],
             "fallback_features": diagnostics["fallback_features"],
             "fallback_segment_level": diagnostics["fallback_segment_level"],
+            "feature_contributions": feature_contributions,
         }
+
+    @staticmethod
+    def _feature_contributions(
+        model: Any,
+        frame: pd.DataFrame,
+        categorical_columns: list[str],
+    ) -> list[dict[str, Any]]:
+        """Return the ten largest local CatBoost SHAP contributions."""
+        try:
+            pool = Pool(frame, cat_features=categorical_columns)
+            shap_values = model.get_feature_importance(
+                data=pool, type="ShapValues"
+            )[0]
+            contributions: list[dict[str, Any]] = []
+            for name, contribution in zip(frame.columns, shap_values[:-1]):
+                raw_value = frame[name].iloc[0]
+                value: Any = (
+                    float(raw_value)
+                    if isinstance(raw_value, (int, float, np.number))
+                    else str(raw_value)
+                )
+                contributions.append({
+                    "feature": str(name),
+                    "value": value,
+                    "contribution": float(contribution),
+                    "method": "catboost_shap_value",
+                })
+            return sorted(
+                contributions,
+                key=lambda item: abs(float(item["contribution"])),
+                reverse=True,
+            )[:10]
+        except Exception as exc:
+            logger.warning(
+                "leakage_model: local feature contributions unavailable: %s",
+                exc,
+            )
+            return []
 
     def maybe_retrain_async(self, batch_id: str = "", tenant_id: str = "") -> None:
         if not self._repo.is_configured():
@@ -124,9 +166,19 @@ class LeakagePredictionModel:
             return
 
         try:
-            labeled_row_count = self._repo.count_labeled_rows()
+            dataset = self._repo.load_training_dataset(
+                training_scope=config.LEAKAGE_TRAINING_SCOPE,
+                tenant_id=tenant_id,
+                feature_names=FEATURE_COLUMNS,
+            )
+            labeled_row_count = len(dataset.rows)
         except Exception:
-            logger.exception("leakage_model: failed counting labeled rows batch=%s tenant=%s", batch_id, tenant_id)
+            logger.exception(
+                "leakage_model: governed dataset rejected batch=%s tenant=%s scope=%s",
+                batch_id,
+                tenant_id,
+                config.LEAKAGE_TRAINING_SCOPE,
+            )
             return
 
         threshold = config.LEAKAGE_RETRAIN_THRESHOLD
@@ -153,7 +205,12 @@ class LeakagePredictionModel:
                 return
             self._retraining = True
 
-        thread = threading.Thread(target=self._retrain, daemon=True, name="leakage-retrain")
+        thread = threading.Thread(
+            target=self._retrain,
+            args=(dataset,),
+            daemon=True,
+            name="leakage-retrain",
+        )
         thread.start()
 
     def _ensure_model_dir(self) -> None:
@@ -249,9 +306,9 @@ class LeakagePredictionModel:
             return training_row_count
         return int(summary.get("real_labeled_rows", 0) or 0)
 
-    def _retrain(self) -> None:
+    def _retrain(self, dataset: LeakageTrainingDataset) -> None:
         try:
-            rows = self._repo.load_labeled_rows()
+            rows = dataset.rows
             if len(rows) < config.LEAKAGE_RETRAIN_THRESHOLD:
                 logger.info(
                     "leakage_model: retrain aborted rows=%d threshold=%d",
@@ -297,6 +354,8 @@ class LeakagePredictionModel:
             model.fit(frame, y, cat_features=categorical_columns, sample_weight=weights)
 
             updated_bundle = dict(bundle)
+            manifest = self._repo.record_manifest(dataset, feature_columns)
+
             updated_bundle["model"] = model
             updated_bundle["fallback_priors"] = self._build_fallback_priors(train_df, feature_columns, categorical_columns)
             updated_bundle["training_summary"] = {
@@ -304,6 +363,11 @@ class LeakagePredictionModel:
                 "training_source": "ml_feature_store",
                 "real_labeled_rows": int(len(train_df)),
                 "training_row_count": int(len(train_df)),
+                "training_scope": dataset.training_scope,
+                "training_manifest_id": manifest["manifest_id"],
+                "policy_snapshot_digest": manifest["policy_snapshot_digest"],
+                "included_tenant_count": manifest["included_tenant_count"],
+                "aggregate_features_only": manifest["aggregate_features_only"],
                 "retrained_at": pd.Timestamp.utcnow().isoformat(),
             }
 
@@ -328,8 +392,7 @@ class LeakagePredictionModel:
         for item in rows:
             raw_features = item.get("features") or {}
             label = item.get("label") or {}
-            batch_id = str(item.get("batch_id", "") or "")
-            tenant_id = str(item.get("tenant_id", "") or "")
+            row_ref = str(item.get("row_ref", "") or "")
 
             row, _ = self._normalized_training_row(raw_features, bundle)
             row[TARGET_COLUMN] = clamp_01(
@@ -344,9 +407,9 @@ class LeakagePredictionModel:
                 0.0,
             )
             row["sample_weight"] = max(_to_float(label.get("sample_weight", 1.0)), 1.0)
-            row["row_id"] = f"db::{tenant_id}::{batch_id}"
-            row["parent_batch_id"] = batch_id
-            row["batch_id"] = batch_id
+            row["row_id"] = row_ref
+            row["parent_batch_id"] = ""
+            row["batch_id"] = ""
             row["scenario_family"] = "real_runtime"
             normalized_rows.append(row)
 

@@ -24,6 +24,7 @@ import {
   type BatchFilter,
   type BatchRecord,
 } from '../intent-journal/intentJournalSidebarUtils'
+import { JOURNAL_HIGH_VALUE_MINOR } from '@/services/payout-command/prod-api/money/journalMoney'
 import { useJournalSidebarBatches } from '../intent-journal/hooks/useJournalSidebarBatches'
 import { useJournalIntentRows } from '../intent-journal/hooks/useJournalIntentRows'
 import { useJournalFailureRows } from '../intent-journal/hooks/useJournalFailureRows'
@@ -56,6 +57,11 @@ import { CommandCenterCardGlow } from '../command-center/CommandCenterCardGlow'
 import { JOURNAL_PAGE_BG } from '../journal/JournalCommandCenterPrimitives'
 import { JOURNAL_DM_SANS } from '../journal/journalFonts'
 import { IntentEngineDetailPanel } from '../intent-journal/IntentEngineDetailPanel'
+import {
+  CURRENCY_NEUTRAL_AMOUNT_RANGES,
+  matchesCurrencyAwareAmountRange,
+  type CurrencyNeutralAmountRange,
+} from '@/services/payout-command/money/money'
 const JOURNAL_FILTER_LABEL =
   'mb-1 block text-[11px] font-semibold uppercase tracking-[0.08em] text-[#888888]'
 
@@ -65,7 +71,13 @@ const JOURNAL_SUBTLE_BG = 'bg-slate-50'
 const JOURNAL_BORDER = 'border-slate-200/90'
 
 type TabKey = 'transactions' | 'failures'
-type IntentStatus = 'Ready to Process' | 'Confirmed' | 'Pending' | 'Needs Review' | 'In Progress'
+type IntentStatus =
+  | 'Ready to Process'
+  | 'Confirmed'
+  | 'Pending'
+  | 'Needs Review'
+  | 'In Progress'
+  | 'Decision unavailable'
 type IntentMatch = 'Matched' | 'Likely Matched' | 'Awaiting' | 'Mismatch' | 'Not Found'
 
 type IntentRow = {
@@ -103,6 +115,7 @@ type FailureRow = {
   sourceRowNum?: number | null
   reference: string
   amount: number
+  currency?: string
   method: 'Bank Transfer' | 'LSM' | 'NACH'
   paymentPartner: string
   /** Connector column subtitle — stage / reason from DLQ payload. */
@@ -137,13 +150,8 @@ const CONNECTOR_OPTIONS: Array<'All' | string> = ['All', 'Razorpay', 'Cashfree',
 
 const DISPATCH_OPTIONS: Array<'All' | IntentRow['method']> = ['All', 'Bank Transfer', 'LSM', 'NACH']
 
-const AMOUNT_RANGE_OPTIONS = [
-  'All',
-  'Under ₹10,000',
-  '₹10,000 – ₹1,00,000',
-  'Over ₹1,00,000',
-] as const
-type AmountRangeFilter = (typeof AMOUNT_RANGE_OPTIONS)[number]
+const AMOUNT_RANGE_OPTIONS = CURRENCY_NEUTRAL_AMOUNT_RANGES
+type AmountRangeFilter = CurrencyNeutralAmountRange
 
 function intentInDateRange(
   lastUpdated: string,
@@ -155,11 +163,12 @@ function intentInDateRange(
   return isInstantInBusinessDatePreset(lastUpdatedIso?.trim() || lastUpdated, preset, timeZone)
 }
 
-function matchesIntentAmountRange(amount: number, range: AmountRangeFilter): boolean {
-  if (range === 'All') return true
-  if (range === 'Under ₹10,000') return amount < 10_000
-  if (range === '₹10,000 – ₹1,00,000') return amount >= 10_000 && amount <= 100_000
-  return amount > 100_000
+function matchesIntentAmountRange(
+  amount: number,
+  currency: string | null | undefined,
+  range: AmountRangeFilter,
+): boolean {
+  return matchesCurrencyAwareAmountRange(amount, currency, range)
 }
 
 const ROW_SIZE_OPTIONS = [25, 50, 100, 200] as const
@@ -499,7 +508,9 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
         return health === 'At Risk' || health === 'Critical'
       })
     }
-    if (batchFilter === 'High Value') return sidebarBatchList.filter((b) => b.totalValue >= 1_500_000)
+    if (batchFilter === 'High Value') {
+      return sidebarBatchList.filter((b) => b.amountMinor >= JOURNAL_HIGH_VALUE_MINOR)
+    }
     return sidebarBatchList.filter((b) => resolveBatchHealthStatus(b) === 'Stable')
   }, [batchFilter, sidebarBatchList, selectedBatchId, selectedMetricsBatch])
 
@@ -560,7 +571,7 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
       const byDispatch = dispatchModeFilter === 'All' || row.method === dispatchModeFilter
       const byStatus = intentStatusFilter === 'All' || row.status === intentStatusFilter
       const byDate = intentInDateRange(row.lastUpdated, dateRange, businessTimeZone, row.lastUpdatedIso)
-      const byAmount = matchesIntentAmountRange(row.amount, amountRangeFilter)
+      const byAmount = matchesIntentAmountRange(row.amount, row.currency, amountRangeFilter)
       return bySearch && bySidebarBatch && byBatchFilter && byConnector && byDispatch && byStatus && byDate && byAmount
     })
   }, [
@@ -590,7 +601,7 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
       const byDispatch = dispatchModeFilter === 'All' || row.method === dispatchModeFilter
       const byStage = failureStageFilter === 'All' || row.failureStage === failureStageFilter
       const byDate = intentInDateRange(row.lastUpdated, dateRange, businessTimeZone, row.lastUpdatedIso)
-      const byAmount = matchesIntentAmountRange(row.amount, amountRangeFilter)
+      const byAmount = matchesIntentAmountRange(row.amount, row.currency, amountRangeFilter)
       return bySearch && bySidebarBatch && byBatch && byConnector && byDispatch && byStage && byDate && byAmount
     })
     return [...filtered].sort((a, b) => {

@@ -105,8 +105,9 @@ type AmbiguitySnapshot struct {
 	WeakestCohortSignal string `json:"weakest_cohort_signal,omitempty"`
 
 	// ── ML: Logistic Regression risk prediction (via Python ml-service) ───
-	RiskPredictionScore float64 `json:"risk_prediction_score"`
-	RiskPredictionLevel string  `json:"risk_prediction_level"`
+	RiskPredictionScore float64                   `json:"risk_prediction_score"`
+	RiskPredictionLevel string                    `json:"risk_prediction_level"`
+	MLAdvisory          mlclient.AdvisoryMetadata `json:"ml_advisory"`
 
 	// ── Recommended action ────────────────────────────────────────────────
 	RecommendedAction string `json:"recommended_action,omitempty"`
@@ -148,6 +149,7 @@ func (s *AmbiguityIntelligenceService) ComputeAndSave(
 		}
 		snap.RiskPredictionScore = lrResult.Probability
 		snap.RiskPredictionLevel = lrResult.Level
+		snap.MLAdvisory = lrResult.Advisory
 
 		projRefs := []string{"ambiguity.summary"}
 		projRefsJSON, _ := json.Marshal(projRefs)
@@ -184,7 +186,7 @@ func (s *AmbiguityIntelligenceService) ComputeAndSave(
 			amb.AmbiguousAmountMinor.InexactFloat64(),
 			0,
 		)
-		s.persistMLPrediction(ctx, tenantID, snapID, features, lrResult.Probability, lrResult.Level)
+		s.persistMLPrediction(ctx, tenantID, snapID, features, lrResult.Probability, lrResult.Level, lrResult.Advisory)
 	})
 
 	return nil
@@ -258,6 +260,7 @@ func (s *AmbiguityIntelligenceService) buildSnapshot(av *models.AmbiguityValue) 
 		CarrierCompleteCount:      av.CarrierCompleteCount,
 		TotalCarrierRecords:       av.TotalCarrierRecords,
 		CarrierCompletenessRate:   av.CarrierCompletenessRate,
+		MLAdvisory:                mlclient.UnavailableAdvisory("NOT_REQUESTED"),
 		ComputedAt:                time.Now().UTC(),
 	}
 
@@ -320,9 +323,11 @@ func (s *AmbiguityIntelligenceService) persistMLPrediction(
 	features []float64,
 	prob float64,
 	level string,
+	advisory mlclient.AdvisoryMetadata,
 ) {
 	explanation := map[string]any{
 		"algorithm": "logistic_regression_v1",
+		"advisory":  advisory,
 		"features": map[string]any{
 			"ambiguity_rate":            features[0],
 			"provider_ref_missing_rate": features[1],
@@ -343,7 +348,7 @@ func (s *AmbiguityIntelligenceService) persistMLPrediction(
 		PredictionFamily: "AMBIGUITY",
 		PredictionValue:  level,
 		PredictionScore:  prob,
-		Confidence:       1.0,
+		Confidence:       advisory.Confidence,
 		ExplanationJSON:  expJSON,
 		SnapshotID:       &snapID,
 		CreatedAt:        time.Now().UTC(),

@@ -5,6 +5,8 @@ CREATE TABLE settlement_ingest_runs (
 	ingest_run_id TEXT PRIMARY KEY,
 	settlement_batch_id TEXT NOT NULL REFERENCES settlement_batches(settlement_batch_id),
 	tenant_id UUID NOT NULL,
+	outcome_artifact_id UUID NOT NULL,
+	outcome_artifact_version_id UUID NOT NULL,
 	psp TEXT NOT NULL,
 	settlement_envelope_id UUID NOT NULL,
 	artifact_family TEXT NOT NULL,
@@ -26,9 +28,7 @@ CREATE TABLE settlement_ingest_runs (
 	started_at TIMESTAMPTZ,
 	completed_at TIMESTAMPTZ,
 	failure_reason_code TEXT,
-	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-	outcome_artifact_id UUID NOT NULL,
-	outcome_artifact_version_id UUID NOT NULL
+	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX settlement_ingest_runs_batch_idx ON settlement_ingest_runs(settlement_batch_id);
 CREATE INDEX settlement_ingest_runs_tenant_idx ON settlement_ingest_runs(tenant_id);

@@ -1,12 +1,12 @@
 package services
 
 import (
-	"time"
 	"crypto/ed25519"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"zord-evidence/models"
 	"zord-evidence/utils"
@@ -67,7 +67,13 @@ func (s *EvidenceService) VerifyPackSignature(pack *models.EvidencePack) error {
 	manifest := reconstructPackManifest(pack)
 
 	// Step 2: Compute digest and compare to stored hash
+	// Construct canonical bytes including the canonicalization version for v2 compatibility
+	canonicalVersion := manifest.CanonicalizationVersion
+	if canonicalVersion == "" {
+		canonicalVersion = "v1" // default to v1 for legacy packs
+	}
 	canonicalBytes := []byte(strings.Join([]string{
+		canonicalVersion,
 		pack.EvidencePackID,
 		pack.MerkleRoot,
 		manifest.ScopeID,
@@ -101,15 +107,15 @@ func reconstructPackManifest(pack *models.EvidencePack) models.PackManifestV1 {
 		scopeID = pack.ClientBatchID
 	}
 	return models.PackManifestV1{
-		EvidencePackID: pack.EvidencePackID,
-		TenantID:       pack.TenantID,
-		MerkleRoot:     pack.MerkleRoot,
-		ScopeID:        scopeID,
-		CreatedAt:      pack.CreatedAt.Format(time.RFC3339Nano),
-		RulesetVersion: pack.RulesetVersion,
+		EvidencePackID:          pack.EvidencePackID,
+		TenantID:                pack.TenantID,
+		MerkleRoot:              pack.MerkleRoot,
+		ScopeID:                 scopeID,
+		CreatedAt:               pack.CreatedAt.Format(time.RFC3339Nano),
+		RulesetVersion:          pack.RulesetVersion,
+		CanonicalizationVersion: "v1", // default; will be overridden if pack has signature with v2
 	}
 }
-
 
 // decodeZordSignature reverses Signer.Sign: strips the "ZORD" prefix and
 // base64-decodes the remainder into raw ed25519 signature bytes.

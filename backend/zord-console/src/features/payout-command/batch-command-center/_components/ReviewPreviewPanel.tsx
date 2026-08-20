@@ -6,6 +6,7 @@ import type { BatchRow } from '@/services/payout-command/batch-model'
 import { formatInrPrecise } from '@/services/payout-command/batch-model'
 import type { JournalFailureRow, JournalIntentRow } from '@/services/payout-command/prod-api/mapIntentEngineBatch'
 import type { SettlementObservationTableRow } from '@/services/payout-command/prod-api/settlementObservations'
+import { isFailedObservationStatus } from '@/features/payout-command/settlement-journal/settlementObservationStatusMap'
 import { BATCH_REVIEW_COPY } from '../copy/batchCommandCenterCopy'
 import { PORTAL_CARD } from './portal/batchPortalTokens'
 export type ReviewItemRow = {
@@ -57,8 +58,7 @@ export function mapIntentReviewRows(failures: JournalFailureRow[], intents: Jour
 function mapSettlementReviewRows(rows: SettlementObservationTableRow[]): ReviewItemRow[] {
   return rows
     .filter((r) => {
-      const st = (r.statusRaw ?? r.status ?? '').toUpperCase()
-      const failed = st.includes('FAIL') || st.includes('REJECT')
+      const failed = isFailedObservationStatus(r.statusRaw ?? r.status ?? '')
       const unmatched = !r.matchedIntentId || r.matchedIntentId === '—'
       const lowMap = r.mappingConfidence != null && r.mappingConfidence < 0.5
       return failed || unmatched || lowMap

@@ -1,3 +1,5 @@
+# Declarative topic creation — all topics defined as code.
+# auto.create.topics.enable=false means ONLY these topics exist.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -21,51 +23,83 @@ spec:
             - /bin/bash
             - -ec
             - |
-              until kafka-topics --bootstrap-server zord-kafka:9092 --list >/dev/null 2>&1; do
+              BOOTSTRAP="zord-kafka:9092"
+
+              until kafka-topics --bootstrap-server $BOOTSTRAP --list >/dev/null 2>&1; do
                 echo "waiting for kafka..."
                 sleep 5
               done
 
+              echo "=== Creating topics with governance ==="
+
+              # ── Core event topics (7 day retention, 3 partitions) ──────────
               for topic in \
                 payments.ledger.events.v1 \
                 payments.intent.events.v1 \
-                payments.intent.dlq \
                 payments.dispatch.events.v1 \
                 payments.outcome.events.v1 \
-                pii.tokenize.request \
-                pii.tokenize.result \
-                relay.dlq.publish_failure \
-                relay.dlq.poison \
-                z.dispatch.events.v1 \
-                z.outcome.events.v1 \
-                canonical.intent.created \
-                dispatch.attempt.created \
-                outcome.event.normalized \
-                finality.certificate.issued \
-                final.contract.updated \
-                evidence.pack.ready \
                 evidence.pack.created \
-                dlq.event \
-                statement.match.event \
-                corridor.health.tick \
-                sla.timer.tick \
+                batch.canonicalization.completed \
                 canonical.settlement.created \
                 attachment.decision.created \
                 variance.record.created \
                 batch.summary.updated \
-                batch.canonicalization.completed \
-                governance.decision.created \
+                governance.decision.created
+              do
+                kafka-topics --bootstrap-server $BOOTSTRAP \
+                  --create --if-not-exists \
+                  --topic "$topic" \
+                  --partitions 3 \
+                  --replication-factor 1 \
+                  --config retention.ms=604800000 \
+                  --config cleanup.policy=delete
+              done
+
+              # ── DLQ topics (30 day retention for investigation) ────────────
+              for topic in \
+                payments.intent.dlq \
+                relay.dlq.publish_failure \
+                relay.dlq.poison \
+                dlq.event
+              do
+                kafka-topics --bootstrap-server $BOOTSTRAP \
+                  --create --if-not-exists \
+                  --topic "$topic" \
+                  --partitions 3 \
+                  --replication-factor 1 \
+                  --config retention.ms=2592000000 \
+                  --config cleanup.policy=delete
+              done
+
+              # ── Internal/operational topics (3 day retention) ──────────────
+              for topic in \
+                pii.tokenize.request \
+                pii.tokenize.result \
                 ml.request.events \
                 ml.result.events \
                 zpi.actuation.retry \
                 zpi.actuation.evidence \
                 zpi.actuation.alert \
-                zpi.actuation.batch_patch
+                zpi.actuation.batch_patch \
+                zord.vector.index.request.v1 \
+                corridor.health.tick \
+                sla.timer.tick
               do
-                kafka-topics --bootstrap-server zord-kafka:9092 \
-                  --create \
-                  --if-not-exists \
+                kafka-topics --bootstrap-server $BOOTSTRAP \
+                  --create --if-not-exists \
                   --topic "$topic" \
                   --partitions 3 \
-                  --replication-factor 1
+                  --replication-factor 1 \
+                  --config retention.ms=259200000 \
+                  --config cleanup.policy=delete
               done
+
+              echo ""
+              echo "=== Topic list ==="
+              kafka-topics --bootstrap-server $BOOTSTRAP --list
+              echo ""
+              echo "=== Topic governance complete ==="
+              echo "  Core topics: 7 day retention"
+              echo "  DLQ topics: 30 day retention"
+              echo "  Operational topics: 3 day retention"
+              echo "  auto.create.topics.enable=false"

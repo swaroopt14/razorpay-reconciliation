@@ -29,6 +29,9 @@ func NewProducer(brokers []string) (*Producer, error) {
 
 	config.Version = sarama.V2_8_0_0
 
+	// SASL/SCRAM-SHA-512 authentication (PLAT-06)
+	ApplySASL(config)
+
 	config.Producer.RequiredAcks = sarama.WaitForAll
 
 	config.Producer.Idempotent = true

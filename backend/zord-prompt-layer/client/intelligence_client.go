@@ -50,7 +50,13 @@ func (c *IntelligenceClient) doGetJSON(path string, q url.Values, authorization 
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		start := time.Now()
-		log.Printf("[prompt-layer][intelligence] GET start path=%s query=%s attempt=%d", path, q.Encode(), attempt+1)
+		log.Printf(
+			"[prompt-layer][intelligence] GET start path=%s query=%s attempt=%d auth_present=%t",
+			path,
+			q.Encode(),
+			attempt+1,
+			strings.TrimSpace(authorization) != "",
+		)
 		req, err := http.NewRequest(http.MethodGet, u, nil)
 		if err != nil {
 			return err
@@ -70,8 +76,8 @@ func (c *IntelligenceClient) doGetJSON(path string, q url.Values, authorization 
 			}
 			return err
 		}
-		log.Printf("[prompt-layer][intelligence] GET response path=%s status=%d attempt=%d duration_ms=%d",
-			path, resp.StatusCode, attempt+1, time.Since(start).Milliseconds())
+		log.Printf("[prompt-layer][intelligence] GET response path=%s status=%d attempt=%d duration_ms=%d auth_present=%t",
+			path, resp.StatusCode, attempt+1, time.Since(start).Milliseconds(), strings.TrimSpace(authorization) != "")
 
 		raw, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()

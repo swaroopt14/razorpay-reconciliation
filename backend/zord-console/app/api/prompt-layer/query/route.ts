@@ -5,17 +5,19 @@ import {
   requireSessionIdentityForProdProxy,
 } from '@/services/auth/resolvePayoutTenant.server'
 import { publicBffError } from '@/services/bff/publicBffError'
+import { consumeBffRateLimit, rateLimitKeyForTenant } from '@/services/bff/rateLimit.server'
 
 /**
- * CON-P0-04 + CON-P1-01 + CON-P1-06 — Ask Zord / Prompt Layer BFF.
+ * CON-P0-04 + CON-P1-01 + CON-P1-06 + CON-P1-20 — Ask Zord / Prompt Layer BFF.
  *
  * MERGE RULE (do not regress on conflict resolution):
  * 1) CSRF / same-origin via assertCookieMutationProtection (CON-P1-01)
  * 2) Identity ONLY from requireSessionIdentityForProdProxy — never client
  *    Authorization / x-tenant-id / x-user-id / x-session-id (CON-P0-04)
  * 3) Public errors via publicBffError only — no upstream URLs in body (CON-P1-06)
- * When merging with master, keep ALL three behaviors; never accept a side that
- * restores client identity forwarding or drops CSRF / publicBffError.
+ * 4) Per-tenant rate limit via consumeBffRateLimit (CON-P1-20)
+ * When merging with master, keep ALL behaviors; never accept a side that
+ * restores client identity forwarding or drops CSRF / publicBffError / rate limits.
  */
 
 export const dynamic = 'force-dynamic'
@@ -39,28 +41,6 @@ function upstreamCandidates() {
   )
 }
 
-/** Simple per-tenant sliding window for expensive Ask Zord / prompt-layer calls. */
-const rateBuckets = new Map<string, { count: number; resetAt: number }>()
-
-function consumePromptRateLimit(tenantId: string): { ok: true } | { ok: false; retryAfterSec: number } {
-  const windowMs = 60_000
-  const maxPerMin = Math.max(
-    1,
-    Number.parseInt(process.env.PROMPT_LAYER_RATE_LIMIT_PER_MIN || '30', 10) || 30,
-  )
-  const now = Date.now()
-  let bucket = rateBuckets.get(tenantId)
-  if (!bucket || now >= bucket.resetAt) {
-    bucket = { count: 0, resetAt: now + windowMs }
-    rateBuckets.set(tenantId, bucket)
-  }
-  bucket.count += 1
-  if (bucket.count > maxPerMin) {
-    return { ok: false, retryAfterSec: Math.max(1, Math.ceil((bucket.resetAt - now) / 1000)) }
-  }
-  return { ok: true }
-}
-
 export async function POST(req: NextRequest) {
   // CON-P1-01: cookie mutations must be same-origin (+ CSRF when session present).
   const csrf = assertCookieMutationProtection(req)
@@ -70,17 +50,15 @@ export async function POST(req: NextRequest) {
   const identity = await requireSessionIdentityForProdProxy(req)
   if (!identity.ok) return identity.response
 
-  const rate = consumePromptRateLimit(identity.tenantId)
+  // CON-P1-20: throttle expensive Ask Zord calls per session tenant.
+  const rate = consumeBffRateLimit({
+    bucket: 'prompt',
+    key: rateLimitKeyForTenant(identity.tenantId),
+    message: 'Too many Ask Zord requests. Try again shortly.',
+  })
   if (!rate.ok) {
-    const res = publicBffError({
-      code: 'RATE_LIMITED',
-      message: 'Too many Ask Zord requests. Try again shortly.',
-      status: 429,
-      log: { route: '/api/prompt-layer/query', extra: { tenantId: identity.tenantId } },
-    })
-    res.headers.set('retry-after', String(rate.retryAfterSec))
-    applyRefreshedSessionCookies(res, identity.refreshedPayload, req)
-    return res
+    applyRefreshedSessionCookies(rate.response, identity.refreshedPayload, req)
+    return rate.response
   }
 
   let body: unknown

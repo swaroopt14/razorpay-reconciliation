@@ -6,6 +6,8 @@ CREATE TABLE canonical_settlement_observations(
 	settlement_envelope_id UUID NOT NULL,
 	ingest_run_id TEXT NOT NULL,
 	settlement_batch_id TEXT NOT NULL,
+	outcome_artifact_id UUID NOT NULL,
+	outcome_artifact_version_id UUID NOT NULL,
 	source_file_ref TEXT NOT NULL,
 	source_row_ref TEXT NOT NULL,
 	source_system TEXT NOT NULL,
@@ -66,6 +68,8 @@ CREATE INDEX canonical_settlement_observations_tenant_idx ON canonical_settlemen
 CREATE INDEX canonical_obs_run_idx ON canonical_settlement_observations(ingest_run_id);
 CREATE INDEX canonical_obs_tenant_run_idx ON canonical_settlement_observations(tenant_id, ingest_run_id);
 CREATE INDEX canonical_obs_batch_idx ON canonical_settlement_observations(settlement_batch_id);
+CREATE INDEX canonical_obs_outcome_artifact_idx ON canonical_settlement_observations(outcome_artifact_id);
+CREATE INDEX canonical_obs_outcome_artifact_version_idx ON canonical_settlement_observations(outcome_artifact_version_id);
 CREATE INDEX canonical_obs_tenant_client_ref_lower_idx ON canonical_settlement_observations(tenant_id, LOWER(client_reference_candidate)) WHERE client_reference_candidate IS NOT NULL;
 CREATE INDEX canonical_obs_tenant_batch_ref_lower_idx ON canonical_settlement_observations(tenant_id, LOWER(batch_reference)) WHERE batch_reference IS NOT NULL;
 CREATE INDEX canonical_obs_tenant_client_batch_id_lower_idx ON canonical_settlement_observations(tenant_id, LOWER(client_batch_id)) WHERE client_batch_id IS NOT NULL AND client_batch_id <> '';
@@ -80,6 +84,8 @@ DROP INDEX canonical_obs_tenant_curr_amt_ts_idx;
 DROP INDEX canonical_obs_tenant_client_batch_id_lower_idx;
 DROP INDEX canonical_obs_tenant_batch_ref_lower_idx;
 DROP INDEX canonical_obs_tenant_client_ref_lower_idx;
+DROP INDEX canonical_obs_outcome_artifact_version_idx;
+DROP INDEX canonical_obs_outcome_artifact_idx;
 DROP INDEX canonical_obs_batch_idx;
 DROP INDEX canonical_obs_tenant_run_idx;
 DROP INDEX canonical_obs_run_idx;

@@ -20,6 +20,7 @@ import { getProdDlqManualReview } from '@/services/payout-command/prod-api/getPr
 import { dlqItemMatchesBatch, mergeDlqItemsById } from '@/services/payout-command/prod-api/mapDlqContext'
 import { apiTrimmedString } from '@/services/payout-command/prod-api/coerceApiField'
 import { mapBatchIdItemToBatchRecord } from './mappers/mapIntentBatchSidebar'
+import { JOURNAL_DEFAULT_CURRENCY } from '@/services/payout-command/prod-api/money/journalMoney'
 
 const listInflight = new Map<string, Promise<JournalBatchRecord[]>>()
 const intentsInflight = new Map<string, Promise<IntentJournalPaymentIntentsResponse | null>>()
@@ -90,7 +91,8 @@ export async function fetchJournalSidebarBatches(tenantId: string): Promise<Jour
               type: 'Disbursement',
               apiType: '—',
               source: 'DLQ',
-              totalValue: 0,
+              amountMinor: 0,
+              currency: JOURNAL_DEFAULT_CURRENCY,
               transactions: count,
               confirmedCount: 0,
               highConfidenceCount: 0,

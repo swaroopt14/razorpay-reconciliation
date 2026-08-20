@@ -131,11 +131,11 @@ func TestTOK06_RepoActiveKeyIsolatedPerTenant(t *testing.T) {
 	keyBv1 := uuid.New().String()
 	keyAv2 := uuid.New().String()
 
-	if err := repo.RotateKey(ctx, tenantA, keyAv1, make([]byte, 32), "test"); err != nil {
-		t.Fatalf("RotateKey(tenant A, initial) error = %v", err)
+	if rotated, err := repo.RotateKey(ctx, tenantA, keyAv1, make([]byte, 32), "test-kms-key", "test"); err != nil || !rotated {
+		t.Fatalf("RotateKey(tenant A, initial) rotated=%v err = %v", rotated, err)
 	}
-	if err := repo.RotateKey(ctx, tenantB, keyBv1, make([]byte, 32), "test"); err != nil {
-		t.Fatalf("RotateKey(tenant B, initial) error = %v", err)
+	if rotated, err := repo.RotateKey(ctx, tenantB, keyBv1, make([]byte, 32), "test-kms-key", "test"); err != nil || !rotated {
+		t.Fatalf("RotateKey(tenant B, initial) rotated=%v err = %v", rotated, err)
 	}
 
 	activeA, err := repo.GetActiveKey(ctx, tenantA)
@@ -151,8 +151,8 @@ func TestTOK06_RepoActiveKeyIsolatedPerTenant(t *testing.T) {
 	}
 
 	// Rotate tenant A again -- tenant B's active key must be completely unaffected.
-	if err := repo.RotateKey(ctx, tenantA, keyAv2, make([]byte, 32), "test"); err != nil {
-		t.Fatalf("RotateKey(tenant A, second rotation) error = %v", err)
+	if rotated, err := repo.RotateKey(ctx, tenantA, keyAv2, make([]byte, 32), "test-kms-key", "test"); err != nil || !rotated {
+		t.Fatalf("RotateKey(tenant A, second rotation) rotated=%v err = %v", rotated, err)
 	}
 	stillActiveB, err := repo.GetActiveKey(ctx, tenantB)
 	if err != nil {

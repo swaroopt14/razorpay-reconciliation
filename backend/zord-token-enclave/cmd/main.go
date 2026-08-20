@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
-	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	awskms "github.com/aws/aws-sdk-go-v2/service/kms"
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
 	"github.com/pressly/goose/v3"
@@ -23,32 +26,21 @@ import (
 	"zord-token-enclave/internal/models"
 	"zord-token-enclave/internal/repository"
 	"zord-token-enclave/internal/retryutil"
+	"zord-token-enclave/internal/serviceauth"
 	"zord-token-enclave/internal/services"
 	"zord-token-enclave/kafka"
 	"zord-token-enclave/tracing"
 )
 
-// internalAuthMiddleware validates X-Zord-Internal-Token on every request
-// except /v1/health. The token is read from ENCLAVE_INTERNAL_TOKEN env var.
-// If the env var is not set, the service refuses to start (see main).
-func internalAuthMiddleware(token string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if c.Request.URL.Path == "/v1/health" || c.Request.URL.Path == "/ready" {
-			c.Next()
-			return
-		}
-		provided := c.GetHeader("X-Zord-Internal-Token")
-		if provided == "" || provided != token {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "unauthorized",
-			})
-			return
-		}
-		// Set caller_id for handlers to use in audit
-		c.Set("caller_id", c.GetHeader("X-Zord-Caller-ID"))
-		c.Next()
-	}
-}
+// TOK-04 ("Use tenant- and purpose-scoped service authorization for
+// tokenize/detokenize"): the old internalAuthMiddleware checked one static
+// shared secret identically for every caller -- any holder could request/
+// decrypt PII for any tenant and the audit trail believed whatever tenant/
+// caller string it was handed. It's replaced below by serviceauth.Middleware,
+// which requires a short-lived, signed, per-call service JWT instead. See
+// internal/serviceauth/serviceauth.go for the real implementation (also
+// exercised directly by testing/audittests -- no separate test-only copy of
+// this logic exists to drift out of sync).
 
 func main() {
 	cleanup := tracing.InitTracing("zord-token-enclave")
@@ -56,10 +48,11 @@ func main() {
 
 	cfg := config.Load()
 
-	// Load internal auth token — refuse to start if missing
-	internalToken := os.Getenv("ENCLAVE_INTERNAL_TOKEN")
-	if internalToken == "" {
-		log.Fatal("❌ ENCLAVE_INTERNAL_TOKEN is not set — refusing to start without authentication")
+	// TOK-04: refuse to start without the scoped-service-JWT signing secret --
+	// same fail-fast discipline the old ENCLAVE_INTERNAL_TOKEN check had, now
+	// gating a verified, per-caller credential instead of one shared secret.
+	if err := serviceauth.InitSigningSecret(); err != nil {
+		log.Fatal("❌ ", err)
 	}
 
 	// ---------------- DB SETUP ----------------
@@ -89,23 +82,49 @@ func main() {
 		log.Fatal("❌ Failed to run migrations:", err)
 	}
 
+	// ---------------- KMS CLIENT (TOK-03) ----------------
+	// Default credential chain: resolves via this pod's zord-aws-access IRSA
+	// service account in EKS, or explicit AWS_* env vars locally/in tests.
+	awsCfg, err := awsconfig.LoadDefaultConfig(context.Background())
+	if err != nil {
+		log.Fatal("❌ Failed to load AWS config:", err)
+	}
+	kmsClient := keymanager.NewAWSKMSClient(awskms.NewFromConfig(awsCfg), cfg.KMSKeyID)
+
 	// ---------------- REPO + KEY MANAGER ----------------
 	tokenRepo := repository.NewTokenRepository(database)
-	keyManager := keymanager.NewKeyManager(tokenRepo)
+	keyManager := keymanager.NewKeyManager(tokenRepo, kmsClient, cfg.KMSKeyID)
 
 	// ---------------- SERVICE ----------------
 	tokenSvc := services.NewTokenService(tokenRepo, keyManager, cfg.TokenSecret)
 
+	// TOK-07: "Multiple replicas can rotate the same tenant concurrently or
+	// continue during shutdown" -- these two workers previously ran on
+	// context.Background() forever, with no way to stop on shutdown. A
+	// signal-derived root context lets them exit their loop promptly on
+	// SIGTERM/SIGINT instead of running an in-flight (or next) cycle to
+	// completion regardless of what the orchestrator wants. HTTP graceful
+	// shutdown (r.Run below) is a separate, explicitly out-of-scope concern
+	// for this ticket -- the audit's code evidence names only these
+	// workers' background contexts.
+	workerCtx, stopWorkers := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopWorkers()
+
 	// ---------------- MIGRATION WORKER ----------------
 	go func() {
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
 		for {
 			log.Println("🔁 Starting migration check for all tenants...")
-			tenants, err := tokenSvc.GetAllTenants(context.Background())
+			tenants, err := tokenSvc.GetAllTenants(workerCtx)
 			if err != nil {
 				log.Println("❌ Failed to load tenants for migration:", err)
 			} else {
 				for _, tenantID := range tenants {
-					if err := tokenSvc.MigrateKeys(context.Background(), tenantID); err != nil {
+					if workerCtx.Err() != nil {
+						break
+					}
+					if err := tokenSvc.MigrateKeys(workerCtx, tenantID); err != nil {
 						log.Printf("❌ Migration error for tenant %s: %v", tenantID, err)
 					} else {
 						log.Printf("✅ Migration cycle completed for tenant %s", tenantID)
@@ -113,20 +132,31 @@ func main() {
 				}
 			}
 
-			time.Sleep(1 * time.Minute)
+			select {
+			case <-workerCtx.Done():
+				log.Println("🛑 migration worker shutting down")
+				return
+			case <-ticker.C:
+			}
 		}
 	}()
 
 	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
 		for {
 			log.Println("🔐 Checking if key rotation needed...")
 
-			err := tokenSvc.AutoRotateKeys(context.Background())
-			if err != nil {
+			if err := tokenSvc.AutoRotateKeys(workerCtx); err != nil {
 				log.Println("❌ Auto-rotation error:", err)
 			}
 
-			time.Sleep(10 * time.Minute)
+			select {
+			case <-workerCtx.Done():
+				log.Println("🛑 auto-rotation worker shutting down")
+				return
+			case <-ticker.C:
+			}
 		}
 	}()
 
@@ -269,7 +299,7 @@ func main() {
 	r.Use(
 		gin.Recovery(),
 		otelgin.Middleware("zord-token-enclave"),
-		internalAuthMiddleware(internalToken), // P0 auth gate
+		serviceauth.Middleware(tokenRepo), // TOK-04: P0 auth gate
 	)
 
 	// health — exempt from auth by middleware
@@ -277,9 +307,12 @@ func main() {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	// Readiness endpoint — checks DB connectivity
+	// Readiness endpoint — checks DB connectivity and KMS reachability.
+	// TOK-03: a missing/broken IAM grant on the KMS key now surfaces as
+	// "pod not ready" instead of live 500s on the hot Tokenize path.
 	readinessHandler := health.NewReadinessHandler([]health.DependencyCheck{
 		health.DBCheck("postgres", database),
+		{Name: "kms", Check: kmsClient.DescribeKey},
 	})
 	r.GET("/ready", readinessHandler.Ready)
 

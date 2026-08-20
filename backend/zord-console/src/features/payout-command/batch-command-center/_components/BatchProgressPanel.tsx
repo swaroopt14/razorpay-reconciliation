@@ -60,7 +60,7 @@ export function BatchProgressPanel({
         />
         <ol className="relative flex justify-between gap-1">
           {steps.map((step, i) => (
-            <li key={step.label} className="flex min-w-0 flex-1 flex-col items-center px-0.5 text-center">
+            <li key={`pipeline-step-${i}`} className="flex min-w-0 flex-1 flex-col items-center px-0.5 text-center">
               <PipelineNode state={step.state} stepNumber={i + 1} />
               <p className="mt-3 max-w-[6.5rem] text-[11px] font-semibold leading-snug text-[#0f172a]">{step.label}</p>
             </li>
@@ -69,12 +69,12 @@ export function BatchProgressPanel({
       </div>
       <ol className="mt-4 space-y-3 md:hidden">
         {steps.map((step, i) => (
-          <li key={step.label} className="flex gap-3">
+          <li key={`pipeline-step-mobile-${i}`} className="flex gap-3">
             <PipelineNode state={step.state} stepNumber={i + 1} />
             <div>
               <p className="text-[14px] font-semibold text-[#0f172a]">{step.label}</p>
               <p className="mt-0.5 text-[12px] text-[#64748b]">
-                {BATCH_REVIEW_COPY.pipeline.steps[i]?.description ?? ''}
+                {step.description ?? BATCH_REVIEW_COPY.pipeline.steps[i]?.description ?? ''}
               </p>
             </div>
           </li>
