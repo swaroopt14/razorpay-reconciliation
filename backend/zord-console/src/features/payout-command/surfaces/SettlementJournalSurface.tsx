@@ -18,7 +18,7 @@ import { settlementObservationPageRange } from '../settlement-journal/settlement
 import { downloadCsv, observationsToCsv } from '../settlement-journal/settlementExport'
 import {
   observationInDateRange,
-  matchesAmountRange,
+  matchesAmountRangeForRow,
   outcomeFromFinalityAndCoverage,
   finalityCoverageFromBatchDetail,
   type AmountRangeFilter,
@@ -47,6 +47,7 @@ import { markSandboxSetupStep } from '@/services/payout-command/sandbox-setup-gu
 import { getIntelligenceBatchDetail } from '@/services/payout-command/prod-api/getIntelligenceKpis'
 import { LiveDataHint } from '../shared'
 import { useRegisterPayoutPageActions } from '../layout/PayoutPageActionsContext'
+import { useTenantBusinessTimezone } from '@/services/payout-command/useTenantBusinessTimezone'
 
 type SettlementActivityTab = 'observations' | 'parseErrors'
 const SETTLEMENT_PAGE_SUMMARY = dockItems.find((d) => d.id === 'settlement')?.summary ?? ''
@@ -138,6 +139,7 @@ function SettlementJournalSurfaceContent({
   const { mode } = useEnvironment()
   const batchCommandCenterHref = payoutBatchCommandCenterHref(mode === 'sandbox')
   const { batchDetail } = useSettlementBatchIntelligence(selectedClientBatchId, tenantReady)
+  const { timeZone: businessTimeZone } = useTenantBusinessTimezone()
 
   const [tableSearch, setTableSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<'All' | string>('All')
@@ -292,13 +294,18 @@ function SettlementJournalSurfaceContent({
     const scopedRows = observationRows.filter((row) => {
       const bySearch = !q || observationSearchHaystack(row).includes(q)
       const byStatus = statusFilter === 'All' || row.status === statusFilter
-      const byDate = observationInDateRange(row.observationTime, dateRange)
+      const byDate = observationInDateRange(
+        row.observationTime,
+        dateRange,
+        businessTimeZone,
+        row.observationAtIso,
+      )
       const byBank = !bankQ || row.bankRef.toLowerCase().includes(bankQ)
       const byClient = !clientQ || row.clientRef.toLowerCase().includes(clientQ)
       const bySettlementBatch =
         !settlementBatchQ || row.settlementBatchId.toLowerCase().includes(settlementBatchQ)
       const bySource = sourceSystemFilter === 'All' || row.sourceSystem === sourceSystemFilter
-      const byAmount = matchesAmountRange(row.amount, amountRangeFilter)
+      const byAmount = matchesAmountRangeForRow(row.amount, row.currency, amountRangeFilter)
       return (
         bySearch &&
         byStatus &&
@@ -311,13 +318,11 @@ function SettlementJournalSurfaceContent({
       )
     })
     return scopedRows.sort((a, b) => {
-      const aNum = Number.parseInt(a.sourceRowRef, 10)
-      const bNum = Number.parseInt(b.sourceRowRef, 10)
-      const aValid = Number.isFinite(aNum)
-      const bValid = Number.isFinite(bNum)
-      if (aValid && bValid) return aNum - bNum
-      if (aValid) return -1
-      if (bValid) return 1
+      const aNum = a.displayRowIndex
+      const bNum = b.displayRowIndex
+      if (aNum != null && bNum != null) return aNum - bNum
+      if (aNum != null) return -1
+      if (bNum != null) return 1
       return 0
     })
   }, [
@@ -330,6 +335,7 @@ function SettlementJournalSurfaceContent({
     filterSettlementBatchId,
     sourceSystemFilter,
     amountRangeFilter,
+    businessTimeZone,
   ])
 
   const serverPagination = !filtersActive

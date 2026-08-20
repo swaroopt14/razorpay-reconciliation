@@ -59,6 +59,7 @@ export type PaymentHealthCardsProps = {
   proofFooter?: string
   proofReadyRow: string
   incompleteProofRow: string
+  evidenceVerificationRow: string
   proofHref: string
 }
 
@@ -90,6 +91,7 @@ export function PaymentHealthCards({
   proofFooter,
   proofReadyRow,
   incompleteProofRow,
+  evidenceVerificationRow,
   proofHref,
 }: PaymentHealthCardsProps) {
   return (
@@ -179,7 +181,8 @@ export function PaymentHealthCards({
           </p>
           <p className={`mt-2 text-center text-[14px] font-medium ${HOME_BODY_IMPERIAL_SM}`}>{proofSub}</p>
           <div className="mt-4">
-            <BreakdownRow label="Proof-ready payments" value={proofReadyRow} />
+            <BreakdownRow label="Audit coverage" value={proofReadyRow} />
+            <BreakdownRow label="Evidence verification" value={evidenceVerificationRow} />
             <BreakdownRow label="Incomplete proof" value={incompleteProofRow} />
           </div>
         </div>

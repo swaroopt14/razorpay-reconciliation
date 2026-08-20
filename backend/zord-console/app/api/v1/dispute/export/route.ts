@@ -9,6 +9,18 @@ import {
 } from '../../evidence/_shared'
 import type { EvidencePackFull, EvidencePackSummaryRow } from '@/services/payout-command/prod-api/evidenceTypes'
 import { apiTrimmedString } from '@/services/payout-command/prod-api/coerceApiField'
+import {
+  cryptographicSealClaim,
+  exportVerificationLines,
+  parseLayeredVerification,
+  paymentVerifiedClaim,
+  verifiedExportBlockReason,
+  type LayeredVerification,
+} from '@/services/payout-command/prod-api/layeredVerification'
+import {
+  postEvidencePackVerifyUpstream,
+  postService6DisputeExport,
+} from '@/services/payout-command/prod-api/verifyEvidencePackUpstream'
 import { consumeBffRateLimit, rateLimitKeyForTenant } from '@/services/bff/rateLimit.server'
 
 export const dynamic = 'force-dynamic'
@@ -24,6 +36,10 @@ type ExportRequestBody = {
   payment_reference?: string
   dispute_reason?: DisputeReason
   export_type?: ExportType
+}
+
+function verificationPdfLines(verification: LayeredVerification): string[] {
+  return ['--- Service 6 verification ---', ...exportVerificationLines(verification), '']
 }
 
 function sanitizeFileSafe(value: string): string {
@@ -238,6 +254,59 @@ export async function POST(request: NextRequest) {
     return res
   }
 
+  const verify = await postEvidencePackVerifyUpstream(
+    gate.tenantId,
+    gate.accessToken,
+    pack.evidence_pack_id,
+  )
+  const verification = parseLayeredVerification(verify.ok ? verify.data : { status: 'VERIFICATION_NOT_RUN' })
+  const blocked = verifiedExportBlockReason(verification)
+  if (blocked) {
+    const res = NextResponse.json(
+      {
+        error: blocked,
+        verification,
+      },
+      { status: 422 },
+    )
+    applyEvidenceGateCookies(res, gate.refreshedPayload)
+    return res
+  }
+
+  const service6 = await postService6DisputeExport({
+    tenantId: gate.tenantId,
+    accessToken: gate.accessToken,
+    paymentReference,
+    disputeReason,
+    exportType,
+    evidencePackId: pack.evidence_pack_id,
+  })
+  if (service6.ok) {
+    const res = new NextResponse(service6.body, {
+      status: 200,
+      headers: {
+        'content-type': service6.contentType,
+        'content-disposition': `attachment; filename="${service6.filename}"`,
+        'cache-control': 'no-store',
+        'x-verification-run-id': verification.verificationRunId ?? '',
+        'x-verification-overall': verification.overallStatus,
+      },
+    })
+    applyEvidenceGateCookies(res, gate.refreshedPayload)
+    return res
+  }
+  if (service6.status === 422) {
+    const res = NextResponse.json(
+      {
+        error: service6.detail || 'Service 6 blocked verified export',
+        verification,
+      },
+      { status: 422 },
+    )
+    applyEvidenceGateCookies(res, gate.refreshedPayload)
+    return res
+  }
+
   const packRef = sanitizeFileSafe(packPaymentReference(pack))
   const utr = packUtr(pack)
   const rawZordSignature = (pack as Record<string, unknown>).zord_signature
@@ -259,9 +328,10 @@ export async function POST(request: NextRequest) {
       `Status:            ${apiTrimmedString(pack.pack_status) || 'N/A'}`,
       `Matched:           ${String(matched)}`,
       `Variance:          ${apiTrimmedString(pack.proof_status) || 'N/A'}`,
-      `Proof score:       ${proofScore}/100`,
-      `Explanation:       Payment verified. Proof score: ${proofScore}/100.`,
+      `Proof score (completeness): ${proofScore}/100`,
+      `Explanation:       ${paymentVerifiedClaim(verification)}`,
       `Zord signature:    ${zordSignature}`,
+      ...verificationPdfLines(verification),
     ])
     const res = new NextResponse(new Uint8Array(pdf), {
       status: 200,
@@ -347,9 +417,10 @@ export async function POST(request: NextRequest) {
       `Match decision:      ${String(pc.match_decision_available ?? 'N/A')}`,
       `Governance check:    ${String(pc.governance_decision_available ?? 'N/A')}`,
       `Replay protection:   ${String(pc.replay_check_passed ?? 'N/A')}`,
-      `Cryptographic seal:  ${(pack.signatures?.length ?? 0) > 0 ? 'true' : 'false'}`,
+      `Cryptographic seal:  ${cryptographicSealClaim(verification, (pack.signatures?.length ?? 0) > 0)}`,
       '',
-      `Proof score: ${pack.proof_score ?? 'N/A'}/100`,
+      `Proof score (completeness): ${pack.proof_score ?? 'N/A'}/100`,
+      ...verificationPdfLines(verification),
     ])
     const res = new NextResponse(new Uint8Array(pdf), {
       status: 200,
@@ -386,6 +457,15 @@ export async function POST(request: NextRequest) {
       issueStatement,
       zordSignature,
     ])
+    const verifySheet = workbook.addWorksheet('Verification')
+    verifySheet.addRow(['Field', 'Value'])
+    verifySheet.addRow(['verification_run_id', verification.verificationRunId ?? 'unavailable'])
+    verifySheet.addRow(['checked_at', verification.checkedAt ?? 'unavailable'])
+    verifySheet.addRow(['overall', verification.overallStatus])
+    for (const layer of verification.layers) {
+      verifySheet.addRow([layer.id, `${layer.status} ${layer.explanation}`])
+    }
+    verifySheet.addRow(['payment_verified_claim', paymentVerifiedClaim(verification)])
     const out = Buffer.from(await workbook.xlsx.writeBuffer())
     const res = new NextResponse(new Uint8Array(out), {
       status: 200,
@@ -405,6 +485,10 @@ export async function POST(request: NextRequest) {
     dispute_reason: disputeReason,
     payment_reference: paymentReference,
     generated_at: new Date().toISOString(),
+    export_label: verification.allowsVerifiedClaim
+      ? 'Verified Service 6 export'
+      : 'Complete-but-unverified pack. Verification not run or not fully verified.',
+    verification,
     evidence_pack: pack,
   }
   const res = new NextResponse(JSON.stringify(raw, null, 2), {

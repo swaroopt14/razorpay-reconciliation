@@ -359,6 +359,12 @@ export function HomeSurface({
   const proofCoveragePct = withPct(displayApiField(defData?.evidence_pack_rate, loading))
   const proofReadyRow = withPct(displayApiField(defData?.audit_ready_pct, loading))
   const incompleteProofRow = displayApiField(defData?.weak_evidence_count, loading)
+  const evidenceVerificationRow =
+    dataSources.evidenceStatus === 'ready'
+      ? 'Verified pack available'
+      : dataSources.evidenceStatus === 'partial'
+        ? 'Not verified'
+        : 'Unavailable'
 
   const settlementHeroDisplay = loading
     ? '…'
@@ -633,10 +639,11 @@ export function HomeSurface({
             refCompleteness={refCompleteness}
             multiMatchRate={multiMatchRate}
             proofCoverageDisplay={proofCoveragePct}
-            proofSub="Evidence coverage for audit or export"
-            proofFooter="Proof-ready payments have enough linked evidence to support audit or dispute export."
+            proofSub="Evidence pack coverage (analytical)"
+            proofFooter="Audit coverage is a Service 7 percentage. Evidence verification comes only from Service 6 pack status — 85% coverage is not Evidence Ready."
             proofReadyRow={proofReadyRow}
             incompleteProofRow={incompleteProofRow}
+            evidenceVerificationRow={evidenceVerificationRow}
             proofHref="/payout-command-view/today?dock=proof"
             nextActions={{ actions: nextActions, completionHint }}
             insightCarousels={insightCarouselSlots}

@@ -1,5 +1,10 @@
 import { fetchProdJsonGetWithMeta, type ProdJsonGetResult } from './fetchProdJsonGet'
 import { apiTrimmedString } from './coerceApiField'
+import {
+  DEFAULT_TENANT_BUSINESS_TIMEZONE,
+  formatInTenantBusinessTimezone,
+} from '@/services/payout-command/tenantBusinessTimezone'
+import { settlementStatusDisplayLabel } from '@/features/payout-command/settlement-journal/settlementObservationStatusMap'
 import { normalizeCurrency } from '@/services/payout-command/money/money'
 
 export type SettlementObservationBatchListItem = {
@@ -284,7 +289,8 @@ export type SettlementObservationTableRow = {
   settlementBatchId: string
   ingestRunId: string
   clientBatchId: string
-  sourceRowRef: string
+  sourceRowRef: string | null
+  displayRowIndex: number | null
   sourceFileRef: string
   clientRef: string
   providerRef: string
@@ -301,7 +307,10 @@ export type SettlementObservationTableRow = {
   sourceType: string
   sourceStrength: string
   observationKind: string
+  /** Display timestamp in tenant business timezone. */
   observationTime: string
+  /** Raw ISO for financial day filters (CON-P1-29) — never browser-local grouping. */
+  observationAtIso: string
   valueDate: string
   createdAt: string
   updatedAt: string
@@ -346,18 +355,8 @@ function parseMoney(raw: string | number | null | undefined): number {
   return Number.isFinite(n) ? n : 0
 }
 
-function formatObsTime(iso: string | undefined): string {
-  const safeIso = apiTrimmedString(iso)
-  if (!safeIso) return '—'
-  const d = new Date(safeIso)
-  if (Number.isNaN(d.getTime())) return safeIso
-  return d.toLocaleString('en-IN', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+function formatObsTime(iso: string | undefined, timeZone = DEFAULT_TENANT_BUSINESS_TIMEZONE): string {
+  return formatInTenantBusinessTimezone(iso, timeZone)
 }
 
 function displayOrDash(value: string | null | undefined): string {
@@ -365,37 +364,34 @@ function displayOrDash(value: string | null | undefined): string {
   return v ? v : '—'
 }
 
-/** Use 1-based row index only when API source_row_ref is missing or invalid. */
-function resolveSourceRowRef(
-  raw: string | null | undefined,
-  rowIndex: number | undefined,
-): string {
+/** Authoritative source_row_ref only. Never substitute array index. */
+export function resolveSourceRowRef(raw: string | null | undefined): string | null {
   const v = raw?.trim()
-  if (!v) {
-    return rowIndex != null ? String(rowIndex + 1) : '—'
-  }
+  if (!v) return null
   const signed = /^-?\d+$/.test(v) ? Number.parseInt(v, 10) : Number.NaN
-  if (Number.isFinite(signed)) {
-    if (signed <= 0 && rowIndex != null) return String(rowIndex + 1)
-    return String(signed)
-  }
+  if (Number.isFinite(signed) && signed <= 0) return null
   return v
 }
 
 export function mapObservationToTableRow(
   obs: CanonicalSettlementObservation | SettlementObservationBatchDetailItem,
-  opts?: { clientBatchId?: string; rowIndex?: number },
+  opts?: { clientBatchId?: string; rowIndex?: number; timeZone?: string },
 ): SettlementObservationTableRow {
   const full = obs as CanonicalSettlementObservation
   const slim = obs as SettlementObservationBatchDetailItem
+  const timeZone = opts?.timeZone || DEFAULT_TENANT_BUSINESS_TIMEZONE
   const statusRaw = apiTrimmedString(full.settlement_status ?? slim.settlement_status)
   const settlementBatchId = displayOrDash(full.settlement_batch_id ?? slim.settlement_batch_id)
-  const sourceRowRef = resolveSourceRowRef(full.source_row_ref ?? slim.source_row_ref, opts?.rowIndex)
-  const createdAt = formatObsTime(full.created_at ?? slim.created_at)
+  const sourceRowRef = resolveSourceRowRef(full.source_row_ref ?? slim.source_row_ref)
+  const displayRowIndex = opts?.rowIndex != null ? opts.rowIndex + 1 : null
+  const observationAtIso = apiTrimmedString(
+    full.observation_timestamp ?? slim.observation_timestamp ?? full.created_at ?? slim.created_at,
+  )
+  const createdAt = formatObsTime(full.created_at ?? slim.created_at, timeZone)
   const observationId =
     full.settlement_observation_id?.trim() ||
     slim.settlement_observation_id?.trim() ||
-    `${settlementBatchId}:${sourceRowRef}:${opts?.rowIndex ?? 0}:${createdAt}`
+    `${settlementBatchId}:${sourceRowRef ?? 'noref'}:${displayRowIndex ?? 0}:${createdAt}`
 
   return {
     observationId,
@@ -403,6 +399,7 @@ export function mapObservationToTableRow(
     ingestRunId: displayOrDash(full.ingest_run_id),
     clientBatchId: displayOrDash(full.client_batch_id ?? opts?.clientBatchId),
     sourceRowRef,
+    displayRowIndex,
     sourceFileRef: displayOrDash(full.source_file_ref),
     clientRef: displayOrDash(full.client_reference_candidate ?? slim.client_reference_candidate),
     providerRef: displayOrDash(full.provider_reference ?? slim.provider_reference),
@@ -413,16 +410,18 @@ export function mapObservationToTableRow(
     deductionAmount: parseMoney(full.deduction_amount ?? slim.deduction_amount),
     currency: normalizeCurrency(full.currency_code ?? slim.currency_code),
     statusRaw,
-    status: statusRaw ? statusRaw.replace(/_/g, ' ') : '—',
+    // CON-P1-24: unknown enums show Needs mapping (never auto-promoted to Settled).
+    status: settlementStatusDisplayLabel(statusRaw),
     sourceSystem: displayOrDash(full.source_system ?? slim.source_system),
     sourceSystemId: displayOrDash(full.source_system_id ?? slim.source_system_id),
     sourceType: displayOrDash(full.source_type),
     sourceStrength: displayOrDash(full.source_strength ?? full.source_strength_class),
     observationKind: displayOrDash(full.observation_kind?.replace(/_/g, ' ')),
-    observationTime: formatObsTime(full.observation_timestamp ?? slim.observation_timestamp ?? full.created_at ?? slim.created_at),
-    valueDate: formatObsTime(full.value_date ?? slim.value_date ?? undefined),
+    observationTime: formatObsTime(observationAtIso || undefined, timeZone),
+    observationAtIso,
+    valueDate: formatObsTime(full.value_date ?? slim.value_date ?? undefined, timeZone),
     createdAt,
-    updatedAt: formatObsTime(full.updated_at ?? slim.updated_at),
+    updatedAt: formatObsTime(full.updated_at ?? slim.updated_at, timeZone),
     providerStatusCode: displayOrDash(full.provider_status_code ?? slim.provider_status_code),
     failureReasonCode: displayOrDash(full.failure_reason_code ?? slim.failure_reason_code),
     retryFlag: Boolean(full.retry_flag ?? slim.retry_flag),
@@ -506,7 +505,8 @@ export function observationSearchHaystack(row: SettlementObservationTableRow): s
     row.settlementBatchId,
     row.ingestRunId,
     row.clientBatchId,
-    row.sourceRowRef,
+    row.sourceRowRef ?? '',
+    row.displayRowIndex != null ? String(row.displayRowIndex) : '',
     row.sourceFileRef,
     row.clientRef,
     row.providerRef,

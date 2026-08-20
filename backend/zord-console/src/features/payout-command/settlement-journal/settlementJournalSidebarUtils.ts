@@ -1,5 +1,9 @@
 import type { SettlementObservationTableRow } from '@/services/payout-command/prod-api/settlementObservations'
 import {
+  DEFAULT_TENANT_BUSINESS_TIMEZONE,
+  isInstantInBusinessDatePreset,
+} from '@/services/payout-command/tenantBusinessTimezone'
+import {
   CURRENCY_NEUTRAL_AMOUNT_RANGES,
   aggregateMoney,
   formatMoneyBuckets,
@@ -7,6 +11,18 @@ import {
   matchesCurrencyAwareAmountRange,
   type CurrencyNeutralAmountRange,
 } from '@/services/payout-command/money/money'
+import {
+  isFailedObservationStatus,
+  isSettledObservationStatus,
+  mapSettlementObservationStatus,
+} from './settlementObservationStatusMap'
+
+export {
+  isFailedObservationStatus,
+  isSettledObservationStatus,
+  mapSettlementObservationStatus,
+  settlementStatusDisplayLabel,
+} from './settlementObservationStatusMap'
 
 export type DateRangePreset = 'all' | '7d' | '30d' | '90d' | 'ytd'
 
@@ -19,6 +35,7 @@ export type SettlementSidebarOutcomeLabel =
   | 'Requires Review'
   | 'Cancelled'
   | 'Processing'
+  | 'Unknown'
 
 export type SettlementSidebarOutcome = {
   total: number
@@ -63,19 +80,30 @@ export type AmountRangeFilter = CurrencyNeutralAmountRange
 /** Material unresolved value (≥1%) blocks Fully Settled even if finality looks closed. */
 export const MATERIAL_UNRESOLVED_VALUE_RATIO = 0.01
 
-export function observationInDateRange(observationTime: string, preset: DateRangePreset): boolean {
-  if (preset === 'all') return true
-  const parsed = Date.parse(observationTime)
-  if (!Number.isFinite(parsed)) return true
-  const observed = new Date(parsed)
-  const now = new Date()
-  const start = new Date(now)
-  if (preset === '7d') start.setDate(now.getDate() - 7)
-  else if (preset === '30d') start.setDate(now.getDate() - 30)
-  else if (preset === '90d') start.setDate(now.getDate() - 90)
-  else if (preset === 'ytd') start.setMonth(0, 1)
-  start.setHours(0, 0, 0, 0)
-  return observed >= start
+/**
+ * Coverage bands aligned with Intent Journal aggregate thresholds
+ * (Critical <50 · At Risk 50–75 · Stable ≥75).
+ * High coverage must not surface as customer “Requires Review”.
+ */
+export const SETTLEMENT_COVERAGE_STATUS_THRESHOLDS = {
+  /** Below this → keep Requires Review when Service 5 says REQUIRES_REVIEW. */
+  requiresReviewBelowPct: 75,
+  /** At/above this with complete coverage → Fully Settled. */
+  fullySettledFromPct: 100,
+} as const
+
+/**
+ * Financial day filter in the tenant business timezone (CON-P1-29).
+ * Prefer ISO `observationAt` when present — display strings are for UI only.
+ */
+export function observationInDateRange(
+  observationTime: string,
+  preset: DateRangePreset,
+  timeZone: string = DEFAULT_TENANT_BUSINESS_TIMEZONE,
+  observationAtIso?: string | null,
+): boolean {
+  const instant = observationAtIso?.trim() || observationTime
+  return isInstantInBusinessDatePreset(instant, preset, timeZone)
 }
 
 /** @deprecated Prefer matchesAmountRangeForRow — amount alone is not currency-safe. */
@@ -89,16 +117,6 @@ export function matchesAmountRangeForRow(
   range: AmountRangeFilter,
 ): boolean {
   return matchesCurrencyAwareAmountRange(amount, currency, range)
-}
-
-export function isSettledObservationStatus(statusRaw: string): boolean {
-  const u = statusRaw.toUpperCase()
-  return u.includes('SETTLED') || u.includes('SUCCESS')
-}
-
-export function isFailedObservationStatus(statusRaw: string): boolean {
-  const u = statusRaw.toUpperCase()
-  return u.includes('FAIL') || u.includes('REJECT')
 }
 
 function parseMinor(value: number | null | undefined): number | null {
@@ -133,12 +151,12 @@ export function coverageProgressPct(input: SettlementFinalityCoverageInput): num
   return 0
 }
 
-function toneForLabel(label: SettlementSidebarOutcomeLabel): Pick<
-  SettlementSidebarOutcome,
-  'dotClass' | 'toneText' | 'barClass'
-> {
+function toneForLabel(
+  label: SettlementSidebarOutcomeLabel,
+  progressPct = 0,
+): Pick<SettlementSidebarOutcome, 'dotClass' | 'toneText' | 'barClass'> {
   if (label === 'Fully Settled') {
-    return { dotClass: 'bg-black', toneText: 'text-black', barClass: 'bg-black' }
+    return { dotClass: 'bg-emerald-500', toneText: 'text-emerald-700', barClass: 'bg-emerald-500' }
   }
   if (label === 'Failed' || label === 'Cancelled') {
     return { dotClass: 'bg-rose-500', toneText: 'text-rose-700', barClass: 'bg-rose-500' }
@@ -146,10 +164,13 @@ function toneForLabel(label: SettlementSidebarOutcomeLabel): Pick<
   if (label === 'Requires Review') {
     return { dotClass: 'bg-rose-500', toneText: 'text-rose-700', barClass: 'bg-rose-500' }
   }
-  if (label === 'Open' || label === 'Processing') {
+  if (label === 'Unknown' || label === 'Open' || label === 'Processing') {
     return { dotClass: 'bg-slate-400', toneText: 'text-slate-600', barClass: 'bg-slate-400' }
   }
-  // Partially Reconciled
+  // Partially Reconciled — green when nearly complete (Intent Stable-like band)
+  if (progressPct >= SETTLEMENT_COVERAGE_STATUS_THRESHOLDS.requiresReviewBelowPct) {
+    return { dotClass: 'bg-emerald-500', toneText: 'text-emerald-700', barClass: 'bg-emerald-500' }
+  }
   return { dotClass: 'bg-amber-500', toneText: 'text-amber-700', barClass: 'bg-amber-500' }
 }
 
@@ -202,7 +223,23 @@ export function outcomeFromFinalityAndCoverage(
   } else if (finality === 'CANCELLED') {
     label = 'Cancelled'
   } else if (finality === 'REQUIRES_REVIEW') {
-    label = 'Requires Review'
+    // Same idea as Intent sidebar: label follows coverage health, not raw finality alone.
+    // ≥75% coverage (Intent “Stable” band) must not stay “Requires Review”.
+    if (
+      progressPct >= SETTLEMENT_COVERAGE_STATUS_THRESHOLDS.fullySettledFromPct &&
+      !hasMaterialUnresolvedValue &&
+      !hasUnresolvedCounts &&
+      failed === 0 &&
+      (settled > 0 || progressPct >= 100)
+    ) {
+      label = 'Fully Settled'
+    } else if (progressPct >= SETTLEMENT_COVERAGE_STATUS_THRESHOLDS.requiresReviewBelowPct) {
+      label = 'Partially Reconciled'
+    } else if (progressPct > 0 || settled > 0) {
+      label = 'Requires Review'
+    } else {
+      label = 'Requires Review'
+    }
   } else if (finality === 'FULLY_SETTLED' || finality === 'SETTLED') {
     // Coverage can keep an "open" commercial picture even when confidence is high.
     label = hasMaterialUnresolvedValue || hasUnresolvedCounts ? 'Partially Reconciled' : 'Fully Settled'
@@ -224,7 +261,7 @@ export function outcomeFromFinalityAndCoverage(
     label = hasMaterialUnresolvedValue || progressPct > 0 ? 'Partially Reconciled' : 'Open'
   }
 
-  const tone = toneForLabel(label)
+  const tone = toneForLabel(label, progressPct)
   return {
     total,
     settled,
@@ -264,13 +301,16 @@ export function outcomeFromObservationRows(rows: SettlementObservationTableRow[]
   }
   const settled = rows.filter((r) => isSettledObservationStatus(r.statusRaw)).length
   const failed = rows.filter((r) => isFailedObservationStatus(r.statusRaw)).length
+  const known = rows.filter((r) => mapSettlementObservationStatus(r.statusRaw).known).length
   const settledPct = Math.round((settled / total) * 100)
   let label: SettlementSidebarOutcomeLabel = 'Partially Reconciled'
-  if (failed > 0 && failed >= settled) label = 'Failed'
+  // CON-P1-24: unknown statuses never upgrade the batch to Fully Settled / Settled.
+  if (known === 0) label = 'Unknown'
+  else if (failed > 0 && failed >= settled) label = 'Failed'
   else if (settled === total) label = 'Fully Settled'
   else if (settled === 0 && failed === 0) label = 'Open'
 
-  const tone = toneForLabel(label)
+  const tone = toneForLabel(label, settledPct)
   return {
     total,
     settled,
@@ -284,17 +324,18 @@ export function outcomeFromObservationRows(rows: SettlementObservationTableRow[]
 }
 
 export function settlementStatusBadgeClass(statusRaw: string) {
-  const u = statusRaw.toUpperCase()
-  if (u.includes('SETTLED') || u.includes('SUCCESS')) {
+  const { bucket } = mapSettlementObservationStatus(statusRaw)
+  if (bucket === 'settled') {
     return 'inline-flex rounded-full border border-black/30 bg-black px-2.5 py-0.5 text-[12px] font-semibold text-white'
   }
-  if (u.includes('FAIL') || u.includes('REJECT')) {
+  if (bucket === 'failed') {
     return 'inline-flex rounded-full border border-rose-200 bg-rose-50 px-2.5 py-0.5 text-[12px] font-semibold text-rose-800'
   }
-  if (u.includes('PEND') || u.includes('PROCESS')) {
+  if (bucket === 'pending') {
     return 'inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[12px] font-semibold text-amber-900'
   }
-  return 'inline-flex rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-[12px] font-semibold text-slate-700'
+  // unknown / Needs mapping — never styled as settled success
+  return 'inline-flex rounded-full border border-slate-300 bg-slate-100 px-2.5 py-0.5 text-[12px] font-semibold text-slate-700'
 }
 
 export function computeSettlementBatchSummary(rows: SettlementObservationTableRow[]) {

@@ -54,9 +54,16 @@ type ActionService struct {
 
 // NewActionService creates an ActionService.
 //
-// PHASE 5 (refactor): signer is now required — pass services.NewDevSigner()
-// (or whatever services.NewSignerForEnvironment(cfg.Environment) returns)
-// from cmd/main.go.
+// PHASE 5 (refactor): pass whatever services.NewSignerForEnvironment(cfg.Environment)
+// returns from cmd/main.go.
+//
+// INTEL-09 (P1): signer may be nil — this happens in production until a
+// real KMS-backed Signer is configured (NewSignerForEnvironment returns
+// ErrNoProductionSigner there). A nil signer does NOT disable ActionService;
+// it disables actuation specifically. See resolveSignature: advisory/
+// audit-only contracts still get created (with an unsigned placeholder
+// digest), while any decision that could reach the actuation outbox fails
+// closed with an error and writes nothing to the DB.
 func NewActionService(
 	actionRepo *persistence.ActionContractRepo,
 	outboxRepo *persistence.OutboxRepo,
@@ -142,8 +149,18 @@ func (s *ActionService) CreateAction(
 		return fmt.Errorf("action_service.CreateAction hash scope_refs: %w", err)
 	}
 	envMeta := models.EnvelopeMetaFromContext(ctx)
-	inputFactsHash := fmt.Sprintf("%x", sha256.Sum256([]byte(req.InputRefsJSON)))
-	payloadHash := fmt.Sprintf("%x", sha256.Sum256([]byte(req.PayloadJSON)))
+	// INTEL-10: canonical (parse-then-sort-then-rehash) JSON hash, not a raw
+	// sha256 of the literal bytes — see canonicalJSONHash's doc comment.
+	// Equivalent facts (reordered keys/whitespace/flat-array order) now hash
+	// identically instead of silently producing a new idempotency key.
+	inputFactsHash, err := canonicalJSONHash(req.InputRefsJSON)
+	if err != nil {
+		return fmt.Errorf("action_service.CreateAction hash input_refs: %w", err)
+	}
+	payloadHash, err := canonicalJSONHash(req.PayloadJSON)
+	if err != nil {
+		return fmt.Errorf("action_service.CreateAction hash payload: %w", err)
+	}
 
 	// ── Build idempotency key ─────────────────────────────────────────────
 	// Same inputs → same key → DB UNIQUE constraint silently ignores duplicate.
@@ -160,6 +177,15 @@ func (s *ActionService) CreateAction(
 	//   1. The policy explicitly declares it needs human approval
 	//   2. The decision type always requires human approval by design
 	needsApproval := req.RequiresManualApproval || req.Decision.RequiresApproval()
+
+	// INTEL-09: mayActuate is true for anything that could EVER cause a
+	// money/ops-impacting Kafka publish — either immediately (needsActuation)
+	// or later once a human approves it (needsApproval; ApproveAction inserts
+	// the outbox row at approval time, not here). resolveSignature uses this
+	// to fail closed on actuating decisions when no signer is configured,
+	// while still letting pure-advisory decisions (ADVISORY_RECOMMENDATION,
+	// ALLOW) through with a clearly-labeled unsigned digest.
+	mayActuate := needsApproval || needsActuation(req.Decision)
 
 	contractStatus := models.ContractStatusActive
 	var expiresAt *time.Time
@@ -204,7 +230,7 @@ func (s *ActionService) CreateAction(
 		TriggerEventVersion:  envMeta.EventVersion,
 		InputFactsHash:       inputFactsHash,
 		PayloadHash:          payloadHash,
-		PayloadSchemaVersion: "legacy",
+		PayloadSchemaVersion: canonicalFactsHashVersion,
 	}
 
 	// PHASE 5 (refactor): sign the canonical hash of the immutable fields via
@@ -213,8 +239,14 @@ func (s *ActionService) CreateAction(
 	if err != nil {
 		return fmt.Errorf("action_service.CreateAction build signature payload: %w", err)
 	}
-	sigResult, err := s.signer.Sign(ctx, sigPayloadHash)
+	sigResult, err := resolveSignature(ctx, s.signer, mayActuate, sigPayloadHash)
 	if err != nil {
+		logger.Warn("action creation blocked — actuation fail-closed (INTEL-09)",
+			"policy_id", req.PolicyID,
+			"tenant_id", req.TenantID,
+			"decision", string(req.Decision),
+			"error", err.Error(),
+		)
 		return fmt.Errorf("action_service.CreateAction sign: %w", err)
 	}
 	contract.IntegrityDigest = sigResult.Signature
@@ -480,6 +512,17 @@ func (s *ActionService) DismissAction(
 
 // ── Private helpers ────────────────────────────────────────────────────────────
 
+// canonicalFactsHashVersion is INTEL-10's version marker for the
+// input_facts_hash/payload_hash contract, stored per-row in the existing
+// ActionContract.PayloadSchemaVersion column (no migration needed — this
+// column already exists and was never branched on elsewhere, so it doubles
+// as "which hashing contract produced this row's hashes": "legacy" means
+// the old raw sha256.Sum256([]byte(rawJSON)) hash; canonicalFactsHashVersion
+// means canonicalJSONHash (canonical.go) — parse, sort flat scalar arrays,
+// re-marshal, then hash. ActionContract rows are immutable audit records, so
+// this is forward-only: existing rows keep "legacy", never backfilled.
+const canonicalFactsHashVersion = "canonical_v1"
+
 // canonicalActionIdentity is the exact set of fields corrective-action-report
 // P1-05 requires bound into an action's idempotency key: tenant, complete
 // policy definition identity, the FULL scope (as a hash — P1-06), trigger
@@ -614,6 +657,34 @@ func buildSignaturePayloadHash(ac models.ActionContract) (string, error) {
 		Confidence:     ac.Confidence,
 		CreatedAt:      ac.CreatedAt.Format(time.RFC3339Nano),
 	})
+}
+
+// resolveSignature decides how to sign (or not sign) an ActionContract.
+//
+// INTEL-09 (P1): the fail-closed gate for actuation. mayActuate is true for
+// any decision that could ever cause a money/ops-impacting Kafka publish
+// (immediately, or later via human approval — see mayActuate's computation
+// in CreateAction). Four cases:
+//
+//	mayActuate=true,  signer!=nil → sign for real (unchanged pre-INTEL-09 behavior)
+//	mayActuate=true,  signer==nil → FAIL CLOSED: return an error, no contract
+//	                                 or outbox row gets written at all
+//	mayActuate=false, signer!=nil → sign for real (unchanged pre-INTEL-09 behavior)
+//	mayActuate=false, signer==nil → advisory/audit-only contract still gets
+//	                                 created, with a clearly-labeled
+//	                                 non-cryptographic placeholder digest
+//	                                 (UNSIGNED_NO_SIGNER) — recommendations
+//	                                 must keep working with no signer at all.
+func resolveSignature(ctx context.Context, signer Signer, mayActuate bool, payloadHash string) (SignatureResult, error) {
+	if signer == nil {
+		if mayActuate {
+			return SignatureResult{}, fmt.Errorf(
+				"no signer configured — refusing to create an action that may " +
+					"publish a money-impacting actuation (%w)", ErrNoProductionSigner)
+		}
+		return unsignedIntegrityDigest(payloadHash), nil
+	}
+	return signer.Sign(ctx, payloadHash)
 }
 
 // needsActuation returns true when the decision should produce a Kafka message.

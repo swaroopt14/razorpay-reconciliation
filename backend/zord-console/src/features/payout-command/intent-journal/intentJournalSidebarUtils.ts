@@ -24,9 +24,18 @@ export type CustomerBatchHealthLabel =
   | 'Awaiting Confirmation'
   | 'Failed Validation'
 
-export function customerHealthLabelFromStatus(status: BatchStatus, dlqCount = 0): CustomerBatchHealthLabel {
-  if (dlqCount > 0 || status === 'Critical') return 'Failed Validation'
-  if (status === 'At Risk') return 'Needs Review'
+/**
+ * Customer health from aggregate status + DLQ buckets (CON-P1-23).
+ * Manual-review queue ⇒ Needs Review; only processing-failed DLQ ⇒ Failed Validation.
+ */
+export function customerHealthLabelFromStatus(
+  status: BatchStatus,
+  opts?: { processingFailedCount?: number; manualReviewCount?: number },
+): CustomerBatchHealthLabel {
+  const processingFailed = opts?.processingFailedCount ?? 0
+  const manualReview = opts?.manualReviewCount ?? 0
+  if (processingFailed > 0 || status === 'Critical') return 'Failed Validation'
+  if (manualReview > 0 || status === 'At Risk') return 'Needs Review'
   return 'Ready'
 }
 

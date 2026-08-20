@@ -332,11 +332,13 @@ function emptyProdBody(path: string): unknown {
       variance_amount: -388.32,
       orphan_amount: 22_381.29,
       unmatch_amount: 0,
-      // CON-P0-24: authoritative matched value (total_confirmed_amount is not a substitute)
+      // CON-P0-24 / CON-P1-22: authoritative matched value + as-of (total_confirmed_amount is not a substitute)
       confirmed_matched_value_minor: 52_653.42,
+      original_settled_amount: 52_653.42,
       total_confirmed_amount: 52_653.42,
       match_confidence: 0.75,
       missing_reference_rate: '0.00%',
+      computed_at: '2026-06-02T07:00:00Z',
     }
   }
   if (path.endsWith('/intents/payment-intents') || path.endsWith('/intents/dlq-items')) {
@@ -949,10 +951,14 @@ function installEmptyProdMocks(page: Page) {
         body: JSON.stringify({
           status: 'VERIFIED',
           evidence_pack_id: PACK_BATCH,
+          verification_run_id: 'run_e2e_empty',
           checked_at: new Date().toISOString(),
           stored_root: 'a'.repeat(64),
           computed_root: 'a'.repeat(64),
-          explanation: 'Merkle root reproduced exactly from live database entries.',
+          explanation: 'Merkle root reproduced from live database entries, and every independent source verified successfully.',
+          db_merkle_status: 'PASSED',
+          signature_status: 'PASSED',
+          archive_status: 'PASSED',
         }),
       })
       return
@@ -1032,10 +1038,14 @@ function installEvidenceFixtureMocks(page: Page) {
         body: JSON.stringify({
           status: 'VERIFIED',
           evidence_pack_id: packId,
+          verification_run_id: 'run_e2e_fixture',
           checked_at: new Date().toISOString(),
           stored_root: 'c'.repeat(64),
           computed_root: 'c'.repeat(64),
-          explanation: 'Merkle root reproduced exactly from live database entries.',
+          explanation: 'Merkle root reproduced from live database entries, and every independent source verified successfully.',
+          db_merkle_status: 'PASSED',
+          signature_status: 'PASSED',
+          archive_status: 'PASSED',
         }),
       })
       return

@@ -6,6 +6,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -72,5 +73,35 @@ func TestDevSigner_Verify_RejectsWrongPayloadHash(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("Verify accepted a signature against a different payload hash than what was signed")
+	}
+}
+
+// INTEL-09 (P1): NewSignerForEnvironment used to log.Fatal (crash the whole
+// process) for environment=production with no KMS signer configured. It
+// must now return an error instead, so the caller (cmd/main.go) can boot
+// recommendation/projection intelligence anyway and fail closed only on
+// actuation (see action_service_intel09_test.go's resolveSignature tests).
+func TestNewSignerForEnvironment_Production_ReturnsErrorNotFatal(t *testing.T) {
+	signer, err := NewSignerForEnvironment("production")
+	if err == nil {
+		t.Fatal("NewSignerForEnvironment(\"production\"): expected an error, got nil")
+	}
+	if !errors.Is(err, ErrNoProductionSigner) {
+		t.Errorf("NewSignerForEnvironment(\"production\") error should be ErrNoProductionSigner, got: %v", err)
+	}
+	if signer != nil {
+		t.Errorf("NewSignerForEnvironment(\"production\") should return a nil Signer alongside the error, got: %+v", signer)
+	}
+}
+
+func TestNewSignerForEnvironment_NonProduction_ReturnsDevSigner(t *testing.T) {
+	for _, env := range []string{"development", "staging", "test", ""} {
+		signer, err := NewSignerForEnvironment(env)
+		if err != nil {
+			t.Errorf("NewSignerForEnvironment(%q): unexpected error: %v", env, err)
+		}
+		if signer == nil {
+			t.Errorf("NewSignerForEnvironment(%q): expected a non-nil DevSigner", env)
+		}
 	}
 }

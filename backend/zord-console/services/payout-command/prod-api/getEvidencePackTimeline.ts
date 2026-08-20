@@ -1,12 +1,18 @@
 import { apiTrimmedString } from './coerceApiField'
 import { fetchProdJsonGetWithMeta } from './fetchProdJsonGet'
-import type { EvidencePackTimelineResponse } from './evidenceTypes'
+import type { EvidencePackTimelineResponse, EvidenceTimelineEntry } from './evidenceTypes'
 
 const EVIDENCE_BASE = '/api/v1/evidence'
 
 type TimelineV1Row = {
   timestamp: string
   event: string
+  provenance?: 'AUTHORITATIVE' | 'DERIVED'
+  source_field?: string
+}
+
+type TimelineEnvelope = EvidencePackTimelineResponse & {
+  data_available?: boolean
 }
 
 export async function getEvidencePackTimeline(
@@ -16,7 +22,7 @@ export async function getEvidencePackTimeline(
   if (!pid) return { data: null, error: 'Missing pack id' }
 
   const path = `${EVIDENCE_BASE}/${encodeURIComponent(pid)}/timeline`
-  const res = await fetchProdJsonGetWithMeta<EvidencePackTimelineResponse | TimelineV1Row[]>(path)
+  const res = await fetchProdJsonGetWithMeta<TimelineEnvelope | TimelineV1Row[]>(path)
   if (!res.ok) {
     return {
       data: null,
@@ -26,15 +32,19 @@ export async function getEvidencePackTimeline(
 
   const raw = res.data
   if (Array.isArray(raw)) {
+    const timeline: EvidenceTimelineEntry[] = raw.map((row) => ({
+      timestamp: row.timestamp,
+      event: row.event,
+      node_id: row.event,
+      provenance: row.provenance,
+      source_field: row.source_field,
+    }))
     return {
       data: {
         evidence_pack_id: pid,
         intent_id: '',
-        timeline: raw.map((row) => ({
-          timestamp: row.timestamp,
-          event: row.event,
-          node_id: row.event,
-        })),
+        data_available: timeline.length > 0 && timeline.every((row) => row.provenance !== 'DERIVED'),
+        timeline,
       },
     }
   }
