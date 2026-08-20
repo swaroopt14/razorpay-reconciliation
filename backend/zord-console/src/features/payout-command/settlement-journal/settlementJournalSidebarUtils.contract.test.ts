@@ -90,7 +90,7 @@ check('PARTIALLY_SETTLED → Partially Reconciled', () => {
   )
 })
 
-check('REQUIRES_REVIEW at 98% coverage uses green tone (not red alert)', () => {
+check('REQUIRES_REVIEW at 98% coverage → Partially Reconciled (not Requires Review)', () => {
   const outcome = outcomeFromFinalityAndCoverage({
     finalityStatus: 'REQUIRES_REVIEW',
     totalIntendedMinor: 44_000,
@@ -99,11 +99,26 @@ check('REQUIRES_REVIEW at 98% coverage uses green tone (not red alert)', () => {
     successCount: 19,
     unresolvedCount: 1,
   })
-  assert.equal(outcome.label, 'Requires Review')
+  assert.equal(outcome.label, 'Partially Reconciled')
   assert.ok(outcome.progressPct >= 90, `expected high coverage, got ${outcome.progressPct}`)
   assert.match(outcome.toneText, /emerald/)
-  assert.match(outcome.barClass, /emerald/)
   assert.doesNotMatch(outcome.toneText, /rose/)
+  // Raw Service 5 finality is retained for ops, not shown as the customer label.
+  assert.equal(outcome.finalityStatus, 'REQUIRES_REVIEW')
+})
+
+check('REQUIRES_REVIEW at low coverage stays Requires Review', () => {
+  const outcome = outcomeFromFinalityAndCoverage({
+    finalityStatus: 'REQUIRES_REVIEW',
+    totalIntendedMinor: 100_000,
+    totalConfirmedMinor: 40_000,
+    totalCount: 10,
+    successCount: 4,
+    unresolvedCount: 6,
+  })
+  assert.equal(outcome.label, 'Requires Review')
+  assert.ok(outcome.progressPct < 75)
+  assert.match(outcome.toneText, /rose/)
 })
 
 console.log('All CON-P0-13 settlement outcome contract tests passed.')
