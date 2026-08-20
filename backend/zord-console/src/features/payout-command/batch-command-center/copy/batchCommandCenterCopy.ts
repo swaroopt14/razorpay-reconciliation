@@ -47,7 +47,7 @@ export const BATCH_REVIEW_COPY = {
       'CSV/XLSX from Tally, SAP, ERP, LMS, or internal finance system. One row should represent one payment.',
     step2Title: 'Upload bank / settlement confirmation file',
     step2Helper:
-      'Bank statement, settlement report, status file, or SFTP export used to confirm payment outcomes. Normal uploads do not force reprocess.',
+      'Bank statement, settlement report, status file, or SFTP export used to confirm payment outcomes. Same reprocess checkbox as Step 1 — settlement reprocess also asks for a reason.',
     uploadFilesLabel: 'Upload files',
     step1Short: 'Step 1 · Payment instruction file',
     step2Short: 'Step 2 · Bank / settlement file',
@@ -55,9 +55,6 @@ export const BATCH_REVIEW_COPY = {
     uploadIntentBusy: 'Uploading payment file…',
     uploadSettlement: 'Upload confirmation file',
     uploadSettlementBusy: 'Uploading confirmation file…',
-    uploadSettlementNew: 'Upload new settlement file',
-    uploadSettlementReprocess: 'Reprocess existing version',
-    uploadSettlementCorrection: 'Upload correction',
     browseFiles: 'Browse files',
   },
 
@@ -77,19 +74,11 @@ export const BATCH_REVIEW_COPY = {
     batchReference: 'Batch reference optional',
     batchReferencePlaceholder: 'Leave blank if you want Zord to create one automatically',
     reprocess: 'Reprocess this file',
-    reprocessHelper: 'Intent reprocess only. Settlement force modes are chosen under Step 2.',
+    reprocessHelper: 'Checking this reprocesses the payment instruction file. No extra reason is required.',
+    reprocessSettlementHelper:
+      'Checking this asks why you need to reprocess the bank / settlement confirmation file.',
     reprocessReason: 'Reprocess reason',
     reprocessReasonPlaceholder: 'Select a reason',
-    settlementMode: 'Settlement upload mode',
-    settlementModeNew: 'Upload new settlement file',
-    settlementModeNewHelper:
-      'Default. No force header — Outcome Engine treats first upload / exact duplicate correctly.',
-    settlementModeReprocess: 'Reprocess existing version',
-    settlementModeReprocessHelper: 'Same content again. Requires batch reference and a reason.',
-    settlementModeCorrection: 'Upload correction',
-    settlementModeCorrectionHelper:
-      'Changed file for an existing batch. Requires batch reference, reason, and confirmation of the current baseline.',
-    settlementReason: 'Reason',
     apiKey: 'API key (optional)',
     apiKeyPlaceholder: 'Same Bearer token as Postman',
     activeBatchId: 'Active batch reference',
@@ -103,11 +92,14 @@ export const BATCH_REVIEW_COPY = {
       `Settlement confirmation for batch ${batchId} has been accepted.`,
     settlementDuplicateBody: (batchId: string) =>
       `Exact duplicate for batch ${batchId} — existing settlement run kept (no force).`,
-    settlementCorrectionConfirmTitle: 'Confirm settlement correction',
-    settlementCorrectionConfirmBody:
-      'This will force a correction upload and create a new artifact version for the batch. Review the current baseline before continuing.',
-    settlementCorrectionConfirm: 'Upload correction',
-    settlementCorrectionCancel: 'Cancel',
+    reprocessWhyTitle: 'Why do you want to reprocess?',
+    reprocessWhyBody:
+      'Pick a reason for reprocessing the bank / settlement confirmation file.',
+    reprocessContinue: 'Continue',
+    reprocessCancel: 'Cancel',
+    uploadErrorIntentTitle: 'This error occurred while uploading the payment instruction file',
+    uploadErrorSettlementTitle: 'This error occurred while uploading the settlement confirmation file',
+    uploadErrorFallback: 'The file was not uploaded.',
     close: 'Close',
     openPaymentJournal: 'Open payment journal',
     openSettlementJournal: 'Open settlement journal',

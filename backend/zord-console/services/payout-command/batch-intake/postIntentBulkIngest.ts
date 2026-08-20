@@ -40,7 +40,7 @@ export type PostIntentBulkIngestParams = {
   sourceSystem?: string
   /** When true, forwards X-Zord-Force-Reprocess (Batch-Id required upstream). */
   forceReprocess?: boolean
-  /** Required by the BFF when forceReprocess is true. */
+  /** Optional. Intent ingest does not require a reason; settlement does. */
   reprocessReason?: ReprocessReason
   /** Override for tests or non-Next callers */
   endpointPath?: string
