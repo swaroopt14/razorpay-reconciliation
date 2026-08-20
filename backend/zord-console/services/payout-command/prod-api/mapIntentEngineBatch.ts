@@ -325,7 +325,15 @@ export function mapPaymentIntentToIntentRow(
         ? 'Decision unavailable'
         : status === 'Ready to Process'
           ? 'Ready for dispatch'
-          : buildIntentInfoSummary(intent),
+          : status === 'Pending'
+            ? 'Awaiting Bank Confirmation'
+            : status === 'Needs Review'
+              ? buildIntentInfoSummary(intent)
+              : status === 'Confirmed'
+                ? 'Confirmed'
+                : status === 'In Progress'
+                  ? 'In Progress'
+                  : buildIntentInfoSummary(intent),
     rawIntent: intent,
   }
 }

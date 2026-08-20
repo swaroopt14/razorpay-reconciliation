@@ -56,7 +56,10 @@ export function IntentEngineDetailPanel({ intent }: { intent: PaymentIntentRecor
         value={apiTrimmedString(intent.beneficiary_type) || apiTrimmedString(intent.beneficiary?.instrument?.kind)}
       />
       <DetailField label="Intent quality score" value={conf} />
-      <DetailField label="Status" value={apiTrimmedString(intent.status)} />
+      <DetailField
+        label="Engine status"
+        value={apiTrimmedString(intent.status)}
+      />
       <DetailField label="Governance state" value={apiTrimmedString(intent.governance_state)} />
       <DetailField label="Business state" value={apiTrimmedString(intent.business_state)} />
       <DetailField label="Client payout ref" value={apiTrimmedString(intent.client_payout_ref)} mono />

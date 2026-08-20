@@ -132,10 +132,6 @@ export function mapPaymentIntentListItemToRow(
   let infoSummary = decision.infoSummary
   if (decision.status === 'Needs Review') {
     infoSummary = buildReviewInfoSummary(item, 'Needs Review')
-  } else if (decision.status === 'Ready to Process') {
-    infoSummary = 'Ready for dispatch'
-  } else if (decision.status === 'Decision unavailable') {
-    infoSummary = 'Decision unavailable'
   }
 
   let match = decision.match

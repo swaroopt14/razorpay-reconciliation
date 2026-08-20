@@ -95,10 +95,20 @@ export function mapJournalIntentDecision(item: {
     .filter(Boolean)
     .join(' · ')
 
+  // Customer-facing summary — never leak raw engine enums like CREATED into the table/export.
+  const infoSummaryByStatus: Record<JournalIntentStatus, string> = {
+    'Needs Review': 'Needs Review',
+    Confirmed: 'Confirmed',
+    'In Progress': 'In Progress',
+    'Ready to Process': 'Ready for dispatch',
+    Pending: 'Awaiting Bank Confirmation',
+    'Decision unavailable': 'Decision unavailable',
+  }
+
   return {
     status,
     match,
-    infoSummary: status === 'Decision unavailable' ? 'Decision unavailable' : engineStatus || status,
+    infoSummary: infoSummaryByStatus[status],
     engineStatus: engineStatus || undefined,
   }
 }
