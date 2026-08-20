@@ -10,3 +10,7 @@ data:
   DB_PORT: "5432"
   DB_SSLMODE: disable
   OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector.tracing.svc.cluster.local:4317
+  # zord-edge bulk ingest — align with Kong request-size-limiting (50 MiB)
+  MAX_BULK_BYTES: "52428800"
+  MAX_CSV_ROWS: "200000"
+  BULK_INGEST_JOB_TIMEOUT_MINUTES: "30"

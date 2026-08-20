@@ -28,65 +28,45 @@ func NewQueryHandler(rag services.RAGService) *QueryHandler {
 func (h *QueryHandler) Query(c *gin.Context) {
 	var req dto.QueryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "invalid request",
-			"details": err.Error(),
-		})
+		plmiddleware.SafeError(c, http.StatusBadRequest, "invalid request", "Request body is invalid or missing required fields.")
 		return
 	}
 	ctxTenant, ok := c.Get(plmiddleware.TenantIDContextKey)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error":   "unauthorized",
-			"details": "Missing tenant context. Please login again.",
-		})
+		plmiddleware.SafeError(c, http.StatusUnauthorized, "unauthorized", "Missing tenant context. Please login again.")
 		return
 	}
 	tenantID, ok := ctxTenant.(string)
 	if !ok || strings.TrimSpace(tenantID) == "" {
-		c.JSON(http.StatusForbidden, gin.H{
-			"error":   "forbidden",
-			"details": "Invalid tenant context.",
-		})
+		plmiddleware.SafeError(c, http.StatusUnauthorized, "unauthorized", "Invalid tenant context. Please login again.")
 		return
 	}
 	ctxUser, ok := c.Get(plmiddleware.UserIDContextKey)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error":   "unauthorized",
-			"details": "Missing user context. Please login again.",
-		})
+		plmiddleware.SafeError(c, http.StatusUnauthorized, "unauthorized", "Missing user context. Please login again.")
 		return
 	}
 	userID, ok := ctxUser.(string)
 	if !ok || strings.TrimSpace(userID) == "" {
-		c.JSON(http.StatusForbidden, gin.H{
-			"error":   "forbidden",
-			"details": "Invalid user context.",
-		})
+		plmiddleware.SafeError(c, http.StatusUnauthorized, "unauthorized", "Invalid user context. Please login again.")
 		return
 	}
 	// Optional hardening: if body tenant_id is sent and mismatches auth tenant, reject.
 	if strings.TrimSpace(req.TenantID) != "" && !strings.EqualFold(strings.TrimSpace(req.TenantID), tenantID) {
-		c.JSON(http.StatusForbidden, gin.H{
-			"error":   "forbidden",
-			"details": "Tenant mismatch with authenticated context.",
-		})
+		plmiddleware.SafeError(c, http.StatusUnauthorized, "unauthorized", "Tenant mismatch with authenticated context. Please login again.")
 		return
 	}
 
 	// Canonical tenant is always from auth context.
 	sessionID := strings.TrimSpace(c.GetHeader(sessionHeader))
 	if !sessionUUIDRe.MatchString(sessionID) {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "invalid request",
-			"details": "x-session-id header must be a valid UUID v4.",
-		})
+		plmiddleware.SafeError(c, http.StatusUnauthorized, "unauthorized", "x-session-id header must be a valid UUID v4. Please login again.")
 		return
 	}
 	req.SessionID = strings.ToLower(sessionID)
 	req.TenantID = tenantID
 	req.UserID = userID
+	req.AuthorizationHeader = strings.TrimSpace(c.GetHeader("Authorization"))
 	if req.TopK <= 0 {
 		req.TopK = 5
 	}

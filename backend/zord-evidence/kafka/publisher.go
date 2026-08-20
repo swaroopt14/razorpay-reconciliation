@@ -51,6 +51,7 @@ type PackEvent struct {
 	// sourced items (see packEnvelopeVersions in services/evidence_service.go)
 	// rather than hardcoded here.
 	EventVersion   string    `json:"event_version,omitempty"`
+	SourceService  string    `json:"source_service,omitempty"`
 	SchemaVersion  string    `json:"schema_version,omitempty"`
 	EvidencePackID string    `json:"evidence_pack_id"`
 	TenantID       string    `json:"tenant_id"`
@@ -79,6 +80,8 @@ type Publisher struct {
 func NewPublisher(brokers []string, topic string) (*Publisher, error) {
 	cfg := sarama.NewConfig()
 	cfg.Version = sarama.V2_6_0_0
+	// SASL/SCRAM-SHA-512 authentication (PLAT-06)
+	ApplySASL(cfg)
 	cfg.Producer.RequiredAcks = sarama.WaitForAll
 	cfg.Producer.Retry.Max = 3
 	cfg.Producer.Return.Successes = true

@@ -8,6 +8,9 @@ type AskZordHistorySidebarProps = {
   activeThreadId: string | null
   onSelectThread: (id: string) => void
   onNewThread: () => void
+  onClearHistory: () => void
+  persistApproved: boolean
+  onPersistApprovedChange: (enabled: boolean) => void
 }
 
 function formatRelativeTime(ts: number): string {
@@ -27,6 +30,9 @@ export function AskZordHistorySidebar({
   activeThreadId,
   onSelectThread,
   onNewThread,
+  onClearHistory,
+  persistApproved,
+  onPersistApprovedChange,
 }: AskZordHistorySidebarProps) {
   const [query, setQuery] = useState('')
 
@@ -64,6 +70,31 @@ export function AskZordHistorySidebar({
           className="mt-3 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-[13px] text-neutral-800 placeholder:text-neutral-400 focus:border-violet-300 focus:outline-none focus:ring-2 focus:ring-violet-100"
           aria-label="Search chat history"
         />
+        <p className="mt-2 text-[11px] leading-snug text-neutral-500">
+          {persistApproved
+            ? 'Saved on this device until you clear history or turn this off.'
+            : 'Session only — cleared on sign-out or browser restart.'}
+        </p>
+        <label className="mt-2 flex cursor-pointer items-start gap-2 text-[11px] text-neutral-600">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={persistApproved}
+            onChange={(e) => onPersistApprovedChange(e.target.checked)}
+            data-testid="ask-zord-persist-opt-in"
+          />
+          <span>Keep chat history on this device</span>
+        </label>
+        {threads.length > 0 ? (
+          <button
+            type="button"
+            onClick={onClearHistory}
+            className="mt-2 text-[11px] font-medium text-neutral-600 underline-offset-2 hover:text-neutral-900 hover:underline"
+            data-testid="ask-zord-clear-history"
+          >
+            Clear history
+          </button>
+        ) : null}
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 py-3">

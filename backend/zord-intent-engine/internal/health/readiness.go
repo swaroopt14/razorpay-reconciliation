@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -19,11 +20,25 @@ type DependencyCheck struct {
 // ReadinessHandler manages readiness probes with dependency checks.
 type ReadinessHandler struct {
 	checks []DependencyCheck
+	ready  atomic.Bool
 }
 
 // NewReadinessHandler creates a handler with the given dependency checks.
+// Starts ready — see SetNotReady for the shutdown-drain path.
 func NewReadinessHandler(checks []DependencyCheck) *ReadinessHandler {
-	return &ReadinessHandler{checks: checks}
+	h := &ReadinessHandler{checks: checks}
+	h.ready.Store(true)
+	return h
+}
+
+// SetNotReady marks this handler not-ready: ReadyHTTP will return 503
+// immediately afterward, without running any dependency check. INT-08:
+// call this as the very first step of graceful shutdown, before draining
+// consumers/HTTP/DB, so a Kubernetes readiness probe (typically polling
+// every ~10s) has the whole termination grace window to notice and stop
+// routing new traffic while in-flight work finishes.
+func (h *ReadinessHandler) SetNotReady() {
+	h.ready.Store(false)
 }
 
 // DBCheck returns a dependency check that pings the database.
@@ -68,6 +83,17 @@ type checkResult struct {
 // ReadyHTTP is the net/http handler for /ready endpoint.
 // Returns 200 if all dependencies are healthy, 503 if any fail.
 func (h *ReadinessHandler) ReadyHTTP(w http.ResponseWriter, r *http.Request) {
+	if !h.ready.Load() {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":    "not_ready",
+			"reason":    "shutting_down",
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
+		})
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 

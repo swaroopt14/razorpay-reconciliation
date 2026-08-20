@@ -864,14 +864,14 @@ func (l *DispatchLoop) verifyDispatchPayloadHash(
 	vr, err := l.hashVerifier.VerifyPayload(ctx,
 		dispatchHashServiceName,
 		e.EventID, e.EventType, e.LeaseID,
-		e.Payload, e.PayloadHash,
+		e.Payload, e.CanonicalPayloadHash,
 	)
 
 	if err != nil {
 		log.Error("dispatch_loop: payload_hash verification: verifier error — " +
 			"SKIPPING PSP dispatch (integrity layer failure, do not publish externally)",
 			zap.Error(err),
-			zap.String("expected_hash", e.PayloadHash),
+			zap.String("expected_hash", e.CanonicalPayloadHash),
 			zap.String("computed_hash", vr.ComputedHash),
 		)
 		metrics.DispatchTotal.WithLabelValues("hash_verifier_error").Inc()
@@ -879,7 +879,7 @@ func (l *DispatchLoop) verifyDispatchPayloadHash(
 	}
 
 	if vr.OK {
-		if e.PayloadHash == "" {
+		if e.CanonicalPayloadHash == "" {
 			metrics.PayloadHashSkippedTotal.WithLabelValues(dispatchHashServiceName).Inc()
 			log.Warn("dispatch_loop: payload_hash empty — verification skipped (strict=false). " +
 				"Enable strict=true once zord-intent-engine guarantees payload_hash on every dispatch event.")

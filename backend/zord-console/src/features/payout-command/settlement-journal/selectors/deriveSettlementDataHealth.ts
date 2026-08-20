@@ -32,15 +32,13 @@ export function deriveSettlementDataHealth(rows: SettlementObservationTableRow[]
   }
   const withBankRef = rows.filter((r) => hasRef(r.bankRef)).length
   const withClientRef = rows.filter((r) => hasRef(r.clientRef)).length
-  const matchedCount = rows.filter((r) => {
-    const linkedIntentId = (r.matchedIntentId ?? '').trim()
-    if (linkedIntentId && linkedIntentId !== '—') return true
-    return mapMatchStatus(r) === 'Matched'
-  }).length
+  // CON-P0-12: matched count from attachment Match Status only (not mapping_confidence).
+  const matchedCount = rows.filter((r) => mapMatchStatus(r) === 'Matched').length
   const unmatchedOrphanValue = rows
     .filter((r) => !hasRef(r.clientRef))
     .reduce((sum, r) => sum + r.amount, 0)
 
+  // Mapping confidence remains a separate data-quality average (not attachment confidence).
   const scores = rows
     .map((r) => settlementMappingConfidence(r))
     .filter((s): s is number => typeof s === 'number' && Number.isFinite(s))
@@ -62,3 +60,4 @@ export function formatOrphanValue(value: number): string {
   if (value <= 0) return formatJournalMoney(0)
   return formatJournalMoney(value)
 }
+

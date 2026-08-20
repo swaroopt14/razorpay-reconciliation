@@ -188,13 +188,22 @@ type RelayEvent struct {
 // TraceID, and SourceEventID are informational metadata only and must never
 // be folded into this formula, since that would break Merkle-proof
 // recomputation for already-sealed packs.
+//
+// hash_type indicates the commitment style: "SHA256", "HMAC", or "NONE"
+// version tracks the Merkle scheme / canonicalization version: "v1" or "v2"
 type EvidenceItem struct {
 	Type          string `json:"type"`
 	Ref           string `json:"ref"`
 	Hash          string `json:"hash,omitempty"`
 	SchemaVersion string `json:"schema_version"`
-	EventVersion  string `json:"event_version,omitempty"`
+	EventVersion  string `json:"event_version,omitempty" db:"event_version"`
 	LeafHash      string `json:"leaf_hash,omitempty"`
+
+	// hash_type indicates the commitment style: "SHA256", "HMAC", or "NONE"
+	HashType string `json:"hash_type,omitempty"`
+
+	// version tracks the Merkle scheme / canonicalization version: "v1" or "v2"
+	Version string `json:"version,omitempty"`
 
 	// TraceID / SourceEventID preserve this leaf's causation/source trace —
 	// the upstream trace_id and event_id that produced it — so pack
@@ -240,6 +249,33 @@ type Signature struct {
 	// packs signed before this field existed — those can't be independently
 	// re-verified and must report NOT_AVAILABLE, not FAILED.
 	SignedPayload string `json:"signed_payload,omitempty"`
+}
+
+// PackManifestV1 is the canonical form used for signature binding.
+// It includes exactly the fields that were signed to create SignedPayloadHash,
+// so that verification can reconstruct the same bytes from the current pack
+// state and compare the digest before verifying the ed25519 signature.
+//
+// The serialization format matches the original signPayload construction:
+//
+//	packID|merkleRoot|intent_or_batch_id|created_at_iso|ruleset_version
+//
+// For intent packs: packID|merkleRoot|intentID|contractID|created_at|rulesetVersion
+// For batch packs: packID|merkleRoot|batchID|created_at|rulesetVersion
+//
+// canonicalization_version indicates the payload formation version: "v1" or "v2"
+type PackManifestV1 struct {
+	EvidencePackID string `json:"evidence_pack_id"`
+	TenantID       string `json:"tenant_id"`
+	MerkleRoot     string `json:"merkle_root"`
+	// The third field is intent_id for intent mode or batch_id for batch mode
+	ScopeID        string `json:"scope_id"`
+	CreatedAt      string `json:"created_at"`
+	RulesetVersion string `json:"ruleset_version"`
+	// CanonicalizationVersion indicates the payload formation version used
+	// when the signature was created. Used to ensure verification uses
+	// the correct canonical form.
+	CanonicalizationVersion string `json:"canonicalization_version"`
 }
 
 // EvidencePack is the canonical committed proof bundle for one payment lifecycle.
@@ -455,26 +491,26 @@ type ListPacksResponse struct {
 }
 
 type EvidencePackSummary struct {
-	EvidencePackID                    string  `json:"evidence_pack_id"`
-	TenantID                          string  `json:"tenant_id"`
-	IntentID                          string  `json:"intent_id"`
-	ContractID                        string  `json:"contract_id"`
-	ClientBatchID                     string  `json:"batch_id,omitempty"`
-	ArtifactID                        string  `json:"artifact_id,omitempty"`
-	ArtifactVersionID                 string  `json:"artifact_version_id,omitempty"`
-	Mode                              string  `json:"mode"`
-	PackStatus                        string  `json:"pack_status"`
-	MerkleRoot                        string  `json:"merkle_root"`
-	RulesetVersion                    string  `json:"ruleset_version"`
-	SupersedesPackID                  string  `json:"supersedes_pack_id,omitempty"`
-	SupersedesByPackID                string  `json:"superseded_by_pack_id,omitempty"`
-	RevisionReason                    string  `json:"revision_reason,omitempty"`
+	EvidencePackID                    string            `json:"evidence_pack_id"`
+	TenantID                          string            `json:"tenant_id"`
+	IntentID                          string            `json:"intent_id"`
+	ContractID                        string            `json:"contract_id"`
+	ClientBatchID                     string            `json:"batch_id,omitempty"`
+	ArtifactID                        string            `json:"artifact_id,omitempty"`
+	ArtifactVersionID                 string            `json:"artifact_version_id,omitempty"`
+	Mode                              string            `json:"mode"`
+	PackStatus                        string            `json:"pack_status"`
+	MerkleRoot                        string            `json:"merkle_root"`
+	RulesetVersion                    string            `json:"ruleset_version"`
+	SupersedesPackID                  string            `json:"supersedes_pack_id,omitempty"`
+	SupersedesByPackID                string            `json:"superseded_by_pack_id,omitempty"`
+	RevisionReason                    string            `json:"revision_reason,omitempty"`
 	BasedOnVersions                   map[string]string `json:"based_on_versions,omitempty"`
-	PackCompletenessScore             float64 `json:"pack_completeness_score"`
-	LeafCount                         int     `json:"leaf_count"`
-	RequiredLeafCount                 int     `json:"required_leaf_count"`
-	SettlementLeafPresentFlag         bool    `json:"settlement_leaf_present_flag"`
-	AttachmentDecisionLeafPresentFlag bool    `json:"attachment_decision_leaf_present_flag"`
+	PackCompletenessScore             float64           `json:"pack_completeness_score"`
+	LeafCount                         int               `json:"leaf_count"`
+	RequiredLeafCount                 int               `json:"required_leaf_count"`
+	SettlementLeafPresentFlag         bool              `json:"settlement_leaf_present_flag"`
+	AttachmentDecisionLeafPresentFlag bool              `json:"attachment_decision_leaf_present_flag"`
 
 	// Traceability & governance fields.
 	PaymentInstructionReceived *time.Time `json:"payment_instruction_received,omitempty"`

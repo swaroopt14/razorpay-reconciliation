@@ -20,15 +20,19 @@ func StartIntentConsumer(
 }
 
 func buildIntentHandler(pg PackGenerator) MessageHandler {
+	topic := "payments.intent.events.v1"
 	return func(ctx context.Context, key string, raw []byte) error {
 		var relayEvt models.RelayEvent
 		if err := json.Unmarshal(raw, &relayEvt); err != nil {
 			log.Printf("intent.consumer.parse_failed key=%s err=%v", key, err)
+			pg.RecordMalformedEvent(ctx, "", topic, key, "", "JSON parse failed: "+err.Error())
 			return nil
 		}
 
 		if relayEvt.TenantID == "" || relayEvt.AggregateID == "" {
+			reason := "missing required fields"
 			log.Printf("intent.consumer.missing_ids tenant=%s intent=%s", relayEvt.TenantID, relayEvt.AggregateID)
+			pg.RecordMalformedEvent(ctx, relayEvt.TenantID, topic, relayEvt.EventID, relayEvt.TraceID, reason)
 			return nil
 		}
 

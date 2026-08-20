@@ -17,7 +17,11 @@ services:
       - KAFKA_TOPIC_PII_TOKENIZE_REQUEST=pii.tokenize.request
       - KAFKA_TOPIC_PII_TOKENIZE_RESULT=pii.tokenize.result
       - ZORD_PII_ENCLAVE_URL=http://host.docker.internal:8087
-      - ENCLAVE_INTERNAL_TOKEN=${ENCLAVE_INTERNAL_TOKEN}
+      # TOK-04: replaces the old static ENCLAVE_INTERNAL_TOKEN shared secret.
+      # Must match SERVICE_JWT_SIGNING_SECRET in zord-token-enclave -- this
+      # service mints a signed, scoped JWT for each tokenize call; the
+      # enclave verifies it against the same secret.
+      - SERVICE_JWT_SIGNING_SECRET=${SERVICE_JWT_SIGNING_SECRET}
       # Must match zord-edge (base64-encoded 32-byte AES key for API key decryption).
       - ZORD_VAULT_KEY=${ZORD_VAULT_KEY}
       - DB_HOST=zord-intent-postgres

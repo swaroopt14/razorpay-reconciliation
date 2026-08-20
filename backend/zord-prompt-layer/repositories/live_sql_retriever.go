@@ -138,7 +138,7 @@ func (r *LiveSQLRetriever) Retrieve(req dto.QueryRequest, intentID, traceID stri
 		}
 	}
 	if r.evidenceDB != nil {
-		if c, err := r.fetchFromEvidence(tenantID, effectiveTopK, failureOnly, scope); err == nil {
+		if c, err := r.fetchFromEvidence(req, tenantID, effectiveTopK, failureOnly, scope); err == nil {
 			chunks = append(chunks, c...)
 		}
 	}

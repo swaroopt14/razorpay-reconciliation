@@ -118,11 +118,10 @@ func main() {
 	h := &handler.Handler{
 		S3store: s3store,
 	}
-	cfg := config.LoadConfig()
 
-	err = vault.InitVaultKey(cfg.VaultKey)
+	err = vault.InitVault()
 	if err != nil {
-		logger.Log.Error("vault key initialization failed",
+		logger.Log.Error("vault initialization failed",
 			slog.String("error", err.Error()))
 		os.Exit(1)
 	}

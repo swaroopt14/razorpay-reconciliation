@@ -1,6 +1,7 @@
 import { fetchProdJsonGetWithMeta, type ProdJsonGetResult } from './fetchProdJsonGet'
 import { apiTrimmedString } from './coerceApiField'
 import { settlementStatusDisplayLabel } from '@/features/payout-command/settlement-journal/settlementObservationStatusMap'
+import { normalizeCurrency } from '@/services/payout-command/money/money'
 
 export type SettlementObservationBatchListItem = {
   client_batch_id: string
@@ -72,6 +73,11 @@ export type CanonicalSettlementObservation = {
   beneficiary_fingerprint?: string | null
   zord_signature_carrier?: string | null
   matched_intent_id?: string | null
+  /** Service 5 attachment decision (MATCH_EXACT / MATCH_HIGH_CONFIDENCE / MATCH_AMBIGUOUS / …). */
+  attachment_decision?: string | null
+  attachment_confidence?: number | string | null
+  candidate_count?: number | null
+  ambiguity_score?: number | null
   warnings_json?: unknown
   created_at?: string
   updated_at?: string
@@ -119,6 +125,10 @@ export type SettlementObservationBatchDetailItem = {
   mapping_confidence?: number | string
   attachment_readiness_score?: number
   matched_intent_id?: string | null
+  attachment_decision?: string | null
+  attachment_confidence?: number | string | null
+  candidate_count?: number | null
+  ambiguity_score?: number | null
   created_at?: string
   updated_at?: string
 }
@@ -324,6 +334,11 @@ export type SettlementObservationTableRow = {
   beneficiaryFingerprint: string
   zordSignatureCarrier: string
   matchedIntentId: string
+  /** Service 5 attachment decision — authoritative for Match Status (CON-P0-12). */
+  attachmentDecision: string | null
+  attachmentConfidence: number | null
+  candidateCount: number | null
+  ambiguityScore: number | null
 }
 
 function parseMoney(raw: string | number | null | undefined): number {
@@ -397,7 +412,7 @@ export function mapObservationToTableRow(
     settledAmount: parseMoney(full.settled_amount ?? slim.settled_amount),
     feeAmount: parseMoney(full.fee_amount ?? slim.fee_amount),
     deductionAmount: parseMoney(full.deduction_amount ?? slim.deduction_amount),
-    currency: apiTrimmedString(full.currency_code ?? slim.currency_code ?? 'INR') || 'INR',
+    currency: normalizeCurrency(full.currency_code ?? slim.currency_code),
     statusRaw,
     // CON-P1-24: unknown enums show Needs mapping (never auto-promoted to Settled).
     status: settlementStatusDisplayLabel(statusRaw),
@@ -461,7 +476,29 @@ export function mapObservationToTableRow(
     corridorId: displayOrDash(full.corridor_id),
     beneficiaryFingerprint: displayOrDash(full.beneficiary_fingerprint ?? undefined),
     zordSignatureCarrier: displayOrDash(full.zord_signature_carrier ?? undefined),
-    matchedIntentId: displayOrDash(full.matched_intent_id ?? undefined),
+    matchedIntentId: displayOrDash(full.matched_intent_id ?? slim.matched_intent_id ?? undefined),
+    attachmentDecision: (() => {
+      const raw = full.attachment_decision ?? slim.attachment_decision
+      const v = typeof raw === 'string' ? raw.trim() : ''
+      return v || null
+    })(),
+    attachmentConfidence: (() => {
+      const raw = full.attachment_confidence ?? slim.attachment_confidence
+      if (typeof raw === 'number' && Number.isFinite(raw)) return raw
+      if (typeof raw === 'string' && raw.trim()) {
+        const n = Number.parseFloat(raw)
+        return Number.isFinite(n) ? n : null
+      }
+      return null
+    })(),
+    candidateCount: (() => {
+      const raw = full.candidate_count ?? slim.candidate_count
+      return typeof raw === 'number' && Number.isFinite(raw) ? raw : null
+    })(),
+    ambiguityScore: (() => {
+      const raw = full.ambiguity_score ?? slim.ambiguity_score
+      return typeof raw === 'number' && Number.isFinite(raw) ? raw : null
+    })(),
   }
 }
 

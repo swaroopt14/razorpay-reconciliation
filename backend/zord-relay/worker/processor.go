@@ -555,7 +555,12 @@ func (p *processor) processIntent(ctx context.Context, event *model.IntentOutbox
 	}
 
 	// ── Payload hash verification (intent-engine only) ─────────────────────
-	// Recomputes SHA-256(payload bytes) and compares to event.PayloadHash.
+	// Recomputes SHA-256(payload bytes) and compares to
+	// event.CanonicalPayloadHash -- the hash of the exact canonical bytes
+	// in event.Payload (a Postgres GENERATED column on the outbox table).
+	// event.PayloadHash is SHA-256 of the raw, pre-transformation ingest
+	// payload -- a different byte sequence describing an earlier stage this
+	// service never sees, so it cannot be what's verified here.
 	// Must run BEFORE publish so altered envelopes never reach downstream.
 	//
 	// DecisionNack   → return retryable failure; upstream will re-lease the
@@ -570,7 +575,7 @@ func (p *processor) processIntent(ctx context.Context, event *model.IntentOutbox
 			event.EventType,
 			event.LeaseID,
 			event.Payload,
-			event.PayloadHash,
+			event.CanonicalPayloadHash,
 		)
 		if verifyErr != nil {
 			// Verifier itself errored (e.g. DB down). Do NOT publish.

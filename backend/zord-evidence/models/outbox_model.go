@@ -33,4 +33,5 @@ type OutboxEvent struct {
 	// at insert time so downstream consumers can verify payload integrity without
 	// re-fetching the full pack from the DB.
 	PayloadHash string `json:"payload_hash,omitempty" db:"payload_hash"`
+	SourceService string `json:"source_service,omitempty" db:"source_service"`
 }

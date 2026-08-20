@@ -58,6 +58,8 @@ type SettlementObservationBatchDetailItem struct {
 	ParseConfidence          float64          `json:"parse_confidence"`
 	MappingConfidence        float64          `json:"mapping_confidence"`
 	AttachmentReadinessScore float64          `json:"attachment_readiness_score"`
+	OutcomeArtifactID        *uuid.UUID       `json:"outcome_artifact_id,omitempty"`
+	OutcomeArtifactVersionID *uuid.UUID       `json:"outcome_artifact_version_id,omitempty"`
 	CreatedAt                time.Time        `json:"created_at"`
 	UpdatedAt                time.Time        `json:"updated_at"`
 }
@@ -188,6 +190,8 @@ func (h *Handler) GetSettlementObservationBatchesHandler(c *gin.Context) {
 			COALESCE(parse_confidence, 0),
 			COALESCE(mapping_confidence, 0),
 			COALESCE(attachment_readiness_score, 0),
+			outcome_artifact_id,
+			outcome_artifact_version_id,
 			created_at,
 			updated_at
 		FROM canonical_settlement_observations
@@ -233,6 +237,8 @@ func (h *Handler) GetSettlementObservationBatchesHandler(c *gin.Context) {
 			&row.ParseConfidence,
 			&row.MappingConfidence,
 			&row.AttachmentReadinessScore,
+			&row.OutcomeArtifactID,
+			&row.OutcomeArtifactVersionID,
 			&row.CreatedAt,
 			&row.UpdatedAt,
 		); err != nil {
