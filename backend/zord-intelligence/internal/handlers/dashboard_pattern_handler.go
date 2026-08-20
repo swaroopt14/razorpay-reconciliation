@@ -28,13 +28,14 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/zord/zord-intelligence/internal/mlclient"
 	"github.com/zord/zord-intelligence/internal/persistence"
 )
 
 // DashboardPatternHandler serves GET /v1/intelligence/dashboard/patterns.
 type DashboardPatternHandler struct {
-	snapshotRepo    *persistence.IntelligenceSnapshotRepo
-	projRepo        *persistence.ProjectionRepo
+	snapshotRepo     *persistence.IntelligenceSnapshotRepo
+	projRepo         *persistence.ProjectionRepo
 	intelligenceMode string
 }
 
@@ -49,23 +50,24 @@ func NewDashboardPatternHandler(
 
 // patternKPIFields reads KPI fields from BATCH-scoped PatternSnapshot JSON.
 type patternKPIFields struct {
-	BatchID            string  `json:"batch_id"`
-	BatchAnomalyScore  float64 `json:"batch_anomaly_score"`
-	AnomalyLevel       string  `json:"anomaly_level"`
-	AnomalyType        string  `json:"anomaly_type"`
-	BatchRiskScore     float64 `json:"batch_risk_score"`
-	RiskTier           string  `json:"risk_tier"`
-	FinalityStatus     string  `json:"finality_status"`
-	TotalCount         int     `json:"total_count"`
-	SuccessCount       int     `json:"success_count"`
-	FailedCount        int     `json:"failed_count"`
-	PendingCount       int     `json:"pending_count"`
-	BatchQualityScore  float64 `json:"batch_quality_score"`
-	ExactMatchCount    int     `json:"exact_match_count"`
-	HighConfidenceCount int    `json:"high_confidence_count"`
-	AmbiguousCount     int     `json:"ambiguous_count"`
-	UnresolvedCount    int     `json:"unresolved_count"`
-	ConflictedCount    int     `json:"conflicted_count"`
+	BatchID             string                    `json:"batch_id"`
+	BatchAnomalyScore   float64                   `json:"batch_anomaly_score"`
+	AnomalyLevel        string                    `json:"anomaly_level"`
+	AnomalyType         string                    `json:"anomaly_type"`
+	MLAdvisory          mlclient.AdvisoryMetadata `json:"ml_advisory"`
+	BatchRiskScore      float64                   `json:"batch_risk_score"`
+	RiskTier            string                    `json:"risk_tier"`
+	FinalityStatus      string                    `json:"finality_status"`
+	TotalCount          int                       `json:"total_count"`
+	SuccessCount        int                       `json:"success_count"`
+	FailedCount         int                       `json:"failed_count"`
+	PendingCount        int                       `json:"pending_count"`
+	BatchQualityScore   float64                   `json:"batch_quality_score"`
+	ExactMatchCount     int                       `json:"exact_match_count"`
+	HighConfidenceCount int                       `json:"high_confidence_count"`
+	AmbiguousCount      int                       `json:"ambiguous_count"`
+	UnresolvedCount     int                       `json:"unresolved_count"`
+	ConflictedCount     int                       `json:"conflicted_count"`
 }
 
 // tenantPatternKPIFields reads P2/P3/P6 fields from TENANT-scoped PatternSnapshot JSON.
@@ -136,14 +138,15 @@ type DashboardPatternResponse struct {
 	SettlementDelayP95Days float64 `json:"settlement_delay_p95_days"`
 
 	// Supplementary pattern fields for frontend context
-	AnomalyType    string  `json:"anomaly_type,omitempty"`
-	BatchRiskScore float64 `json:"batch_risk_score"`
-	RiskTier       string  `json:"risk_tier,omitempty"`
-	FinalityStatus string  `json:"finality_status,omitempty"`
-	TotalCount     int     `json:"total_count"`
-	SuccessCount   int     `json:"success_count"`
-	FailedCount    int     `json:"failed_count"`
-	PendingCount   int     `json:"pending_count"`
+	AnomalyType    string                    `json:"anomaly_type,omitempty"`
+	MLAdvisory     mlclient.AdvisoryMetadata `json:"ml_advisory"`
+	BatchRiskScore float64                   `json:"batch_risk_score"`
+	RiskTier       string                    `json:"risk_tier,omitempty"`
+	FinalityStatus string                    `json:"finality_status,omitempty"`
+	TotalCount     int                       `json:"total_count"`
+	SuccessCount   int                       `json:"success_count"`
+	FailedCount    int                       `json:"failed_count"`
+	PendingCount   int                       `json:"pending_count"`
 
 	// Intelligence mode — GRADE_A or GRADE_B
 	IntelligenceMode string `json:"intelligence_mode,omitempty"`
@@ -254,6 +257,7 @@ func (h *DashboardPatternHandler) GetPatternKPIs(w http.ResponseWriter, r *http.
 	resp.BatchAnomalyScore = pct(kpis.BatchAnomalyScore)
 	resp.AnomalyLevel = kpis.AnomalyLevel
 	resp.AnomalyType = kpis.AnomalyType
+	resp.MLAdvisory = kpis.MLAdvisory
 	resp.BatchRiskScore = pct(kpis.BatchRiskScore)
 	resp.RiskTier = kpis.RiskTier
 	resp.FinalityStatus = kpis.FinalityStatus

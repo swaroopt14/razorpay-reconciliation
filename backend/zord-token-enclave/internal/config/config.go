@@ -9,7 +9,7 @@ import (
 
 type Config struct {
 	DBURL       string
-	MasterKey   []byte // ✅ decoded raw key bytes
+	KMSKeyID    string // AWS KMS CMK ID/ARN used to wrap tenant DEKs (TOK-03)
 	TokenSecret []byte // ✅ decoded HMAC secret for deterministic tokens
 }
 
@@ -37,19 +37,12 @@ func Load() *Config {
 		user, pass, host, port, name, ssl,
 	)
 
-	// 🔐 Load and decode MASTER_KEY
-	masterKeyB64 := os.Getenv("MASTER_KEY")
-	if masterKeyB64 == "" {
-		log.Fatal("❌ MASTER_KEY not set")
-	}
-
-	masterKey, err := base64.StdEncoding.DecodeString(masterKeyB64)
-	if err != nil {
-		log.Fatal("❌ MASTER_KEY is not valid base64:", err)
-	}
-
-	if len(masterKey) != 32 {
-		log.Fatalf("❌ MASTER_KEY must decode to 32 bytes, got %d bytes", len(masterKey))
+	// 🔐 KMS_KEY_ID: the AWS KMS CMK ID/ARN this service uses to wrap/unwrap
+	// tenant DEKs (TOK-03). Not a secret -- an ARN alone grants no access --
+	// so it's a plain env var, not base64/not a k8s Secret.
+	kmsKeyID := os.Getenv("KMS_KEY_ID")
+	if kmsKeyID == "" {
+		log.Fatal("❌ KMS_KEY_ID not set")
 	}
 
 	// 🔐 Load and decode TOKEN_SECRET
@@ -65,7 +58,7 @@ func Load() *Config {
 
 	return &Config{
 		DBURL:       dbURL,
-		MasterKey:   masterKey,
+		KMSKeyID:    kmsKeyID,
 		TokenSecret: tokenSecret,
 	}
 }

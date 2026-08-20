@@ -80,6 +80,9 @@ export function AskZordWorkspaceLayout({ askZord, batchId }: AskZordWorkspaceLay
           activeThreadId={askZord.activeThreadId}
           onSelectThread={askZord.selectThread}
           onNewThread={askZord.startNewThread}
+          onClearHistory={askZord.clearHistory}
+          persistApproved={askZord.persistApproved}
+          onPersistApprovedChange={askZord.setPersistApproved}
         />
       </div>
 

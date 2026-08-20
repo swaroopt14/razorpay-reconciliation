@@ -103,6 +103,13 @@ type Config struct {
 	// discipline for the outbound side.
 	TopicOutboxDLQ string
 
+	// IntelligenceDLQReplayStallThresholdSeconds (INTEL-07) — if the oldest
+	// unreplayed row in intelligence_dlq_local_receipts is older than this
+	// many seconds, the replay worker logs a CRITICAL stall alert every
+	// tick. Signals a Kafka outage (or some other replay-blocking condition)
+	// that has outlasted a brief blip and now needs operator attention.
+	IntelligenceDLQReplayStallThresholdSeconds int
+
 	// ── ML Service Topics ─────────────────────────────────────────
 	// Go publishes ML requests to TopicMLRequest; Python publishes
 	// results back to TopicMLResult.  The mlclient package manages
@@ -176,6 +183,8 @@ func Load() *Config {
 		TopicActuationBatchPatch: getWithDefault("TOPIC_ACTUATION_BATCH_PATCH", "zpi.actuation.batch_patch"),
 		TopicIntelligenceDLQ:     getWithDefault("TOPIC_INTELLIGENCE_DLQ", "zord-intelligence.dlq.v1"),
 		TopicOutboxDLQ:           getWithDefault("TOPIC_OUTBOX_DLQ", "zord-intelligence.outbox-dlq.v1"),
+
+		IntelligenceDLQReplayStallThresholdSeconds: getIntWithDefault("INTELLIGENCE_DLQ_REPLAY_STALL_THRESHOLD_SECONDS", 300),
 
 		// ── ML Service Topics ────────────────────────────────────────
 		TopicMLRequest: getWithDefault("TOPIC_ML_REQUEST", "ml.request.events"),

@@ -1,7 +1,10 @@
 package handlers
 
 import (
+	"crypto/subtle"
+	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
@@ -35,6 +38,11 @@ type ackNackResponse struct {
 }
 
 func (h *OutboxHandler) Lease(c *gin.Context) {
+	if !authorizeRelay(c.Request) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
 	limit := 500
 	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
 		n, err := strconv.Atoi(raw)
@@ -71,6 +79,11 @@ func (h *OutboxHandler) Lease(c *gin.Context) {
 }
 
 func (h *OutboxHandler) Ack(c *gin.Context) {
+	if !authorizeRelay(c.Request) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
 	var req ackNackRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid json body"})
@@ -97,6 +110,11 @@ func (h *OutboxHandler) Ack(c *gin.Context) {
 }
 
 func (h *OutboxHandler) Nack(c *gin.Context) {
+	if !authorizeRelay(c.Request) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
 	var req ackNackRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid json body"})
@@ -120,4 +138,28 @@ func (h *OutboxHandler) Nack(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, ackNackResponse{Updated: updated})
+}
+
+func authorizeRelay(r *http.Request) bool {
+	expected := strings.TrimSpace(os.Getenv("RELAY_AUTH_TOKEN"))
+
+	// Fail closed — if token is not configured, deny all requests.
+	if expected == "" {
+		log.Printf("SECURITY: RELAY_AUTH_TOKEN is not set — rejecting request from %s", r.RemoteAddr)
+		return false
+	}
+
+	provided := strings.TrimSpace(r.Header.Get("X-Relay-Token"))
+	if provided == "" {
+		log.Printf("SECURITY: missing X-Relay-Token header from %s %s", r.RemoteAddr, r.URL.Path)
+		return false
+	}
+
+	// Constant-time comparison prevents timing side-channel attacks.
+	if subtle.ConstantTimeCompare([]byte(expected), []byte(provided)) != 1 {
+		log.Printf("SECURITY: invalid relay auth token from %s %s", r.RemoteAddr, r.URL.Path)
+		return false
+	}
+
+	return true
 }

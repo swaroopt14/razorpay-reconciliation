@@ -16,7 +16,6 @@ spec:
       securityContext:
         fsGroup: 1000
       priorityClassName: infra-critical
-      # Schedule on the stateful on-demand node group
       tolerations:
         - key: workload
           value: stateful
@@ -28,7 +27,7 @@ spec:
           image: 673698305621.dkr.ecr.ap-south-1.amazonaws.com/mirror/cp-kafka:7.6.0
           ports:
             - containerPort: 9092
-              name: kafka
+              name: sasl
             - containerPort: 9093
               name: controller
           env:
@@ -40,14 +39,31 @@ spec:
               value: 1@localhost:9093
             - name: KAFKA_CONTROLLER_LISTENER_NAMES
               value: CONTROLLER
+
+            # ── SASL/SCRAM Authentication ────────────────────────────────────
             - name: KAFKA_LISTENERS
-              value: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+              value: SASL_PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
             - name: KAFKA_ADVERTISED_LISTENERS
-              value: PLAINTEXT://zord-kafka.zord.svc.cluster.local:9092
+              value: SASL_PLAINTEXT://zord-kafka.zord.svc.cluster.local:9092
             - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
-              value: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+              value: CONTROLLER:PLAINTEXT,SASL_PLAINTEXT:SASL_PLAINTEXT
             - name: KAFKA_INTER_BROKER_LISTENER_NAME
-              value: PLAINTEXT
+              value: SASL_PLAINTEXT
+            - name: KAFKA_SASL_ENABLED_MECHANISMS
+              value: SCRAM-SHA-512
+            - name: KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL
+              value: SCRAM-SHA-512
+
+            # ── SCRAM credentials (inter-broker) ─────────────────────────────
+            - name: KAFKA_LISTENER_NAME_SASL__PLAINTEXT_SCRAM__SHA__512_SASL_JAAS_CONFIG
+              valueFrom:
+                secretKeyRef:
+                  name: zord-app-secrets
+                  key: KAFKA_BROKER_JAAS_CONFIG
+
+            # ── Topic governance ─────────────────────────────────────────────
+            - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+              value: "false"
             - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
               value: "1"
             - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
@@ -56,8 +72,21 @@ spec:
               value: "1"
             - name: KAFKA_MIN_INSYNC_REPLICAS
               value: "1"
-            - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
-              value: "true"
+
+            # ── Retention (7 days default) ───────────────────────────────────
+            - name: KAFKA_LOG_RETENTION_HOURS
+              value: "168"
+            - name: KAFKA_LOG_RETENTION_BYTES
+              value: "-1"
+
+            # ── ACL enforcement ──────────────────────────────────────────────
+            - name: KAFKA_AUTHORIZER_CLASS_NAME
+              value: org.apache.kafka.metadata.authorizer.StandardAuthorizer
+            - name: KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND
+              value: "false"
+            - name: KAFKA_SUPER_USERS
+              value: "User:admin"
+
             - name: CLUSTER_ID
               value: MkU3OEVBNTcwNTJENDM2Qk
             - name: KAFKA_HEAP_OPTS

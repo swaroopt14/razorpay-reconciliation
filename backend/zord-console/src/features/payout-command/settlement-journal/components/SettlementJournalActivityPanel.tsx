@@ -17,10 +17,7 @@ import {
   type DateRangePreset,
 } from '../settlementJournalSidebarUtils'
 import { settlementJournalCopy } from '../copy/settlementJournalCopy'
-import {
-  formatClientRefDisplay,
-  formatMappingConfidenceLabel,
-} from '../mappers/mapMatchStatus'
+import { formatClientRefDisplay, formatMappingConfidenceLabel } from '../mappers/mapMatchStatus'
 import { SettlementParseErrorsTable } from './SettlementParseErrorsTable'
 import type { SettlementParseErrorRow } from '@/services/payout-command/prod-api/settlementObservations'
 
@@ -328,14 +325,15 @@ export function SettlementJournalActivityPanel({ vm }: SettlementJournalActivity
     <table className={`w-full min-w-[720px] border-collapse text-[14px] ${HOME_TITLE_BLACK}`}>
       <thead className="bg-[#f8fafc]">
         <tr>
-{[
+          {[
             settlementJournalCopy.table.sourceRow,
             settlementJournalCopy.table.clientRef,
             settlementJournalCopy.table.bankRef,
             settlementJournalCopy.table.observedAmount,
             settlementJournalCopy.table.netSettled,
             settlementJournalCopy.table.fee,
-            settlementJournalCopy.table.matchConfidence,
+            // Match Status column removed
+            settlementJournalCopy.table.mappingConfidence,
             settlementJournalCopy.table.observedAt,
           ].map((h) => (
             <th key={h} className={TABLE_TH}>
@@ -486,13 +484,19 @@ export function SettlementJournalActivityPanel({ vm }: SettlementJournalActivity
                           {row.providerStatusCode} · {row.failureReasonCode}
                         </p>
                         <p>
-                          <span className="text-[#888888]">Parse / mapping confidence</span>
+                          <span className="text-[#888888]">Parse / mapping confidence (data quality)</span>
                           <br />
                           {row.parseConfidence != null ? `${(row.parseConfidence * 100).toFixed(0)}%` : '—'}{' '}
                           /{' '}
                           {row.mappingConfidence != null
                             ? `${(row.mappingConfidence * 100).toFixed(0)}%`
                             : '—'}
+                        </p>
+                        <p>
+                          <span className="text-[#888888]">Attachment decision</span>
+                          <br />
+                          {row.attachmentDecision ?? '—'}
+                          {row.candidateCount != null ? ` · candidates ${row.candidateCount}` : ''}
                         </p>
                         <p>
                           <span className="text-[#888888]">Value date</span>
