@@ -3,11 +3,15 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -43,6 +47,9 @@ func main() {
 		otelgin.Middleware(cfg.ServiceName),
 	)
 	router.Use(corsMiddleware())
+	router.Use(plmiddleware.RequestIDMiddleware())
+	router.Use(plmiddleware.MaxBodyBytesMiddleware(cfg.HTTPMaxBodyBytes))
+	router.Use(plmiddleware.RequestTimeoutMiddleware(time.Duration(cfg.HTTPRequestTimeoutSeconds) * time.Second))
 
 	cleanup := tracing.InitTracing(cfg.ServiceName)
 	defer cleanup()
@@ -178,8 +185,44 @@ func main() {
 	addr := ":" + cfg.HTTPPort
 	log.Printf("starting %s on %s", cfg.ServiceName, addr)
 
-	if err := router.Run(addr); err != nil {
-		log.Fatalf("server failed to start: %v", err)
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           router,
+		ReadHeaderTimeout: time.Duration(cfg.HTTPReadHeaderTimeoutSeconds) * time.Second,
+		ReadTimeout:       time.Duration(cfg.HTTPReadTimeoutSeconds) * time.Second,
+		WriteTimeout:      time.Duration(cfg.HTTPWriteTimeoutSeconds) * time.Second,
+		IdleTimeout:       time.Duration(cfg.HTTPIdleTimeoutSeconds) * time.Second,
+	}
+
+	serverErr := make(chan error, 1)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErr <- err
+			return
+		}
+		serverErr <- nil
+	}()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	select {
+	case sig := <-stop:
+		log.Printf("shutdown signal received signal=%s service=%s", sig.String(), cfg.ServiceName)
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Fatalf("server forced shutdown failed: %v", err)
+		}
+
+		log.Printf("server shutdown complete service=%s", cfg.ServiceName)
+
+	case err := <-serverErr:
+		if err != nil {
+			log.Fatalf("server failed: %v", err)
+		}
 	}
 }
 

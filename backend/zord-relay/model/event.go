@@ -35,13 +35,21 @@ type OutboxEvent struct {
 	SchemaVersion string `json:"schema_version,omitempty"`
 
 	// --- Payload ---
-	Payload         json.RawMessage `json:"payload"`
-	PayloadHash     string          `json:"payload_hash"`
-	RawRowHash      *string         `json:"raw_row_hash,omitempty"`
-	EnvelopeHash    string          `json:"envelope_hash,omitempty"`
-	CanonicalHash   string          `json:"canonical_hash,omitempty"`
-	GovernanceState string          `json:"governance_state,omitempty"`
-	GovernanceHash  string          `json:"governance_hash,omitempty"`
+	Payload     json.RawMessage `json:"payload"`
+	PayloadHash string          `json:"payload_hash"`
+	// CanonicalPayloadHash is SHA-256 of the exact bytes in Payload
+	// (computed by Postgres as a GENERATED column on zord-intent-engine's
+	// outbox table) -- distinct from PayloadHash, which is SHA-256 of the
+	// raw, pre-transformation ingest payload and describes a different byte
+	// sequence entirely. Payload-integrity verification must compare
+	// against this field, since Payload's bytes are all this service ever
+	// receives.
+	CanonicalPayloadHash string  `json:"canonical_payload_hash,omitempty"`
+	RawRowHash           *string `json:"raw_row_hash,omitempty"`
+	EnvelopeHash         string  `json:"envelope_hash,omitempty"`
+	CanonicalHash        string  `json:"canonical_hash,omitempty"`
+	GovernanceState      string  `json:"governance_state,omitempty"`
+	GovernanceHash       string  `json:"governance_hash,omitempty"`
 
 	// --- Evidence leaf hashes (Service 2 / zord-intent-engine) ---
 	RawRowEvidenceLeafHash       string `json:"raw_row_evidence_leaf_hash,omitempty"`

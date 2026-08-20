@@ -71,18 +71,23 @@ func loadOutboxContractInventory(t *testing.T) outboxContractInventory {
 	return inv
 }
 
-// TestINT09_InventoryReportsExpected91Columns pins the audit item's own
-// headline claim: the outbox table has 91 columns. This inventory value was
-// cross-checked byte-for-byte (same names, same order) against a live,
-// freshly-migrated Postgres instance during development — see the testing
-// report for the captured session.
-func TestINT09_InventoryReportsExpected91Columns(t *testing.T) {
+// TestINT09_InventoryReportsExpectedColumnCount pins the outbox table's
+// real column count. Was 91 at INT-09's original writing; deliberately
+// updated to 92 for the addition of canonical_payload_hash (a fix, not an
+// audit ticket -- a Postgres GENERATED column, see
+// internal/models/outbox_model.go's CanonicalPayloadHash doc comment),
+// following this test's own documented update procedure below. The
+// 91-column value was itself cross-checked byte-for-byte (same names, same
+// order) against a live, freshly-migrated Postgres instance during
+// development — see the testing report for that captured session.
+func TestINT09_InventoryReportsExpectedColumnCount(t *testing.T) {
+	const wantColumns = 92
 	inv := loadOutboxContractInventory(t)
-	if inv.TotalColumns != 91 {
-		t.Fatalf("outbox_contract_inventory.json total_columns = %d, want 91 -- either the schema genuinely changed (re-run generate_outbox_contract_inventory.py and update this test deliberately) or something is wrong", inv.TotalColumns)
+	if inv.TotalColumns != wantColumns {
+		t.Fatalf("outbox_contract_inventory.json total_columns = %d, want %d -- either the schema genuinely changed (re-run generate_outbox_contract_inventory.py and update this test deliberately) or something is wrong", inv.TotalColumns, wantColumns)
 	}
-	if len(inv.Columns) != 91 {
-		t.Fatalf("inventory columns list has %d entries, want 91", len(inv.Columns))
+	if len(inv.Columns) != wantColumns {
+		t.Fatalf("inventory columns list has %d entries, want %d", len(inv.Columns), wantColumns)
 	}
 }
 

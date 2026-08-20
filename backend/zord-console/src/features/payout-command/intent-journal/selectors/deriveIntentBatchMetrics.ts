@@ -1,14 +1,20 @@
 import type { IntentJournalPaymentIntentItem, IntentJournalDlqItem } from '@/services/payout-command/prod-api/intentJournalTypes'
 import { readIntentQualityScore } from '@/services/payout-command/prod-api/resolveIntentQualityScore'
 import { READINESS_REVIEW_THRESHOLD } from '../mappers/mapIntentTableRow'
+import {
+  JOURNAL_DEFAULT_CURRENCY,
+  majorAmountToMinor,
+  normalizeJournalCurrency,
+} from '@/services/payout-command/prod-api/money/journalMoney'
 
 export const DLQ_STATUS_MANUAL_REVIEW = 'NEEDS_MANUAL_REVIEW'
 
 export type IntentBatchMetrics = {
   /** Authoritative count from payment-intents `pagination.total`; null when API total missing. */
   instructionCount: number | null
-  /** Batch total from batch-ids `total_amount`, else sum of loaded payment-intent amounts. */
-  intendedValue: number
+  /** Batch total in minor units — from batch-ids or sum of payment-intent amounts. */
+  intendedAmountMinor: number
+  currency: string
   avgReadinessPct: number | null
   /** Batch aggregate from intent-engine `aggregate_confidence_score` (0–1). */
   batchAggregateConfidenceScore: number | null
@@ -27,12 +33,6 @@ export type IntentBatchMetrics = {
   processingFailedCount: number
   /** Provenance for needsReviewCount. */
   needsReviewSource: 'dlq.manual-review.pagination.total' | 'dlq.NEEDS_MANUAL_REVIEW.unique'
-}
-
-function parseAmount(raw: string | number | undefined): number {
-  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : 0
-  const n = Number.parseFloat(String(raw ?? '').replace(/,/g, ''))
-  return Number.isFinite(n) ? n : 0
 }
 
 function normalizeQualityPct(score: number): number {
@@ -98,8 +98,9 @@ function uniqueCount(ids: Iterable<string>): number {
 export type DeriveIntentBatchMetricsOptions = {
   /** Authoritative batch intent count from payment-intents `pagination.total`. */
   paymentIntentTotal?: number | null
-  /** Authoritative batch value from batch-ids `total_amount` (major INR units). */
-  batchTotalAmount?: number | null
+  /** Authoritative batch value already in minor units. */
+  batchTotalAmountMinor?: number | null
+  currency?: string | null
   /**
    * Batch-scoped count from GET /api/prod/dlq/manual-review (`pagination.total` or filtered items).
    * When set, becomes needsReviewCount / manualReviewCount.
@@ -115,15 +116,22 @@ export function deriveIntentBatchMetrics(
   const apiTotal = options?.paymentIntentTotal
   const instructionCount =
     apiTotal != null && Number.isFinite(apiTotal) && apiTotal >= 0 ? apiTotal : null
-  // Sum via integer milli-rupees (3 dp) to eliminate float-drift over large batches.
-  const summedValueMillis = paymentIntents.reduce(
-    (sum, item) => sum + Math.round(parseAmount(item.amount) * 1000),
+  // Payment-intent `amount` is major — convert each row once, then sum integers.
+  const summedAmountMinor = paymentIntents.reduce(
+    (sum, item) => sum + majorAmountToMinor(item.amount),
     0,
   )
-  const summedValue = summedValueMillis / 1000
-  const batchTotal = options?.batchTotalAmount
-  const intendedValue =
-    batchTotal != null && Number.isFinite(batchTotal) && batchTotal >= 0 ? batchTotal : summedValue
+  const batchTotal = options?.batchTotalAmountMinor
+  const intendedAmountMinor =
+    batchTotal != null && Number.isFinite(batchTotal) && batchTotal >= 0
+      ? Math.trunc(batchTotal)
+      : summedAmountMinor
+
+  const currency = normalizeJournalCurrency(
+    options?.currency ??
+      paymentIntents.map((item) => item.currency).find((c) => Boolean(c?.trim())) ??
+      JOURNAL_DEFAULT_CURRENCY,
+  )
 
   const readScore = (raw: unknown): number | null => {
     if (typeof raw === 'number' && Number.isFinite(raw)) return raw
@@ -145,7 +153,7 @@ export function deriveIntentBatchMetrics(
   const batchAggregateConfidenceScore =
     paymentIntents.map((item) => readScore(item.aggregate_confidence_score)).find((s) => s != null) ?? null
 
-  // Quality KPI — unique intents below threshold; never merged into review queue size.
+  // Quality KPI — unique intents below threshold; never merged into review queue size (CON-P1-23).
   const lowReadinessIds = paymentIntents
     .map((item, index) => {
       const score = readIntentQualityScore(item)
@@ -178,7 +186,8 @@ export function deriveIntentBatchMetrics(
 
   return {
     instructionCount,
-    intendedValue,
+    intendedAmountMinor,
+    currency,
     avgReadinessPct,
     batchAggregateConfidenceScore,
     lowReadinessCount,

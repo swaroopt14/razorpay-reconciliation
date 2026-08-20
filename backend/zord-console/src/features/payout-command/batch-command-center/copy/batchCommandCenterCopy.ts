@@ -47,7 +47,7 @@ export const BATCH_REVIEW_COPY = {
       'CSV/XLSX from Tally, SAP, ERP, LMS, or internal finance system. One row should represent one payment.',
     step2Title: 'Upload bank / settlement confirmation file',
     step2Helper:
-      'Bank statement, settlement report, status file, or SFTP export used to confirm payment outcomes.',
+      'Bank statement, settlement report, status file, or SFTP export used to confirm payment outcomes. Same reprocess checkbox as Step 1 — settlement reprocess also asks for a reason.',
     uploadFilesLabel: 'Upload files',
     step1Short: 'Step 1 · Payment instruction file',
     step2Short: 'Step 2 · Bank / settlement file',
@@ -74,7 +74,11 @@ export const BATCH_REVIEW_COPY = {
     batchReference: 'Batch reference optional',
     batchReferencePlaceholder: 'Leave blank if you want Zord to create one automatically',
     reprocess: 'Reprocess this file',
-    reprocessHelper: 'Use only when uploading a corrected file or rerunning a previous batch.',
+    reprocessHelper: 'Checking this reprocesses the payment instruction file. No extra reason is required.',
+    reprocessSettlementHelper:
+      'Checking this asks why you need to reprocess the bank / settlement confirmation file.',
+    reprocessReason: 'Reprocess reason',
+    reprocessReasonPlaceholder: 'Select a reason',
     apiKey: 'API key (optional)',
     apiKeyPlaceholder: 'Same Bearer token as Postman',
     activeBatchId: 'Active batch reference',
@@ -86,6 +90,16 @@ export const BATCH_REVIEW_COPY = {
     settlementTitle: 'Confirmation file uploaded',
     settlementBody: (batchId: string) =>
       `Settlement confirmation for batch ${batchId} has been accepted.`,
+    settlementDuplicateBody: (batchId: string) =>
+      `Exact duplicate for batch ${batchId} — existing settlement run kept (no force).`,
+    reprocessWhyTitle: 'Why do you want to reprocess?',
+    reprocessWhyBody:
+      'Pick a reason for reprocessing the bank / settlement confirmation file.',
+    reprocessContinue: 'Continue',
+    reprocessCancel: 'Cancel',
+    uploadErrorIntentTitle: 'This error occurred while uploading the payment instruction file',
+    uploadErrorSettlementTitle: 'This error occurred while uploading the settlement confirmation file',
+    uploadErrorFallback: 'The file was not uploaded.',
     close: 'Close',
     openPaymentJournal: 'Open payment journal',
     openSettlementJournal: 'Open settlement journal',
@@ -118,7 +132,10 @@ export const BATCH_REVIEW_COPY = {
         label: 'Confirmation received',
         description: 'Bank/settlement/status file has been uploaded or connected.',
       },
-      { label: 'Matching completed', description: 'Zord has linked payment intents with outcome records.' },
+      {
+        label: 'Matching completed',
+        description: 'Service 5 attachment/finality confirms intents are linked to settlement outcomes.',
+      },
       {
         label: 'Ready for proof / review',
         description: 'Batch is ready for evidence export or issue review.',
@@ -152,8 +169,8 @@ export const BATCH_REVIEW_COPY = {
     bankConfirmed: {
       title: 'Bank-Confirmed Value',
       subtitle: 'Payments matched with bank, settlement, or status confirmation.',
-      empty: 'Waiting for confirmation file',
-      emptyHelper: 'Upload bank/settlement data to confirm outcomes.',
+      empty: 'Unavailable',
+      emptyHelper: 'Unavailable — bank-confirmed amount not returned for this batch.',
     },
     pending: {
       title: 'Pending Confirmation',

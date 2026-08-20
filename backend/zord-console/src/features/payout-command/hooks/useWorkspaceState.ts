@@ -16,9 +16,15 @@ import type {
   WorkspaceLoadingPhase,
   WorkspaceLiveAnswer,
 } from '@/services/payout-command/types'
+import {
+  clearWorkspaceChatThreadsForTenant,
+  loadWorkspaceChatThreads,
+  purgeLegacyLocalWorkspaceChatThreads,
+  saveWorkspaceChatThreads,
+} from '../workspace/workspaceChatThreads'
+import { isAskZordPersistApproved } from '../workspace/payoutChatPersistence'
 
 const WORKSPACE_LIVE_ANSWER_TITLE = 'Zord'
-const THREADS_STORAGE_PREFIX = 'zord:workspace-threads:'
 
 const LOADING_PHASES: WorkspaceLoadingPhase[] = [
   'understanding',
@@ -54,27 +60,6 @@ function threadTitleFromPrompt(prompt: string) {
   const t = prompt.trim()
   if (t.length <= 48) return t
   return `${t.slice(0, 45)}…`
-}
-
-function loadThreads(storageKey: string): WorkspaceChatThread[] {
-  if (typeof window === 'undefined') return []
-  try {
-    const raw = window.localStorage.getItem(storageKey)
-    if (!raw) return []
-    const parsed = JSON.parse(raw) as WorkspaceChatThread[]
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
-}
-
-function saveThreads(storageKey: string, threads: WorkspaceChatThread[]) {
-  if (typeof window === 'undefined') return
-  try {
-    window.localStorage.setItem(storageKey, JSON.stringify(threads.slice(0, 40)))
-  } catch {
-    /* quota */
-  }
 }
 
 function welcomeMessages(tab: WorkspaceTab): WorkspaceConversationMessage[] {
@@ -122,6 +107,7 @@ export type WorkspaceState = {
   startNewChat: () => void
   selectThread: (threadId: string) => void
   deleteThread: (threadId: string) => void
+  clearHistory: () => void
   submitPrompt: (prompt: string) => Promise<void>
   refreshStarterAnswer: () => void
   resetForTab: (tab: WorkspaceTab) => void
@@ -133,7 +119,7 @@ export function useWorkspaceState(
 ): WorkspaceState {
   const { tenantId, tenantReady } = useSessionTenant()
   const { user, isLoading: authLoading } = useAuth()
-  const storageKey = `${THREADS_STORAGE_PREFIX}${tenantId.trim() || 'anonymous'}`
+  const scopedTenantId = tenantId.trim() || 'anonymous'
 
   const [threads, setThreads] = useState<WorkspaceChatThread[]>([])
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null)
@@ -154,15 +140,18 @@ export function useWorkspaceState(
   conversationRef.current = conversation
 
   useEffect(() => {
-    setThreads(loadThreads(storageKey))
-  }, [storageKey])
+    if (!isAskZordPersistApproved()) {
+      purgeLegacyLocalWorkspaceChatThreads()
+    }
+    setThreads(loadWorkspaceChatThreads(scopedTenantId))
+  }, [scopedTenantId])
 
   const persistThreads = useCallback(
     (next: WorkspaceChatThread[]) => {
       setThreads(next)
-      saveThreads(storageKey, next)
+      saveWorkspaceChatThreads(scopedTenantId, next)
     },
-    [storageKey],
+    [scopedTenantId],
   )
 
   const upsertActiveThread = useCallback(
@@ -194,11 +183,11 @@ export function useWorkspaceState(
             },
             ...prev,
           ]
-        saveThreads(storageKey, next)
+        saveWorkspaceChatThreads(scopedTenantId, next)
         return next
       })
     },
-    [activeTab, storageKey],
+    [activeTab, scopedTenantId],
   )
 
   const startNewChat = useCallback(() => {
@@ -233,6 +222,12 @@ export function useWorkspaceState(
     },
     [activeThreadId, persistThreads, startNewChat, threads],
   )
+
+  const clearHistory = useCallback(() => {
+    clearWorkspaceChatThreadsForTenant(scopedTenantId)
+    setThreads([])
+    startNewChat()
+  }, [scopedTenantId, startNewChat])
 
   const resetForTab = useCallback(
     (tab: WorkspaceTab) => {
@@ -457,6 +452,7 @@ export function useWorkspaceState(
     startNewChat,
     selectThread,
     deleteThread,
+    clearHistory,
     submitPrompt,
     resetForTab,
     refreshStarterAnswer,

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -105,20 +106,10 @@ func (r *IntelligenceSnapshotRepo) Create(
 		strings.EqualFold(strings.TrimSpace(snap.ScopeType), "BATCH") &&
 		snap.ScopeRef != nil &&
 		strings.TrimSpace(*snap.ScopeRef) != "" {
-		batchID := strings.TrimSpace(*snap.ScopeRef)
-
-		emitVectorIndexRequest(
-			"intelligence_rca_cluster.created.v1",
+		log.Printf(
+			"[intelligence][vector-index] RCA snapshot stored tenant=%s batch_id=%s; batch contract publisher owns vector indexing",
 			snap.TenantID,
-			"intelligence_batch_contract",
-			batchID,
-			batchID,
-			map[string]string{
-				"snapshot_type":        snap.SnapshotType,
-				"scope_type":           snap.ScopeType,
-				"scope_ref":            batchID,
-				"vector_summary_scope": "batch_with_rca",
-			},
+			strings.TrimSpace(*snap.ScopeRef),
 		)
 	}
 

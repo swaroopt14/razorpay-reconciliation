@@ -35,12 +35,13 @@ def main() -> None:
         if result is not None:
             producer.publish_result(result)
 
-    consumer = MLConsumer(handler=handle)
+    consumer = MLConsumer(handler=handle, dead_letter_handler=producer.publish_dead_letter)
     try:
         consumer.start()        # blocks until interrupted
     except KeyboardInterrupt:
         logger.info("ml-service: interrupted — shutting down")
     finally:
+        ml_service.close()
         producer.close()
         consumer.close()
         logger.info("ml-service: stopped")

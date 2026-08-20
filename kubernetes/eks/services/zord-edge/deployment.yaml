@@ -134,12 +134,25 @@ spec:
                   key: OTEL_EXPORTER_OTLP_ENDPOINT
             - name: OTEL_SERVICE_NAME
               value: zord-edge
+            - name: MAX_BULK_BYTES
+              valueFrom:
+                configMapKeyRef:
+                  name: zord-aws-config
+                  key: MAX_BULK_BYTES
+            - name: MAX_CSV_ROWS
+              valueFrom:
+                configMapKeyRef:
+                  name: zord-aws-config
+                  key: MAX_CSV_ROWS
+            - name: BULK_INGEST_JOB_TIMEOUT_MINUTES
+              valueFrom:
+                configMapKeyRef:
+                  name: zord-aws-config
+                  key: BULK_INGEST_JOB_TIMEOUT_MINUTES
           volumeMounts:
             - name: signing-key
               mountPath: /run/secrets
               readOnly: true
-            - name: tmp
-              mountPath: /tmp
           readinessProbe:
             httpGet:
               path: /ready
@@ -156,13 +169,11 @@ spec:
           resources:
             requests:
               cpu: 200m
-              memory: 384Mi
+              memory: 512Mi
             limits:
               cpu: 750m
-              memory: 768Mi
+              memory: 1536Mi
       volumes:
         - name: signing-key
           secret:
             secretName: zord-edge-signing-key
-        - name: tmp
-          emptyDir: {}

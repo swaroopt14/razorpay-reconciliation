@@ -20,6 +20,9 @@ type EdgeOutboxEvent struct {
 	ObjectRef         string          `json:"object_ref"`
 	Source            string          `json:"source"`
 	SourceSystem      string          `json:"source_system,omitempty"`
+	ContentType       string          `json:"content_type,omitempty"`
+	KMSKeyVersion     string          `json:"kms_key_version,omitempty"`
+	EncryptionKeyID   string          `json:"encryption_key_id,omitempty"`
 	EventVersion      string          `json:"event_version,omitempty"`
 	SchemaVersion     string          `json:"schema_version,omitempty"`
 	Topic             string          `json:"topic"`

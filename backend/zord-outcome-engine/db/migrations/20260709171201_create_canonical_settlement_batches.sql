@@ -10,6 +10,8 @@ CREATE TABLE canonical_settlement_batches(
 	source_batch_ref TEXT,
 	client_batch_id TEXT NOT NULL,
 	artifact_family TEXT NOT NULL,
+	outcome_artifact_id UUID NOT NULL,
+	outcome_artifact_version_id UUID NOT NULL,
 	row_count INT NOT NULL DEFAULT 0,
 	success_count_estimate INT NOT NULL DEFAULT 0,
 	failed_count_estimate INT NOT NULL DEFAULT 0,

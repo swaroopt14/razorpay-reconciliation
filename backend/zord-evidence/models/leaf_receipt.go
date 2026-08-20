@@ -24,6 +24,7 @@ const (
 	LeafReceiptAccepted  LeafReceiptOutcome = "ACCEPTED"
 	LeafReceiptDuplicate LeafReceiptOutcome = "DUPLICATE"
 	LeafReceiptConflict  LeafReceiptOutcome = "CONFLICT"
+	LeafReceiptMalformed LeafReceiptOutcome = "MALFORMED"
 )
 
 // LeafReceipt is one immutable row in evidence_leaf_receipts.

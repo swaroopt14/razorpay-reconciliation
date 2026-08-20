@@ -27,9 +27,11 @@ services:
       - INTELLIGENCE_MODE=GRADE_A
       # This is the local/dev docker-compose stack, not a real production
       # deployment (matches docker-compose.test.yml's existing convention).
-      # NewSignerForEnvironment (corrective-action-report P0-07) refuses to
-      # boot when ENVIRONMENT=production without a real KMS-backed signer,
-      # since only DevSigner exists today — keep this "development" here.
+      # ENVIRONMENT=production with no KMS-backed signer configured (only
+      # DevSigner exists today) disables actuation — action publication
+      # fails closed (INTEL-09) — but recommendation/projection intelligence
+      # still boots. Keep this "development" here so DevSigner covers the
+      # full actuation flow locally too.
       - ENVIRONMENT=development
 
       # Database URL

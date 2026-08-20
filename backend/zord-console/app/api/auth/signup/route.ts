@@ -9,12 +9,20 @@ import {
   parseJSONSafe,
   sanitizeAuthEnvelope,
 } from '@/services/auth/server'
+import { consumeBffRateLimit, rateLimitKeyForIp } from '@/services/bff/rateLimit.server'
 
 export const dynamic = 'force-dynamic'
 
 // Public signup route — creates a tenant + first admin user in one call.
 // Mirrors /login but hits /v1/auth/signup on zord-edge.
 export async function POST(request: NextRequest) {
+  const rate = consumeBffRateLimit({
+    bucket: 'auth',
+    key: rateLimitKeyForIp(request),
+    message: 'Too many signup attempts. Try again shortly.',
+  })
+  if (!rate.ok) return rate.response
+
   let requestBody: unknown
   try {
     requestBody = await request.json()

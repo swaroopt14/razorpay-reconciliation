@@ -4,6 +4,14 @@ import time
 from dataclasses import dataclass, field, asdict
 from typing import Any, Optional
 
+from app.exceptions import PayloadHashMismatchError, UnsupportedSchemaVersionError
+from app.model_contracts import canonical_sha256
+
+CURRENT_SCHEMA_VERSION = "1"
+SUPPORTED_SCHEMA_VERSIONS = {CURRENT_SCHEMA_VERSION}
+OUTPUT_KIND_ADVISORY = "ADVISORY_PREDICTION"
+DECISION_AUTHORITY_ADVISORY = "ADVISORY_ONLY"
+
 # Event type constants — must match mlclient/schemas.go exactly
 EVENT_TYPE_IF_SCORE = "ISOLATION_FOREST_SCORE"
 EVENT_TYPE_ZSCORE = "ZSCORE_DETECT"
@@ -65,16 +73,48 @@ class MLRequest:
     tenant_id: str
     payload: dict[str, Any]
     timestamp: int = field(default_factory=lambda: int(time.time()))
+    schema_version: str = CURRENT_SCHEMA_VERSION
+    payload_sha256: str = ""
 
     @classmethod
     def from_dict(cls, d: dict) -> MLRequest:
-        return cls(
+        request = cls(
             event_id=d["event_id"],
             event_type=d["event_type"],
             tenant_id=d["tenant_id"],
             payload=d.get("payload", {}),
             timestamp=d.get("timestamp", int(time.time())),
+            schema_version=str(d.get("schema_version", CURRENT_SCHEMA_VERSION)),
+            payload_sha256=str(d.get("payload_sha256", d.get("payload_hash", ""))),
         )
+        request.validate()
+        return request
+
+    def validate(self) -> None:
+        self.schema_version = str(self.schema_version)
+        if self.schema_version not in SUPPORTED_SCHEMA_VERSIONS:
+            raise UnsupportedSchemaVersionError(
+                f"unsupported schema_version={self.schema_version}"
+            )
+        if not self.event_id or not self.event_type or not self.tenant_id:
+            raise ValueError("event_id, event_type and tenant_id are required")
+        if not isinstance(self.payload, dict):
+            raise ValueError("payload must be a JSON object")
+        actual_hash = canonical_sha256(self.payload)
+        if self.payload_sha256 and self.payload_sha256.lower() != actual_hash:
+            raise PayloadHashMismatchError(
+                f"payload_sha256 mismatch event_id={self.event_id}"
+            )
+        self.payload_sha256 = actual_hash
+
+    def request_hash(self) -> str:
+        self.validate()
+        return canonical_sha256({
+            "schema_version": self.schema_version,
+            "event_type": self.event_type,
+            "tenant_id": self.tenant_id,
+            "payload_sha256": self.payload_sha256,
+        })
 
 
 @dataclass
@@ -84,8 +124,41 @@ class MLResult:
     tenant_id: str
     model_outputs: dict[str, Any]
     model_version: str
+    prediction_id: str = ""
     processed_at: int = field(default_factory=lambda: int(time.time()))
     error: Optional[str] = None
+    schema_version: str = CURRENT_SCHEMA_VERSION
+    request_hash: str = ""
+    model_digest: str = ""
+    model_ready: bool = True
+    fallback_reason: Optional[str] = None
+    output_kind: str = OUTPUT_KIND_ADVISORY
+    decision_authority: str = DECISION_AUTHORITY_ADVISORY
+    may_actuate: bool = False
+    deterministic_rule_required: bool = True
+    prediction_confidence: float = 0.0
+    calibration: dict[str, Any] = field(default_factory=lambda: {
+        "status": "NOT_EVALUATED",
+        "method": "none",
+    })
+    feature_contributions: list[dict[str, Any]] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not self.prediction_id:
+            self.prediction_id = self.event_id
+        if self.output_kind != OUTPUT_KIND_ADVISORY:
+            raise ValueError("ML results must be labeled ADVISORY_PREDICTION")
+        if self.decision_authority != DECISION_AUTHORITY_ADVISORY:
+            raise ValueError("ML results must have ADVISORY_ONLY authority")
+        if self.may_actuate or not self.deterministic_rule_required:
+            raise ValueError("ML results cannot actuate without a deterministic rule")
+        self.prediction_confidence = max(
+            0.0, min(1.0, float(self.prediction_confidence))
+        )
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> MLResult:
+        return cls(**d)

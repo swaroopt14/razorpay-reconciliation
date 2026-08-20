@@ -116,6 +116,7 @@ func main() {
 	actionRepo := persistence.NewActionContractRepo(pool)
 	outboxRepo := persistence.NewOutboxRepo(pool)
 	slaRepo := persistence.NewSLATimerRepo(pool)
+	intelDLQLocalRepo := persistence.NewIntelligenceDLQLocalRepo(pool) // INTEL-07: local fallback for the inbound Kafka DLQ hand-off
 
 	// ── PHASE 4 & 7: New intelligence repos ───────────────────────────────
 	snapshotRepo := persistence.NewIntelligenceSnapshotRepo(pool)
@@ -163,11 +164,27 @@ func main() {
 	// ── Step 6: Create services ────────────────────────────────────────────
 	// PHASE 5 (refactor): Signer abstraction for action_contract signatures
 	// (clarification §5). Only DevSigner exists today (no KMS-backed Signer
-	// built yet) — NewSignerForEnvironment refuses to start in
-	// environment=production rather than silently using it there
-	// (corrective-action-report P0-07).
-	signer := services.NewSignerForEnvironment(cfg.Environment)
-	log.Printf("main: action-contract integrity digest initialized (environment=%s, algorithm=DEV_SHA256, NOT a cryptographic signature)", cfg.Environment)
+	// built yet).
+	//
+	// INTEL-09 (P1): a missing production signer used to log.Fatal here and
+	// take the whole service down — recommendations and projections included,
+	// even though they never needed a signer. Now it degrades instead: signer
+	// is nil, every intelligence/recommendation service below still boots
+	// normally, and ActionService (services.NewActionService) fails closed
+	// only on the specific decisions that could reach the actuation outbox
+	// (see resolveSignature in action_service.go). Advisory-only actions keep
+	// getting created with an unsigned placeholder digest.
+	//
+	// RBAC + a real KMS-backed Signer are expected to land later from
+	// upstream; wire the KMS Signer in here for environment=="production"
+	// when it exists (see services.NewSignerForEnvironment).
+	signer, signerErr := services.NewSignerForEnvironment(cfg.Environment)
+	if signerErr != nil {
+		log.Printf("main: WARNING actuation disabled (INTEL-09 fail-closed) — %v — "+
+			"recommendation and projection intelligence remain fully available", signerErr)
+	} else {
+		log.Printf("main: action-contract integrity digest initialized (environment=%s, algorithm=DEV_SHA256, NOT a cryptographic signature)", cfg.Environment)
+	}
 	actionService := services.NewActionService(actionRepo, outboxRepo, pool, signer)
 	policyService := services.NewPolicyService(policyRepo, projRepo, actionService)
 
@@ -225,6 +242,9 @@ func main() {
 	// Phase 2 gap-fix pass: clarification doc §11/§14 scheduled jobs.
 	consistencyWorker := worker.NewProjectionConsistencyWorker(projRepo)
 	shadowDiffWorker := worker.NewShadowDiffWorker(batchRepo, policyRepo)
+	// INTEL-07: replays intelligence_dlq_local_receipts to cfg.TopicIntelligenceDLQ
+	// once Kafka is reachable — see kafka.StartConsumers below for the write side.
+	intelDLQReplayWorker := worker.NewIntelligenceDLQReplayWorker(intelDLQLocalRepo, producer, cfg)
 
 	// ── Step 8: Create HTTP handlers ──────────────────────────────────────
 	healthHandler := handlers.NewHealthHandler(pool)
@@ -312,12 +332,16 @@ func main() {
 	go cronWorker.Start(ctx)
 	go consistencyWorker.Start(ctx)
 	go shadowDiffWorker.Start(ctx)
-	log.Println("main: background workers started (outbox + sla + policy-cron)")
+	go intelDLQReplayWorker.Start(ctx)
+	log.Println("main: background workers started (outbox + sla + policy-cron + intel-dlq-replay)")
 
 	// ── Step 13: Start Kafka consumers ────────────────────────────────────
-	// producer is reused here (P0-02) so a permanently-failed inbound event
-	// can be published to cfg.TopicIntelligenceDLQ before its offset commits.
-	kafkapkg.StartConsumers(ctx, cfg, kafkaIngestionHandler, producer)
+	// intelDLQLocalRepo is passed here (INTEL-07) so a permanently-failed
+	// inbound event's failure record is written locally before its offset
+	// commits — decoupled from Kafka's health. intelDLQReplayWorker (started
+	// above) is what eventually gets that record onto
+	// cfg.TopicIntelligenceDLQ.
+	kafkapkg.StartConsumers(ctx, cfg, kafkaIngestionHandler, intelDLQLocalRepo)
 	log.Println("main: kafka consumers started")
 
 	// ── Step 14: Start HTTP server ────────────────────────────────────────

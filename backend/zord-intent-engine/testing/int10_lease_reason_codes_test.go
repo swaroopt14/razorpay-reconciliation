@@ -82,11 +82,15 @@ func newOutboxColumns() []string {
 
 // int02OutboxColumns is the 30-column list INT-02 adds to the lease
 // projection ("Fix outbox lease projection to include schema_version,
-// payload_hash and commercial lineage fields") — same order as appended to
-// outboxLeaseColumns in internal/persistence/outbox_lease_contract.go.
+// payload_hash and commercial lineage fields"), plus canonical_payload_hash
+// (added later, not part of INT-02 itself -- a Postgres GENERATED column,
+// see internal/models/outbox_model.go's CanonicalPayloadHash doc comment
+// for why it's a separate, database-computed field from payload_hash) —
+// same order as outboxLeaseColumns in
+// internal/persistence/outbox_lease_contract.go.
 func int02OutboxColumns() []string {
 	return []string{
-		"schema_version", "payload_hash", "source_row_ref", "source_system",
+		"schema_version", "payload_hash", "canonical_payload_hash", "source_row_ref", "source_system",
 		"client_batch_ref", "salient_hash", "canonical_row_hash", "input_facts_hash",
 		"raw_row_hash", "idempotency_key", "intent_type", "canonical_version",
 		"intended_execution_at", "constraints", "beneficiary_type", "pii_tokens",
@@ -104,7 +108,7 @@ func int02OutboxColumns() []string {
 // back blank.
 func int02RowValues(now time.Time) []driver.Value {
 	return []driver.Value{
-		"v1", "payloadhash-int02-abc123", "row-ref-42", "TALLY",
+		"v1", "payloadhash-int02-abc123", "canonicalpayloadhash-abc123", "row-ref-42", "TALLY",
 		"batch-ref-99", "salienthash123", "canonrowhash123", "inputfactshash123",
 		"rawrowhash123", "idem-key-1", "FILE", "v1",
 		now, []byte(`{"max_amount":1000}`), "BANK_ACCOUNT", []byte(`{"account_number":"tok_123"}`),

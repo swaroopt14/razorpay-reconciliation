@@ -54,7 +54,9 @@ export type BatchRecord = {
   type: BatchType
   apiType?: string
   source: string
-  totalValue: number
+  /** Batch total in minor units (paise for INR). */
+  amountMinor: number
+  currency: string
   transactions: number
   confirmedCount: number
   highConfidenceCount: number

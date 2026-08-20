@@ -116,6 +116,7 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 		var parsedCreatedAt time.Time
 		var obsClientBatchID string
 		var envelopeIDStr string
+		var outcomeArtifactID, outcomeArtifactVersionID string
 
 		if d.SettlementObservationID != nil {
 			obs, ok := obsMap[*d.SettlementObservationID]
@@ -145,6 +146,8 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 			}
 			obsCreatedAt = obs.CreatedAt
 			envelopeIDStr = obs.SettlementEnvelopeID.String()
+			outcomeArtifactID = obs.OutcomeArtifactID.String()
+			outcomeArtifactVersionID = obs.OutcomeArtifactVersionID.String()
 
 			if pr, ok2 := parsedByRowRef[obs.SourceRowRef]; ok2 {
 				parsedCreatedAt = pr.CreatedAt
@@ -230,6 +233,8 @@ func (s *AttachmentOutboxService) BuildOutboxRows(
 			"match_confidence":             d.MatchConfidence,
 			"value_date_check":             valueDateCheck,
 			"amount_match":                 amountMatch,
+			"outcome_artifact_id":          outcomeArtifactID,
+			"outcome_artifact_version_id":  outcomeArtifactVersionID,
 		}
 		if v, ok := varianceByDecision[d.AttachmentDecisionID]; ok {
 			payload["variance_summary"] = map[string]interface{}{
@@ -455,14 +460,16 @@ func (s *AttachmentOutboxService) buildBatchUpdatedRow(
 ) (models.OutboxRow, error) {
 
 	var (
-		batchID            string
-		corridorID         string
-		totalCount         int
-		successCount       int
-		failedCount        int
-		pendingCount       int
-		reversedCount      int
-		fileSHA            string
+		batchID                    string
+		corridorID                 string
+		totalCount                 int
+		successCount               int
+		failedCount                int
+		pendingCount               int
+		reversedCount              int
+		fileSHA                    string
+		outcomeArtifactID          string
+		outcomeArtifactVersionID   string
 	)
 
 	if batchSummary.BatchID != nil {
@@ -488,11 +495,15 @@ func (s *AttachmentOutboxService) buildBatchUpdatedRow(
 		if firstObsID != nil {
 			if obs, ok := obsMap[*firstObsID]; ok {
 				corridorID = obs.CorridorID
+				outcomeArtifactID = obs.OutcomeArtifactID.String()
+				outcomeArtifactVersionID = obs.OutcomeArtifactVersionID.String()
 			}
 		}
 	}
 
-	// File metadata from ingest run.
+	// File SHA and settlement-row estimates are not on CanonicalSettlementObservation
+	// or BatchAttachmentSummary (those hold intent-side counts). Keep this lookup so
+	// attachment.batch.updated payload fields stay unchanged for downstream consumers.
 	ingestRunID := ""
 	if job.JobScopeType == models.JobScopeIngestRun {
 		ingestRunID = job.ScopeRef
@@ -574,6 +585,8 @@ func (s *AttachmentOutboxService) buildBatchUpdatedRow(
 		"aggregate_match_confidence":         batchSummary.AggregateMatchConfidence,
 		"batch_finality_status":              batchSummary.BatchAttachmentStatus,
 		"job_status":                         job.Status,
+		"outcome_artifact_id":                outcomeArtifactID,
+		"outcome_artifact_version_id":        outcomeArtifactVersionID,
 	}
 
 	// Batch-level event spans many intents, so there is no single trace_id to

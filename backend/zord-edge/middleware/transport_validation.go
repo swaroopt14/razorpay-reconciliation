@@ -1,14 +1,11 @@
 package middleware
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 )
-
-const maxPayloadSize = 1000 * 1024 // 1000 KB
 
 var allowedContentTypes = map[string]bool{
 	"application/json":    true,
@@ -73,20 +70,6 @@ func TransportValidation() gin.HandlerFunc {
 		c.Set("source_type", SourceType)
 		c.Set("source_class", sourceClass)
 
-		// 2. Payload Size Check
-		// Fast check using Content-Length if provided
-		if c.Request.ContentLength > maxPayloadSize {
-			c.JSON(http.StatusRequestEntityTooLarge, gin.H{
-				"error": fmt.Sprintf("Payload size exceeds maximum allowed limit %d kilobytes", maxPayloadSize/1024),
-				"code":  "PAYLOAD_TOO_LARGE",
-			})
-			c.Abort()
-			return
-		}
-
-		// Strict enforcement using MaxBytesReader to prevent spoofed Content-Length
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxPayloadSize)
-		c.Set("PayloadSize", c.Request.ContentLength)
 		c.Next()
 	}
 }

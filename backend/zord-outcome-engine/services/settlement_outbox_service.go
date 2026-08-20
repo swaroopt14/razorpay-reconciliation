@@ -26,20 +26,14 @@ func (s *SettlementOutboxService) EmitForJob(
 	tenantID uuid.UUID,
 	observations []models.CanonicalSettlementObservation,
 	clientBatchID string,
+	settlementBatchID string,
 ) error {
 	log.Printf("settlement.outbox.start job_id=%s count=%d", jobID, len(observations))
 	var lastErr error
 	batchCount := 0
-	var settlementBatchID string
 
-	if err := db.DB.QueryRowContext(ctx, `
-		SELECT settlement_batch_id
-		FROM settlement_ingest_runs
-		WHERE ingest_run_id = $1 AND tenant_id = $2
-		LIMIT 1`,
-		jobID, tenantID,
-	).Scan(&settlementBatchID); err != nil {
-		return fmt.Errorf("outbox batch lookup failed: %w", err)
+	if settlementBatchID == "" && len(observations) > 0 {
+		settlementBatchID = observations[0].SettlementBatchID
 	}
 
 	// ── EVENT TYPE 1: Observation Created ──────────────────────────────────
@@ -87,6 +81,8 @@ func (s *SettlementOutboxService) EmitForJob(
 			"bank_id":              obs.BankID,
 			"source_system":        obs.SourceSystem,
 			"corridor_id":          obs.CorridorID,
+			"outcome_artifact_id":  obs.OutcomeArtifactID.String(),
+			"outcome_artifact_version_id": obs.OutcomeArtifactVersionID.String(),
 		}
 
 		if err := s.insertEvent(ctx, eventID, eventTenantID, eventTraceID, jobID, settlementBatchID, "settlement_observation", obs.SettlementObservationID, "canonical.settlement.created", payload, obs.BankID, &obs.SourceSystem, &obs.CorridorID); err != nil {

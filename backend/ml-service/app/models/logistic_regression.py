@@ -19,6 +19,7 @@ import json
 import logging
 import math
 import os
+import tempfile
 from threading import Lock
 from typing import Any
 
@@ -77,11 +78,13 @@ class AmbiguityModel:
         weights: list[float] | None = None,
         bias: float = DEFAULT_BIAS,
         trained_on: int = 0,
+        last_event_id: str = "",
     ) -> None:
         self.weights: list[float] = list(weights) if weights else list(DEFAULT_WEIGHTS)
         self.bias: float = bias
         self.num_features: int = FEATURE_SIZE
         self.trained_on: int = trained_on
+        self.last_event_id: str = last_event_id
         self._lock = Lock()
 
     # ── Inference ──────────────────────────────────────────────────────────────
@@ -112,12 +115,47 @@ class AmbiguityModel:
 
     # ── Serialisation ──────────────────────────────────────────────────────────
 
+    def train_and_save(
+        self,
+        features: list[float],
+        label: float,
+        path: str,
+        event_id: str,
+        learning_rate: float = 0.01,
+    ) -> bool:
+        """Atomically persist one SGD step before making it visible in memory."""
+        with self._lock:
+            if event_id and event_id == self.last_event_id:
+                return False
+
+            error = self.predict(features) - label
+            new_bias = self.bias - learning_rate * error
+            new_weights = [
+                weight - learning_rate * error * feature
+                for weight, feature in zip(self.weights, features)
+            ]
+            state = {
+                "weights": new_weights,
+                "bias": new_bias,
+                "num_features": self.num_features,
+                "trained_on": self.trained_on + 1,
+                "last_event_id": event_id,
+            }
+            _persist_state(path, state)
+
+            self.weights = new_weights
+            self.bias = new_bias
+            self.trained_on += 1
+            self.last_event_id = event_id
+            return True
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "weights": self.weights,
             "bias": self.bias,
             "num_features": self.num_features,
             "trained_on": self.trained_on,
+            "last_event_id": self.last_event_id,
         }
 
     @classmethod
@@ -126,16 +164,16 @@ class AmbiguityModel:
             weights=d.get("weights", DEFAULT_WEIGHTS),
             bias=d.get("bias", DEFAULT_BIAS),
             trained_on=d.get("trained_on", 0),
+            last_event_id=d.get("last_event_id", ""),
         )
 
     def save(self, path: str) -> None:
         try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "w") as fh:
-                json.dump(self.to_dict(), fh)
+            _persist_state(path, self.to_dict())
             logger.info("lr_model: saved trained_on=%d path=%s", self.trained_on, path)
         except Exception as exc:
             logger.error("lr_model: save failed: %s", exc)
+            raise
 
     @classmethod
     def load(cls, path: str) -> AmbiguityModel:
@@ -165,3 +203,30 @@ def _sigmoid(z: float) -> float:
 
 def _clamp(v: float) -> float:
     return max(0.0, min(1.0, float(v)))
+
+
+def _persist_state(path: str, state: dict[str, Any]) -> None:
+    directory = os.path.dirname(os.path.abspath(path))
+    os.makedirs(directory, exist_ok=True)
+    temp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=directory,
+            prefix=".lr_model_",
+            suffix=".tmp",
+            delete=False,
+        ) as fh:
+            temp_path = fh.name
+            json.dump(state, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(temp_path, path)
+    except Exception:
+        if temp_path:
+            try:
+                os.unlink(temp_path)
+            except FileNotFoundError:
+                pass
+        raise
