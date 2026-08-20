@@ -149,8 +149,18 @@ func (s *ActionService) CreateAction(
 		return fmt.Errorf("action_service.CreateAction hash scope_refs: %w", err)
 	}
 	envMeta := models.EnvelopeMetaFromContext(ctx)
-	inputFactsHash := fmt.Sprintf("%x", sha256.Sum256([]byte(req.InputRefsJSON)))
-	payloadHash := fmt.Sprintf("%x", sha256.Sum256([]byte(req.PayloadJSON)))
+	// INTEL-10: canonical (parse-then-sort-then-rehash) JSON hash, not a raw
+	// sha256 of the literal bytes — see canonicalJSONHash's doc comment.
+	// Equivalent facts (reordered keys/whitespace/flat-array order) now hash
+	// identically instead of silently producing a new idempotency key.
+	inputFactsHash, err := canonicalJSONHash(req.InputRefsJSON)
+	if err != nil {
+		return fmt.Errorf("action_service.CreateAction hash input_refs: %w", err)
+	}
+	payloadHash, err := canonicalJSONHash(req.PayloadJSON)
+	if err != nil {
+		return fmt.Errorf("action_service.CreateAction hash payload: %w", err)
+	}
 
 	// ── Build idempotency key ─────────────────────────────────────────────
 	// Same inputs → same key → DB UNIQUE constraint silently ignores duplicate.
@@ -220,7 +230,7 @@ func (s *ActionService) CreateAction(
 		TriggerEventVersion:  envMeta.EventVersion,
 		InputFactsHash:       inputFactsHash,
 		PayloadHash:          payloadHash,
-		PayloadSchemaVersion: "legacy",
+		PayloadSchemaVersion: canonicalFactsHashVersion,
 	}
 
 	// PHASE 5 (refactor): sign the canonical hash of the immutable fields via
@@ -501,6 +511,17 @@ func (s *ActionService) DismissAction(
 }
 
 // ── Private helpers ────────────────────────────────────────────────────────────
+
+// canonicalFactsHashVersion is INTEL-10's version marker for the
+// input_facts_hash/payload_hash contract, stored per-row in the existing
+// ActionContract.PayloadSchemaVersion column (no migration needed — this
+// column already exists and was never branched on elsewhere, so it doubles
+// as "which hashing contract produced this row's hashes": "legacy" means
+// the old raw sha256.Sum256([]byte(rawJSON)) hash; canonicalFactsHashVersion
+// means canonicalJSONHash (canonical.go) — parse, sort flat scalar arrays,
+// re-marshal, then hash. ActionContract rows are immutable audit records, so
+// this is forward-only: existing rows keep "legacy", never backfilled.
+const canonicalFactsHashVersion = "canonical_v1"
 
 // canonicalActionIdentity is the exact set of fields corrective-action-report
 // P1-05 requires bound into an action's idempotency key: tenant, complete
