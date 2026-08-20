@@ -95,7 +95,7 @@ export function SettlementJournalHeroBanner({
       sub:
         kpis.settlementValueMatched != null
           ? copy.settlementValueMatchedSub
-          : 'Unavailable — authoritative matched value not returned',
+          : copy.settlementValueMatchedUnavailable,
     },
     {
       label: copy.amountVariance,
@@ -103,7 +103,7 @@ export function SettlementJournalHeroBanner({
       sub:
         kpis.varianceAmount != null
           ? copy.amountVarianceSub
-          : 'Unavailable — authoritative variance not returned',
+          : copy.amountVarianceUnavailable,
     },
   ] as const
 
