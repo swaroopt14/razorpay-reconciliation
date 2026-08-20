@@ -107,17 +107,6 @@ function fieldPath(field: string): string {
   return `${SETTLEMENT_LIVE_KPI_ENDPOINT}.${field}`
 }
 
-/** Format provenance for MetricCard / hero sub lines. */
-export function formatLiveKpiProvenanceSub(
-  baseSub: string | undefined,
-  sourcePath: string,
-  asOf: string | null,
-): string {
-  const provenance = asOf ? `Source: ${sourcePath} · as-of ${asOf}` : `Source: ${sourcePath}`
-  if (!baseSub) return provenance
-  return `${baseSub} · ${provenance}`
-}
-
 /**
  * Authoritative reader for matched settlement value.
  * Only `confirmed_matched_value_minor` — never `total_confirmed_amount`.

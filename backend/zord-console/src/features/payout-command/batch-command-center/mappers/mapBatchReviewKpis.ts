@@ -30,17 +30,12 @@ export type BatchKpiCardModel = {
   asOf?: string | null
 }
 
-/** Authoritative sources for batch-review live money KPIs (CON-P1-22). */
+/** Authoritative sources for batch-review live money KPIs (CON-P1-22). Not shown in UI. */
 export const BATCH_REVIEW_LIVE_KPI_SOURCES = {
   intendedValue: 'batch_health.total_intended_amount_minor',
   bankConfirmed: 'batch_health.total_confirmed_amount_minor',
   valueNeedingReview: 'leakage.unmatched_amount_minor',
 } as const
-
-function withProvenanceSub(base: string, source: string, asOf: string | null | undefined): string {
-  const provenance = asOf ? `Source: ${source} · as-of ${asOf}` : `Source: ${source}`
-  return `${base} · ${provenance}`
-}
 
 export type BatchHealthState = 'clean' | 'waiting' | 'review'
 
@@ -108,11 +103,8 @@ export function mapBatchReviewKpis(args: {
       id: 'intended-value',
       title: BATCH_REVIEW_COPY.kpis.intendedValue.title,
       value: formatMinorDisplay(intendedMinor),
-      subtitle: withProvenanceSub(
+      subtitle:
         total > 0 ? 'Total value from payment instructions' : BATCH_REVIEW_COPY.kpis.uploadToCalculate,
-        BATCH_REVIEW_LIVE_KPI_SOURCES.intendedValue,
-        asOf,
-      ),
       empty: !intendedMinor,
       source: BATCH_REVIEW_LIVE_KPI_SOURCES.intendedValue,
       asOf,
@@ -124,13 +116,10 @@ export function mapBatchReviewKpis(args: {
         confirmedMinor != null && confirmedMinor > 0
           ? formatMinorDisplay(confirmedMinor)
           : BATCH_REVIEW_COPY.kpis.bankConfirmed.empty,
-      subtitle: withProvenanceSub(
+      subtitle:
         confirmedMinor != null && confirmedMinor > 0
           ? BATCH_REVIEW_COPY.kpis.bankConfirmed.subtitle
           : BATCH_REVIEW_COPY.kpis.bankConfirmed.emptyHelper,
-        BATCH_REVIEW_LIVE_KPI_SOURCES.bankConfirmed,
-        asOf,
-      ),
       empty: !confirmedMinor,
       source: BATCH_REVIEW_LIVE_KPI_SOURCES.bankConfirmed,
       asOf,
@@ -157,11 +146,7 @@ export function mapBatchReviewKpis(args: {
       id: 'value-needing-review',
       title: BATCH_REVIEW_COPY.kpis.valueNeedingReview.title,
       value: formatMinorDisplay(valueNeedingReviewMinor),
-      subtitle: withProvenanceSub(
-        'Unmatched payment value from leakage dashboard',
-        BATCH_REVIEW_LIVE_KPI_SOURCES.valueNeedingReview,
-        leakageAsOf,
-      ),
+      subtitle: 'Unmatched payment value from leakage dashboard',
       empty: valueNeedingReviewMinor == null,
       source: BATCH_REVIEW_LIVE_KPI_SOURCES.valueNeedingReview,
       asOf: leakageAsOf,

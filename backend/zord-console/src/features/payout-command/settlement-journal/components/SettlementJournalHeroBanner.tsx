@@ -9,10 +9,7 @@ import { useSettlementBatchIntelligence } from '../hooks/useSettlementBatchIntel
 import { settlementJournalCopy } from '../copy/settlementJournalCopy'
 import { derivePaymentPartnerLabel } from '../selectors/derivePaymentPartnerLabel'
 import { outcomeFromMatchConfidence } from '../settlementJournalSidebarUtils'
-import {
-  formatLiveKpiProvenanceSub,
-  LIVE_KPI_UNAVAILABLE,
-} from '../selectors/resolveSettlementIntelligenceKpis'
+import { LIVE_KPI_UNAVAILABLE } from '../selectors/resolveSettlementIntelligenceKpis'
 
 type SettlementJournalHeroBannerProps = {
   onExport: () => void
@@ -95,24 +92,18 @@ export function SettlementJournalHeroBanner({
     {
       label: copy.settlementValueMatched,
       value: settlementMatchedDisplay,
-      sub: formatLiveKpiProvenanceSub(
+      sub:
         kpis.settlementValueMatched != null
           ? copy.settlementValueMatchedSub
           : 'Unavailable — authoritative matched value not returned',
-        kpis.sources.settlementValueMatched,
-        kpis.asOf,
-      ),
     },
     {
       label: copy.amountVariance,
       value: varianceDisplay,
-      sub: formatLiveKpiProvenanceSub(
+      sub:
         kpis.varianceAmount != null
-          ? copy.amountVariance
+          ? copy.amountVarianceSub
           : 'Unavailable — authoritative variance not returned',
-        kpis.sources.varianceAmount,
-        kpis.asOf,
-      ),
     },
   ] as const
 
@@ -122,11 +113,7 @@ export function SettlementJournalHeroBanner({
       eyebrow={settlementJournalCopy.hero.label}
       value={observedValue}
       deltaPill={deltaPill}
-      subcopy={formatLiveKpiProvenanceSub(
-        `${selectedClientBatchId || settlementJournalCopy.sidebar.selectBatch} · ${countLine} ${settlementJournalCopy.sidebar.records}`,
-        kpis.sources.observedSettlementValue,
-        kpis.asOf,
-      )}
+      subcopy={`${selectedClientBatchId || settlementJournalCopy.sidebar.selectBatch} · ${countLine} ${settlementJournalCopy.sidebar.records}`}
       buckets={buckets}
       testId="settlement-kpi-hero"
       footer={

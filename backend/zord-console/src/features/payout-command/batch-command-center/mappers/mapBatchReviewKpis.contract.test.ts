@@ -65,8 +65,8 @@ const emptySummary = {
   assert.notEqual(bank!.value, 'Unavailable')
   assert.equal(bank!.source, BATCH_REVIEW_LIVE_KPI_SOURCES.bankConfirmed)
   assert.equal(bank!.asOf, '2026-08-11T09:00:00Z')
-  assert.match(bank!.subtitle, /Source: batch_health\.total_confirmed_amount_minor/)
-  assert.match(bank!.subtitle, /as-of 2026-08-11T09:00:00Z/)
+  assert.doesNotMatch(bank!.subtitle, /Source:/)
+  assert.doesNotMatch(bank!.subtitle, /batch_health/)
 }
 
 {

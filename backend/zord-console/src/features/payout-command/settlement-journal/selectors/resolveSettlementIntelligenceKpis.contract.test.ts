@@ -7,7 +7,6 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { BatchContractKpiResponse, BatchDetailResponse } from '@/services/payout-command/prod-api/intelligenceTypes'
 import {
-  formatLiveKpiProvenanceSub,
   LIVE_KPI_UNAVAILABLE,
   resolveAuthoritativeMatchedValue,
   resolveSettlementIntelligenceKpis,
@@ -65,10 +64,6 @@ assert.equal(LIVE_KPI_UNAVAILABLE, 'Unavailable')
   assert.equal(kpis.asOf, '2026-08-11T10:00:00Z')
   assert.equal(kpis.asOfField, 'computed_at')
   assert.equal(kpis.sources.varianceAmount, 'batch_contract.variance_amount')
-  assert.match(
-    formatLiveKpiProvenanceSub('Matched', kpis.sources.settlementValueMatched, kpis.asOf),
-    /Source: batch_contract\.confirmed_matched_value_minor · as-of 2026-08-11T10:00:00Z/,
-  )
 }
 
 // --- as-of falls back to batch_health.updated_at (timestamp only, not metric) ---

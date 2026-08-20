@@ -12,10 +12,7 @@ import { useSettlementBatchSelection } from '../context/SettlementBatchSelection
 import { useSettlementBatchIntelligence } from '../hooks/useSettlementBatchIntelligence'
 import { useSettlementParseErrorTotal } from '../hooks/useSettlementParseErrorTotal'
 import { settlementJournalCopy } from '../copy/settlementJournalCopy'
-import {
-  formatLiveKpiProvenanceSub,
-  LIVE_KPI_UNAVAILABLE,
-} from '../selectors/resolveSettlementIntelligenceKpis'
+import { LIVE_KPI_UNAVAILABLE } from '../selectors/resolveSettlementIntelligenceKpis'
 import { normalizeCurrency } from '@/services/payout-command/money/money'
 
 function MetricCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
@@ -81,21 +78,17 @@ export function SettlementJournalDataHealthPanel() {
         <MetricCard
           label={copy.withBankRef}
           value={bankRefDisplay}
-          sub={formatLiveKpiProvenanceSub(copy.bankRefCoverageSub, kpis.sources.bankReferenceCoverage, kpis.asOf)}
+          sub={copy.bankRefCoverageSub}
         />
         <MetricCard
           label={copy.withClientRef}
           value={clientRefDisplay}
-          sub={formatLiveKpiProvenanceSub(copy.clientRefCoverageSub, kpis.sources.clientReferenceCoverage, kpis.asOf)}
+          sub={copy.clientRefCoverageSub}
         />
         <MetricCard
           label={copy.unmatchedSettlementValue}
           value={formatMoneyKpi(kpis.unmatchedSettlementValue, intelligenceLoading, kpiCurrency)}
-          sub={formatLiveKpiProvenanceSub(
-            copy.unmatchedSettlementValueSub,
-            kpis.sources.unmatchedSettlementValue,
-            kpis.asOf,
-          )}
+          sub={copy.unmatchedSettlementValueSub}
         />
         <MetricCard
           label={copy.matchConfidence}
@@ -106,7 +99,6 @@ export function SettlementJournalDataHealthPanel() {
                 ? '…'
                 : LIVE_KPI_UNAVAILABLE
           }
-          sub={formatLiveKpiProvenanceSub(undefined, kpis.sources.matchConfidence, kpis.asOf)}
         />
         <MetricCard
           label={copy.missingRefRate}
@@ -114,7 +106,6 @@ export function SettlementJournalDataHealthPanel() {
             kpis.missingReferenceRate ??
             (intelligenceLoading ? '…' : LIVE_KPI_UNAVAILABLE)
           }
-          sub={formatLiveKpiProvenanceSub(undefined, kpis.sources.missingReferenceRate, kpis.asOf)}
         />
       </div>
     </section>
