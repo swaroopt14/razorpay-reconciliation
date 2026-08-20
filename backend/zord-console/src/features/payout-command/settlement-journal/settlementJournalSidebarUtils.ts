@@ -1,5 +1,9 @@
 import type { SettlementObservationTableRow } from '@/services/payout-command/prod-api/settlementObservations'
 import {
+  DEFAULT_TENANT_BUSINESS_TIMEZONE,
+  isInstantInBusinessDatePreset,
+} from '@/services/payout-command/tenantBusinessTimezone'
+import {
   CURRENCY_NEUTRAL_AMOUNT_RANGES,
   aggregateMoney,
   formatMoneyBuckets,
@@ -88,19 +92,18 @@ export const SETTLEMENT_COVERAGE_STATUS_THRESHOLDS = {
   fullySettledFromPct: 100,
 } as const
 
-export function observationInDateRange(observationTime: string, preset: DateRangePreset): boolean {
-  if (preset === 'all') return true
-  const parsed = Date.parse(observationTime)
-  if (!Number.isFinite(parsed)) return true
-  const observed = new Date(parsed)
-  const now = new Date()
-  const start = new Date(now)
-  if (preset === '7d') start.setDate(now.getDate() - 7)
-  else if (preset === '30d') start.setDate(now.getDate() - 30)
-  else if (preset === '90d') start.setDate(now.getDate() - 90)
-  else if (preset === 'ytd') start.setMonth(0, 1)
-  start.setHours(0, 0, 0, 0)
-  return observed >= start
+/**
+ * Financial day filter in the tenant business timezone (CON-P1-29).
+ * Prefer ISO `observationAt` when present — display strings are for UI only.
+ */
+export function observationInDateRange(
+  observationTime: string,
+  preset: DateRangePreset,
+  timeZone: string = DEFAULT_TENANT_BUSINESS_TIMEZONE,
+  observationAtIso?: string | null,
+): boolean {
+  const instant = observationAtIso?.trim() || observationTime
+  return isInstantInBusinessDatePreset(instant, preset, timeZone)
 }
 
 /** @deprecated Prefer matchesAmountRangeForRow — amount alone is not currency-safe. */

@@ -2,6 +2,10 @@ import type { IntentJournalPaymentIntentItem } from '@/services/payout-command/p
 import type { JournalIntentRow, JournalIntentStatus } from '@/services/payout-command/prod-api/mapIntentEngineBatch'
 import { apiTrimmedString } from '@/services/payout-command/prod-api/coerceApiField'
 import { readIntentQualityScore } from '@/services/payout-command/prod-api/resolveIntentQualityScore'
+import {
+  DEFAULT_TENANT_BUSINESS_TIMEZONE,
+  formatInTenantBusinessTimezone,
+} from '@/services/payout-command/tenantBusinessTimezone'
 import { mapJournalIntentDecision } from './mapJournalIntentDecision'
 
 export { mapJournalIntentDecision } from './mapJournalIntentDecision'
@@ -9,17 +13,8 @@ export { mapJournalIntentDecision } from './mapJournalIntentDecision'
 export const READINESS_REVIEW_THRESHOLD = 0.7
 
 function formatJournalExecutionAt(iso: string | undefined): string {
-  const s = apiTrimmedString(iso)
-  if (!s) return '—'
-  const d = new Date(s)
-  if (Number.isNaN(d.getTime())) return s
-  return d.toLocaleString('en-IN', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+  // CON-P1-29: display in tenant business timezone (grouping uses ISO + business TZ helpers).
+  return formatInTenantBusinessTimezone(iso, DEFAULT_TENANT_BUSINESS_TIMEZONE)
 }
 
 function formatConfidenceLabel(score: number | undefined): string {
@@ -167,6 +162,7 @@ export function mapPaymentIntentListItemToRow(
     status: decision.status,
     match,
     lastUpdated: formatJournalExecutionAt(item.intended_execution_at),
+    lastUpdatedIso: apiTrimmedString(item.intended_execution_at),
     paymentPartner: provider,
     bank: provider,
     paymentMethodDetail: rail !== '—' ? rail : provider,
