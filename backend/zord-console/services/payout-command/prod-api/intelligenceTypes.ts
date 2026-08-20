@@ -308,6 +308,9 @@ export type BatchContractKpiResponse = {
   tenant_id: string
   intelligence_mode?: string
   batch_id: string
+  /** Snapshot / compute timestamp for live KPI as-of (CON-P1-22). */
+  computed_at?: string
+  snapshot_id?: string
   bank_reference_coverage?: string | null
   settlement_ref_count?: number
   bank_ref_present_count?: number
@@ -317,12 +320,17 @@ export type BatchContractKpiResponse = {
   orphan_amount?: MinorAmountField
   unmatch_amount?: MinorAmountField
   /**
-   * Authoritative matched settlement value for live KPIs (CON-P0-24).
+   * Authoritative matched settlement value for live KPIs (CON-P0-24 / CON-P1-22).
    * Do not substitute `total_confirmed_amount` — different semantic.
    */
   confirmed_matched_value_minor?: MinorAmountField
   /** Confirmed amount present on contract — not a stand-in for matched value. */
   total_confirmed_amount?: MinorAmountField
+  /**
+   * Authoritative observed / original settled amount for settlement hero.
+   * Do not substitute matched or confirmed fields.
+   */
+  original_settled_amount?: MinorAmountField
   match_confidence?: number | null
   missing_reference_rate?: string | number
 }

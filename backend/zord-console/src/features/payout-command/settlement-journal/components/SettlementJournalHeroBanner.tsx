@@ -18,12 +18,6 @@ type SettlementJournalHeroBannerProps = {
   filtersActive: boolean
 }
 
-function parseBatchContractAmount(value: unknown): number | null {
-  if (value == null || value === '') return null
-  const n = typeof value === 'number' ? value : Number.parseFloat(String(value).replace(/,/g, ''))
-  return Number.isFinite(n) ? n : null
-}
-
 export function SettlementJournalHeroBanner({
   onExport,
   exportDisabled,
@@ -32,17 +26,12 @@ export function SettlementJournalHeroBanner({
 }: SettlementJournalHeroBannerProps) {
   const { selectedClientBatchId, journalEnabled, tenantReady } = useSettlementBatchSelection()
   const { loading, rows, observationTotal, currency } = useSettlementBatchSummary()
-  const { batchContract, batchDetail, kpis, loading: intelligenceLoading } = useSettlementBatchIntelligence(
+  const { batchDetail, kpis, loading: intelligenceLoading } = useSettlementBatchIntelligence(
     selectedClientBatchId,
     journalEnabled && tenantReady,
   )
 
   const copy = settlementJournalCopy.kpi
-  const totalSettlementValue = parseBatchContractAmount(
-    (batchContract as { original_settled_amount?: unknown } | null)?.original_settled_amount,
-  )
-
-  // Prefer currency from intelligence batch detail when present; fall back to row aggregate currency.
   const intelCurrencyRaw =
     (batchDetail?.batch as unknown as { currency?: string; currency_code?: string; currencyCode?: string })?.currency ??
     (batchDetail?.batch as unknown as { currency?: string; currency_code?: string; currencyCode?: string })?.currency_code ??
@@ -56,11 +45,11 @@ export function SettlementJournalHeroBanner({
   }
 
   const observedValue =
-    intelligenceLoading && totalSettlementValue == null
-      ? '—'
-      : totalSettlementValue != null
-        ? formatJournalMoney(totalSettlementValue, heroCurrency)
-        : '—'
+    intelligenceLoading && kpis.observedSettlementValue == null
+      ? '…'
+      : kpis.observedSettlementValue != null
+        ? formatJournalMoney(kpis.observedSettlementValue, heroCurrency)
+        : LIVE_KPI_UNAVAILABLE
   const recordsTotal = observationTotal ?? null
   const countLine =
     recordsTotal != null ? recordsTotal.toLocaleString('en-IN') : loading ? '…' : '—'
@@ -73,15 +62,12 @@ export function SettlementJournalHeroBanner({
       : kpis.settlementValueMatched != null
         ? formatJournalMoney(kpis.settlementValueMatched, heroCurrency)
         : LIVE_KPI_UNAVAILABLE
-  const varianceAmount = parseBatchContractAmount(batchContract?.variance_amount)
   const varianceDisplay =
-    intelligenceLoading && varianceAmount == null
+    intelligenceLoading && kpis.varianceAmount == null
       ? '…'
-      : varianceAmount != null
-        ? formatJournalMoney(varianceAmount, heroCurrency)
+      : kpis.varianceAmount != null
+        ? formatJournalMoney(kpis.varianceAmount, heroCurrency)
         : LIVE_KPI_UNAVAILABLE
-  const varianceSub =
-    varianceAmount != null ? copy.amountVariance : 'Unavailable — authoritative variance not returned'
 
   const matchOutcome = outcomeFromMatchConfidence(kpis.matchConfidence)
   const deltaPill =
@@ -89,7 +75,7 @@ export function SettlementJournalHeroBanner({
       ? `${matchOutcome.label} · ${matchOutcome.progressPct}% match`
       : intelligenceLoading
         ? '…'
-        : '—'
+        : LIVE_KPI_UNAVAILABLE
 
   const obsSub =
     filtersActive && recordsTotal != null
@@ -109,9 +95,16 @@ export function SettlementJournalHeroBanner({
       sub:
         kpis.settlementValueMatched != null
           ? copy.settlementValueMatchedSub
-          : 'Unavailable — authoritative matched value not returned',
+          : copy.settlementValueMatchedUnavailable,
     },
-    { label: copy.amountVariance, value: varianceDisplay, sub: varianceSub },
+    {
+      label: copy.amountVariance,
+      value: varianceDisplay,
+      sub:
+        kpis.varianceAmount != null
+          ? copy.amountVarianceSub
+          : copy.amountVarianceUnavailable,
+    },
   ] as const
 
   return (
@@ -139,5 +132,3 @@ export function SettlementJournalHeroBanner({
     />
   )
 }
-
-

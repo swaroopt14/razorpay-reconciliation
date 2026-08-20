@@ -63,6 +63,18 @@ export type AmountRangeFilter = CurrencyNeutralAmountRange
 /** Material unresolved value (≥1%) blocks Fully Settled even if finality looks closed. */
 export const MATERIAL_UNRESOLVED_VALUE_RATIO = 0.01
 
+/**
+ * Coverage bands aligned with Intent Journal aggregate thresholds
+ * (Critical <50 · At Risk 50–75 · Stable ≥75).
+ * High coverage must not surface as customer “Requires Review”.
+ */
+export const SETTLEMENT_COVERAGE_STATUS_THRESHOLDS = {
+  /** Below this → keep Requires Review when Service 5 says REQUIRES_REVIEW. */
+  requiresReviewBelowPct: 75,
+  /** At/above this with complete coverage → Fully Settled. */
+  fullySettledFromPct: 100,
+} as const
+
 export function observationInDateRange(observationTime: string, preset: DateRangePreset): boolean {
   if (preset === 'all') return true
   const parsed = Date.parse(observationTime)
@@ -133,12 +145,12 @@ export function coverageProgressPct(input: SettlementFinalityCoverageInput): num
   return 0
 }
 
-function toneForLabel(label: SettlementSidebarOutcomeLabel): Pick<
-  SettlementSidebarOutcome,
-  'dotClass' | 'toneText' | 'barClass'
-> {
+function toneForLabel(
+  label: SettlementSidebarOutcomeLabel,
+  progressPct = 0,
+): Pick<SettlementSidebarOutcome, 'dotClass' | 'toneText' | 'barClass'> {
   if (label === 'Fully Settled') {
-    return { dotClass: 'bg-black', toneText: 'text-black', barClass: 'bg-black' }
+    return { dotClass: 'bg-emerald-500', toneText: 'text-emerald-700', barClass: 'bg-emerald-500' }
   }
   if (label === 'Failed' || label === 'Cancelled') {
     return { dotClass: 'bg-rose-500', toneText: 'text-rose-700', barClass: 'bg-rose-500' }
@@ -149,7 +161,10 @@ function toneForLabel(label: SettlementSidebarOutcomeLabel): Pick<
   if (label === 'Open' || label === 'Processing') {
     return { dotClass: 'bg-slate-400', toneText: 'text-slate-600', barClass: 'bg-slate-400' }
   }
-  // Partially Reconciled
+  // Partially Reconciled — green when nearly complete (Intent Stable-like band)
+  if (progressPct >= SETTLEMENT_COVERAGE_STATUS_THRESHOLDS.requiresReviewBelowPct) {
+    return { dotClass: 'bg-emerald-500', toneText: 'text-emerald-700', barClass: 'bg-emerald-500' }
+  }
   return { dotClass: 'bg-amber-500', toneText: 'text-amber-700', barClass: 'bg-amber-500' }
 }
 
@@ -202,7 +217,23 @@ export function outcomeFromFinalityAndCoverage(
   } else if (finality === 'CANCELLED') {
     label = 'Cancelled'
   } else if (finality === 'REQUIRES_REVIEW') {
-    label = 'Requires Review'
+    // Same idea as Intent sidebar: label follows coverage health, not raw finality alone.
+    // ≥75% coverage (Intent “Stable” band) must not stay “Requires Review”.
+    if (
+      progressPct >= SETTLEMENT_COVERAGE_STATUS_THRESHOLDS.fullySettledFromPct &&
+      !hasMaterialUnresolvedValue &&
+      !hasUnresolvedCounts &&
+      failed === 0 &&
+      (settled > 0 || progressPct >= 100)
+    ) {
+      label = 'Fully Settled'
+    } else if (progressPct >= SETTLEMENT_COVERAGE_STATUS_THRESHOLDS.requiresReviewBelowPct) {
+      label = 'Partially Reconciled'
+    } else if (progressPct > 0 || settled > 0) {
+      label = 'Requires Review'
+    } else {
+      label = 'Requires Review'
+    }
   } else if (finality === 'FULLY_SETTLED' || finality === 'SETTLED') {
     // Coverage can keep an "open" commercial picture even when confidence is high.
     label = hasMaterialUnresolvedValue || hasUnresolvedCounts ? 'Partially Reconciled' : 'Fully Settled'
@@ -224,7 +255,7 @@ export function outcomeFromFinalityAndCoverage(
     label = hasMaterialUnresolvedValue || progressPct > 0 ? 'Partially Reconciled' : 'Open'
   }
 
-  const tone = toneForLabel(label)
+  const tone = toneForLabel(label, progressPct)
   return {
     total,
     settled,
@@ -270,7 +301,7 @@ export function outcomeFromObservationRows(rows: SettlementObservationTableRow[]
   else if (settled === total) label = 'Fully Settled'
   else if (settled === 0 && failed === 0) label = 'Open'
 
-  const tone = toneForLabel(label)
+  const tone = toneForLabel(label, settledPct)
   return {
     total,
     settled,

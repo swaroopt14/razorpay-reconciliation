@@ -120,9 +120,6 @@ export function SettlementJournalBatchSidebar({
                   ) : null}
                   <p className={`text-[13px] font-semibold ${liveOutcome.toneText}`}>
                     {liveOutcome.label}
-                    {liveOutcome.finalityStatus ? (
-                      <span className="ml-1 font-medium text-[#64748b]">· {liveOutcome.finalityStatus}</span>
-                    ) : null}
                   </p>
                 </div>
               ) : null}

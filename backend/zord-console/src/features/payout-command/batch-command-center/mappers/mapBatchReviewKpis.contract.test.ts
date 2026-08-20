@@ -1,13 +1,14 @@
 /**
- * CON-P0-24 — bank-confirmed must not stand in leakage observed settled.
- * Run: npx tsx src/features/payout-command/batch-command-center/mappers/mapBatchReviewKpis.contract.test.ts
+ * CON-P0-24 / CON-P1-22 — bank-confirmed must not stand in leakage observed settled;
+ * money cards expose source/as-of.
+ * Run: npx tsx --tsconfig tsconfig.json src/features/payout-command/batch-command-center/mappers/mapBatchReviewKpis.contract.test.ts
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { BatchSummary } from '@/services/payout-command/batch-model'
 import type { BatchDetailResponse, LeakageKpiResponse } from '@/services/payout-command/prod-api/intelligenceTypes'
-import { mapBatchReviewKpis } from './mapBatchReviewKpis'
+import { BATCH_REVIEW_LIVE_KPI_SOURCES, mapBatchReviewKpis } from './mapBatchReviewKpis'
 
 const emptySummary = {
   totalRows: 10,
@@ -45,6 +46,7 @@ const emptySummary = {
     batch_health: {
       total_confirmed_amount_minor: 52_653.42,
       total_intended_amount_minor: 53_041.74,
+      updated_at: '2026-08-11T09:00:00Z',
     },
   } as unknown as BatchDetailResponse
   const cards = mapBatchReviewKpis({
@@ -61,6 +63,10 @@ const emptySummary = {
   assert.ok(bank)
   assert.equal(bank!.empty, false)
   assert.notEqual(bank!.value, 'Unavailable')
+  assert.equal(bank!.source, BATCH_REVIEW_LIVE_KPI_SOURCES.bankConfirmed)
+  assert.equal(bank!.asOf, '2026-08-11T09:00:00Z')
+  assert.doesNotMatch(bank!.subtitle, /Source:/)
+  assert.doesNotMatch(bank!.subtitle, /batch_health/)
 }
 
 {

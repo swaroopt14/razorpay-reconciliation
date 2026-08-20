@@ -58,8 +58,13 @@ export function SettlementJournalDataHealthPanel() {
   const kpiCurrency = intelCurrencyRaw ? normalizeCurrency(String(intelCurrencyRaw)) : null
   const bankRefDisplay = formatCoverageKpi(kpis.bankReferenceCoverage, intelligenceLoading)
   const clientRefDisplay = formatCoverageKpi(kpis.clientReferenceCoverage, intelligenceLoading)
+  // CON-P1-22: missing parse-error total ⇒ Unavailable (do not zero-fill).
   const parseIssuesDisplay =
-    parseErrorsLoading && parseErrorTotal == null ? '—' : (parseErrorTotal ?? 0).toLocaleString('en-IN')
+    parseErrorsLoading && parseErrorTotal == null
+      ? '…'
+      : parseErrorTotal != null
+        ? parseErrorTotal.toLocaleString('en-IN')
+        : LIVE_KPI_UNAVAILABLE
 
   return (
     <section className="mb-4">
@@ -70,8 +75,16 @@ export function SettlementJournalDataHealthPanel() {
           value={parseIssuesDisplay}
           sub={copy.settlementParseIssuesSub}
         />
-        <MetricCard label={copy.withBankRef} value={bankRefDisplay} sub={copy.bankRefCoverageSub} />
-        <MetricCard label={copy.withClientRef} value={clientRefDisplay} sub={copy.clientRefCoverageSub} />
+        <MetricCard
+          label={copy.withBankRef}
+          value={bankRefDisplay}
+          sub={copy.bankRefCoverageSub}
+        />
+        <MetricCard
+          label={copy.withClientRef}
+          value={clientRefDisplay}
+          sub={copy.clientRefCoverageSub}
+        />
         <MetricCard
           label={copy.unmatchedSettlementValue}
           value={formatMoneyKpi(kpis.unmatchedSettlementValue, intelligenceLoading, kpiCurrency)}
