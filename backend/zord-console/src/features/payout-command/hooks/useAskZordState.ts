@@ -13,10 +13,15 @@ import type { HomeCommandStatus } from '@/services/payout-command/model'
 import type { AskZordArchivedTurn } from '../layout/AskZordPromptLayer'
 import {
   buildThreadSnapshot,
+  clearAskZordThreadsForTenant,
+  isAskZordPersistApproved,
   loadAskZordThreads,
+  purgeLegacyLocalAskZordThreads,
   saveAskZordThreads,
+  setAskZordPersistApproved,
   type AskZordThread,
 } from '../workspace/askZordThreads'
+import { purgeLegacyLocalWorkspaceChatThreads } from '../workspace/workspaceChatThreads'
 import {
   clearAskZordSelectedContext,
   readAskZordSelectedContext,
@@ -44,6 +49,9 @@ export type AskZordState = {
   threads: AskZordThread[]
   activeThreadId: string | null
   startNewThread: () => void
+  clearHistory: () => void
+  persistApproved: boolean
+  setPersistApproved: (enabled: boolean) => void
   selectedContext: AskZordSelectedContext | null
   clearSelectedContext: () => void
   selectThread: (id: string) => void
@@ -71,6 +79,7 @@ export function useAskZordState(_activeSurfaceTitle: string): AskZordState {
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null)
   const activeThreadIdRef = useRef<string | null>(null)
   const [selectedContext, setSelectedContext] = useState<AskZordSelectedContext | null>(null)
+  const [persistApproved, setPersistApprovedState] = useState(false)
 
   useEffect(() => {
     setSelectedContext(readAskZordSelectedContext(searchParams))
@@ -78,6 +87,15 @@ export function useAskZordState(_activeSurfaceTitle: string): AskZordState {
   useEffect(() => {
     activeThreadIdRef.current = activeThreadId
   }, [activeThreadId])
+
+  useEffect(() => {
+    const approved = isAskZordPersistApproved()
+    setPersistApprovedState(approved)
+    if (!approved) {
+      purgeLegacyLocalAskZordThreads()
+      purgeLegacyLocalWorkspaceChatThreads()
+    }
+  }, [])
 
   useEffect(() => {
     if (!tenantReady || !tenantId?.trim()) {
@@ -299,6 +317,31 @@ setLastUserPrompt(cleaned)
     setResponse(null)
   }, [])
 
+  const clearHistory = useCallback(() => {
+    if (tenantId?.trim()) clearAskZordThreadsForTenant(tenantId)
+    setThreads([])
+    setArchivedTurns([])
+    setLastUserPrompt(null)
+    setResponse(null)
+    setPendingResponse(null)
+    setInput('')
+    setStatus('idle')
+    setActiveThreadId(null)
+    activeThreadIdRef.current = null
+  }, [tenantId])
+
+  const setPersistApproved = useCallback(
+    (enabled: boolean) => {
+      setAskZordPersistApproved(enabled)
+      setPersistApprovedState(enabled)
+      if (tenantId?.trim()) {
+        // Re-save current session threads into the chosen store (or drop local copies).
+        saveAskZordThreads(tenantId, threads)
+      }
+    },
+    [tenantId, threads],
+  )
+
   return {
     isOpen,
     open,
@@ -315,6 +358,9 @@ setLastUserPrompt(cleaned)
     selectedContext,
     clearSelectedContext,
     startNewThread,
+    clearHistory,
+    persistApproved,
+    setPersistApproved,
     selectThread,
     run,
     dismissResponse,

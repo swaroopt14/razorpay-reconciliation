@@ -80,6 +80,8 @@ type Publisher struct {
 func NewPublisher(brokers []string, topic string) (*Publisher, error) {
 	cfg := sarama.NewConfig()
 	cfg.Version = sarama.V2_6_0_0
+	// SASL/SCRAM-SHA-512 authentication (PLAT-06)
+	ApplySASL(cfg)
 	cfg.Producer.RequiredAcks = sarama.WaitForAll
 	cfg.Producer.Retry.Max = 3
 	cfg.Producer.Return.Successes = true

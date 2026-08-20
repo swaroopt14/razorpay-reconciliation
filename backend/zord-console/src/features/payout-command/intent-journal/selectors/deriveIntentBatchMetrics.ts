@@ -1,13 +1,20 @@
 import type { IntentJournalPaymentIntentItem, IntentJournalDlqItem } from '@/services/payout-command/prod-api/intentJournalTypes'
 import { readIntentQualityScore } from '@/services/payout-command/prod-api/resolveIntentQualityScore'
 import { READINESS_REVIEW_THRESHOLD } from '../mappers/mapIntentTableRow'
+import {
+  JOURNAL_DEFAULT_CURRENCY,
+  majorAmountToMinor,
+  normalizeJournalCurrency,
+} from '@/services/payout-command/prod-api/money/journalMoney'
+
 export type IntentBatchMetrics = {
   /** Authoritative count from payment-intents `pagination.total`; null when API total missing. */
   instructionCount: number | null
-  /** Batch total from batch-ids `total_amount`, else sum of loaded payment-intent amounts. */
-  intendedValue: number
+  /** Batch total in minor units — from batch-ids (converted) or sum of payment-intent amounts. */
+  intendedAmountMinor: number
+  currency: string
   avgReadinessPct: number | null
-  /** Batch aggregate from intent-engine `aggregate_confidence_score` (0–1). */
+  /** Batch aggregate from intent-engine `aggregate_confidence_score` (0ΓÇô1). */
   batchAggregateConfidenceScore: number | null
   lowReadinessCount: number
   dlqCount: number
@@ -15,17 +22,12 @@ export type IntentBatchMetrics = {
   needsReviewCount: number
 }
 
-function parseAmount(raw: string | number | undefined): number {
-  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : 0
-  const n = Number.parseFloat(String(raw ?? '').replace(/,/g, ''))
-  return Number.isFinite(n) ? n : 0
-}
-
 export type DeriveIntentBatchMetricsOptions = {
   /** Authoritative batch intent count from payment-intents `pagination.total`. */
   paymentIntentTotal?: number | null
-  /** Authoritative batch value from batch-ids `total_amount` (major INR units). */
-  batchTotalAmount?: number | null
+  /** Authoritative batch value already in minor units. */
+  batchTotalAmountMinor?: number | null
+  currency?: string | null
 }
 
 export function deriveIntentBatchMetrics(
@@ -36,18 +38,23 @@ export function deriveIntentBatchMetrics(
   const apiTotal = options?.paymentIntentTotal
   const instructionCount =
     apiTotal != null && Number.isFinite(apiTotal) && apiTotal >= 0 ? apiTotal : null
-  // Sum via integer milli-rupees (3 dp) to eliminate float-drift over large batches.
-  // JS floating-point accumulation across 1000s of additions can drift by ~₹1+;
-  // rounding each amount to the nearest 0.001 before summing keeps the result
-  // consistent with a spreadsheet sum of the same values.
-  const summedValueMillis = paymentIntents.reduce(
-    (sum, item) => sum + Math.round(parseAmount(item.amount) * 1000),
+  // Payment-intent `amount` is major INR — convert each row once, then sum integers.
+  const summedAmountMinor = paymentIntents.reduce(
+    (sum, item) => sum + majorAmountToMinor(item.amount),
     0,
   )
-  const summedValue = summedValueMillis / 1000
-  const batchTotal = options?.batchTotalAmount
-  const intendedValue =
-    batchTotal != null && Number.isFinite(batchTotal) && batchTotal >= 0 ? batchTotal : summedValue
+  const batchTotal = options?.batchTotalAmountMinor
+  const intendedAmountMinor =
+    batchTotal != null && Number.isFinite(batchTotal) && batchTotal >= 0
+      ? Math.trunc(batchTotal)
+      : summedAmountMinor
+
+  const currency =
+    normalizeJournalCurrency(
+      options?.currency ??
+        paymentIntents.map((item) => item.currency).find((c) => Boolean(c?.trim())) ??
+        JOURNAL_DEFAULT_CURRENCY,
+    )
 
   const readScore = (raw: unknown): number | null => {
     if (typeof raw === 'number' && Number.isFinite(raw)) return raw
@@ -76,15 +83,21 @@ export function deriveIntentBatchMetrics(
     if (score == null) return false
     return normalizeQualityPct(score) < READINESS_REVIEW_THRESHOLD * 100
   }).length
+  const governedHoldCount = paymentIntents.filter((item) => {
+    const gov = String(item.governance_state ?? '').trim().toUpperCase()
+    const lifecycle = String(item.intent_lifecycle_state ?? '').trim().toUpperCase()
+    return gov === 'REQUIRES_REVIEW' || gov === 'FLAGGED' || lifecycle === 'FLAGGED_FOR_REVIEW'
+  }).length
   const dlqCount = dlqItems.length
   const manualReviewCount = dlqItems.filter(
     (item) => String(item.dlq_status ?? '').trim() === 'NEEDS_MANUAL_REVIEW',
   ).length
-  const needsReviewCount = dlqCount + lowReadinessCount
+  const needsReviewCount = dlqCount + lowReadinessCount + governedHoldCount
 
   return {
     instructionCount,
-    intendedValue,
+    intendedAmountMinor,
+    currency,
     avgReadinessPct,
     batchAggregateConfidenceScore,
     lowReadinessCount,
@@ -122,3 +135,4 @@ export function deriveIntentBatchHealth(metrics: IntentBatchMetrics): {
   }
   return { status: 'Ready', reasons: [] }
 }
+

@@ -2,9 +2,16 @@ import { NextRequest, NextResponse } from 'next/server'
 import { assertCookieMutationProtection } from '@/services/auth/assertSameOrigin.server'
 import {
   applyRefreshedSessionCookies,
+  getTenantIdForBearerAuthorizationHeader,
   resolveBulkIngestForwardAuthorization,
 } from '@/services/auth/resolvePayoutTenant.server'
+import {
+  consumeBffRateLimit,
+  rateLimitKeyForIp,
+  rateLimitKeyForTenant,
+} from '@/services/bff/rateLimit.server'
 import { publicBffError } from '@/services/bff/publicBffError'
+import { isReprocessReason, REPROCESS_REASONS } from '@/services/payout-command/batch-intake/reprocessReason'
 
 /** Proxies multipart bulk file to zord-edge `POST /v1/bulk-ingest` only (never zord-intelligence).
  * Requires signed-in session JWT and/or explicit Authorization (CON-P0-02).
@@ -29,6 +36,17 @@ export async function POST(req: NextRequest) {
 
   const authResolution = await resolveBulkIngestForwardAuthorization(req)
   if (!authResolution.ok) return authResolution.response
+
+  const bearerTenant = await getTenantIdForBearerAuthorizationHeader(authResolution.authorization)
+  const rate = consumeBffRateLimit({
+    bucket: 'reprocess',
+    key: bearerTenant ? rateLimitKeyForTenant(bearerTenant) : rateLimitKeyForIp(req),
+    message: 'Too many ingest/reprocess requests. Try again shortly.',
+  })
+  if (!rate.ok) {
+    applyRefreshedSessionCookies(rate.response, authResolution.refreshedPayload)
+    return rate.response
+  }
 
   const bodyBuffer = Buffer.from(await req.arrayBuffer())
   const sourceType =
@@ -71,7 +89,23 @@ export async function POST(req: NextRequest) {
   const forceReprocess =
     req.headers.get('x-zord-force-reprocess')?.trim().toLowerCase() === 'true' ||
     req.headers.get('X-Zord-Force-Reprocess')?.trim().toLowerCase() === 'true'
-  if (forceReprocess) headers['X-Zord-Force-Reprocess'] = 'true'
+  const reprocessReason = req.headers.get('x-zord-force-reprocess-reason')?.trim() || null
+  if (reprocessReason && !isReprocessReason(reprocessReason)) {
+    return NextResponse.json(
+      { error: `A valid reprocess reason is required: ${REPROCESS_REASONS.join(', ')}.` },
+      { status: 400 },
+    )
+  }
+  if (!forceReprocess && reprocessReason) {
+    return NextResponse.json(
+      { error: 'A reprocess reason may only be sent when force reprocess is enabled.' },
+      { status: 400 },
+    )
+  }
+  if (forceReprocess) {
+    headers['X-Zord-Force-Reprocess'] = 'true'
+    if (reprocessReason) headers['X-Zord-Force-Reprocess-Reason'] = reprocessReason
+  }
 
   const candidateUrls = candidateEdgeBases().map((base) => `${base.replace(/\/$/, '')}/v1/bulk-ingest`)
   let lastError: unknown = null

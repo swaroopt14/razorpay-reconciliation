@@ -2,22 +2,19 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
 
-	"zord-outcome-engine/db"
 	"zord-outcome-engine/models"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
 
-func upsertCanonicalIntent(ctx context.Context, intent models.CanonicalIntent) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	_, err := db.DB.ExecContext(ctx, `
+func insertCanonicalIntent(ctx context.Context, tx *sql.Tx, intent models.CanonicalIntent) (sql.Result, error) {
+	return tx.ExecContext(ctx, `
 		INSERT INTO canonical_intents (
 			intent_id, tenant_id, trace_id, contract_id,
 			client_payout_ref, client_batch_ref, business_idempotency_key,
@@ -29,24 +26,7 @@ func upsertCanonicalIntent(ctx context.Context, intent models.CanonicalIntent) e
 			created_at
 		) VALUES (
 			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
-		) ON CONFLICT (intent_id) DO UPDATE SET
-			tenant_id               = EXCLUDED.tenant_id,
-			trace_id                = EXCLUDED.trace_id,
-			contract_id             = EXCLUDED.contract_id,
-			client_payout_ref       = EXCLUDED.client_payout_ref,
-			client_batch_ref        = EXCLUDED.client_batch_ref,
-			business_idempotency_key= EXCLUDED.business_idempotency_key,
-			amount                  = EXCLUDED.amount,
-			currency_code           = EXCLUDED.currency_code,
-			intended_execution_at   = EXCLUDED.intended_execution_at,
-			payout_type             = EXCLUDED.payout_type,
-			provider_hint           = EXCLUDED.provider_hint,
-			corridor                = EXCLUDED.corridor,
-			proof_readiness_score   = EXCLUDED.proof_readiness_score,
-			matchability_score      = EXCLUDED.matchability_score,
-			canonical_hash          = EXCLUDED.canonical_hash,
-			governance_state        = EXCLUDED.governance_state,
-			source_row_num          = EXCLUDED.source_row_num`,
+		) ON CONFLICT (intent_id) DO NOTHING`,
 		intent.IntentID, intent.TenantID, intent.TraceID, intent.ContractID,
 		intent.ClientPayoutRef, intent.ClientBatchRef, intent.BusinessIdempotencyKey,
 		intent.Amount, intent.CurrencyCode,
@@ -56,7 +36,6 @@ func upsertCanonicalIntent(ctx context.Context, intent models.CanonicalIntent) e
 		intent.SourceRowNum,
 		intent.CreatedAt,
 	)
-	return err
 }
 
 func validateAmount(amount string) (decimal.Decimal, error) {

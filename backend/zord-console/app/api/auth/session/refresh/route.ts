@@ -16,12 +16,20 @@ import {
   BackendAuthEnvelope,
   BackendErrorEnvelope,
 } from '@/services/auth/server'
+import { consumeBffRateLimit, rateLimitKeyForIp } from '@/services/bff/rateLimit.server'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(request: NextRequest) {
   const csrf = assertCookieMutationProtection(request)
   if (!csrf.ok) return csrf.response
+
+  const rate = consumeBffRateLimit({
+    bucket: 'auth',
+    key: rateLimitKeyForIp(request),
+    message: 'Too many session refresh attempts. Try again shortly.',
+  })
+  if (!rate.ok) return rate.response
 
   const refreshToken = getRefreshTokenFromRequest(request)
   if (!refreshToken) {

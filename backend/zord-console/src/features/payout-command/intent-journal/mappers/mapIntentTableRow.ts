@@ -7,6 +7,9 @@ import {
 } from '@/services/payout-command/prod-api/mapIntentEngineBatch'
 import { apiTrimmedString } from '@/services/payout-command/prod-api/coerceApiField'
 import { readIntentQualityScore } from '@/services/payout-command/prod-api/resolveIntentQualityScore'
+import { mapJournalIntentDecision } from './mapJournalIntentDecision'
+
+export { mapJournalIntentDecision } from './mapJournalIntentDecision'
 
 export const READINESS_REVIEW_THRESHOLD = 0.7
 
@@ -23,7 +26,6 @@ function formatJournalExecutionAt(iso: string | undefined): string {
     minute: '2-digit',
   })
 }
-
 
 function formatConfidenceLabel(score: number | undefined): string {
   if (score == null || !Number.isFinite(score)) return '—'
@@ -74,6 +76,45 @@ function beneficiaryNameHint(item: IntentJournalPaymentIntentItem): string | nul
   return null
 }
 
+function collectReasonCodes(item: IntentJournalPaymentIntentItem): string[] {
+  const codes = new Set<string>()
+  const push = (raw: unknown) => {
+    if (typeof raw === 'string' && raw.trim()) {
+      codes.add(raw.trim())
+      return
+    }
+    if (Array.isArray(raw)) {
+      for (const entry of raw) {
+        if (typeof entry === 'string' && entry.trim()) codes.add(entry.trim())
+        else if (entry && typeof entry === 'object' && 'code' in entry) {
+          const code = (entry as { code?: unknown }).code
+          if (typeof code === 'string' && code.trim()) codes.add(code.trim())
+        }
+      }
+    }
+  }
+  push(item.governance_reason_codes)
+  push(item.reason_codes)
+  push(item.score_reason_codes)
+  const dup = apiTrimmedString(item.duplicate_reason_code)
+  if (dup) codes.add(dup)
+  return [...codes]
+}
+
+function buildReviewInfoSummary(item: IntentJournalPaymentIntentItem, fallback: string): string {
+  const reasons = collectReasonCodes(item)
+  const remediability = apiTrimmedString(item.remediability)
+  const parts = [
+    apiTrimmedString(item.governance_state),
+    apiTrimmedString(item.governance_decision),
+    ...reasons,
+  ].filter(Boolean)
+  if (remediability) parts.push(`remediability:${remediability}`)
+  if (item.duplicate_risk_flag) parts.push('duplicate-risk')
+  if (parts.length === 0) return fallback
+  return parts.join(' · ')
+}
+
 /** Map thin payment-intents list item → journal table row. */
 export function mapPaymentIntentListItemToRow(
   item: IntentJournalPaymentIntentItem,
@@ -84,7 +125,7 @@ export function mapPaymentIntentListItemToRow(
   const amount = parseAmount(item.amount)
   const sourceRowNum = parseSourceRowNum(item.source_row_num)
   const qualityScore = readIntentQualityScore(item)
-  const status: JournalIntentStatus = 'Ready to Process'
+  const decision = mapJournalIntentDecision(item)
   const provider = resolveProviderHint(item)
   const rail = resolveRailHint(item)
   const requestId = apiTrimmedString(item.intent_id) || null
@@ -92,6 +133,20 @@ export function mapPaymentIntentListItemToRow(
   const paymentRef = apiTrimmedString(item.client_payout_ref)
   const clientBatchRef = apiTrimmedString(item.client_batch_ref) || apiTrimmedString(item.batch_id) || batchId
   const referenceFallback = sourceRowNum != null ? `SRC-${sourceRowNum}` : '—'
+
+  let infoSummary = decision.infoSummary
+  if (decision.status === 'Needs Review') {
+    infoSummary = buildReviewInfoSummary(item, 'Needs Review')
+  } else if (decision.status === 'Ready to Process') {
+    infoSummary = 'Ready for dispatch'
+  } else if (decision.status === 'Decision unavailable') {
+    infoSummary = 'Decision unavailable'
+  }
+
+  let match = decision.match
+  if (decision.status === 'Ready to Process' && typeof qualityScore === 'number') {
+    if (qualityScore >= 0.8 || (qualityScore > 1 && qualityScore >= 80)) match = 'Likely Matched'
+  }
 
   return {
     batchId,
@@ -101,20 +156,20 @@ export function mapPaymentIntentListItemToRow(
     reference: paymentRef || referenceFallback,
     amount,
     method: methodFromRail(rail),
-    status,
-    match: 'Awaiting',
+    status: decision.status,
+    match,
     lastUpdated: formatJournalExecutionAt(item.intended_execution_at),
     paymentPartner: provider,
     bank: provider,
     paymentMethodDetail: rail !== '—' ? rail : provider,
-    engineStatus: undefined,
+    engineStatus: decision.engineStatus,
     currency: apiTrimmedString(item.currency ?? 'INR') || 'INR',
     tenantId: apiTrimmedString(item.tenant_id) || apiTrimmedString(sessionTenantId) || '—',
     intendedExecutionAt: formatJournalExecutionAt(item.intended_execution_at),
     provider,
     confidenceScore: qualityScore,
     confidenceLabel: formatConfidenceLabel(qualityScore ?? undefined),
-    infoSummary: 'Ready for dispatch',
+    infoSummary,
     rail,
     sourceRowNum,
     clientBatchRef,
@@ -126,5 +181,8 @@ export function mapPaymentIntentListItemToRow(
 export function intentRowCustomerStatus(status: JournalIntentStatus): string {
   if (status === 'Pending') return 'Awaiting Bank Confirmation'
   if (status === 'Ready to Process') return 'Ready for Dispatch'
+  if (status === 'Decision unavailable') return 'Decision unavailable'
   return status
 }
+
+

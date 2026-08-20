@@ -332,6 +332,8 @@ function emptyProdBody(path: string): unknown {
       variance_amount: -388.32,
       orphan_amount: 22_381.29,
       unmatch_amount: 0,
+      // CON-P0-24: authoritative matched value (total_confirmed_amount is not a substitute)
+      confirmed_matched_value_minor: 52_653.42,
       total_confirmed_amount: 52_653.42,
       match_confidence: 0.75,
       missing_reference_rate: '0.00%',

@@ -28,7 +28,7 @@ import (
 func TestTOK06_RotationFullLifecycle(t *testing.T) {
 	db := tok06TestDB(t)
 	repo := repository.NewTokenRepository(db)
-	km := keymanager.NewKeyManager(repo)
+	km := keymanager.NewKeyManager(repo, newFakeKMSClient("test-kms-key"), "test-kms-key")
 	svc := services.NewTokenService(repo, km, []byte("rotation-test-secret"))
 	ctx := context.Background()
 
@@ -103,7 +103,7 @@ func TestTOK06_RotationFullLifecycle(t *testing.T) {
 func TestTOK06_AutoRotateKeysTriggersOnAge(t *testing.T) {
 	db := tok06TestDB(t)
 	repo := repository.NewTokenRepository(db)
-	km := keymanager.NewKeyManager(repo)
+	km := keymanager.NewKeyManager(repo, newFakeKMSClient("test-kms-key"), "test-kms-key")
 	svc := services.NewTokenService(repo, km, []byte("auto-rotation-test-secret"))
 	ctx := context.Background()
 
@@ -146,7 +146,7 @@ func TestTOK06_AutoRotateKeysTriggersOnAge(t *testing.T) {
 func TestTOK06_AutoRotateKeysLeavesFreshKeysAlone(t *testing.T) {
 	db := tok06TestDB(t)
 	repo := repository.NewTokenRepository(db)
-	km := keymanager.NewKeyManager(repo)
+	km := keymanager.NewKeyManager(repo, newFakeKMSClient("test-kms-key"), "test-kms-key")
 	svc := services.NewTokenService(repo, km, []byte("auto-rotation-fresh-secret"))
 	ctx := context.Background()
 

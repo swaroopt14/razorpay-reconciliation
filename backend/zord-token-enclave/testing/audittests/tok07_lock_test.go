@@ -225,7 +225,7 @@ func TestTOK07_SessionLockBlocksConcurrentXactLock(t *testing.T) {
 
 	// RotateKey's own xact-scoped lock attempt for the SAME tenant must be
 	// blocked while the session lock is held.
-	rotated, err := repo.RotateKey(ctx, tenantID, uuid.New().String(), make([]byte, 32), "test")
+	rotated, err := repo.RotateKey(ctx, tenantID, uuid.New().String(), make([]byte, 32), "test-kms-key", "test")
 	if err != nil {
 		t.Fatalf("RotateKey() error = %v", err)
 	}
@@ -238,7 +238,7 @@ func TestTOK07_SessionLockBlocksConcurrentXactLock(t *testing.T) {
 	}
 
 	// Now it must succeed.
-	rotated, err = repo.RotateKey(ctx, tenantID, uuid.New().String(), make([]byte, 32), "test")
+	rotated, err = repo.RotateKey(ctx, tenantID, uuid.New().String(), make([]byte, 32), "test-kms-key", "test")
 	if err != nil {
 		t.Fatalf("RotateKey() after release error = %v", err)
 	}

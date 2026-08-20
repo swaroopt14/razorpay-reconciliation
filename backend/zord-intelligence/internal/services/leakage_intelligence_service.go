@@ -121,9 +121,10 @@ type LeakageSnapshot struct {
 	//
 	// These complement the deterministic RiskTier: RiskTier says "you are leaking 5%
 	// of volume", AnomalyLevel says "5% is 3 stddevs above YOUR normal — unusual for you."
-	AnomalyScore  float64 `json:"anomaly_score"`
-	AnomalyLevel  string  `json:"anomaly_level"`
-	AnomalyZScore float64 `json:"anomaly_z_score"`
+	AnomalyScore  float64                   `json:"anomaly_score"`
+	AnomalyLevel  string                    `json:"anomaly_level"`
+	AnomalyZScore float64                   `json:"anomaly_z_score"`
+	MLAdvisory    mlclient.AdvisoryMetadata `json:"ml_advisory"`
 
 	// ── Over-settlement exposure ──────────────────────────────────────────
 	OverSettlementAmountMinor decimal.Decimal `json:"over_settlement_amount_minor"`
@@ -196,6 +197,7 @@ func (s *LeakageIntelligenceService) ComputeAndSave(
 		snap.AnomalyScore = result.Score
 		snap.AnomalyLevel = result.Level
 		snap.AnomalyZScore = result.ZScore
+		snap.MLAdvisory = result.Advisory
 
 		projRefs := []string{"leakage.total"}
 		projRefsJSON, _ := json.Marshal(projRefs)
@@ -344,6 +346,7 @@ func (s *LeakageIntelligenceService) buildSnapshot(lv *models.LeakageValue) Leak
 		ReversalCount:                   lv.ReversalCount,
 		BreakdownByType:                 lv.BreakdownByType,
 		OverSettlementAmountMinor:       lv.OverSettlementAmountMinor,
+		MLAdvisory:                      mlclient.UnavailableAdvisory("NOT_REQUESTED"),
 		ComputedAt:                      time.Now().UTC(),
 	}
 
@@ -466,6 +469,7 @@ func (s *LeakageIntelligenceService) persistMLPrediction(
 	explanation := map[string]any{
 		"algorithm":     "zscore_v1",
 		"z_score":       snap.AnomalyZScore,
+		"advisory":      snap.MLAdvisory,
 		"anomaly_level": snap.AnomalyLevel,
 		"leakage_pct":   snap.LeakagePercentage,
 	}
@@ -480,7 +484,7 @@ func (s *LeakageIntelligenceService) persistMLPrediction(
 		PredictionFamily: "LEAKAGE",
 		PredictionValue:  snap.AnomalyLevel,
 		PredictionScore:  snap.AnomalyScore,
-		Confidence:       1.0,
+		Confidence:       snap.MLAdvisory.Confidence,
 		ExplanationJSON:  expJSON,
 		SnapshotID:       &snapID,
 		CreatedAt:        time.Now().UTC(),

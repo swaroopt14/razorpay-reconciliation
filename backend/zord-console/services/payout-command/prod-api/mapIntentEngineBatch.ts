@@ -4,9 +4,22 @@ import type { IntelligenceBatchRow } from './intelligenceTypes'
 import { apiTrimmedString } from './coerceApiField'
 import { readIntentQualityScore } from '@/services/payout-command/prod-api/resolveIntentQualityScore'
 import { formatDlqStatusLabel, parseDlqIntentContext, normalizePspDisplayName } from './mapDlqContext'
+import {
+  JOURNAL_DEFAULT_CURRENCY,
+  majorAmountToMinor,
+  normalizeJournalCurrency,
+  parseMinorAmountField,
+} from './money/journalMoney'
+import { mapJournalIntentDecision } from '@/features/payout-command/intent-journal/mappers/mapJournalIntentDecision'
 
 export type JournalBatchType = 'Disbursement' | 'Settlement'
-export type JournalIntentStatus = 'Ready to Process' | 'Confirmed' | 'Pending' | 'Needs Review' | 'In Progress'
+export type JournalIntentStatus =
+  | 'Ready to Process'
+  | 'Confirmed'
+  | 'Pending'
+  | 'Needs Review'
+  | 'In Progress'
+  | 'Decision unavailable'
 export type JournalIntentMatch = 'Matched' | 'Likely Matched' | 'Awaiting' | 'Mismatch' | 'Not Found'
 
 export type JournalBatchRecord = {
@@ -15,12 +28,14 @@ export type JournalBatchRecord = {
   /** Raw `type` from intent-engine sidebar (e.g. PAYOUT, COLLECTION). */
   apiType: string
   source: string
-  totalValue: number
+  /** Batch total in minor units (paise for INR). Never major INR. */
+  amountMinor: number
+  currency: string
   transactions: number
   confirmedCount: number
   /** Legacy field name — when from engine sidebar, stores rounded count fallback only. */
   highConfidenceCount: number
-  /** Batch-level aggregate confidence 0–1 from intent-engine `aggregate_confidence_score`. */
+  /** Batch-level aggregate confidence 0ΓÇô1 from intent-engine `aggregate_confidence_score`. */
   aggregateConfidenceScore?: number
   mismatchCount: number
   unresolvedCount: number
@@ -168,7 +183,7 @@ function inferBatchSource(batchId: string, finality?: string): string {
   return 'Intelligence'
 }
 
-/** Engine in-flight only — used for Billing “processing in Zord” count (GET, no POST). */
+/** Engine in-flight only — used for Billing ΓÇ£processing in ZordΓÇ¥ count (GET, no POST). */
 export function isZordProcessingPaymentIntent(intent: PaymentIntentRecord): boolean {
   const st = String(intent.status ?? '').toUpperCase()
   const biz = String(intent.business_state ?? '').toUpperCase()
@@ -182,8 +197,8 @@ export function isZordProcessingPaymentIntent(intent: PaymentIntentRecord): bool
 export function mapSidebarItemToBatchRecord(it: IntentEngineBatchSidebarItem): JournalBatchRecord {
   const typeUpper = (it.type ?? '').toUpperCase()
   const batchType: JournalBatchType = typeUpper.includes('SETTLEMENT') ? 'Settlement' : 'Disbursement'
-  const tv = Number.parseFloat(String(it.totalValue ?? '').replace(/,/g, ''))
-  const totalValue = Number.isFinite(tv) ? tv : 0
+  // Intent-engine sidebar `totalValue` is major INR (same contract as batch-ids `total_amount`).
+  const amountMinor = majorAmountToMinor(it.totalValue)
   const hcRaw = it.highConfidenceCount
   const aggregateConfidenceScore =
     typeof hcRaw === 'number' && Number.isFinite(hcRaw) && hcRaw <= 1 ? hcRaw : undefined
@@ -199,7 +214,8 @@ export function mapSidebarItemToBatchRecord(it: IntentEngineBatchSidebarItem): J
     type: batchType,
     apiType: typeUpper || '—',
     source: 'Intent engine',
-    totalValue,
+    amountMinor,
+    currency: JOURNAL_DEFAULT_CURRENCY,
     transactions: it.transactions ?? 0,
     confirmedCount: it.confirmedCount ?? 0,
     highConfidenceCount,
@@ -208,12 +224,6 @@ export function mapSidebarItemToBatchRecord(it: IntentEngineBatchSidebarItem): J
     unresolvedCount: it.unresolvedCount ?? 0,
     engineSidebar: true,
   }
-}
-
-function readMinorAmount(value: number | string | undefined | null): number {
-  if (value == null || value === '') return 0
-  const n = typeof value === 'number' ? value : Number(value)
-  return Number.isFinite(n) ? n : 0
 }
 
 function readMatchConfidenceAsFraction(raw: number | undefined | null): number | undefined {
@@ -228,7 +238,8 @@ export function mapIntelligenceRowToBatchRecord(b: IntelligenceBatchRow): Journa
     type: 'Disbursement',
     apiType: '—',
     source: inferBatchSource(b.batch_id, b.finality_status),
-    totalValue: readMinorAmount(b.total_intended_amount_minor),
+    amountMinor: parseMinorAmountField(b.total_intended_amount_minor),
+    currency: normalizeJournalCurrency(JOURNAL_DEFAULT_CURRENCY),
     transactions: b.total_count ?? 0,
     confirmedCount: b.success_count ?? 0,
     highConfidenceCount: 0,
@@ -253,27 +264,19 @@ export function mapPaymentIntentToIntentRow(
   const amount = typeof raw === 'string' ? parseFloat(raw) : Number(raw ?? 0)
   const safe = Number.isFinite(amount) ? amount : 0
   const stRaw = String(intent.status ?? '').trim()
-  const gov = String(intent.governance_state ?? '').toUpperCase()
-  const biz = String(intent.business_state ?? '').toUpperCase()
-  const st = stRaw.toUpperCase()
-
-  let status: JournalIntentStatus = 'Ready to Process'
-  if (st.includes('FAIL') || st.includes('REJECT') || st.includes('ERROR') || gov === 'FLAGGED') {
-    status = 'Needs Review'
-  } else if (st.includes('CONFIRM') || st.includes('SUCCESS') || st === 'COMPLETED' || st === 'SETTLED') {
-    status = 'Confirmed'
-  } else if (st.includes('PROCESS') || st.includes('DISPAT') || st === 'IN_FLIGHT' || biz === 'PROCESSING') {
-    status = 'In Progress'
-  } else if (st.includes('PEND') || st.includes('CREAT')) {
-    status = 'Pending'
-  }
-
+  const gov = String(intent.governance_state ?? '').trim()
+  const mapped = mapJournalIntentDecision({
+    status: intent.status,
+    governance_state: intent.governance_state,
+    governance_decision: intent.governance_decision,
+    intent_lifecycle_state: intent.intent_lifecycle_state,
+    business_state: intent.business_state,
+  })
+  const status = mapped.status
   const conf = intent.aggregate_confidence_score
-  let match: JournalIntentMatch = 'Awaiting'
-  if (status === 'Confirmed') match = 'Matched'
-  else if (status === 'Needs Review') match = 'Not Found'
-  else if (typeof conf === 'number' && conf >= 0.8) match = 'Likely Matched'
-  else if (typeof conf === 'number' && conf < 0.5) match = 'Mismatch'
+  let match: JournalIntentMatch = mapped.match
+  if (status === 'Ready to Process' && typeof conf === 'number' && conf >= 0.8) match = 'Likely Matched'
+  else if (status === 'Ready to Process' && typeof conf === 'number' && conf < 0.5) match = 'Mismatch'
 
   const created = intent.created_at ? new Date(intent.created_at) : new Date()
   const instrument =
@@ -315,7 +318,7 @@ export function mapPaymentIntentToIntentRow(
     paymentPartner: instrument || '—',
     bank: instrument || '—',
     paymentMethodDetail,
-    engineStatus: [stRaw, gov, biz].filter(Boolean).join(' · ') || undefined,
+    engineStatus: mapped.engineStatus || [stRaw, gov].filter(Boolean).join(' · ') || undefined,
     currency: apiTrimmedString(intent.currency ?? 'INR') || 'INR',
     tenantId: apiTrimmedString(intent.tenant_id) || apiTrimmedString(sessionTenantId) || '—',
     intendedExecutionAt: formatJournalExecutionAt(intent.intended_execution_at),
@@ -325,7 +328,12 @@ export function mapPaymentIntentToIntentRow(
     provider: resolveProvider(intent),
     confidenceScore,
     confidenceLabel: formatConfidenceLabel(confidenceScore ?? undefined),
-    infoSummary: buildIntentInfoSummary(intent),
+    infoSummary:
+      status === 'Decision unavailable'
+        ? 'Decision unavailable'
+        : status === 'Ready to Process'
+          ? 'Ready for dispatch'
+          : buildIntentInfoSummary(intent),
     rawIntent: intent,
   }
 }
@@ -366,3 +374,5 @@ export function mapDlqToFailureRow(row: ApiDlqRow, opts?: { inManualReviewQueue?
     inManualReviewQueue: manualReview,
   }
 }
+
+

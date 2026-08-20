@@ -11,16 +11,38 @@ function batchStatusFromAggregateScore(score) {
   return 'Stable'
 }
 
+/** CON-P0-13 — match confidence must never map to Settled/Failed. */
 function outcomeFromMatchConfidence(matchConfidence) {
-  if (matchConfidence == null || !Number.isFinite(matchConfidence)) {
-    return { label: 'Partial', progressPct: 0 }
+  void matchConfidence
+  return { label: 'Open', progressPct: 0 }
+}
+
+function outcomeFromFinalityAndCoverage({
+  finalityStatus,
+  totalIntendedMinor,
+  unresolvedIntendedMinor,
+}) {
+  const finality = String(finalityStatus ?? '').toUpperCase()
+  const unresolvedRatio =
+    totalIntendedMinor > 0 && unresolvedIntendedMinor != null
+      ? unresolvedIntendedMinor / totalIntendedMinor
+      : null
+  const hasMaterialUnresolved = unresolvedRatio != null && unresolvedRatio >= 0.01
+
+  if (finality === 'FAILED') return { label: 'Failed', finalityStatus: finalityStatus ?? null }
+  if (finality === 'FULLY_SETTLED' || finality === 'SETTLED') {
+    return {
+      label: hasMaterialUnresolved ? 'Partially Reconciled' : 'Fully Settled',
+      finalityStatus: finalityStatus ?? null,
+    }
   }
-  const score = matchConfidence <= 1 ? matchConfidence : matchConfidence / 100
-  const progressPct = Math.round(Math.min(100, Math.max(0, score * 100)))
-  let label = 'Partial'
-  if (score >= 0.75) label = 'Settled'
-  else if (score < 0.5) label = 'Failed'
-  return { label, progressPct }
+  if (finality === 'PARTIALLY_SETTLED') {
+    return { label: 'Partially Reconciled', finalityStatus: finalityStatus ?? null }
+  }
+  if (hasMaterialUnresolved) {
+    return { label: 'Partially Reconciled', finalityStatus: finalityStatus ?? null }
+  }
+  return { label: 'Open', finalityStatus: finalityStatus ?? null }
 }
 
 function settlementObservationPageRange({ page, pageSize, total }) {
@@ -45,9 +67,35 @@ assert(batchStatusFromAggregateScore(0.49) === 'Critical', '49% aggregate → Cr
 assert(batchStatusFromAggregateScore(0.6) === 'At Risk', '60% aggregate → At Risk')
 
 assert(outcomeFromMatchConfidence(null).progressPct === 0, 'null match_confidence → 0% progress')
-assert(outcomeFromMatchConfidence(0.8).label === 'Settled', '80% match → Settled')
-assert(outcomeFromMatchConfidence(0.64).label === 'Partial', '64% match → Partial')
-assert(outcomeFromMatchConfidence(0.4).label === 'Failed', '40% match → Failed')
+assert(outcomeFromMatchConfidence(0.8).label === 'Open', '80% match alone must NOT be Settled')
+assert(outcomeFromMatchConfidence(0.4).label === 'Open', '40% match alone must NOT be Failed')
+
+assert(
+  outcomeFromFinalityAndCoverage({
+    finalityStatus: 'OPEN',
+    totalIntendedMinor: 1_000_000,
+    unresolvedIntendedMinor: 100_000,
+  }).label === 'Partially Reconciled',
+  '10% unresolved value → Partially Reconciled',
+)
+
+assert(
+  outcomeFromFinalityAndCoverage({
+    finalityStatus: 'FULLY_SETTLED',
+    totalIntendedMinor: 1_000_000,
+    unresolvedIntendedMinor: 0,
+  }).label === 'Fully Settled',
+  'FULLY_SETTLED with full coverage → Fully Settled',
+)
+
+assert(
+  outcomeFromFinalityAndCoverage({
+    finalityStatus: 'FULLY_SETTLED',
+    totalIntendedMinor: 1_000_000,
+    unresolvedIntendedMinor: 0,
+  }).finalityStatus === 'FULLY_SETTLED',
+  'FULLY_SETTLED finality appears on outcome',
+)
 
 const page11 = settlementObservationPageRange({ page: 1, pageSize: 20, total: 11 })
 assert(page11.start === 1 && page11.end === 11 && page11.total === 11, '11 total on page 1 → 1-11 of 11')

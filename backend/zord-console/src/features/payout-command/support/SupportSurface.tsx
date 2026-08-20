@@ -37,6 +37,7 @@ import {
   ZORD_SUPPORT_MAILTO,
   supportMailtoForTicket,
 } from './supportConstants'
+import { formatMoney } from '@/services/payout-command/money/money'
 import {
   HOME_BODY_IMPERIAL,
   HOME_BODY_IMPERIAL_SM,
@@ -119,12 +120,9 @@ function categoryAvatarColor(category: string) {
   return palette[hash % palette.length]
 }
 
-function money(n: number) {
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR',
-    maximumFractionDigits: 0,
-  }).format(Math.round(n))
+/** Support money display — currency must be provided; never invent INR (CON-P0-23). */
+function money(n: number, currency?: string | null) {
+  return formatMoney(Math.round(n), currency, { decimals: 0 })
 }
 
 function statusTone(status: string) {

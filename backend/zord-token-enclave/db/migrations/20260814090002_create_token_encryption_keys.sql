@@ -5,6 +5,15 @@
 -- (internal/repository/token_repo.go) relies on this: it marks the current
 -- ACTIVE key RETIRING and inserts the new ACTIVE key in the same
 -- transaction, so this constraint is never violated mid-rotation.
+--
+-- wrapped / kms_key_id (TOK-03): encrypted_key holds a RAW 32-byte DEK when
+-- wrapped=false (legacy/pre-TOK-03 rows) or a KMS CiphertextBlob when
+-- wrapped=true (every row this service writes from now on). kms_key_id
+-- isn't required to decrypt (KMS's ciphertext blob is self-describing) but
+-- is passed as Decrypt's optional KeyId check -- defense-in-depth against a
+-- future IAM-policy mistake decrypting under the wrong CMK. Not in
+-- production yet, so this is added directly to the CREATE TABLE rather than
+-- a separate ALTER TABLE migration.
 CREATE TABLE IF NOT EXISTS token_encryption_keys (
     key_id           VARCHAR      PRIMARY KEY,
     tenant_id        UUID         NOT NULL,
@@ -13,6 +22,8 @@ CREATE TABLE IF NOT EXISTS token_encryption_keys (
     algorithm        VARCHAR      DEFAULT 'AES-256-GCM',
 
     encrypted_key    BYTEA        NOT NULL,
+    wrapped          BOOLEAN      NOT NULL DEFAULT false,
+    kms_key_id       TEXT,
 
     status           VARCHAR      CHECK (status IN ('ACTIVE', 'RETIRING', 'RETIRED')),
 

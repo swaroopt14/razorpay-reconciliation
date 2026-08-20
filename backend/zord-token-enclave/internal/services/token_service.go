@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"log"
 	"os"
@@ -53,9 +52,9 @@ func releaseRotationLock(lock *repository.RotationLock, tenantID string) {
 type TokenService struct {
 	repo        *repository.TokenRepository
 	keyManager  keymanager.KeyManager
-	tokenSecret []byte            // for deterministic tokenization
+	tokenSecret []byte             // for deterministic tokenization
 	tenantGroup singleflight.Group // per-tenant concurrency control
-	tokenSem    chan struct{}       // limit global tokenization concurrency
+	tokenSem    chan struct{}      // limit global tokenization concurrency
 }
 
 func NewTokenService(r *repository.TokenRepository, km keymanager.KeyManager, secret []byte) *TokenService {
@@ -112,22 +111,27 @@ func (s *TokenService) Tokenize(
 		return "", err
 	}
 
-	// 3. Deterministic token ID — scoped to tenant + kind
-	normalized := crypto.NormalizeValue(string(plaintext))
-	tokenID := "zrd_" + crypto.GenerateDeterministicToken(s.tokenSecret, tenantID, kind, normalized)
+	// 3. Deterministic token ID — scoped to tenant + kind, versioned
+	// (TOK-08). CurrentNormalizationVersion's rule for every kind is
+	// bit-identical to the old blanket NormalizeValue -- this call
+	// changes no existing token_id for any kind.
+	normalized := crypto.NormalizeValueForKind(crypto.CurrentNormalizationVersion, kind, string(plaintext))
+	tokenID := "zrd_" + crypto.GenerateDeterministicToken(s.tokenSecret, tenantID, kind, crypto.CurrentNormalizationVersion, normalized)
 
 	// 4. Store in DB with key reference and actor context
 	rec := models.TokenRecord{
-		TokenID:         tokenID,
-		TenantID:        tenantID,
-		Kind:            kind,
-		Ciphertext:      ciphertext,
-		Nonce:           nonce,
-		EncryptionKeyID: key.KeyID,
-		KeyVersion:      key.Version,
-		Status:          "ACTIVE",
-		Actor:           actor,
-		TraceID:         traceID,
+		TokenID:              tokenID,
+		TenantID:             tenantID,
+		Kind:                 kind,
+		Ciphertext:           ciphertext,
+		Nonce:                nonce,
+		EncryptionKeyID:      key.KeyID,
+		KeyVersion:           key.Version,
+		Status:               "ACTIVE",
+		Actor:                actor,
+		TraceID:              traceID,
+		NormalizationVersion: crypto.CurrentNormalizationVersion,
+		SecretVersion:        crypto.CurrentSecretVersion,
 	}
 
 	if err := s.repo.Insert(ctx, rec); err != nil {
@@ -217,15 +221,17 @@ func (s *TokenService) DetokenizeFields(
 func (s *TokenService) RotateKey(ctx context.Context, tenantID string, createdBy string) (bool, error) {
 
 	v, err, _ := s.tenantGroup.Do("rotate:"+tenantID, func() (interface{}, error) {
-		// Generate new AES-256 key (32 bytes)
-		newKey := make([]byte, 32)
-		if _, err := rand.Read(newKey); err != nil {
+		// TOK-03: WrapNewDEK generates the raw DEK AND wraps it via KMS in
+		// one call -- the raw DEK never exists in this function's stack
+		// frame, only the wrapped ciphertext blob does.
+		wrapped, kmsKeyID, err := s.keyManager.WrapNewDEK(ctx, tenantID)
+		if err != nil {
 			return false, err
 		}
 
 		newKeyID := uuid.New().String()
 
-		return s.repo.RotateKey(ctx, tenantID, newKeyID, newKey, createdBy)
+		return s.repo.RotateKey(ctx, tenantID, newKeyID, wrapped, kmsKeyID, createdBy)
 	})
 	if err != nil {
 		return false, err
@@ -289,8 +295,13 @@ func (s *TokenService) migrateKeysLocked(ctx context.Context, tenantID string) e
 func (s *TokenService) doMigrateKeys(ctx context.Context, tenantID string) (oldKeyID, newKeyID string, err error) {
 	log.Printf("Migration started for tenant %s", tenantID)
 
-	// 1️⃣ Get RETIRING key (old key)
-	oldKey, err := s.repo.GetRetiringKey(ctx, tenantID)
+	// 1️⃣ Get RETIRING key (old key) -- TOK-03: routed through keyManager,
+	// NOT repo directly, so a wrapped RETIRING key gets unwrapped before
+	// oldCrypto is built below (repo.RawKey may be an opaque KMS ciphertext
+	// blob, never a usable AES key -- this was a real bug found and fixed
+	// during TOK-03 implementation: the migration sweep would otherwise
+	// hard-crash the moment a tenant's RETIRING key was wrapped).
+	oldKey, err := s.keyManager.GetRetiringKey(ctx, tenantID)
 	if err != nil {
 		// no retiring key → nothing to migrate
 		return "", "", nil
@@ -333,9 +344,12 @@ func (s *TokenService) doMigrateKeys(ctx context.Context, tenantID string) (oldK
 				return oldKey.KeyID, newKey.KeyID, err
 			}
 
-			// 💾 update DB
+			// 💾 update DB -- TOK-05: scoped by the full composite
+			// identity (tenant_id, kind, token_id), not token_id alone.
 			err = s.repo.UpdateTokenKey(
 				ctx,
+				t.TenantID,
+				t.Kind,
 				t.TokenID,
 				newCipher,
 				newNonce,
@@ -422,14 +436,14 @@ func (s *TokenService) AutoRotateKeys(ctx context.Context) error {
 func (s *TokenService) rotateKeyIfStale(ctx context.Context, tenantID string, createdBy string) (bool, error) {
 
 	v, err, _ := s.tenantGroup.Do("rotate:"+tenantID, func() (interface{}, error) {
-		newKey := make([]byte, 32)
-		if _, err := rand.Read(newKey); err != nil {
+		wrapped, kmsKeyID, err := s.keyManager.WrapNewDEK(ctx, tenantID)
+		if err != nil {
 			return false, err
 		}
 
 		newKeyID := uuid.New().String()
 
-		return s.repo.RotateKeyIfStale(ctx, tenantID, newKeyID, newKey, createdBy, autoRotationMaxAge)
+		return s.repo.RotateKeyIfStale(ctx, tenantID, newKeyID, wrapped, kmsKeyID, createdBy, autoRotationMaxAge)
 	})
 	if err != nil {
 		return false, err
@@ -474,4 +488,15 @@ func (s *TokenService) EnsureInitialKey(ctx context.Context, tenantID string) er
 // GetAllTenants delegates to the repository — used by the migration goroutine.
 func (s *TokenService) GetAllTenants(ctx context.Context) ([]string, error) {
 	return s.repo.GetAllTenants(ctx)
+}
+
+// WriteAuthzDenialAudit delegates to the repository — the HTTP handlers'
+// only DB-adjacent entry point (TOK-04), used to durably record an
+// authorization denial (invalid service JWT, disallowed purpose_code,
+// missing object_ref/correlation_id).
+func (s *TokenService) WriteAuthzDenialAudit(
+	ctx context.Context,
+	tenantID, caller, action, purposeCode, objectRef, correlationID, reason string,
+) error {
+	return s.repo.WriteAuthzDenialAudit(ctx, tenantID, caller, action, purposeCode, objectRef, correlationID, reason)
 }

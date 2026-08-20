@@ -785,6 +785,7 @@ func findAllCandidateObservationsBatch(
 		SELECT
 			settlement_observation_id, tenant_id, trace_id,
 			settlement_envelope_id, ingest_run_id,
+			outcome_artifact_id, outcome_artifact_version_id,
 			source_file_ref, source_row_ref, source_system,
 			observation_kind, source_strength_class,
 			client_reference_candidate, provider_reference, bank_reference,
@@ -2110,6 +2111,7 @@ func loadObservationsByBatch(
 		SELECT
 			settlement_observation_id, tenant_id, trace_id,
 			settlement_envelope_id, ingest_run_id,
+			outcome_artifact_id, outcome_artifact_version_id,
 			source_file_ref, source_row_ref, source_system,
 			observation_kind, source_strength_class,
 			client_reference_candidate, provider_reference, bank_reference,
@@ -2150,6 +2152,7 @@ func loadObservationsByJobID(
 		SELECT
 			settlement_observation_id, tenant_id, trace_id,
 			settlement_envelope_id, ingest_run_id,
+			outcome_artifact_id, outcome_artifact_version_id,
 			source_file_ref, source_row_ref, source_system,
 			observation_kind, source_strength_class,
 			client_reference_candidate, provider_reference, bank_reference,
@@ -2184,6 +2187,7 @@ func scanObservations(rows *sql.Rows) ([]models.CanonicalSettlementObservation, 
 		err := rows.Scan(
 			&o.SettlementObservationID, &o.TenantID, &o.TraceID,
 			&o.SettlementEnvelopeID, &o.IngestRunID,
+			&o.OutcomeArtifactID, &o.OutcomeArtifactVersionID,
 			&o.SourceFileRef, &o.SourceRowRef, &o.SourceSystem,
 			&o.ObservationKind, &o.SourceStrengthClass,
 			&o.ClientReferenceCandidate, &o.ProviderReference, &o.BankReference,
