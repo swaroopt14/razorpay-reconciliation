@@ -19,7 +19,6 @@ import {
   postSupportChatReply,
   postSupportEmailMessage,
 } from '@/services/payout-command/support/supportTicketsApi'
-import { SANDBOX_RECENT_REQUESTS } from '@/services/payout-command/sandbox-data'
 import { clearLegacyTenantApiSecrets } from '@/services/auth/readStoredTenantApiKey'
 import { workspaceApiKeysPath } from '@/services/payout-command/workspaceApiKeysPath'
 import { getAmbiguityHeatmap, getPatternsKpis } from '@/services/payout-command/prod-api/getIntelligenceKpis'
@@ -401,44 +400,15 @@ function ProfileTab({
   )
 }
 
-function CreditsTab({ tickets }: { tickets: SupportTicket[] }) {
-  const estimatedSpend = tickets.reduce((sum, t) => sum + (t.messages.length * 45 + (t.status === 'open' ? 120 : 80)), 0)
-  const available = Math.max(0, 25000 - estimatedSpend)
-  const rows = SANDBOX_RECENT_REQUESTS.slice(0, 5)
-
+function CreditsTab(_props: { tickets: SupportTicket[] }) {
   return (
     <div className="space-y-4">
-      <FieldCard title="Credits" subtitle="Estimated until dedicated credits API is available">
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Available credits</p>
-            <p className="mt-1 text-[28px] font-bold text-[#000000]">{money(available)}</p>
-          </div>
-          <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold text-amber-800">Mock / estimated</span>
-        </div>
+      <FieldCard title="Credits" subtitle="Credits appear when a billing provider is configured">
+        <p className="text-[13px] text-slate-600">No live credit balance is available.</p>
       </FieldCard>
 
-      <FieldCard title="Recent credit transactions" subtitle="Derived from support and API activity">
-        <table className="w-full text-left text-[13px]">
-          <thead className="text-[11px] uppercase tracking-wide text-slate-500">
-            <tr>
-              <th className="pb-2">Date</th>
-              <th className="pb-2">Type</th>
-              <th className="pb-2 text-right">Amount</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r, i) => (
-              <tr key={r.id} className="border-t border-slate-100">
-                <td className="py-2">{r.at}</td>
-                <td className="py-2">{i === 0 ? 'Added credits' : 'API usage'}</td>
-                <td className={`py-2 text-right font-semibold ${i === 0 ? 'text-black' : 'text-slate-700'}`}>
-                  {i === 0 ? `+${money(10000)}` : `-${money(150 + i * 35)}`}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <FieldCard title="Recent credit transactions" subtitle="Live tenant starts with an empty ledger">
+        <p className="text-[13px] text-slate-600">No credit transactions.</p>
       </FieldCard>
     </div>
   )

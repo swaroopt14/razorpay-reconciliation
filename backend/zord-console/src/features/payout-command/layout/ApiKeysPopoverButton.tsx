@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 
-import { SANDBOX_DOCS_LINKS } from '@/services/payout-command/sandbox-data'
+import { DOCS_LINKS } from '@/services/payout-command/docsLinks'
 import {
   clearLegacyTenantApiSecrets,
   formatSecretKeyPrefix,
@@ -124,7 +124,7 @@ export function ApiKeysPopoverButton({ label = 'API keys' }: { label?: string })
               <p>
                 Use{' '}
                 <a
-                  href={SANDBOX_DOCS_LINKS.apiReference}
+                  href={DOCS_LINKS.apiReference}
                   target="_blank"
                   rel="noreferrer noopener"
                   className="font-medium text-[#2563eb] underline decoration-[#93c5fd] underline-offset-2 hover:text-[#1d4ed8]"
@@ -136,7 +136,7 @@ export function ApiKeysPopoverButton({ label = 'API keys' }: { label?: string })
               <p>
                 Design flows with{' '}
                 <a
-                  href={docsBase ? `${docsBase}/webhooks` : SANDBOX_DOCS_LINKS.webhookGuide}
+                  href={docsBase ? `${docsBase}/webhooks` : DOCS_LINKS.webhookGuide}
                   target="_blank"
                   rel="noreferrer noopener"
                   className="font-medium text-[#2563eb] underline decoration-[#93c5fd] underline-offset-2 hover:text-[#1d4ed8]"
@@ -151,7 +151,7 @@ export function ApiKeysPopoverButton({ label = 'API keys' }: { label?: string })
               <div className="flex items-center justify-between gap-2">
                 <p className="text-[15px] font-semibold text-[#30313d]">API keys</p>
                 <a
-                  href={SANDBOX_DOCS_LINKS.apiReference}
+                  href={DOCS_LINKS.apiReference}
                   target="_blank"
                   rel="noreferrer noopener"
                   className="shrink-0 text-[13px] font-medium text-[#000000] hover:text-[#15803d]"

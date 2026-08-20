@@ -4,18 +4,12 @@ import { publicBffError } from '@/services/bff/publicBffError'
 
 export const dynamic = 'force-dynamic'
 
-/** CON-P1-42 — synthetic analytics must not back live `/api/prod`. */
-export async function unavailableSyntheticProd(request: NextRequest): Promise<NextResponse> {
+export async function GET(request: NextRequest) {
   const gate = await requireSessionTenantForProdProxy(request)
   if (!gate.ok) return gate.response
   return publicBffError({
     code: 'UNAVAILABLE',
-    message: 'Synthetic analytics are not part of live V1.',
+    message: 'Tenant directory is not part of live V1 BFF.',
     status: 503,
   })
-}
-
-export function withNoStore(response: NextResponse): NextResponse {
-  response.headers.set('Cache-Control', 'no-store, max-age=0')
-  return response
 }

@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { BACKEND_SERVICES, buildUrl, DEFAULT_FETCH_OPTIONS, API_TIMEOUT } from '@/config/api.endpoints'
+import { requireSessionTenantForProdProxy } from '@/services/auth/resolvePayoutTenant.server'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(request: NextRequest) {
+  const gate = await requireSessionTenantForProdProxy(request)
+  if (!gate.ok) return gate.response
   const idempotencyKey = request.headers.get('x-idempotency-key') || request.headers.get('X-Idempotency-Key')
   const authorization = request.headers.get('authorization') || request.headers.get('Authorization')
 

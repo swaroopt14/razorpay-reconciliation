@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { buildUnavailableOverview, fetchOverview } from '@/services/backend/overview'
+import { requireSessionTenantForProdProxy } from '@/services/auth/resolvePayoutTenant.server'
 
-// Force dynamic rendering for API routes
 export const dynamic = 'force-dynamic'
 
 export async function GET(request: NextRequest) {
+  const gate = await requireSessionTenantForProdProxy(request)
+  if (!gate.ok) return gate.response
   try {
     // Fetch overview data from backend services (includes health checks)
     const overviewData = await fetchOverview()

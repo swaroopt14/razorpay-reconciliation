@@ -1,4 +1,5 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test'
+import liveNav from '../product-contract/live-nav.json'
 
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3000'
 const SESSION_TENANT = 'e2e-session-tenant-111'
@@ -11,17 +12,11 @@ const PACK_BATCH = 'pack-batch-001'
 const PACK_INTENT_A = 'pack-intent-a'
 const PACK_INTENT_B = 'pack-intent-b'
 
-/** Live payout console docks (CON-P2-01). Lending mocks, billing, and connectors are sandbox-only / hidden. */
-const DOCK_CASES: { dock: string; title: string }[] = [
-  { dock: 'home', title: 'Payment Command Center' },
-  { dock: 'workspace', title: 'Payment Operations View' },
-  { dock: 'leakage', title: 'Payment Gaps & Value at Risk' },
-  { dock: 'ambiguity', title: 'Match Review' },
-  { dock: 'grid', title: 'Intent Journal' },
-  { dock: 'settlement', title: 'Settlement Journal' },
-  { dock: 'proof', title: 'Evidence & Dispute Resolution' },
-  { dock: 'support', title: 'Support requests' },
-]
+/** Live payout console docks from product-contract/live-nav.json (CON-P1-38). */
+const DOCK_CASES: { dock: string; title: string }[] = liveNav.liveNavDockIds.map((dock) => ({
+  dock,
+  title: liveNav.liveDockTitles[dock as keyof typeof liveNav.liveDockTitles],
+}))
 
 const BLOCKED_LIVE_DOCKS = ['verification', 'monitoring', 'billing', 'connectors'] as const
 
@@ -1370,13 +1365,22 @@ test.describe('payout console pages smoke (empty prod → preview fallbacks)', (
     await expect(page.getByText('Preview', { exact: true })).toHaveCount(0)
   })
 
-  test('blocked connectors deep-link does not render connector intelligence', async ({ page }) => {
+  test('deferred and sandbox-only docks are not live nav destinations', async ({ page }) => {
     await page.goto('/payout-command-view/today?dock=connectors')
     await expect(page.getByRole('heading', { name: 'Payment Command Center', level: 1 }).first()).toBeVisible({
       timeout: 25_000,
     })
+    await expect(page.getByRole('heading', { name: 'Connector Performance & Leakage', level: 1 })).toHaveCount(0)
     await expect(page.getByTestId('routing-kpi-bar')).toHaveCount(0)
     await expect(page.getByTestId('connector-grid')).toHaveCount(0)
+
+    await page.goto('/payout-command-view/today?dock=billing')
+    await expect(page.getByRole('heading', { name: 'Payment Command Center', level: 1 }).first()).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Billing', level: 1 })).toHaveCount(0)
+
+    await page.goto('/payout-command-view/today?dock=verification')
+    await expect(page.getByRole('heading', { name: 'Payment Command Center', level: 1 }).first()).toBeVisible()
+    await expect(page.getByText('is not part of live V1')).toHaveCount(0)
   })
 
   test('evidence shows empty pack state when no live packs', async ({ page }) => {

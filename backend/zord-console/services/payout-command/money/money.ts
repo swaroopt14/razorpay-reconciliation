@@ -99,14 +99,36 @@ export function formatMoney(
   }
 }
 
-/** Format minor units using currency (÷100 for ISO 2-decimal currencies). */
+/** Format minor units using ISO 4217 exponent (JPY=0, USD/INR=2, KWD=3). */
+export function minorExponent(currency?: string | null): number {
+  const cur = normalizeCurrency(currency)
+  if (cur === 'JPY' || cur === 'KRW' || cur === 'VND') return 0
+  if (cur === 'KWD' || cur === 'BHD' || cur === 'OMR') return 3
+  return 2
+}
+
+export function majorToMinor(amountMajor: number, currency?: string | null): number {
+  if (!Number.isFinite(amountMajor)) return 0
+  const exp = minorExponent(currency)
+  return Math.round(amountMajor * 10 ** exp)
+}
+
+export function minorToMajor(amountMinor: number, currency?: string | null): number {
+  if (!Number.isFinite(amountMinor)) return 0
+  const exp = minorExponent(currency)
+  return amountMinor / 10 ** exp
+}
+
 export function formatMoneyFromMinor(
   amountMinor: number | null | undefined,
   currency?: string | null,
   options: FormatMoneyOptions = {},
 ): string {
   if (amountMinor == null || !Number.isFinite(amountMinor)) return '—'
-  return formatMoney(amountMinor / 100, currency, options)
+  return formatMoney(minorToMajor(amountMinor, currency), currency, {
+    ...options,
+    decimals: minorExponent(currency) === 0 ? 0 : options.decimals ?? 2,
+  })
 }
 
 /** Group amounts by currency. Does not invent FX conversions. */

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { EnvironmentProvider, useEnvironment } from '@/services/auth/EnvironmentProvider'
-import { SANDBOX_DOCS_LINKS } from '@/services/payout-command/sandbox-data'
+import { DOCS_LINKS } from '@/services/payout-command/docsLinks'
 import { ActivateLiveWizard } from '@/features/payout-command/sandbox/ActivateLiveWizard'
 import { Glyph } from '@/features/payout-command/shared'
 import { useSessionTenantId } from '@/services/auth/useSessionTenantId'
@@ -189,21 +189,21 @@ function ApiKeysClientInner() {
             icon="document"
             title="View API docs"
             body="OpenAPI reference, schema, and examples."
-            href={SANDBOX_DOCS_LINKS.apiReference}
+            href={DOCS_LINKS.apiReference}
             external
           />
           <RecommendationCard
             icon="terminal"
             title="Postman collection"
             body="Pre-built requests with sandbox keys baked in."
-            href={SANDBOX_DOCS_LINKS.postmanCollection}
+            href={DOCS_LINKS.postmanCollection}
             external
           />
           <RecommendationCard
             icon="bell"
             title="Webhooks setup"
             body="Receive real-time signals from Zord."
-            href={SANDBOX_DOCS_LINKS.webhookGuide}
+            href={DOCS_LINKS.webhookGuide}
             external
             soon
           />
