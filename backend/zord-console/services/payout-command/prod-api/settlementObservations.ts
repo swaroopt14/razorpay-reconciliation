@@ -1,5 +1,6 @@
 import { fetchProdJsonGetWithMeta, type ProdJsonGetResult } from './fetchProdJsonGet'
 import { apiTrimmedString } from './coerceApiField'
+import { settlementStatusDisplayLabel } from '@/features/payout-command/settlement-journal/settlementObservationStatusMap'
 import { normalizeCurrency } from '@/services/payout-command/money/money'
 
 export type SettlementObservationBatchListItem = {
@@ -413,7 +414,8 @@ export function mapObservationToTableRow(
     deductionAmount: parseMoney(full.deduction_amount ?? slim.deduction_amount),
     currency: normalizeCurrency(full.currency_code ?? slim.currency_code),
     statusRaw,
-    status: statusRaw ? statusRaw.replace(/_/g, ' ') : '—',
+    // CON-P1-24: unknown enums show Needs mapping (never auto-promoted to Settled).
+    status: settlementStatusDisplayLabel(statusRaw),
     sourceSystem: displayOrDash(full.source_system ?? slim.source_system),
     sourceSystemId: displayOrDash(full.source_system_id ?? slim.source_system_id),
     sourceType: displayOrDash(full.source_type),

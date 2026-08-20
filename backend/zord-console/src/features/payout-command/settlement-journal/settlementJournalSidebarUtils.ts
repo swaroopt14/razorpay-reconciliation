@@ -7,6 +7,18 @@ import {
   matchesCurrencyAwareAmountRange,
   type CurrencyNeutralAmountRange,
 } from '@/services/payout-command/money/money'
+import {
+  isFailedObservationStatus,
+  isSettledObservationStatus,
+  mapSettlementObservationStatus,
+} from './settlementObservationStatusMap'
+
+export {
+  isFailedObservationStatus,
+  isSettledObservationStatus,
+  mapSettlementObservationStatus,
+  settlementStatusDisplayLabel,
+} from './settlementObservationStatusMap'
 
 export type DateRangePreset = 'all' | '7d' | '30d' | '90d' | 'ytd'
 
@@ -19,6 +31,7 @@ export type SettlementSidebarOutcomeLabel =
   | 'Requires Review'
   | 'Cancelled'
   | 'Processing'
+  | 'Unknown'
 
 export type SettlementSidebarOutcome = {
   total: number
@@ -103,16 +116,6 @@ export function matchesAmountRangeForRow(
   return matchesCurrencyAwareAmountRange(amount, currency, range)
 }
 
-export function isSettledObservationStatus(statusRaw: string): boolean {
-  const u = statusRaw.toUpperCase()
-  return u.includes('SETTLED') || u.includes('SUCCESS')
-}
-
-export function isFailedObservationStatus(statusRaw: string): boolean {
-  const u = statusRaw.toUpperCase()
-  return u.includes('FAIL') || u.includes('REJECT')
-}
-
 function parseMinor(value: number | null | undefined): number | null {
   if (value == null || !Number.isFinite(value)) return null
   return value
@@ -158,7 +161,7 @@ function toneForLabel(
   if (label === 'Requires Review') {
     return { dotClass: 'bg-rose-500', toneText: 'text-rose-700', barClass: 'bg-rose-500' }
   }
-  if (label === 'Open' || label === 'Processing') {
+  if (label === 'Unknown' || label === 'Open' || label === 'Processing') {
     return { dotClass: 'bg-slate-400', toneText: 'text-slate-600', barClass: 'bg-slate-400' }
   }
   // Partially Reconciled — green when nearly complete (Intent Stable-like band)
@@ -295,9 +298,12 @@ export function outcomeFromObservationRows(rows: SettlementObservationTableRow[]
   }
   const settled = rows.filter((r) => isSettledObservationStatus(r.statusRaw)).length
   const failed = rows.filter((r) => isFailedObservationStatus(r.statusRaw)).length
+  const known = rows.filter((r) => mapSettlementObservationStatus(r.statusRaw).known).length
   const settledPct = Math.round((settled / total) * 100)
   let label: SettlementSidebarOutcomeLabel = 'Partially Reconciled'
-  if (failed > 0 && failed >= settled) label = 'Failed'
+  // CON-P1-24: unknown statuses never upgrade the batch to Fully Settled / Settled.
+  if (known === 0) label = 'Unknown'
+  else if (failed > 0 && failed >= settled) label = 'Failed'
   else if (settled === total) label = 'Fully Settled'
   else if (settled === 0 && failed === 0) label = 'Open'
 
@@ -315,17 +321,18 @@ export function outcomeFromObservationRows(rows: SettlementObservationTableRow[]
 }
 
 export function settlementStatusBadgeClass(statusRaw: string) {
-  const u = statusRaw.toUpperCase()
-  if (u.includes('SETTLED') || u.includes('SUCCESS')) {
+  const { bucket } = mapSettlementObservationStatus(statusRaw)
+  if (bucket === 'settled') {
     return 'inline-flex rounded-full border border-black/30 bg-black px-2.5 py-0.5 text-[12px] font-semibold text-white'
   }
-  if (u.includes('FAIL') || u.includes('REJECT')) {
+  if (bucket === 'failed') {
     return 'inline-flex rounded-full border border-rose-200 bg-rose-50 px-2.5 py-0.5 text-[12px] font-semibold text-rose-800'
   }
-  if (u.includes('PEND') || u.includes('PROCESS')) {
+  if (bucket === 'pending') {
     return 'inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[12px] font-semibold text-amber-900'
   }
-  return 'inline-flex rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-[12px] font-semibold text-slate-700'
+  // unknown / Needs mapping — never styled as settled success
+  return 'inline-flex rounded-full border border-slate-300 bg-slate-100 px-2.5 py-0.5 text-[12px] font-semibold text-slate-700'
 }
 
 export function computeSettlementBatchSummary(rows: SettlementObservationTableRow[]) {
