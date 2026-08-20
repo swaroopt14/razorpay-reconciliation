@@ -133,23 +133,33 @@ export function coverageProgressPct(input: SettlementFinalityCoverageInput): num
   return 0
 }
 
-function toneForLabel(label: SettlementSidebarOutcomeLabel): Pick<
-  SettlementSidebarOutcome,
-  'dotClass' | 'toneText' | 'barClass'
-> {
+function toneForLabel(
+  label: SettlementSidebarOutcomeLabel,
+  progressPct = 0,
+): Pick<SettlementSidebarOutcome, 'dotClass' | 'toneText' | 'barClass'> {
   if (label === 'Fully Settled') {
-    return { dotClass: 'bg-black', toneText: 'text-black', barClass: 'bg-black' }
+    return { dotClass: 'bg-emerald-500', toneText: 'text-emerald-700', barClass: 'bg-emerald-500' }
   }
   if (label === 'Failed' || label === 'Cancelled') {
     return { dotClass: 'bg-rose-500', toneText: 'text-rose-700', barClass: 'bg-rose-500' }
   }
   if (label === 'Requires Review') {
+    // High confirmed/intended coverage should read as healthy progress, not a red alert.
+    if (progressPct >= 90) {
+      return { dotClass: 'bg-emerald-500', toneText: 'text-emerald-700', barClass: 'bg-emerald-500' }
+    }
+    if (progressPct >= 50) {
+      return { dotClass: 'bg-amber-500', toneText: 'text-amber-700', barClass: 'bg-amber-500' }
+    }
     return { dotClass: 'bg-rose-500', toneText: 'text-rose-700', barClass: 'bg-rose-500' }
   }
   if (label === 'Open' || label === 'Processing') {
     return { dotClass: 'bg-slate-400', toneText: 'text-slate-600', barClass: 'bg-slate-400' }
   }
-  // Partially Reconciled
+  // Partially Reconciled — green when nearly complete
+  if (progressPct >= 90) {
+    return { dotClass: 'bg-emerald-500', toneText: 'text-emerald-700', barClass: 'bg-emerald-500' }
+  }
   return { dotClass: 'bg-amber-500', toneText: 'text-amber-700', barClass: 'bg-amber-500' }
 }
 
@@ -224,7 +234,7 @@ export function outcomeFromFinalityAndCoverage(
     label = hasMaterialUnresolvedValue || progressPct > 0 ? 'Partially Reconciled' : 'Open'
   }
 
-  const tone = toneForLabel(label)
+  const tone = toneForLabel(label, progressPct)
   return {
     total,
     settled,
@@ -270,7 +280,7 @@ export function outcomeFromObservationRows(rows: SettlementObservationTableRow[]
   else if (settled === total) label = 'Fully Settled'
   else if (settled === 0 && failed === 0) label = 'Open'
 
-  const tone = toneForLabel(label)
+  const tone = toneForLabel(label, settledPct)
   return {
     total,
     settled,

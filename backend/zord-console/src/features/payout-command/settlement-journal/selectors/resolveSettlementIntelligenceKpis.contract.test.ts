@@ -21,33 +21,37 @@ function fail(msg: string): never {
 assert.equal(SETTLEMENT_LIVE_KPI_FIELDS.settlementValueMatched, 'confirmed_matched_value_minor')
 assert.equal(LIVE_KPI_UNAVAILABLE, 'Unavailable')
 
-// --- Only non-equivalent stand-in present ⇒ matched KPI unavailable ---
+// --- Contract-only total_confirmed_amount ⇒ still unavailable (wrong field) ---
+{
+  const contract = {
+    total_confirmed_amount: 52_653.42,
+    match_confidence: 0.9,
+  } as unknown as BatchContractKpiResponse
+
+  const standIn = resolveAuthoritativeMatchedValue(contract, null)
+  assert.equal(standIn.value, null, 'contract total_confirmed_amount alone must not populate matched KPI')
+  assert.equal(standIn.usedStandIn, true)
+}
+
+// --- batches/batch_health total_confirmed_amount_minor fills Settlement value matched ---
 {
   const contract = {
     total_confirmed_amount: 52_653.42,
     match_confidence: 0.9,
   } as unknown as BatchContractKpiResponse
   const detail = {
-    batch: { total_confirmed_amount_minor: 99_999 },
+    batch: { total_confirmed_amount_minor: 43_117.46 },
     batch_health: { total_confirmed_amount_minor: 88_888, total_variance_minor: 12 },
   } as unknown as BatchDetailResponse
 
-  const standIn = resolveAuthoritativeMatchedValue(contract)
-  assert.equal(standIn.value, null, 'stand-in-only contract must not yield a matched value')
-  assert.equal(standIn.usedStandIn, true, 'must detect that only a non-equivalent stand-in exists')
-
   const kpis = resolveSettlementIntelligenceKpis(contract, detail)
-  assert.equal(
-    kpis.settlementValueMatched,
-    null,
-    'Acceptance: only total_confirmed_amount / health confirmed must NOT populate settlementValueMatched',
-  )
+  assert.equal(kpis.settlementValueMatched, 43_117.46)
+  assert.equal(kpis.settlementValueMatchedIsStandIn, true)
+  assert.equal(kpis.sources.settlementValueMatched, 'batches.total_confirmed_amount_minor')
   assert.equal(kpis.varianceAmount, null, 'must not fall back variance to batch/health total_variance_minor')
-  assert.equal(kpis.settlementValueMatchedIsStandIn, false)
-  assert.equal(kpis.sources.settlementValueMatched, 'batch_contract.confirmed_matched_value_minor')
 }
 
-// --- Authoritative field present ⇒ use it (ignore stand-ins) + expose source/as-of ---
+// --- Authoritative field present ⇒ use it (ignore stand-ins) ---
 {
   const contract = {
     confirmed_matched_value_minor: 42_000_000,
@@ -56,14 +60,18 @@ assert.equal(LIVE_KPI_UNAVAILABLE, 'Unavailable')
     original_settled_amount: 50_000_000,
     computed_at: '2026-08-11T10:00:00Z',
   } as unknown as BatchContractKpiResponse
-  const kpis = resolveSettlementIntelligenceKpis(contract, null)
+  const detail = {
+    batch: { total_confirmed_amount_minor: 43_117.46 },
+  } as unknown as BatchDetailResponse
+  const kpis = resolveSettlementIntelligenceKpis(contract, detail)
   assert.equal(kpis.settlementValueMatched, 42_000_000)
   assert.equal(kpis.varianceAmount, -100)
   assert.equal(kpis.observedSettlementValue, 50_000_000)
-  assert.equal(resolveAuthoritativeMatchedValue(contract).usedStandIn, false)
+  assert.equal(resolveAuthoritativeMatchedValue(contract, detail).usedStandIn, false)
   assert.equal(kpis.asOf, '2026-08-11T10:00:00Z')
   assert.equal(kpis.asOfField, 'computed_at')
   assert.equal(kpis.sources.varianceAmount, 'batch_contract.variance_amount')
+  assert.equal(kpis.sources.settlementValueMatched, 'batch_contract.confirmed_matched_value_minor')
 }
 
 // --- as-of falls back to batch_health.updated_at (timestamp only, not metric) ---
@@ -94,7 +102,7 @@ assert.equal(LIVE_KPI_UNAVAILABLE, 'Unavailable')
   assert.equal(kpis.observedSettlementValue, null, 'observed value must not invent from other fields')
 }
 
-// --- Source guard: resolver must not reintroduce total_confirmed_amount as matched-value fallback ---
+// --- Source guard: resolver must not use contract total_confirmed_amount as matched value ---
 {
   const srcPath = join(__dirname, 'resolveSettlementIntelligenceKpis.ts')
   const src = readFileSync(srcPath, 'utf8')
@@ -102,6 +110,7 @@ assert.equal(LIVE_KPI_UNAVAILABLE, 'Unavailable')
     fail('resolver reintroduced total_confirmed_amount as settlementValueMatched source')
   }
   assert.match(src, /confirmed_matched_value_minor/, 'authoritative field must remain in resolver')
+  assert.match(src, /total_confirmed_amount_minor/, 'batches confirmed fallback must remain')
   assert.match(src, /sources:/, 'CON-P1-22 source contract must remain')
   assert.doesNotMatch(
     src,

@@ -90,4 +90,20 @@ check('PARTIALLY_SETTLED → Partially Reconciled', () => {
   )
 })
 
+check('REQUIRES_REVIEW at 98% coverage uses green tone (not red alert)', () => {
+  const outcome = outcomeFromFinalityAndCoverage({
+    finalityStatus: 'REQUIRES_REVIEW',
+    totalIntendedMinor: 44_000,
+    totalConfirmedMinor: 43_117.46,
+    totalCount: 20,
+    successCount: 19,
+    unresolvedCount: 1,
+  })
+  assert.equal(outcome.label, 'Requires Review')
+  assert.ok(outcome.progressPct >= 90, `expected high coverage, got ${outcome.progressPct}`)
+  assert.match(outcome.toneText, /emerald/)
+  assert.match(outcome.barClass, /emerald/)
+  assert.doesNotMatch(outcome.toneText, /rose/)
+})
+
 console.log('All CON-P0-13 settlement outcome contract tests passed.')

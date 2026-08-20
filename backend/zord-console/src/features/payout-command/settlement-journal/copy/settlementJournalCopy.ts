@@ -11,7 +11,7 @@ export const settlementJournalCopy = {
     recordsReceived: 'Settlement records received',
     recordsReceivedSub: (count: string) => `${count} settlement records in this batch`,
     settlementValueMatched: 'Settlement value matched',
-    settlementValueMatchedSub: 'Bank-confirmed amount linked to payment instructions',
+    settlementValueMatchedSub: 'Bank-confirmed amount for this batch',
     settlementValueMatchedUnavailable: 'Matched value is not available for this batch',
     amountVariance: 'Amount variance',
     amountVarianceSub: 'Linked via client ref or payment instruction',

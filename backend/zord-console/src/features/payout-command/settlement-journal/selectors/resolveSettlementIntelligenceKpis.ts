@@ -2,9 +2,10 @@ import type { BatchContractKpiResponse, BatchDetailResponse } from '@/services/p
 
 /**
  * CON-P0-24 / CON-P1-22 — live settlement KPIs:
- * - One authoritative field per KPI (no non-equivalent stand-ins).
- * - Each KPI exposes source + as-of provenance.
- * - Missing authoritative field ⇒ null → UI shows Unavailable.
+ * - Prefer one authoritative field per KPI.
+ * - When batch_contract matched value is absent, use batches/batch_health
+ *   `total_confirmed_amount_minor` (same coverage field as the sidebar %).
+ * - Never invent from contract-only `total_confirmed_amount`.
  */
 
 function parseApiAmount(value: unknown): number | null {
@@ -39,6 +40,8 @@ export const LIVE_KPI_UNAVAILABLE = 'Unavailable'
 /** Authoritative field names for settlement intelligence KPIs (live surfaces). */
 export const SETTLEMENT_LIVE_KPI_FIELDS = {
   settlementValueMatched: 'confirmed_matched_value_minor',
+  /** Batches / batch_health confirmed amount when contract matched field is absent. */
+  settlementValueMatchedBatchFallback: 'total_confirmed_amount_minor',
   varianceAmount: 'variance_amount',
   unmatchedSettlementValue: 'unmatch_amount',
   matchConfidence: 'match_confidence',
@@ -51,8 +54,8 @@ export const SETTLEMENT_LIVE_KPI_FIELDS = {
 export const SETTLEMENT_LIVE_KPI_ENDPOINT = 'batch_contract' as const
 
 export type LiveKpiProvenance = {
-  /** Endpoint / projection that owns the field. */
-  endpoint: typeof SETTLEMENT_LIVE_KPI_ENDPOINT
+  /** Endpoint / operation that owns the field. */
+  endpoint: typeof SETTLEMENT_LIVE_KPI_ENDPOINT | 'batches' | 'batch_health'
   /** Authoritative field name (never a stand-in). */
   field: string
   /** ISO timestamp when known. */
@@ -71,8 +74,11 @@ export type ResolvedSettlementIntelligenceKpis = {
   clientReferenceCoverage: string | null
   /** Observed settlement hero value — authoritative field only. */
   observedSettlementValue: number | null
-  /** True when settlementValueMatched used only a non-authoritative stand-in (always false after CON-P0-24). */
-  settlementValueMatchedIsStandIn: false
+  /**
+   * True when matched KPI used batches/batch_health `total_confirmed_amount_minor`
+   * because `batch_contract.confirmed_matched_value_minor` was absent.
+   */
+  settlementValueMatchedIsStandIn: boolean
   /** Shared as-of for this resolution pass. */
   asOf: string | null
   asOfField: LiveKpiProvenance['asOfField']
@@ -108,8 +114,8 @@ function fieldPath(field: string): string {
 }
 
 /**
- * Authoritative reader for matched settlement value.
- * Only `confirmed_matched_value_minor` — never `total_confirmed_amount`.
+ * Authoritative reader for matched settlement value on batch_contract.
+ * Does not invent from contract `total_confirmed_amount` (different measure).
  */
 export function confirmedMatchedValueMinorFromBatchContract(
   batchContract: BatchContractKpiResponse | null | undefined,
@@ -118,28 +124,60 @@ export function confirmedMatchedValueMinorFromBatchContract(
 }
 
 /**
- * Reject non-equivalent stand-ins for matched value.
- * Returns null when only total_confirmed* (or other substitutes) are present.
+ * Prefer `batch_contract.confirmed_matched_value_minor`.
+ * If absent, use Intelligence batches/batch_health `total_confirmed_amount_minor`
+ * (same field the sidebar coverage % already uses from `/intelligence/batches/{id}`).
+ * Still reject inventing from contract-only `total_confirmed_amount`.
  */
-export function resolveAuthoritativeMatchedValue(batchContract: BatchContractKpiResponse | null | undefined): {
+export function resolveAuthoritativeMatchedValue(
+  batchContract: BatchContractKpiResponse | null | undefined,
+  batchDetail?: BatchDetailResponse | null,
+): {
   value: number | null
   usedStandIn: boolean
+  sourcePath: string
 } {
   const authoritative = parseApiAmount(batchContract?.confirmed_matched_value_minor)
   if (authoritative != null) {
-    return { value: authoritative, usedStandIn: false }
+    return {
+      value: authoritative,
+      usedStandIn: false,
+      sourcePath: fieldPath(SETTLEMENT_LIVE_KPI_FIELDS.settlementValueMatched),
+    }
   }
+
+  const fromBatch = parseApiAmount(batchDetail?.batch?.total_confirmed_amount_minor)
+  if (fromBatch != null) {
+    return {
+      value: fromBatch,
+      usedStandIn: true,
+      sourcePath: `batches.${SETTLEMENT_LIVE_KPI_FIELDS.settlementValueMatchedBatchFallback}`,
+    }
+  }
+
+  const fromHealth = parseApiAmount(batchDetail?.batch_health?.total_confirmed_amount_minor)
+  if (fromHealth != null) {
+    return {
+      value: fromHealth,
+      usedStandIn: true,
+      sourcePath: `batch_health.${SETTLEMENT_LIVE_KPI_FIELDS.settlementValueMatchedBatchFallback}`,
+    }
+  }
+
   const standInCandidates = [batchContract?.total_confirmed_amount]
   const hasStandInOnly = standInCandidates.some((v) => parseApiAmount(v) != null)
-  return { value: null, usedStandIn: hasStandInOnly }
+  return {
+    value: null,
+    usedStandIn: hasStandInOnly,
+    sourcePath: fieldPath(SETTLEMENT_LIVE_KPI_FIELDS.settlementValueMatched),
+  }
 }
 
 export function resolveSettlementIntelligenceKpis(
   batchContract: BatchContractKpiResponse | null,
   batchDetail: BatchDetailResponse | null,
 ): ResolvedSettlementIntelligenceKpis {
-  // batchDetail may supply as-of via batch_health.updated_at only — never metric stand-ins.
-  const matched = resolveAuthoritativeMatchedValue(batchContract)
+  const matched = resolveAuthoritativeMatchedValue(batchContract, batchDetail)
   const { asOf, asOfField } = resolveAsOf(batchContract, batchDetail)
 
   return {
@@ -151,11 +189,11 @@ export function resolveSettlementIntelligenceKpis(
     bankReferenceCoverage: batchContract?.bank_reference_coverage ?? null,
     clientReferenceCoverage: batchContract?.client_reference_coverage ?? null,
     observedSettlementValue: parseApiAmount(batchContract?.original_settled_amount),
-    settlementValueMatchedIsStandIn: false,
+    settlementValueMatchedIsStandIn: matched.usedStandIn && matched.value != null,
     asOf,
     asOfField,
     sources: {
-      settlementValueMatched: fieldPath(SETTLEMENT_LIVE_KPI_FIELDS.settlementValueMatched),
+      settlementValueMatched: matched.sourcePath,
       varianceAmount: fieldPath(SETTLEMENT_LIVE_KPI_FIELDS.varianceAmount),
       unmatchedSettlementValue: fieldPath(SETTLEMENT_LIVE_KPI_FIELDS.unmatchedSettlementValue),
       matchConfidence: fieldPath(SETTLEMENT_LIVE_KPI_FIELDS.matchConfidence),
