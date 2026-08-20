@@ -1,8 +1,8 @@
 /** Customer-facing copy for Evidence & Dispute Resolution. */
 
 export const PROOF_STATUS = {
-  proofReady: 'Proof Ready',
-  partialProof: 'Partial Proof',
+  proofReady: 'Complete',
+  partialProof: 'Incomplete',
   missingIntent: 'Missing Intent',
   missingSettlement: 'Missing Settlement',
   missingMatchDecision: 'Missing Match Decision',
@@ -10,6 +10,10 @@ export const PROOF_STATUS = {
   missingReplayCheck: 'Missing Replay Check',
   needsReview: 'Needs Review',
   verified: 'Verified',
+  internallyConsistent: 'Internally Consistent',
+  signatureVerified: 'Signature Verified',
+  archiveVerified: 'Archive Verified',
+  verificationNotRun: 'Verification Not Run',
   exported: 'Exported',
   revoked: 'Revoked / Superseded',
 } as const
@@ -123,9 +127,16 @@ export const evidenceCopy = {
     timelineTitle: 'Operational proof timeline',
     timelineEmpty: 'No timeline events returned for this pack.',
     verifyTitle: 'Cryptographic verification',
-    verifyBusy: 'Verifying Merkle root…',
+    verifyBusy: 'Verifying independent layers…',
     verified: 'Verified',
     corrupted: 'Corrupted',
+    compromised: 'Compromised',
+    internallyConsistent: 'Internally consistent',
+    verificationNotRun: 'Verification not run',
+    layerDb: 'DB consistency (Merkle)',
+    layerSignature: 'Signature',
+    layerArchive: 'Archive / decryption',
+    layerReplay: 'Replay / source',
     loadingGraph: 'Loading proof graph…',
     packNotFound: 'This proof graph is not available yet. Try again or open another payment from the list.',
     batchEmpty: 'No evidence packs for this batch yet. Select a batch with ingested payments.',
@@ -160,10 +171,11 @@ export const evidenceCopy = {
   verify: {
     button: 'Verify Proof Integrity',
     verified:
-      'Proof verified. No evidence item has changed since this pack was generated.',
+      'Every required Service 6 layer passed: DB consistency, signature, and archive.',
     failed:
-      'Proof verification failed. One or more evidence items do not match the original proof root.',
-    partial: 'Proof root present; full cryptographic verification requires Service 6 verify API.',
+      'Service 6 verification failed. See independent layer statuses — this is not a blanket Verified result.',
+    partial: 'Local hash presence is a partial check only. It is not cryptographic verification.',
+    unknown: 'Verification has not been run by Service 6.',
   },
   empty: {
     noPack: 'No evidence pack available yet.',
@@ -199,14 +211,11 @@ export type DisputeReason = (typeof evidenceCopy.dispute.reasons)[number]
 
 export function mapProofTierLabel(tier: string | undefined): string {
   const t = (tier || '').toUpperCase()
-  if (t === 'STRONG') return 'Certified'
-  if (t === 'FRAGILE') return 'Needs Review'
-  if (t === 'EXCELLENT' || t === 'SEALED') return 'Certified'
-  if (t === 'GOOD') return 'Proof Ready'
-  if (t === 'FAIR') return 'Partial'
-  if (t === 'POOR') return 'Needs Review'
+  if (t === 'STRONG' || t === 'EXCELLENT' || t === 'SEALED' || t === 'GOOD') return 'Complete'
+  if (t === 'FRAGILE' || t === 'POOR') return 'Needs Review'
+  if (t === 'FAIR') return 'Incomplete'
   if (t === 'DRAFT') return 'Draft'
-  return 'Partial'
+  return 'Incomplete'
 }
 
 export function humanizePackMode(mode: string): string {

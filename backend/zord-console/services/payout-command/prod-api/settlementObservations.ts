@@ -289,7 +289,8 @@ export type SettlementObservationTableRow = {
   settlementBatchId: string
   ingestRunId: string
   clientBatchId: string
-  sourceRowRef: string
+  sourceRowRef: string | null
+  displayRowIndex: number | null
   sourceFileRef: string
   clientRef: string
   providerRef: string
@@ -363,20 +364,12 @@ function displayOrDash(value: string | null | undefined): string {
   return v ? v : '—'
 }
 
-/** Use 1-based row index only when API source_row_ref is missing or invalid. */
-function resolveSourceRowRef(
-  raw: string | null | undefined,
-  rowIndex: number | undefined,
-): string {
+/** Authoritative source_row_ref only. Never substitute array index. */
+export function resolveSourceRowRef(raw: string | null | undefined): string | null {
   const v = raw?.trim()
-  if (!v) {
-    return rowIndex != null ? String(rowIndex + 1) : '—'
-  }
+  if (!v) return null
   const signed = /^-?\d+$/.test(v) ? Number.parseInt(v, 10) : Number.NaN
-  if (Number.isFinite(signed)) {
-    if (signed <= 0 && rowIndex != null) return String(rowIndex + 1)
-    return String(signed)
-  }
+  if (Number.isFinite(signed) && signed <= 0) return null
   return v
 }
 
@@ -389,7 +382,8 @@ export function mapObservationToTableRow(
   const timeZone = opts?.timeZone || DEFAULT_TENANT_BUSINESS_TIMEZONE
   const statusRaw = apiTrimmedString(full.settlement_status ?? slim.settlement_status)
   const settlementBatchId = displayOrDash(full.settlement_batch_id ?? slim.settlement_batch_id)
-  const sourceRowRef = resolveSourceRowRef(full.source_row_ref ?? slim.source_row_ref, opts?.rowIndex)
+  const sourceRowRef = resolveSourceRowRef(full.source_row_ref ?? slim.source_row_ref)
+  const displayRowIndex = opts?.rowIndex != null ? opts.rowIndex + 1 : null
   const observationAtIso = apiTrimmedString(
     full.observation_timestamp ?? slim.observation_timestamp ?? full.created_at ?? slim.created_at,
   )
@@ -397,7 +391,7 @@ export function mapObservationToTableRow(
   const observationId =
     full.settlement_observation_id?.trim() ||
     slim.settlement_observation_id?.trim() ||
-    `${settlementBatchId}:${sourceRowRef}:${opts?.rowIndex ?? 0}:${createdAt}`
+    `${settlementBatchId}:${sourceRowRef ?? 'noref'}:${displayRowIndex ?? 0}:${createdAt}`
 
   return {
     observationId,
@@ -405,6 +399,7 @@ export function mapObservationToTableRow(
     ingestRunId: displayOrDash(full.ingest_run_id),
     clientBatchId: displayOrDash(full.client_batch_id ?? opts?.clientBatchId),
     sourceRowRef,
+    displayRowIndex,
     sourceFileRef: displayOrDash(full.source_file_ref),
     clientRef: displayOrDash(full.client_reference_candidate ?? slim.client_reference_candidate),
     providerRef: displayOrDash(full.provider_reference ?? slim.provider_reference),
@@ -510,7 +505,8 @@ export function observationSearchHaystack(row: SettlementObservationTableRow): s
     row.settlementBatchId,
     row.ingestRunId,
     row.clientBatchId,
-    row.sourceRowRef,
+    row.sourceRowRef ?? '',
+    row.displayRowIndex != null ? String(row.displayRowIndex) : '',
     row.sourceFileRef,
     row.clientRef,
     row.providerRef,

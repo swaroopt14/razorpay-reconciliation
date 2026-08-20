@@ -61,6 +61,8 @@ export type TimelineEventVm = {
   time: string
   label: string
   detail?: string
+  provenance?: 'AUTHORITATIVE' | 'DERIVED'
+  sourceField?: string
 }
 
 export type MissingProofItem = {
