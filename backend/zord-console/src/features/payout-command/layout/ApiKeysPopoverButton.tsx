@@ -8,6 +8,8 @@ import {
   clearLegacyTenantApiSecrets,
   formatSecretKeyPrefix,
 } from '@/services/auth/readStoredTenantApiKey'
+import { workspaceApiKeysPath } from '@/services/payout-command/workspaceApiKeysPath'
+import { useEnvironment } from '@/services/auth/EnvironmentProvider'
 import { Glyph } from '../shared'
 
 type WorkspaceKeysPayload = {
@@ -19,6 +21,7 @@ type WorkspaceKeysPayload = {
 }
 
 export function ApiKeysPopoverButton({ label = 'API keys' }: { label?: string }) {
+  const { mode } = useEnvironment()
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
   const [keys, setKeys] = useState<WorkspaceKeysPayload | null>(null)
@@ -29,7 +32,7 @@ export function ApiKeysPopoverButton({ label = 'API keys' }: { label?: string })
     setLoading(true)
     setLoadError(null)
     try {
-      const res = await fetch('/api/sandbox/workspace-api-keys', { credentials: 'include', cache: 'no-store' })
+      const res = await fetch(workspaceApiKeysPath(mode), { credentials: 'include', cache: 'no-store' })
       if (!res.ok) {
         const j = (await res.json().catch(() => null)) as { message?: string } | null
         setLoadError(j?.message || `Could not load keys (${res.status})`)
@@ -45,7 +48,7 @@ export function ApiKeysPopoverButton({ label = 'API keys' }: { label?: string })
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [mode])
 
   useEffect(() => {
     if (!open) return

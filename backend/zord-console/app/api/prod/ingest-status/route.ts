@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
   const intelBase = BACKEND_SERVICES.INTELLIGENCE.BASE_URL
   const evidenceBase = BACKEND_SERVICES.EVIDENCE.BASE_URL
 
-  const [intentProbe, settlement, evidencePacks, defensibility, patterns] = await Promise.all([
+  const [intentProbe, settlement, evidencePacks, patterns] = await Promise.all([
     probeJson<{ pagination?: { total?: number }; items?: unknown[] }>(
       `${intentBase}/v1/intents?page=1&page_size=1&tenant_id=${encodeURIComponent(tenantId)}`,
       tenantId,
@@ -54,11 +54,6 @@ export async function GET(request: NextRequest) {
     ),
     probeJson<{ packs?: Array<{ verification_status?: string }> }>(
       `${evidenceBase}${BACKEND_SERVICES.EVIDENCE.ENDPOINTS.PACKS}?tenant_id=${encodeURIComponent(tenantId)}&limit=50`,
-      tenantId,
-      accessToken,
-    ),
-    probeJson<{ data_available?: boolean; bank_confirmed_rate?: number }>(
-      `${intelBase}${BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.DEFENSIBILITY}?tenant_id=${encodeURIComponent(tenantId)}`,
       tenantId,
       accessToken,
     ),
@@ -77,8 +72,6 @@ export async function GET(request: NextRequest) {
   const packs = evidencePacks?.packs ?? []
   const packCount = packs.length
   const evidenceReadiness = evidenceReadinessFromPacks(packs)
-  const bankHint =
-    defensibility?.data_available === true && (defensibility.bank_confirmed_rate ?? 0) > 0
 
   const sources: IngestSource[] = [
     {
@@ -96,8 +89,10 @@ export async function GET(request: NextRequest) {
     {
       id: 'bank_statement',
       label: 'Bank statement',
-      status: bankHint ? 'partial' : 'missing',
-      detail: bankHint ? 'Inferred from defensibility' : 'Awaiting bank-confirmed signal',
+      // CON production scope: do not treat intelligence defensibility as bank-statement receipt.
+      status: 'missing',
+      detail:
+        'Not connected — bank-statement status comes from the artifact/source registry, not intelligence confirmation coverage.',
     },
     {
       id: 'evidence',

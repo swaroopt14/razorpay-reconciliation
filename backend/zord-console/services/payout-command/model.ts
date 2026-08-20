@@ -47,6 +47,44 @@ export type DockId =
 /** Dock IDs in sandbox top nav: Today → Intent → Settlement → Billing. */
 export const SANDBOX_DOCK_IDS: DockId[] = ['home', 'grid', 'settlement', 'billing']
 
+/**
+ * Sandbox URL allow-list. Borrower/post-disbursal mocks stay off the visible nav
+ * but can still be opened with an explicit `?dock=` (CON-P0-07).
+ */
+export const SANDBOX_ALLOWED_DOCK_IDS: DockId[] = [
+  ...SANDBOX_DOCK_IDS,
+  'verification',
+  'monitoring',
+]
+
+/**
+ * Live V1 docks backed by Services 2/5/6/7 (CON-P2-01).
+ * Order: Home → Intent Journal → Settlement → Match Review → Payment Gaps → Evidence → Ask → Support.
+ */
+export const LIVE_CONSOLE_DOCK_IDS: DockId[] = [
+  'home',
+  'grid',
+  'settlement',
+  'ambiguity',
+  'leakage',
+  'proof',
+  'workspace',
+  'support',
+]
+
+/** Removed from live V1: lending mocks, billing, connectors, sandbox. */
+export const LIVE_BLOCKED_DOCK_IDS: readonly DockId[] = [
+  'verification',
+  'monitoring',
+  'billing',
+  'connectors',
+  'sandbox',
+]
+
+export function isLiveBlockedDock(id: string): boolean {
+  return (LIVE_BLOCKED_DOCK_IDS as readonly string[]).includes(id)
+}
+
 /** Temporarily hide Connectors from nav and routing; connector code remains in the repo. */
 export const CONNECTORS_DOCK_TEMPORARILY_HIDDEN = true
 
@@ -169,7 +207,7 @@ export type HomeOverviewSnapshot = {
   axisLabels: readonly string[]
   quarterName: 'Q1' | 'Q2' | 'Q3' | 'Q4'
   quarterMonths: readonly string[]
-  selectedYear: 2026 | 2027 | 2028
+  selectedYear: number
   holidayLabels: readonly string[]
   salesBaseValue: number
   expensesBaseValue: number
@@ -352,18 +390,8 @@ function dockPageRow(id: DockId): PayoutConsoleDockPage {
 /** Sandbox mode — dock order matches `SANDBOX_DOCK_IDS`. */
 export const SANDBOX_CONSOLE_DOCK_PAGES: readonly PayoutConsoleDockPage[] = SANDBOX_DOCK_IDS.map(dockPageRow)
 
-/**
- * Live (active) account — dock shows every surface except Sandbox and Billing.
- * Order follows `dockItems`.
- */
-export const LIVE_CONSOLE_DOCK_PAGES: readonly PayoutConsoleDockPage[] = dockItems
-  .filter(
-    (d) =>
-      d.id !== 'sandbox' &&
-      d.id !== 'billing' &&
-      !(CONNECTORS_DOCK_TEMPORARILY_HIDDEN && d.id === 'connectors'),
-  )
-  .map((d) => ({ dockId: d.id, dockLabel: d.navLabel, pageName: d.title }))
+/** Live V1 — dock order matches `LIVE_CONSOLE_DOCK_IDS`. */
+export const LIVE_CONSOLE_DOCK_PAGES: readonly PayoutConsoleDockPage[] = LIVE_CONSOLE_DOCK_IDS.map(dockPageRow)
 
 /** Routes outside the main console shell (header links, deep links). */
 export const PAYOUT_STANDALONE_PAGE_NAMES = [
@@ -503,11 +531,11 @@ export function resolveHomeTimeframeFromPrompt(prompt: string, currentTimeframe:
   return currentTimeframe
 }
 
-export function resolveHomeYearFromPrompt(prompt: string, currentYear: 2026 | 2027 | 2028) {
+export function resolveHomeYearFromPrompt(prompt: string, currentYear: number) {
   const matched = prompt.match(/20(26|27|28)/)
   if (!matched) return currentYear
-  const parsed = Number(matched[0]) as 2026 | 2027 | 2028
-  return HOME_YEAR_OPTIONS.includes(parsed) ? parsed : currentYear
+  const parsed = Number(matched[0])
+  return (HOME_YEAR_OPTIONS as readonly number[]).includes(parsed) ? parsed : currentYear
 }
 
 export function resolveHomeQuarterFromPrompt(prompt: string, currentQuarterIndex: number) {
@@ -519,7 +547,7 @@ export function resolveHomeQuarterFromPrompt(prompt: string, currentQuarterIndex
   return currentQuarterIndex
 }
 
-function buildHomeTimeframeLayout(timeframe: HomeTimeframe, quarterIndex: number, selectedYear: 2026 | 2027 | 2028) {
+function buildHomeTimeframeLayout(timeframe: HomeTimeframe, quarterIndex: number, selectedYear: number) {
   if (timeframe === 'Today') {
     return {
       totalBars: 48,
@@ -579,7 +607,7 @@ export function buildSimulatedHomeOverviewSnapshot(
   scenario: HomeSimulation,
   timeframe: HomeTimeframe,
   tick: number,
-  selectedYear: 2026 | 2027 | 2028,
+  selectedYear: number,
   quarterIndex: number,
   filterMultiplier = 1,
 ): HomeOverviewSnapshot {
@@ -687,7 +715,7 @@ export function buildSimulatedHomeOverviewSnapshot(
 export function buildStaticHomeOverviewSnapshot(
   scenario: HomeSimulation,
   timeframe: HomeTimeframe,
-  selectedYear: 2026 | 2027 | 2028,
+  selectedYear: number,
   quarterIndex: number,
   _filterMultiplier = 1,
 ): HomeOverviewSnapshot {

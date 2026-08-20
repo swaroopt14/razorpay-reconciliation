@@ -22,10 +22,7 @@ export async function GET(request: NextRequest) {
         rejected_24h: 0,
         idempotency_hits_24h: 0,
         p95_ingest_latency_ms: 0,
-        slo: {
-          latency_ms: 60,
-          success_rate_pct: 99.9,
-        },
+        slo: null,
       },
       health: [],
       errors_last_24h: {},

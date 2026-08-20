@@ -82,8 +82,9 @@ type IntentMatch = 'Matched' | 'Likely Matched' | 'Awaiting' | 'Mismatch' | 'Not
 
 type IntentRow = {
   batchId: string
+  rowKey: string
   zordId: string
-  requestId: string
+  requestId: string | null
   sourceRowNum?: number | null
   reference: string
   clientBatchRef?: string
@@ -299,7 +300,9 @@ function KpiGlyph({ variant }: { variant: KpiVariant }) {
 function intentHaystack(row: IntentRow) {
   return [
     row.batchId,
-    row.requestId,
+    row.rowKey,
+    row.requestId ?? '',
+    row.zordId,
     row.reference,
     row.tenantId,
     row.provider,
@@ -448,21 +451,21 @@ export function IntentJournalSurface({ initialBatchId }: { initialBatchId?: stri
   }, [selectedBatchId])
 
   useEffect(() => {
-    if (!journalUsesBackendFeed || !tenantReady || !expandedId) {
+    if (!journalUsesBackendFeed || !tenantReady || !selectedIntentId) {
       setLiveIntentDrawerApi(null)
       return
     }
     let cancelled = false
-    const targetId = expandedId
+    const targetId = selectedIntentId
     setLiveIntentDrawerApi(null)
     void getProdIntentDetail(targetId).then((api) => {
-      if (cancelled || expandedIdRef.current !== targetId) return
+      if (cancelled) return
       setLiveIntentDrawerApi(api)
     })
     return () => {
       cancelled = true
     }
-  }, [journalUsesBackendFeed, tenantReady, expandedId])
+  }, [journalUsesBackendFeed, tenantReady, selectedIntentId])
 
   // Dispatch modal — smart routing on use-case + connector history
   const [dispatchModalOpen, setDispatchModalOpen] = useState(false)

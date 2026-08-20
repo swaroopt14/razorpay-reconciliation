@@ -8,8 +8,8 @@ import { useEnvironment } from '@/services/auth/EnvironmentProvider'
 import {
   dockItems,
   SANDBOX_DOCK_DISPLAY_LABELS,
-  CONNECTORS_DOCK_TEMPORARILY_HIDDEN,
   SANDBOX_DOCK_IDS,
+  LIVE_CONSOLE_DOCK_IDS,
   type DockId,
 } from '@/services/payout-command/model'
 import { AlertsDropdownPanel } from '../command-center/AlertsDropdownPanel'
@@ -48,18 +48,7 @@ export function DockNav({
   const searchContainerRef = useRef<HTMLDivElement>(null)
 
   const visibleDockItems = useMemo(() => {
-    const ids =
-      dockIds ??
-      (mode === 'sandbox'
-        ? SANDBOX_DOCK_IDS
-        : dockItems
-            .filter(
-              (d) =>
-                d.id !== 'sandbox' &&
-                d.id !== 'billing' &&
-                !(CONNECTORS_DOCK_TEMPORARILY_HIDDEN && d.id === 'connectors'),
-            )
-            .map((d) => d.id))
+    const ids = dockIds ?? (mode === 'sandbox' ? SANDBOX_DOCK_IDS : LIVE_CONSOLE_DOCK_IDS)
 
     return ids
       .map((id) => dockItems.find((d) => d.id === id))

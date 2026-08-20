@@ -1,7 +1,7 @@
 import dynamic from 'next/dynamic'
 import type { Metadata } from 'next'
 import { resolveInitialDock } from '@/app/payout-command-view/today/_lib/resolveInitialDock'
-import { SANDBOX_DOCK_IDS } from '@/services/payout-command/model'
+import { SANDBOX_ALLOWED_DOCK_IDS } from '@/services/payout-command/model'
 
 export const metadata: Metadata = {
   title: 'Sandbox · Zord',
@@ -50,7 +50,7 @@ export default function SandboxPage({
   return (
     <PayoutCommandViewClient
       forceMode="sandbox"
-      initialDock={resolveInitialDock(searchParams.dock, SANDBOX_DOCK_IDS)}
+      initialDock={resolveInitialDock(searchParams.dock, SANDBOX_ALLOWED_DOCK_IDS)}
       scope={{
         batchId: readQueryParam(searchParams.batch_id),
         clientBatchId: readQueryParam(searchParams.client_batch_id),

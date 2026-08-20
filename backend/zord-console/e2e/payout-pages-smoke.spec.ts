@@ -11,20 +11,19 @@ const PACK_BATCH = 'pack-batch-001'
 const PACK_INTENT_A = 'pack-intent-a'
 const PACK_INTENT_B = 'pack-intent-b'
 
-/** Live payout console docks (excludes sandbox-only). */
+/** Live payout console docks (CON-P2-01). Lending mocks, billing, and connectors are sandbox-only / hidden. */
 const DOCK_CASES: { dock: string; title: string }[] = [
   { dock: 'home', title: 'Payment Command Center' },
   { dock: 'workspace', title: 'Payment Operations View' },
   { dock: 'leakage', title: 'Payment Gaps & Value at Risk' },
   { dock: 'ambiguity', title: 'Match Review' },
-  { dock: 'verification', title: 'Borrower Verification' },
-  { dock: 'monitoring', title: 'Post-Disbursal Monitoring' },
   { dock: 'grid', title: 'Intent Journal' },
   { dock: 'settlement', title: 'Settlement Journal' },
-  { dock: 'connectors', title: 'Connector Performance & Leakage' },
   { dock: 'proof', title: 'Evidence & Dispute Resolution' },
-  { dock: 'billing', title: 'Billing' },
+  { dock: 'support', title: 'Support requests' },
 ]
+
+const BLOCKED_LIVE_DOCKS = ['verification', 'monitoring', 'billing', 'connectors'] as const
 
 const STANDALONE_ROUTES = [
   '/payout-command-view/batch-command-center',
@@ -1153,6 +1152,28 @@ test.describe('payout console pages smoke (empty prod → preview fallbacks)', (
     })
   }
 
+  test('blocked live docks redirect to Payment Command Center', async ({ page }) => {
+    for (const dock of BLOCKED_LIVE_DOCKS) {
+      await page.goto(`/payout-command-view/today?dock=${dock}`)
+      await expect(page.getByRole('heading', { name: 'Payment Command Center', level: 1 }).first()).toBeVisible({
+        timeout: 25_000,
+      })
+      await expect(page.getByRole('heading', { name: 'Borrower Verification', level: 1 })).toHaveCount(0)
+      await expect(page.getByRole('heading', { name: 'Post-Disbursal Monitoring', level: 1 })).toHaveCount(0)
+      await expect(page.getByRole('heading', { name: 'Billing', level: 1 })).toHaveCount(0)
+      await expect(page.getByRole('heading', { name: 'Connector Performance & Leakage', level: 1 })).toHaveCount(0)
+    }
+  })
+
+  test('live create-payment is not available and has no WALLET/CARD sample form', async ({ page }) => {
+    await page.goto('/payout-command-view/create-payment')
+    await expect(page.getByRole('heading', { name: 'Direct payment creation is not available', level: 1 })).toBeVisible({
+      timeout: 15_000,
+    })
+    await expect(page.getByText('WALLET')).toHaveCount(0)
+    await expect(page.getByText('ACC55knkn5000')).toHaveCount(0)
+  })
+
   test('navy KPI heroes render all expected bucket counts', async ({ page }) => {
     await page.goto('/payout-command-view/today?dock=grid')
     await expect(page.getByTestId('intent-kpi-hero')).toBeVisible({ timeout: 20_000 })
@@ -1176,8 +1197,8 @@ test.describe('payout console pages smoke (empty prod → preview fallbacks)', (
 
   test('home payment health cards render from intelligence APIs', async ({ page }) => {
     await page.goto('/payout-command-view/today?dock=home')
-    await expect(page.getByText('Settlement Value Observed')).toBeVisible({ timeout: 20_000 })
-    await expect(page.getByText('Unmatched Intent Value')).toBeVisible()
+    await expect(page.getByText('Observed Outcome Value')).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByText('Unresolved Intended Value')).toBeVisible()
     await expect(page.getByText('Match Confidence')).toBeVisible()
     await expect(page.getByText('Proof Readiness')).toBeVisible()
     await expect(page.getByText('75%')).toBeVisible({ timeout: 20_000 })
@@ -1231,56 +1252,13 @@ test.describe('payout console pages smoke (empty prod → preview fallbacks)', (
     await expect(page.getByText('Preview', { exact: true })).toHaveCount(0)
   })
 
-  test('connectors renders API-driven routing sections', async ({ page }) => {
-    test.setTimeout(45_000)
-    const captures: ProdCapture[] = []
-    page.on('request', (req) => {
-      if (req.method() !== 'GET') return
-      const cap = captureProdGet(req.url())
-      if (cap) captures.push(cap)
-    })
-
+  test('blocked connectors deep-link does not render connector intelligence', async ({ page }) => {
     await page.goto('/payout-command-view/today?dock=connectors')
-    await expect(page.getByRole('heading', { name: 'Connector Performance & Leakage', level: 1 })).toBeVisible({
+    await expect(page.getByRole('heading', { name: 'Payment Command Center', level: 1 }).first()).toBeVisible({
       timeout: 25_000,
     })
-    await expect(page.getByTestId('routing-kpi-bar')).toBeVisible({ timeout: 25_000 })
-    await expect(page.getByTestId('leakage-exposure-chart')).toBeVisible({ timeout: 15_000 })
-    await expect(page.getByTestId('leakage-composition-chart')).toBeVisible({ timeout: 15_000 })
-    await expect(page.getByTestId('connector-grid')).toContainText('Cashfree', { timeout: 15_000 })
-    await expect(page.getByTestId('connector-grid')).toContainText('Strengthen provider contract')
-    await expect(page.getByTestId('recommended-routes')).toHaveCount(0)
-    await expect(page.getByText('Razorpay')).toHaveCount(0)
-    await expect(page.getByText('ICICI Bank')).toHaveCount(0)
-    expect(captures.some((c) => c.pathname.endsWith('/api/prod/intelligence/leakage'))).toBe(true)
-    expect(captures.some((c) => c.pathname.endsWith('/api/prod/intelligence/ambiguity/heatmap'))).toBe(true)
-    expect(captures.some((c) => c.pathname.endsWith('/api/prod/intelligence/pattern'))).toBe(true)
-    expect(captures.some((c) => c.pathname.endsWith('/api/prod/intelligence/pattern/history'))).toBe(true)
-    expect(captures.some((c) => c.pathname.endsWith('/api/prod/intelligence/recommendations'))).toBe(true)
-  })
-
-  test('connectors shows empty state when intelligence APIs have no data', async ({ page }) => {
-    await page.route('**/api/prod/intelligence/**', async (route) => {
-      if (route.request().method() !== 'GET') {
-        await route.continue()
-        return
-      }
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ data_available: false, tenant_id: SESSION_TENANT }),
-      })
-    })
-
-    await page.goto('/payout-command-view/today?dock=connectors')
-    await expect(page.getByRole('heading', { name: 'Connector Performance & Leakage', level: 1 })).toBeVisible({
-      timeout: 25_000,
-    })
-    await expect(page.getByTestId('routing-empty-state')).toBeVisible({ timeout: 20_000 })
     await expect(page.getByTestId('routing-kpi-bar')).toHaveCount(0)
     await expect(page.getByTestId('connector-grid')).toHaveCount(0)
-    await expect(page.getByText('Razorpay')).toHaveCount(0)
-    await expect(page.getByTestId('preventable-leakage-impact')).toHaveCount(0)
   })
 
   test('evidence shows empty pack state when no live packs', async ({ page }) => {

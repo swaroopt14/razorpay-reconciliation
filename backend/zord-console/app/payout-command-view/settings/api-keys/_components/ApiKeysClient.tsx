@@ -11,6 +11,7 @@ import {
   clearLegacyTenantApiSecrets,
   formatSecretKeyPrefix,
 } from '@/services/auth/readStoredTenantApiKey'
+import { workspaceApiKeysPath } from '@/services/payout-command/workspaceApiKeysPath'
 
 type WorkspaceKeysPayload = {
   tenant_id: string
@@ -22,7 +23,7 @@ type WorkspaceKeysPayload = {
 
 type DisplayApiKey = {
   type: 'publishable' | 'secret'
-  mode: 'sandbox'
+  mode: 'live'
   value: string
   lastUsedAt: string | null
 }
@@ -42,14 +43,14 @@ type DisplayApiKey = {
  */
 export function ApiKeysClient() {
   return (
-    <EnvironmentProvider>
+    <EnvironmentProvider routeMode="live">
       <ApiKeysClientInner />
     </EnvironmentProvider>
   )
 }
 
 function ApiKeysClientInner() {
-  const { canSwitchToLive, liveActivationStatus } = useEnvironment()
+  const { mode, canSwitchToLive, liveActivationStatus } = useEnvironment()
   const [activateOpen, setActivateOpen] = useState(false)
   const tenantId = useSessionTenantId()
   const [keys, setKeys] = useState<WorkspaceKeysPayload | null>(null)
@@ -60,7 +61,7 @@ function ApiKeysClientInner() {
     setKeysLoading(true)
     setKeysError(null)
     try {
-      const res = await fetch('/api/sandbox/workspace-api-keys', { credentials: 'include', cache: 'no-store' })
+      const res = await fetch(workspaceApiKeysPath(mode), { credentials: 'include', cache: 'no-store' })
       if (!res.ok) {
         const j = (await res.json().catch(() => null)) as { message?: string } | null
         setKeysError(j?.message || `Could not load keys (${res.status})`)
@@ -76,7 +77,7 @@ function ApiKeysClientInner() {
     } finally {
       setKeysLoading(false)
     }
-  }, [])
+  }, [mode])
 
   useEffect(() => {
     clearLegacyTenantApiSecrets(tenantId || undefined)
@@ -86,15 +87,15 @@ function ApiKeysClientInner() {
   const publishableValue = keys?.publishable_key ?? keys?.workspace_code ?? ''
   const secretPrefixDisplay = formatSecretKeyPrefix(keys?.secret_key_prefix ?? keys?.workspace_code)
 
-  const sandboxPublishable: DisplayApiKey = {
+  const livePublishable: DisplayApiKey = {
     type: 'publishable',
-    mode: 'sandbox',
+    mode: 'live',
     value: publishableValue || '—',
     lastUsedAt: null,
   }
-  const sandboxSecret: DisplayApiKey = {
+  const liveSecret: DisplayApiKey = {
     type: 'secret',
-    mode: 'sandbox',
+    mode: 'live',
     value: secretPrefixDisplay,
     lastUsedAt: null,
   }
@@ -105,9 +106,8 @@ function ApiKeysClientInner() {
       <div className="mb-5">
         <h1 className="text-[24px] font-semibold tracking-[-0.02em] text-[#0f172a]">API keys</h1>
         <p className="mt-1 max-w-2xl text-[16px] leading-relaxed text-[#64748b]">
-          Use sandbox keys (<span className="font-mono">pk_test_…</span>) to test your integration. Live keys
-          (<span className="font-mono">pk_live_…</span>) are issued only after activation. Treat secret keys
-          like passwords — never commit them.
+          Use live workspace credentials from your signed-in session. The secret is never stored in the
+          browser — only the prefix is shown.
         </p>
         {keysError ? (
           <p className="mt-2 text-[14px] text-amber-800">{keysError}</p>
@@ -121,7 +121,7 @@ function ApiKeysClientInner() {
             {keysLoading ? (
               <KeyRowSkeleton />
             ) : (
-              <KeyRow apiKey={sandboxPublishable} copyDisabled={!publishableValue} />
+              <KeyRow apiKey={livePublishable} copyDisabled={!publishableValue} />
             )}
             <LiveLockedRow
               type="publishable"
@@ -141,7 +141,7 @@ function ApiKeysClientInner() {
               <KeyRowSkeleton />
             ) : (
               <KeyRow
-                apiKey={sandboxSecret}
+                apiKey={liveSecret}
                 masked
                 copyDisabled={secretPrefixDisplay === '—'}
                 rotateDisabled
@@ -282,7 +282,7 @@ function KeyRow({
     <div className="flex flex-wrap items-center gap-3 border-t border-[#E5E5E5] px-5 py-3 first:border-t-0">
       <span className="inline-flex items-center gap-1.5 rounded-full border border-[#F59E0B]/30 bg-[#FFF7ED] px-2 py-0.5 text-[14px] font-semibold uppercase tracking-[0.1em] text-[#9A3412]">
         <span className="h-1.5 w-1.5 rounded-full bg-[#F59E0B]" aria-hidden />
-        Sandbox
+        Live
       </span>
       <code className="flex-1 truncate font-mono text-[16px] text-[#0f172a]">{display}</code>
       <span className="text-[14px] text-[#94a3b8]">Last used {apiKey.lastUsedAt ?? 'never'}</span>

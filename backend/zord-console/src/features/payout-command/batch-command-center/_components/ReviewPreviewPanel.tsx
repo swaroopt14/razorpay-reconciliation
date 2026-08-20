@@ -41,7 +41,11 @@ export function mapIntentReviewRows(failures: JournalFailureRow[], intents: Jour
     isDlq: true,
   }))
   const intentItems: ReviewItemRow[] = intents
-    .filter((r) => r.status === 'Needs Review' || r.status === 'Pending' || r.status === 'In Progress')
+    .filter(
+      (r): r is JournalIntentRow & { requestId: string } =>
+        Boolean(r.requestId) &&
+        (r.status === 'Needs Review' || r.status === 'Pending' || r.status === 'In Progress'),
+    )
     .map((r) => ({
       id: r.requestId,
       paymentRef: r.reference || r.requestId,

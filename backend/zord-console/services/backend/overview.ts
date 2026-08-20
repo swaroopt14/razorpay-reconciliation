@@ -8,9 +8,9 @@ export interface OverviewKPIs {
   idempotency_hits_24h: number
   p95_ingest_latency_ms: number
   slo: {
-    latency_ms: number
-    success_rate_pct: number
-  }
+    latency_ms: number | null
+    success_rate_pct: number | null
+  } | null
 }
 
 export interface ComponentHealth {
@@ -55,13 +55,28 @@ type EdgeOverviewResponse = Partial<Omit<OverviewData, 'kpis'>> & {
   success_rate_pct?: number
 }
 
-function toSafeNumber(value: unknown, fallback = 0): number {
+function toOptionalNumber(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   if (typeof value === 'string') {
     const parsed = Number(value)
     if (Number.isFinite(parsed)) return parsed
   }
-  return fallback
+  return null
+}
+
+function toSafeNumber(value: unknown, fallback = 0): number {
+  const parsed = toOptionalNumber(value)
+  return parsed == null ? fallback : parsed
+}
+
+function readSlo(
+  payloadSlo: { latency_ms?: unknown; success_rate_pct?: unknown } | null | undefined,
+  payloadKpis: { latency_ms?: unknown; success_rate_pct?: unknown },
+): OverviewKPIs['slo'] {
+  const latency_ms = toOptionalNumber(payloadSlo?.latency_ms ?? payloadKpis.latency_ms)
+  const success_rate_pct = toOptionalNumber(payloadSlo?.success_rate_pct ?? payloadKpis.success_rate_pct)
+  if (latency_ms == null && success_rate_pct == null) return null
+  return { latency_ms, success_rate_pct }
 }
 
 /**
@@ -126,11 +141,10 @@ async function fetchEdgeOverview(): Promise<OverviewData | null> {
     if (!response.ok) return null
     const payload = (await response.json()) as EdgeOverviewResponse
     const payloadKpis = (payload.kpis ?? payload) as Partial<OverviewKPIs> & {
-      slo?: Partial<OverviewKPIs['slo']>
+      slo?: { latency_ms?: number; success_rate_pct?: number } | null
       latency_ms?: number
       success_rate_pct?: number
     }
-    const payloadSlo = (payloadKpis.slo ?? {}) as Partial<OverviewKPIs['slo']>
 
     return {
       environment: payload.environment === 'SANDBOX' ? 'SANDBOX' : 'PRODUCTION',
@@ -140,10 +154,7 @@ async function fetchEdgeOverview(): Promise<OverviewData | null> {
         rejected_24h: toSafeNumber(payloadKpis.rejected_24h, 0),
         idempotency_hits_24h: toSafeNumber(payloadKpis.idempotency_hits_24h, 0),
         p95_ingest_latency_ms: toSafeNumber(payloadKpis.p95_ingest_latency_ms, 0),
-        slo: {
-          latency_ms: toSafeNumber(payloadSlo.latency_ms ?? payloadKpis.latency_ms, 60),
-          success_rate_pct: toSafeNumber(payloadSlo.success_rate_pct ?? payloadKpis.success_rate_pct, 99.9),
-        },
+        slo: readSlo(payloadKpis.slo, payloadKpis),
       },
       health: Array.isArray(payload.health) ? payload.health : [],
       errors_last_24h: payload.errors_last_24h ?? {},
@@ -200,10 +211,7 @@ export async function fetchOverview(): Promise<OverviewData> {
       rejected_24h: 0,
       idempotency_hits_24h: 0,
       p95_ingest_latency_ms: 0,
-      slo: {
-        latency_ms: 60,
-        success_rate_pct: 99.9,
-      },
+      slo: null,
     },
     health: healthChecks,
     errors_last_24h: {},

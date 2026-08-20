@@ -49,10 +49,12 @@ export type JournalBatchRecord = {
 
 export type JournalIntentRow = {
   batchId: string
-  /** Intent-scoped display id for Zord ID column. */
+  /** React key — never shown as a durable Zord identifier. */
+  rowKey: string
+  /** Display label: authoritative intent id, or `Intent ID unavailable · Source row N`. */
   zordId: string
-  /** Intent id (or synthetic id) for drawer selection. */
-  requestId: string
+  /** Authoritative intent id. Null when the source row has no intent_id. */
+  requestId: string | null
   reference: string
   amount: number
   method: 'Bank Transfer' | 'LSM' | 'NACH' | '—'
@@ -108,11 +110,20 @@ function buildIntentInfoSummary(intent: PaymentIntentRecord): string {
   return parts.length > 0 ? parts.join(' · ') : '—'
 }
 
-function buildZordId(requestId: string, batchId: string): string {
-  const source = apiTrimmedString(requestId) || batchId
-  const normalized = source.replace(/[^a-zA-Z0-9]/g, '')
-  if (!normalized) return 'ZRD-UNKNOWN'
-  return `ZRD-${normalized.slice(-8).toUpperCase()}`
+export function formatIntentIdUnavailable(sourceRowNum: number | null, index: number): string {
+  const n = sourceRowNum != null && sourceRowNum > 0 ? sourceRowNum : index + 1
+  return `Intent ID unavailable · Source row ${n}`
+}
+
+export function journalIntentRowKey(
+  batchId: string,
+  index: number,
+  sourceRowNum: number | null,
+  intentId: string | null,
+): string {
+  if (intentId) return intentId
+  if (sourceRowNum != null && sourceRowNum > 0) return `${batchId}:src:${sourceRowNum}:${index}`
+  return `${batchId}:row:${index}`
 }
 
 function resolveDlqPaymentMethod(ctx: ReturnType<typeof parseDlqIntentContext>): JournalFailureRow['method'] {
@@ -270,15 +281,21 @@ export function mapPaymentIntentToIntentRow(
     .join(' · ') || '—'
 
   const confidenceScore = readIntentQualityScore(intent)
+  const intentId = apiTrimmedString(intent.intent_id) || null
+  const sourceRowNum = intent.source_row_num ?? null
+  const rowIndex = Number.parseInt(String(intent.source_row_num ?? 0), 10)
+  const indexForKey = Number.isFinite(rowIndex) && rowIndex > 0 ? rowIndex - 1 : 0
 
   return {
     batchId,
-    zordId: buildZordId(intent.intent_id, batchId),
-    requestId: intent.intent_id,
+    rowKey: journalIntentRowKey(batchId, indexForKey, sourceRowNum, intentId),
+    zordId: intentId ?? formatIntentIdUnavailable(sourceRowNum, indexForKey),
+    requestId: intentId,
     reference:
       apiTrimmedString(intent.client_payout_ref) ||
       (intent.source_row_num != null ? `SRC-${intent.source_row_num}` : apiTrimmedString(intent.envelope_id)) ||
-      intent.intent_id,
+      intentId ||
+      '—',
     amount: safe,
     method,
     rail: instrument || '—',
@@ -308,7 +325,15 @@ export function mapPaymentIntentToIntentRow(
         ? 'Decision unavailable'
         : status === 'Ready to Process'
           ? 'Ready for dispatch'
-          : buildIntentInfoSummary(intent),
+          : status === 'Pending'
+            ? 'Awaiting Bank Confirmation'
+            : status === 'Needs Review'
+              ? buildIntentInfoSummary(intent)
+              : status === 'Confirmed'
+                ? 'Confirmed'
+                : status === 'In Progress'
+                  ? 'In Progress'
+                  : buildIntentInfoSummary(intent),
     rawIntent: intent,
   }
 }
@@ -329,8 +354,8 @@ export function mapDlqToFailureRow(row: ApiDlqRow, opts?: { inManualReviewQueue?
     apiTrimmedString(row.dlq_status) === 'NEEDS_MANUAL_REVIEW'
   return {
     batchId,
-    zordId: buildZordId(row.dlq_id, batchId),
-    requestId: row.dlq_id,
+    zordId: apiTrimmedString(row.dlq_id) || '—',
+    requestId: apiTrimmedString(row.dlq_id) || '—',
     sourceRowNum: typeof row.source_row_num === 'number' ? row.source_row_num : null,
     reference: row.dlq_id,
     amount: ctx.amount,
