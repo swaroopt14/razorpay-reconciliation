@@ -8,8 +8,10 @@ import { LIVE_JOURNAL_POLL_MS } from '../journalConstants'
 import type { JournalBatchRecord } from '@/services/payout-command/prod-api/mapIntentEngineBatch'
 import { findJournalBatch, fetchJournalSidebarBatches } from '../journalBatchCache'
 import { useSessionTenant } from '@/services/auth/useSessionTenantId'
+import { getProdDlqManualReview } from '@/services/payout-command/prod-api/getProdDlqManualReview'
+import { dlqItemMatchesBatch } from '@/services/payout-command/prod-api/mapDlqContext'
 
-/** Batch KPIs + enriched sidebar record from payment-intents + dlq-items bundle. */
+/** Batch KPIs + enriched sidebar record from payment-intents + dlq-items + manual-review API. */
 export function useJournalBatchMetrics(batchId: string, enabled: boolean, pollMs = LIVE_JOURNAL_POLL_MS) {
   const { tenantId, tenantReady } = useSessionTenant()
   const [baseBatch, setBaseBatch] = useState<JournalBatchRecord | null>(null)
@@ -27,20 +29,29 @@ export function useJournalBatchMetrics(batchId: string, enabled: boolean, pollMs
     setLoading(true)
     setError(null)
     try {
-      const [list, bundle] = await Promise.all([
+      const [list, bundle, manualReviewRes] = await Promise.all([
         fetchJournalSidebarBatches(tenantId),
         fetchJournalBatchBundle(bid),
+        getProdDlqManualReview(),
       ])
       const found = findJournalBatch(list, bid)
       setBaseBatch(found)
 
       const paymentItems = bundle.paymentIntents?.items ?? []
       const dlqItems = bundle.dlqItems?.items ?? []
+
+      // CON-P1-23: authoritative review count from manual-review endpoint (batch-scoped items).
+      // Do not use tenant-wide pagination.total for a single batch.
+      const manualReviewApiTotal = (manualReviewRes?.items ?? []).filter((row) =>
+        dlqItemMatchesBatch(row, bid),
+      ).length
+
       setMetrics(
         deriveIntentBatchMetrics(paymentItems, dlqItems, {
           paymentIntentTotal: bundle.paymentIntents?.pagination?.total,
           batchTotalAmountMinor: found?.amountMinor,
           currency: found?.currency,
+          manualReviewApiTotal,
         }),
       )
     } catch {
