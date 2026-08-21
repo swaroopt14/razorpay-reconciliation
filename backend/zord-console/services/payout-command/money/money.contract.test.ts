@@ -8,8 +8,11 @@ import {
   aggregateMoney,
   formatMoney,
   formatMoneyBuckets,
+  formatMoneyFromMinor,
   groupAmountsByCurrency,
+  majorToMinor,
   matchesCurrencyAwareAmountRange,
+  minorToMajor,
   normalizeCurrency,
 } from './money'
 
@@ -95,4 +98,44 @@ check('amount filter is currency-aware (UNKNOWN excluded from ranges)', () => {
   assert.equal(matchesCurrencyAwareAmountRange(5000, 'INR', 'Under 10,000', 'INR'), true)
 })
 
-console.log('All CON-P0-23 money contract tests passed.')
+check('CON-P1-40 major→minor USD/INR and reverse', () => {
+  assert.equal(majorToMinor(12.34, 'USD'), 1234)
+  assert.equal(minorToMajor(1234, 'USD'), 12.34)
+  assert.equal(majorToMinor(12.34, 'INR'), 1234)
+  assert.equal(formatMoneyFromMinor(1234, 'USD'), formatMoney(12.34, 'USD'))
+})
+
+check('CON-P1-40 100x unit bug is rejected', () => {
+  const minor = majorToMinor(12.34, 'USD')
+  assert.notEqual(minor, 12.34)
+  assert.notEqual(minorToMajor(1234, 'USD'), 1234)
+  assert.equal(minorToMajor(123400, 'USD'), 1234)
+})
+
+check('CON-P1-40 zero-decimal JPY does not divide by 100', () => {
+  assert.equal(majorToMinor(1234, 'JPY'), 1234)
+  assert.equal(minorToMajor(1234, 'JPY'), 1234)
+  assert.notEqual(minorToMajor(1234, 'JPY'), 12.34)
+})
+
+check('CON-P1-40 three-decimal KWD', () => {
+  assert.equal(majorToMinor(1.234, 'KWD'), 1234)
+  assert.equal(minorToMajor(1234, 'KWD'), 1.234)
+})
+
+check('CON-P1-40 large values stay exact in minor units', () => {
+  assert.equal(majorToMinor(9999999.99, 'USD'), 999999999)
+  assert.equal(minorToMajor(999999999, 'USD'), 9999999.99)
+})
+
+check('CON-P1-40 decimals and mixed-currency still blocked', () => {
+  assert.equal(majorToMinor(0.01, 'USD'), 1)
+  const mixed = aggregateMoney([
+    { amount: 10, currency: 'USD' },
+    { amount: 10, currency: 'JPY' },
+  ])
+  assert.equal(mixed.ok, false)
+  if (!mixed.ok) assert.equal(mixed.reason, 'mixed_currency')
+})
+
+console.log('All CON-P0-23 / CON-P1-40 money contract tests passed.')

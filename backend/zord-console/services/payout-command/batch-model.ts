@@ -176,20 +176,6 @@ export function createRow(index: number): BatchRow {
   }
 }
 
-export function buildDefaultBatchRows(count = 180): BatchRow[] {
-  return Array.from({ length: count }, (_, index) => createRow(index))
-}
-
-export function buildSeedSummary(): BatchSummary {
-  return {
-    totalRows: 10_000,
-    processed: 7_000,
-    success: 6_500,
-    failed: 300,
-    pending: 200,
-  }
-}
-
 export type ZordPipelineIntake = {
   intakeStep: 'idle' | 'intent_uploading' | 'intent_ready' | 'settlement_uploading' | 'closed'
   intentFileName: string | null

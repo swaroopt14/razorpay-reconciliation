@@ -4,6 +4,8 @@
  * is the swap point.
  */
 
+import { DOCS_LINKS } from './docsLinks'
+
 export type SandboxScenarioId = 'salary_run' | 'vendor_payouts' | 'refund_batch' | 'failure_injection'
 
 export type SandboxScenario = {
@@ -117,8 +119,4 @@ export const SANDBOX_RECENT_REQUESTS: SandboxApiRequest[] = [
 
 // ─── Postman / docs links ──────────────────────────────────────────────────────
 
-export const SANDBOX_DOCS_LINKS = {
-  apiReference: 'https://docs.zord.com/api',
-  postmanCollection: 'https://www.postman.com/zord/zord-public/collection/sandbox',
-  webhookGuide: 'https://docs.zord.com/webhooks',
-}
+export const SANDBOX_DOCS_LINKS = DOCS_LINKS

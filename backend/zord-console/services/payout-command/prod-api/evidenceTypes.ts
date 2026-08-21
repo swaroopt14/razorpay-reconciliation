@@ -115,6 +115,7 @@ export type EvidencePackVerifyResponse = {
   stored_root: string
   computed_root?: string
   explanation: string
+  /** Service 6 layer statuses — optional for older payloads. */
   db_merkle_status?: string
   archive_status?: string
   archive_explanation?: string
@@ -123,6 +124,7 @@ export type EvidencePackVerifyResponse = {
   replay_status?: string
   replay_explanation?: string
   source_replay_status?: string
+  pack_status?: string
 }
 
 export type EvidencePackFull = {

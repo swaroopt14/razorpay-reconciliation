@@ -9,7 +9,7 @@ import {
   dockItems,
   SANDBOX_DOCK_DISPLAY_LABELS,
   SANDBOX_DOCK_IDS,
-  LIVE_CONSOLE_DOCK_IDS,
+  LIVE_NAV_DOCK_IDS,
   type DockId,
 } from '@/services/payout-command/model'
 import { AlertsDropdownPanel } from '../command-center/AlertsDropdownPanel'
@@ -48,7 +48,9 @@ export function DockNav({
   const searchContainerRef = useRef<HTMLDivElement>(null)
 
   const visibleDockItems = useMemo(() => {
-    const ids = dockIds ?? (mode === 'sandbox' ? SANDBOX_DOCK_IDS : LIVE_CONSOLE_DOCK_IDS)
+    const ids =
+      dockIds ??
+      (mode === 'sandbox' ? SANDBOX_DOCK_IDS : LIVE_NAV_DOCK_IDS)
 
     return ids
       .map((id) => dockItems.find((d) => d.id === id))

@@ -2,6 +2,7 @@ import {
   PAYOUT_BATCH_COMMAND_CENTER_LIVE_PATH,
   PAYOUT_BATCH_COMMAND_CENTER_SANDBOX_PATH,
 } from './batchCommandCenterHref'
+import liveNavContract from '../../product-contract/live-nav.json'
 
 export type GlyphName =
   | 'home'
@@ -57,28 +58,20 @@ export const SANDBOX_ALLOWED_DOCK_IDS: DockId[] = [
   'monitoring',
 ]
 
+/** Live V1 nav — mock/hidden/deferred docks are not live (CON-P1-38). */
+export const LIVE_NAV_DOCK_IDS = liveNavContract.liveNavDockIds as DockId[]
+export const SANDBOX_ONLY_DOCK_IDS = liveNavContract.sandboxOnlyDockIds as DockId[]
+export const DEFERRED_LIVE_DOCK_IDS = liveNavContract.deferredDockIds as DockId[]
+
 /**
- * Live V1 docks backed by Services 2/5/6/7 (CON-P2-01).
- * Order: Home → Intent Journal → Settlement → Match Review → Payment Gaps → Evidence → Ask → Support.
+ * Live V1 docks for shell / landing consumers (alias of product-contract live nav).
  */
-export const LIVE_CONSOLE_DOCK_IDS: DockId[] = [
-  'home',
-  'grid',
-  'settlement',
-  'ambiguity',
-  'leakage',
-  'proof',
-  'workspace',
-  'support',
-]
+export const LIVE_CONSOLE_DOCK_IDS: DockId[] = LIVE_NAV_DOCK_IDS
 
 /** Removed from live V1: lending mocks, billing, connectors, sandbox. */
 export const LIVE_BLOCKED_DOCK_IDS: readonly DockId[] = [
-  'verification',
-  'monitoring',
-  'billing',
-  'connectors',
-  'sandbox',
+  ...SANDBOX_ONLY_DOCK_IDS,
+  ...DEFERRED_LIVE_DOCK_IDS,
 ]
 
 export function isLiveBlockedDock(id: string): boolean {
@@ -390,8 +383,11 @@ function dockPageRow(id: DockId): PayoutConsoleDockPage {
 /** Sandbox mode — dock order matches `SANDBOX_DOCK_IDS`. */
 export const SANDBOX_CONSOLE_DOCK_PAGES: readonly PayoutConsoleDockPage[] = SANDBOX_DOCK_IDS.map(dockPageRow)
 
-/** Live V1 — dock order matches `LIVE_CONSOLE_DOCK_IDS`. */
-export const LIVE_CONSOLE_DOCK_PAGES: readonly PayoutConsoleDockPage[] = LIVE_CONSOLE_DOCK_IDS.map(dockPageRow)
+/**
+ * Live (active) account — dock shows V1 live surfaces only (CON-P1-38).
+ * Order follows `LIVE_NAV_DOCK_IDS` / product-contract/live-nav.json.
+ */
+export const LIVE_CONSOLE_DOCK_PAGES: readonly PayoutConsoleDockPage[] = LIVE_NAV_DOCK_IDS.map(dockPageRow)
 
 /** Routes outside the main console shell (header links, deep links). */
 export const PAYOUT_STANDALONE_PAGE_NAMES = [
@@ -1164,27 +1160,6 @@ export type IntentJournalFailureRow = {
   failureStage: 'Validation' | 'Dispatch' | 'Processing' | 'Settlement'
   lastUpdated: string
   action: 'Retry' | 'Fix Details' | 'Investigate' | 'Escalate' | 'Fix Mandate'
-}
-
-export function getIntentJournalBatches(): IntentJournalBatchRecord[] {
-  const seed: IntentJournalBatchRecord[] = [
-    { batchId: 'B-2026-021', type: 'Disbursement', source: 'Loan System', totalValue: 1_200_000, transactions: 1200, confirmedCount: 840, highConfidenceCount: 60, mismatchCount: 20, unresolvedCount: 20 },
-    { batchId: 'ZB-2041', type: 'Disbursement', source: 'Loan System', totalValue: 2_400_000, transactions: 847, confirmedCount: 760, highConfidenceCount: 64, mismatchCount: 12, unresolvedCount: 11 },
-    { batchId: 'B-2026-023', type: 'Settlement', source: 'Payment Hub', totalValue: 980_000, transactions: 870, confirmedCount: 580, highConfidenceCount: 90, mismatchCount: 110, unresolvedCount: 90 },
-    { batchId: 'B-2026-024', type: 'Disbursement', source: 'Loan System', totalValue: 740_000, transactions: 640, confirmedCount: 320, highConfidenceCount: 40, mismatchCount: 120, unresolvedCount: 90 },
-  ]
-  const generated: IntentJournalBatchRecord[] = Array.from({ length: 22 }, (_, i) => ({
-    batchId: `B-2026-${String(25 + i).padStart(3, '0')}`,
-    type: i % 3 === 0 ? 'Settlement' : 'Disbursement',
-    source: i % 2 === 0 ? 'Loan System' : 'Payment Hub',
-    totalValue: 600_000 + ((i * 175_000) % 2_200_000),
-    transactions: 500 + ((i * 241) % 5100),
-    confirmedCount: 330 + ((i * 200) % 3200),
-    highConfidenceCount: 45 + ((i * 31) % 300),
-    mismatchCount: 40 + ((i * 19) % 240),
-    unresolvedCount: 20 + ((i * 23) % 220),
-  }))
-  return [...seed, ...generated]
 }
 
 export function getIntentJournalIntents(): IntentJournalIntentRow[] {
