@@ -144,16 +144,20 @@ func (r *ProjectionRepo) computeLeakageSums(ctx context.Context, tenantID string
 }
 
 // checkLeakageRatios runs every registered leakageRatioMetrics entry against
-// one decoded row and returns a violation for each mismatch.
+// one decoded row and returns a violation for each mismatch. MetricKey
+// embeds window/currency/source_owner (INTEL-11) so a violation traces
+// directly to which window it was computed over and which upstream owns
+// the underlying inputs, without changing ConsistencyViolation's shape.
 func checkLeakageRatios(v models.LeakageValue, scopeLabel, scopeRef string) []ConsistencyViolation {
 	var out []ConsistencyViolation
 	for _, m := range leakageRatioMetrics {
 		if ok, expected, stored := checkRatioMetric(m, v); !ok {
 			out = append(out, ConsistencyViolation{
 				ProjectionFamily: "LEAKAGE",
-				MetricKey:        fmt.Sprintf("%s[%s:%s]", m.Name, scopeLabel, scopeRef),
-				ExpectedValue:    decimal.NewFromFloat(expected),
-				ActualValue:      decimal.NewFromFloat(stored),
+				MetricKey: fmt.Sprintf("%s[%s:%s window=%s currency=%s source=%s]",
+					m.Name, scopeLabel, scopeRef, windowForScopeLabel(scopeLabel), m.Currency, m.SourceOwner),
+				ExpectedValue: decimal.NewFromFloat(expected),
+				ActualValue:   decimal.NewFromFloat(stored),
 			})
 		}
 	}
@@ -273,9 +277,10 @@ func checkAmbiguityRatios(v models.AmbiguityValue, scopeLabel, scopeRef string) 
 		if ok, expected, stored := checkRatioMetric(m, v); !ok {
 			out = append(out, ConsistencyViolation{
 				ProjectionFamily: "AMBIGUITY",
-				MetricKey:        fmt.Sprintf("%s[%s:%s]", m.Name, scopeLabel, scopeRef),
-				ExpectedValue:    decimal.NewFromFloat(expected),
-				ActualValue:      decimal.NewFromFloat(stored),
+				MetricKey: fmt.Sprintf("%s[%s:%s window=%s currency=%s source=%s]",
+					m.Name, scopeLabel, scopeRef, windowForScopeLabel(scopeLabel), m.Currency, m.SourceOwner),
+				ExpectedValue: decimal.NewFromFloat(expected),
+				ActualValue:   decimal.NewFromFloat(stored),
 			})
 		}
 	}
@@ -400,9 +405,10 @@ func checkDefensibilityRatios(v models.DefensibilityValue, scopeLabel, scopeRef 
 		if ok, expected, stored := checkRatioMetric(m, v); !ok {
 			out = append(out, ConsistencyViolation{
 				ProjectionFamily: "DEFENSIBILITY",
-				MetricKey:        fmt.Sprintf("%s[%s:%s]", m.Name, scopeLabel, scopeRef),
-				ExpectedValue:    decimal.NewFromFloat(expected),
-				ActualValue:      decimal.NewFromFloat(stored),
+				MetricKey: fmt.Sprintf("%s[%s:%s window=%s currency=%s source=%s]",
+					m.Name, scopeLabel, scopeRef, windowForScopeLabel(scopeLabel), m.Currency, m.SourceOwner),
+				ExpectedValue: decimal.NewFromFloat(expected),
+				ActualValue:   decimal.NewFromFloat(stored),
 			})
 		}
 	}

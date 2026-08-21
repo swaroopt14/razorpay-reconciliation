@@ -34,6 +34,16 @@ package persistence
 // fragility in a codebase that uses none elsewhere. This registry's job is
 // specifically to formalize aggregation_kind as a concept and wire in the
 // fields that had NO check at all before.
+//
+// INTEL-11 (commercial metric mathematics and labels) extends this registry
+// with Currency and SourceOwner metadata per RatioMetric — see the struct
+// doc below. Window is deliberately NOT a static RatioMetric field: the
+// same formula (e.g. leakage_percentage) is checked against both a
+// WindowRolling24h tenant row and a WindowBatchLifetime batch row (see
+// checkLeakageRatios's scopeLabel parameter in consistency_check.go), so a
+// fixed per-metric window would misrepresent which rows it actually
+// applies to. Window is derived per-row from scopeLabel at check time via
+// windowForScopeLabel below, not registered statically.
 
 import "math"
 
@@ -84,6 +94,35 @@ type RatioMetric[T any] struct {
 	Numerator   func(v T) float64
 	Denominator func(v T) float64
 	Stored      func(v T) float64
+
+	// Currency is the ISO 4217 code the Numerator/Denominator amounts are
+	// denominated in, or "MULTI" for a metric whose current implementation
+	// still blends currencies without grouping (a known gap tracked
+	// separately — see batch_contract_repo.go's per-currency aggregation
+	// fix). Ratios/counts with no monetary unit (e.g. a rate over intent
+	// counts) use "N/A".
+	Currency string
+
+	// SourceOwner names the upstream producer of the raw inputs this metric
+	// is computed from, so a CFO/ops reader can trace a dashboard number
+	// back to the service that actually recorded the underlying events —
+	// e.g. "zord-outcome-engine via batch.summary.updated" for
+	// event-sourced counters, or "zord-intelligence (self-computed)" for
+	// values derived entirely from this service's own decisions.
+	SourceOwner string
+}
+
+// windowForScopeLabel maps a consistency-check scope label to the
+// projection WindowType it corresponds to (see projection_meta.go). TENANT
+// rows are bucketed into rolling daily windows; BATCH rows live in a single
+// lifetime-window row per batch. Used to attribute a window to a ratio
+// self-consistency check at the point it runs, since the window is a
+// property of the row being checked, not of the metric formula itself.
+func windowForScopeLabel(scopeLabel string) string {
+	if scopeLabel == "BATCH" {
+		return WindowBatchLifetime
+	}
+	return WindowRolling24h
 }
 
 // ratioTolerance absorbs JSON float round-trip noise and the incremental

@@ -775,13 +775,30 @@ func (r *BatchContractRepo) ListForLeakageExposure(
 	return result, rows.Err()
 }
 
-func (r *BatchContractRepo) SummarizeLeakageForWindow(
+// PerCurrencyLeakageWindowSummary is one currency's LeakageWindowSummary
+// within a tenant/window — see SummarizeLeakageForWindowByCurrency. INTEL-11:
+// the previous single-row SummarizeLeakageForWindow summed
+// intent_total_amount_minor etc. across every currency a tenant used with no
+// GROUP BY, silently adding e.g. INR and USD together.
+type PerCurrencyLeakageWindowSummary struct {
+	Currency string
+	Summary  LeakageWindowSummary
+}
+
+// SummarizeLeakageForWindowByCurrency is the currency-grouped replacement
+// for the removed SummarizeLeakageForWindow (which had no callers — dead
+// code summing across currencies). Currency falls back to 'INR' via the
+// same COALESCE(NULLIF(batch_currency,”),'INR') pattern used elsewhere in
+// this file (see resolveOrCreate's currency fallback) since batch_currency
+// is nullable with no DB default on batch_contracts.
+func (r *BatchContractRepo) SummarizeLeakageForWindowByCurrency(
 	ctx context.Context,
 	tenantID string,
 	windowStart, windowEnd time.Time,
-) (*LeakageWindowSummary, error) {
-	row := r.q(ctx).QueryRow(ctx, `
+) ([]PerCurrencyLeakageWindowSummary, error) {
+	rows, err := r.q(ctx).Query(ctx, `
 		SELECT
+			COALESCE(NULLIF(batch_currency,''),'INR') AS currency,
 			COALESCE(SUM(
 				CASE
 					WHEN intent_total_amount_minor > 0 THEN intent_total_amount_minor
@@ -797,73 +814,144 @@ func (r *BatchContractRepo) SummarizeLeakageForWindow(
 		WHERE tenant_id = $1
 		  AND COALESCE(first_intent_created_at, created_at) >= $2
 		  AND COALESCE(first_intent_created_at, created_at) < $3
+		GROUP BY COALESCE(NULLIF(batch_currency,''),'INR')
 	`, tenantID, windowStart, windowEnd)
+	if err != nil {
+		return nil, fmt.Errorf("batch_contract_repo.SummarizeLeakageForWindowByCurrency tenant=%s: %w", tenantID, err)
+	}
+	defer rows.Close()
 
-	var (
-		summary                   LeakageWindowSummary
-		totalText                 string
-		unmatchedText             string
-		underText                 string
-		orphanText                string
-		reversalText              string
-		observedSettledAmountText string
-		err                       error
-	)
-	if err = row.Scan(
-		&totalText,
-		&unmatchedText,
-		&underText,
-		&orphanText,
-		&reversalText,
-		&observedSettledAmountText,
-	); err != nil {
-		return nil, fmt.Errorf("batch_contract_repo.SummarizeLeakageForWindow tenant=%s: %w", tenantID, err)
+	var out []PerCurrencyLeakageWindowSummary
+	for rows.Next() {
+		var (
+			currency                  string
+			summary                   LeakageWindowSummary
+			totalText                 string
+			unmatchedText             string
+			underText                 string
+			orphanText                string
+			reversalText              string
+			observedSettledAmountText string
+		)
+		if err := rows.Scan(
+			&currency,
+			&totalText,
+			&unmatchedText,
+			&underText,
+			&orphanText,
+			&reversalText,
+			&observedSettledAmountText,
+		); err != nil {
+			return nil, fmt.Errorf("batch_contract_repo.SummarizeLeakageForWindowByCurrency scan tenant=%s: %w", tenantID, err)
+		}
+		if err := scanLeakageWindowSummaryAmounts(&summary, totalText, unmatchedText, underText, orphanText, reversalText, observedSettledAmountText); err != nil {
+			return nil, fmt.Errorf("batch_contract_repo.SummarizeLeakageForWindowByCurrency tenant=%s currency=%s: %w", tenantID, currency, err)
+		}
+		out = append(out, PerCurrencyLeakageWindowSummary{Currency: currency, Summary: summary})
 	}
-	if summary.TotalIntendedAmountMinor, err = decimal.NewFromString(totalText); err != nil {
-		return nil, fmt.Errorf("batch_contract_repo.SummarizeLeakageForWindow total=%q: %w", totalText, err)
-	}
-	if summary.UnmatchedAmountMinor, err = decimal.NewFromString(unmatchedText); err != nil {
-		return nil, fmt.Errorf("batch_contract_repo.SummarizeLeakageForWindow unmatched=%q: %w", unmatchedText, err)
-	}
-	if summary.UnderSettlementAmountMinor, err = decimal.NewFromString(underText); err != nil {
-		return nil, fmt.Errorf("batch_contract_repo.SummarizeLeakageForWindow under=%q: %w", underText, err)
-	}
-	if summary.OrphanAmountMinor, err = decimal.NewFromString(orphanText); err != nil {
-		return nil, fmt.Errorf("batch_contract_repo.SummarizeLeakageForWindow orphan=%q: %w", orphanText, err)
-	}
-	if summary.ReversalExposureMinor, err = decimal.NewFromString(reversalText); err != nil {
-		return nil, fmt.Errorf("batch_contract_repo.SummarizeLeakageForWindow reversal=%q: %w", reversalText, err)
-	}
-	if summary.TotalObservedSettledAmountMinor, err = decimal.NewFromString(observedSettledAmountText); err != nil {
-		return nil, fmt.Errorf("batch_contract_repo.SummarizeLeakageForWindow settled=%q: %w", observedSettledAmountText, err)
-	}
-	return &summary, nil
+	return out, rows.Err()
 }
 
-// GetUnmatchedAndOrphanForTenant returns the tenant-wide SUM of unmatched_amount_minor
-// and orphan_amount_minor across all batch_contracts for a tenant.
-func (r *BatchContractRepo) GetUnmatchedAndOrphanForTenant(
+// scanLeakageWindowSummaryAmounts parses the six decimal.Decimal text
+// columns shared by SummarizeLeakageForWindowByCurrency into summary. Split
+// out so the per-currency query above stays a plain Scan/parse loop.
+func scanLeakageWindowSummaryAmounts(
+	summary *LeakageWindowSummary,
+	totalText, unmatchedText, underText, orphanText, reversalText, observedSettledAmountText string,
+) (err error) {
+	if summary.TotalIntendedAmountMinor, err = decimal.NewFromString(totalText); err != nil {
+		return fmt.Errorf("total=%q: %w", totalText, err)
+	}
+	if summary.UnmatchedAmountMinor, err = decimal.NewFromString(unmatchedText); err != nil {
+		return fmt.Errorf("unmatched=%q: %w", unmatchedText, err)
+	}
+	if summary.UnderSettlementAmountMinor, err = decimal.NewFromString(underText); err != nil {
+		return fmt.Errorf("under=%q: %w", underText, err)
+	}
+	if summary.OrphanAmountMinor, err = decimal.NewFromString(orphanText); err != nil {
+		return fmt.Errorf("orphan=%q: %w", orphanText, err)
+	}
+	if summary.ReversalExposureMinor, err = decimal.NewFromString(reversalText); err != nil {
+		return fmt.Errorf("reversal=%q: %w", reversalText, err)
+	}
+	if summary.TotalObservedSettledAmountMinor, err = decimal.NewFromString(observedSettledAmountText); err != nil {
+		return fmt.Errorf("settled=%q: %w", observedSettledAmountText, err)
+	}
+	return nil
+}
+
+// PerCurrencyUnmatchedAndOrphan is one currency's unmatched/orphan totals
+// within a tenant — see GetUnmatchedAndOrphanByCurrency.
+type PerCurrencyUnmatchedAndOrphan struct {
+	Currency  string
+	Unmatched decimal.Decimal
+	Orphan    decimal.Decimal
+}
+
+// GetUnmatchedAndOrphanByCurrency returns the per-currency SUM of
+// unmatched_amount_minor and orphan_observed_amount_minor across
+// batch_contracts for a tenant, optionally restricted to one batch.
+//
+// INTEL-11: replaces GetUnmatchedAndOrphanForTenant, which summed both
+// fields across every currency a tenant used with no GROUP BY — silently
+// blending e.g. INR and USD into one number fed straight into the leakage
+// dashboard. Currency falls back to 'INR' via the same
+// COALESCE(NULLIF(batch_currency,''),'INR') pattern used elsewhere in this
+// file, since batch_currency is nullable with no DB default.
+//
+// batchID ("" = all of the tenant's batches) was added so
+// dashboard_leakage_handler.go can source unmatched_amount_minor from this
+// same authoritative query for BOTH the tenant-wide and single-batch view —
+// previously only the tenant-wide view used it, so the same JSON field name
+// meant two different things depending on whether a batch_id query param
+// was supplied (this query includes MATCH_AMBIGUOUS amounts;
+// the LEAKAGE snapshot's own unmatched_amount_minor, used directly for a
+// single batch before this change, does not — see
+// unmatched_excluding_ambiguous_amount_minor on the response for that
+// narrower figure, still sourced from the snapshot).
+func (r *BatchContractRepo) GetUnmatchedAndOrphanByCurrency(
 	ctx context.Context,
 	tenantID string,
-) (unmatched, orphan decimal.Decimal, err error) {
-	row := r.q(ctx).QueryRow(ctx, `
+	batchID string,
+) ([]PerCurrencyUnmatchedAndOrphan, error) {
+	sql := `
 		SELECT
+			COALESCE(NULLIF(batch_currency,''),'INR') AS currency,
 			COALESCE(SUM(unmatched_amount_minor)::text, '0'),
 			COALESCE(SUM(orphan_observed_amount_minor)::text, '0')
 		FROM batch_contracts
 		WHERE tenant_id = $1
-	`, tenantID)
-	var unmatchedText, orphanText string
-	if err = row.Scan(&unmatchedText, &orphanText); err != nil {
-		return decimal.Zero, decimal.Zero, fmt.Errorf("batch_contract_repo.GetUnmatchedAndOrphanForTenant tenant=%s: %w", tenantID, err)
+	`
+	args := []any{tenantID}
+	if batchID != "" {
+		sql += ` AND batch_id = $2`
+		args = append(args, batchID)
 	}
-	if unmatched, err = decimal.NewFromString(unmatchedText); err != nil {
-		return decimal.Zero, decimal.Zero, fmt.Errorf("batch_contract_repo.GetUnmatchedAndOrphanForTenant unmatched=%q: %w", unmatchedText, err)
+	sql += ` GROUP BY COALESCE(NULLIF(batch_currency,''),'INR')`
+
+	rows, err := r.q(ctx).Query(ctx, sql, args...)
+	if err != nil {
+		return nil, fmt.Errorf("batch_contract_repo.GetUnmatchedAndOrphanByCurrency tenant=%s batch=%s: %w", tenantID, batchID, err)
 	}
-	if orphan, err = decimal.NewFromString(orphanText); err != nil {
-		return decimal.Zero, decimal.Zero, fmt.Errorf("batch_contract_repo.GetUnmatchedAndOrphanForTenant orphan=%q: %w", orphanText, err)
+	defer rows.Close()
+
+	var out []PerCurrencyUnmatchedAndOrphan
+	for rows.Next() {
+		var currency, unmatchedText, orphanText string
+		if err := rows.Scan(&currency, &unmatchedText, &orphanText); err != nil {
+			return nil, fmt.Errorf("batch_contract_repo.GetUnmatchedAndOrphanByCurrency scan tenant=%s: %w", tenantID, err)
+		}
+		unmatched, err := decimal.NewFromString(unmatchedText)
+		if err != nil {
+			return nil, fmt.Errorf("batch_contract_repo.GetUnmatchedAndOrphanByCurrency tenant=%s currency=%s unmatched=%q: %w", tenantID, currency, unmatchedText, err)
+		}
+		orphan, err := decimal.NewFromString(orphanText)
+		if err != nil {
+			return nil, fmt.Errorf("batch_contract_repo.GetUnmatchedAndOrphanByCurrency tenant=%s currency=%s orphan=%q: %w", tenantID, currency, orphanText, err)
+		}
+		out = append(out, PerCurrencyUnmatchedAndOrphan{Currency: currency, Unmatched: unmatched, Orphan: orphan})
 	}
-	return unmatched, orphan, nil
+	return out, rows.Err()
 }
 
 // scanBatchContract scans one row from a QueryRow call.
