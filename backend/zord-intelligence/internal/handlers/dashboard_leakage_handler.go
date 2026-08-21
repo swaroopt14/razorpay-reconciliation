@@ -6,7 +6,10 @@ package handlers
 //
 // Serves the 6 Leakage KPIs for the frontend dashboard:
 //   KPI 1  total_intended_volume        → total_intended_amount_minor
-//   KPI 2  unmatched_intent_amount      → unmatched_amount_minor
+//   KPI 2  unmatched_intent_amount      → unmatched_amount_minor (MATCH_UNRESOLVED
+//                                          + MATCH_AMBIGUOUS — see
+//                                          unmatched_excluding_ambiguous_amount_minor
+//                                          for the MATCH_UNRESOLVED-only figure)
 //   KPI 3  under_settlement_amount      → under_settlement_amount_minor
 //   KPI 4  orphan_settlement_amount     → orphan_amount_minor
 //   KPI 5  reversal_exposure            → reversal_exposure_minor
@@ -24,7 +27,11 @@ package handlers
 //   tenant_id   required
 //   from_date   optional — ISO-8601 date (YYYY-MM-DD); filters by snapshot created_at >= from
 //   to_date     optional — ISO-8601 date (YYYY-MM-DD); filters by snapshot created_at <= to
-//   batch_id    optional — not applicable for leakage (TENANT-scoped); accepted and ignored
+//   batch_id    optional — scopes the LEAKAGE snapshot AND the
+//               unmatched/orphan batch_contracts override (see
+//               GetUnmatchedAndOrphanByCurrency) to one batch instead of the
+//               whole tenant. Despite an earlier version of this comment,
+//               it is NOT ignored.
 //   provider    optional — not applicable for leakage (TENANT-scoped); accepted and ignored
 
 import (
@@ -111,6 +118,17 @@ type DashboardLeakageResponse struct {
 
 	// L4 — ambiguous_value_at_risk: ambiguous_amount_minor from AMBIGUITY snapshot
 	AmbiguousValueAtRiskMinor decimal.Decimal `json:"ambiguous_value_at_risk_minor"`
+
+	// UnmatchedExcludingAmbiguousAmountMinor — INTEL-11: unmatched_amount_minor
+	// (KPI 2, above) is sourced from batch_contracts and includes BOTH
+	// MATCH_UNRESOLVED and MATCH_AMBIGUOUS decisions ("money at risk" —
+	// batch_contract_repo.go's AtomicAddBatchUnmatchedAmount call site).
+	// This field is the narrower MATCH_UNRESOLVED-only figure straight from
+	// the LEAKAGE snapshot (same one leakage_percentage's own numerator
+	// uses), so a reader who wants "settlement genuinely never found" without
+	// still-ambiguous decisions mixed in has a correctly-labeled number to
+	// use instead of assuming unmatched_amount_minor means that.
+	UnmatchedExcludingAmbiguousAmountMinor decimal.Decimal `json:"unmatched_excluding_ambiguous_amount_minor"`
 
 	// INTEL-11: L10 used to blend a CONFIRMED amount with a SPECULATIVE one
 	// into a single risk_adjusted_leakage_minor field, the same conflation
@@ -215,11 +233,23 @@ func (h *DashboardLeakageHandler) GetLeakageKPIs(w http.ResponseWriter, r *http.
 	resp.OrphanAmountMinor = kpis.OrphanAmountMinor
 	resp.ReversalExposureMinor = kpis.ReversalExposureMinor
 
-	// Override unmatched and orphan amounts from batch_contracts (authoritative source).
-	// Only applies to the TENANT-wide view — a single batch's snapshot fields are
-	// already authoritative for that batch.
-	if batchID == "" && h.batchRepo != nil {
-		if perCurrency, bErr := h.batchRepo.GetUnmatchedAndOrphanByCurrency(r.Context(), tenantID); bErr == nil {
+	// INTEL-11: captured BEFORE the batch_contracts override below, straight
+	// from the LEAKAGE snapshot, so this stays the MATCH_UNRESOLVED-only
+	// figure regardless of scope — see the field's own doc comment.
+	resp.UnmatchedExcludingAmbiguousAmountMinor = kpis.UnmatchedAmountMinor
+
+	// Override unmatched and orphan amounts from batch_contracts (authoritative
+	// source — see GetUnmatchedAndOrphanByCurrency's doc comment). INTEL-11:
+	// this now runs for BOTH the tenant-wide view and a single-batch view
+	// (passing batchID through), rather than only the tenant-wide view —
+	// previously a single-batch request skipped this override and returned
+	// the LEAKAGE snapshot's narrower MATCH_UNRESOLVED-only figure under the
+	// same unmatched_amount_minor field name the tenant-wide view used for
+	// the broader MATCH_UNRESOLVED+MATCH_AMBIGUOUS figure, so the same JSON
+	// field silently meant two different things depending on whether
+	// batch_id was supplied.
+	if h.batchRepo != nil {
+		if perCurrency, bErr := h.batchRepo.GetUnmatchedAndOrphanByCurrency(r.Context(), tenantID, batchID); bErr == nil {
 			var unmatchedSum, orphanSum decimal.Decimal
 			for _, pc := range perCurrency {
 				unmatchedSum = unmatchedSum.Add(pc.Unmatched)

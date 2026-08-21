@@ -889,29 +889,49 @@ type PerCurrencyUnmatchedAndOrphan struct {
 }
 
 // GetUnmatchedAndOrphanByCurrency returns the per-currency SUM of
-// unmatched_amount_minor and orphan_observed_amount_minor across all
-// batch_contracts for a tenant. INTEL-11: replaces
-// GetUnmatchedAndOrphanForTenant, which summed both fields across every
-// currency a tenant used with no GROUP BY — silently blending e.g. INR and
-// USD into one number fed straight into the leakage dashboard. Currency
-// falls back to 'INR' via the same COALESCE(NULLIF(batch_currency,''),'INR')
-// pattern used elsewhere in this file, since batch_currency is nullable
-// with no DB default.
+// unmatched_amount_minor and orphan_observed_amount_minor across
+// batch_contracts for a tenant, optionally restricted to one batch.
+//
+// INTEL-11: replaces GetUnmatchedAndOrphanForTenant, which summed both
+// fields across every currency a tenant used with no GROUP BY — silently
+// blending e.g. INR and USD into one number fed straight into the leakage
+// dashboard. Currency falls back to 'INR' via the same
+// COALESCE(NULLIF(batch_currency,''),'INR') pattern used elsewhere in this
+// file, since batch_currency is nullable with no DB default.
+//
+// batchID ("" = all of the tenant's batches) was added so
+// dashboard_leakage_handler.go can source unmatched_amount_minor from this
+// same authoritative query for BOTH the tenant-wide and single-batch view —
+// previously only the tenant-wide view used it, so the same JSON field name
+// meant two different things depending on whether a batch_id query param
+// was supplied (this query includes MATCH_AMBIGUOUS amounts;
+// the LEAKAGE snapshot's own unmatched_amount_minor, used directly for a
+// single batch before this change, does not — see
+// unmatched_excluding_ambiguous_amount_minor on the response for that
+// narrower figure, still sourced from the snapshot).
 func (r *BatchContractRepo) GetUnmatchedAndOrphanByCurrency(
 	ctx context.Context,
 	tenantID string,
+	batchID string,
 ) ([]PerCurrencyUnmatchedAndOrphan, error) {
-	rows, err := r.q(ctx).Query(ctx, `
+	sql := `
 		SELECT
 			COALESCE(NULLIF(batch_currency,''),'INR') AS currency,
 			COALESCE(SUM(unmatched_amount_minor)::text, '0'),
 			COALESCE(SUM(orphan_observed_amount_minor)::text, '0')
 		FROM batch_contracts
 		WHERE tenant_id = $1
-		GROUP BY COALESCE(NULLIF(batch_currency,''),'INR')
-	`, tenantID)
+	`
+	args := []any{tenantID}
+	if batchID != "" {
+		sql += ` AND batch_id = $2`
+		args = append(args, batchID)
+	}
+	sql += ` GROUP BY COALESCE(NULLIF(batch_currency,''),'INR')`
+
+	rows, err := r.q(ctx).Query(ctx, sql, args...)
 	if err != nil {
-		return nil, fmt.Errorf("batch_contract_repo.GetUnmatchedAndOrphanByCurrency tenant=%s: %w", tenantID, err)
+		return nil, fmt.Errorf("batch_contract_repo.GetUnmatchedAndOrphanByCurrency tenant=%s batch=%s: %w", tenantID, batchID, err)
 	}
 	defer rows.Close()
 
