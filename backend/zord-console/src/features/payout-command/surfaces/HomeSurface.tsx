@@ -387,6 +387,7 @@ export function HomeSurface({
     : matchedAllocatedMinor != null
       ? fmtInrFromMinorExact(matchedAllocatedMinor)
       : '—'
+  // CON-P0-19 — label by actual ingest source metadata (never call observed "bank-confirmed").
   const observedSourceLabel =
     dataSources.bankStatementStatus === 'received' || dataSources.bankStatementStatus === 'partial'
       ? 'Bank'
@@ -398,8 +399,8 @@ export function HomeSurface({
     const actions: Array<{ title: string; description: string; href?: string; emphasis?: boolean }> = []
     if (dataSources.settlementStatus === 'missing') {
       actions.push({
-        title: 'Upload bank confirmation file',
-        description: 'Required to complete proof for this period.',
+        title: 'Upload settlement outcome file',
+        description: 'Required to populate observed outcome value for this period.',
         href: '/payout-command-view/today?dock=settlement',
         emphasis: true,
       })

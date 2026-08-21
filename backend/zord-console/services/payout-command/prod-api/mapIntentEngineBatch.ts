@@ -141,7 +141,7 @@ function formatDlqUpdatedAt(iso?: string): string {
 
 export type JournalFailureRow = {
   batchId: string
-  /** DLQ-scoped display id for Zord ID column (same ZRD- format as intents). */
+  /** DLQ-scoped display id for Zord ID column (authoritative dlq_id when present). */
   zordId?: string
   requestId: string
   sourceRowNum?: number | null

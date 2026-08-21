@@ -3,10 +3,10 @@
 export const PAYMENT_COMMAND_CENTER = {
   pageTitle: 'Payment Command Center',
   pageSubtitle:
-    'Track payment instructions, bank confirmations, settlement gaps, and proof readiness in one place.',
+    'Track payment instructions, observed settlement outcomes, settlement gaps, and proof readiness in one place.',
   sectionTitle: "Today's payment health",
   sectionSubtitle:
-    'Current status of payment value, confirmation, and review items across connected systems.',
+    'Current status of intended value, observed outcomes, match quality, and review items across connected systems.',
   intendedHelper:
     'This is the value your system intended to pay. Observed outcomes are reported separately and are not the same as matched allocation.',
   bankPending:

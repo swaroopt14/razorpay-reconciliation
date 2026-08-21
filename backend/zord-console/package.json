@@ -10,7 +10,7 @@
     "start:standalone": "node .next/standalone/server.js",
     "lint": "next lint",
     "test:e2e": "playwright test",
-    "test:contracts": "npx tsx --tsconfig tsconfig.json services/payout-command/money/money.contract.test.ts && npx tsx --tsconfig tsconfig.json src/features/payout-command/settlement-journal/mappers/mapMatchStatus.contract.test.ts && npx tsx --tsconfig tsconfig.json src/features/payout-command/evidence/mappers/mapLayeredVerification.contract.test.ts && npx tsx --tsconfig tsconfig.json services/payout-command/commercial-truth/commercialTruth.contract.test.ts",
+    "test:contracts": "npx tsx --tsconfig tsconfig.json services/payout-command/money/money.contract.test.ts && npx tsx --tsconfig tsconfig.json src/features/payout-command/settlement-journal/mappers/mapMatchStatus.contract.test.ts && npx tsx --tsconfig tsconfig.json src/features/payout-command/evidence/mappers/mapLayeredVerification.contract.test.ts && npx tsx --tsconfig tsconfig.json services/payout-command/commercial-truth/commercialTruth.contract.test.ts && npx tsx --tsconfig tsconfig.json services/payout-command/commercial-truth/commercialScopeFollowups.contract.test.ts",
     "verify:api-routes": "node scripts/verify-payout-api-routes.mjs && node scripts/verify-console-page-routes.mjs && node scripts/verify-tenant-batch-scope.mjs && node scripts/verify-journal-api-metrics.mjs && node scripts/verify-payout-mock-allowlist.mjs && node scripts/verify-live-synthetic-imports.mjs && node scripts/verify-production-truthfulness.mjs && node scripts/verify-no-synthetic-analytics-in-prod.mjs && npm run test:contracts",
     "verify:tenant-scope": "node scripts/verify-tenant-batch-scope.mjs",
     "clean": "rm -rf .next node_modules/.cache",
