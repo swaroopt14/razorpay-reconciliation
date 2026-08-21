@@ -352,10 +352,14 @@ export type BatchContractKpiResolved = {
   missing_reference_rate?: string | number
 }
 export type BatchContractKpiResponse = BatchContractKpiResolved | (IntelligenceUnavailableResponse & {
+  /** May still carry a last-known compute time when present. */
+  computed_at?: string
   variance_amount?: never
   orphan_amount?: never
   unmatch_amount?: never
   total_confirmed_amount?: never
+  confirmed_matched_value_minor?: never
+  original_settled_amount?: never
   match_confidence?: never
   missing_reference_rate?: never
   settlement_ref_count?: never
