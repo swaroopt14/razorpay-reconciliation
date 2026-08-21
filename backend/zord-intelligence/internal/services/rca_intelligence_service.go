@@ -255,6 +255,35 @@ func (s *RCAIntelligenceService) AccumulateEvidenceFragment(
 
 // ── Clustering ────────────────────────────────────────────────────────────────
 
+// computeBatchMatchabilitySignal returns the missing-client-ref rate and
+// mean MatchabilityScore across frags, plus the derived weakBatchRef flag
+// (INTEL-11 guardrail comment below).
+//
+// IMPORTANT: avgMatchability is a simple mean scoped to ONE batch's
+// fragments (frags always come from a single rcaFragPrefix(batchID) query —
+// see the only caller, ComputeAndSaveGradeA). It is never persisted
+// standalone (models.RCASummaryValue carries no matchability field) and
+// must never be re-averaged across batches without volume-weighting the
+// way P1-04 requires for any other rate in this service — averaging two
+// already-averaged batch rates as if they were single observations
+// reproduces exactly the "100% of 1 vs 50% of 100 → wrongly 75%" failure
+// mode metric_registry.go's file doc warns about.
+func computeBatchMatchabilitySignal(frags []models.RCAFragment) (missingClientRefRate, avgMatchability float64, weakBatchRef bool) {
+	missingRefCount := 0
+	totalMatchability := 0.0
+	for _, f := range frags {
+		if f.MissingClientRef {
+			missingRefCount++
+		}
+		totalMatchability += f.MatchabilityScore
+	}
+	n := len(frags)
+	missingClientRefRate = float64(missingRefCount) / float64(n)
+	avgMatchability = totalMatchability / float64(n)
+	weakBatchRef = missingClientRefRate > 0.30 || avgMatchability < 0.50
+	return missingClientRefRate, avgMatchability, weakBatchRef
+}
+
 // ComputeAndSaveGradeA is the HDBSCAN RCA entry point.
 // Called non-fatally from HandleBatchSummaryUpdated after all batch signals are final.
 //
@@ -285,20 +314,10 @@ func (s *RCAIntelligenceService) ComputeAndSaveGradeA(
 	}
 
 	// Step 2: compute batch-level aggregates for denormalisation
-	missingRefCount := 0
-	totalMatchability := 0.0
-	for _, f := range frags {
-		if f.MissingClientRef {
-			missingRefCount++
-		}
-		totalMatchability += f.MatchabilityScore
-	}
-	n := len(frags)
-	missingClientRefRate := float64(missingRefCount) / float64(n)
-	avgMatchability := totalMatchability / float64(n)
-	weakBatchRef := missingClientRefRate > 0.30 || avgMatchability < 0.50
+	_, _, weakBatchRef := computeBatchMatchabilitySignal(frags)
 
 	// Step 3: build candidates with denormalised batch signals
+	n := len(frags)
 	candidates := make([]mlclient.RCACandidate, 0, n)
 	for _, f := range frags {
 		amountVariancePct := 0.0
