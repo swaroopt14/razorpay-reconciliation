@@ -86,7 +86,7 @@ export async function postSupportEmailMessage(
     method: 'POST',
     credentials: 'include',
     headers: csrfMutationHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ kind: 'email', ...input }),
+    body: JSON.stringify({ kind: 'email_log', ...input }),
   })
   const data = await parseJson<{ ticket: SupportTicket }>(res)
   return data.ticket

@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        NODE_BASE_IMAGE: ${NODE_BASE_IMAGE:-public.ecr.aws/docker/library/node:18-alpine}
+        NODE_BASE_IMAGE: ${NODE_BASE_IMAGE:-public.ecr.aws/docker/library/node:20-alpine}
     container_name: zord-console
     ports:
       - "3000:3000"

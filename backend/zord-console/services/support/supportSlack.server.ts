@@ -9,7 +9,7 @@ import {
 export type SupportSlackEvent =
   | { kind: 'new_ticket'; tenantId: string; ticket: SupportTicket }
   | { kind: 'chat_reply'; tenantId: string; ticket: SupportTicket; message: SupportMessage }
-  | { kind: 'email'; tenantId: string; ticket: SupportTicket; message: SupportMessage }
+  | { kind: 'email_log'; tenantId: string; ticket: SupportTicket; message: SupportMessage }
   | { kind: 'manual_review'; tenantId: string; ticket: SupportTicket }
 
 function fieldsLine(label: string, value: string | null | undefined) {
@@ -22,8 +22,8 @@ function headerForEvent(event: SupportSlackEvent): string {
       return 'New Zord support ticket'
     case 'chat_reply':
       return 'Support ticket reply'
-    case 'email':
-      return 'Support ticket email'
+    case 'email_log':
+      return 'Support email logged for follow-up'
     case 'manual_review':
       return 'Manual review escalated to support'
     default:
@@ -68,7 +68,7 @@ export function buildSupportSlackPayload(event: SupportSlackEvent): {
     },
   ]
 
-  if (event.kind === 'email') {
+  if (event.kind === 'email_log') {
     const msg = event.message
     const subject = redactSupportTextForSlack(msg.emailSubject || '', 120)
     const body = redactSupportTextForSlack(msg.body || '', 240)

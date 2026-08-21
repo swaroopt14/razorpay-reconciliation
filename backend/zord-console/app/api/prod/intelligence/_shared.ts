@@ -5,74 +5,96 @@ import {
   requireSessionTenantForProdProxy,
   sessionUpstreamHeaders,
 } from '@/services/auth/resolvePayoutTenant.server'
-import { publicBffError } from '@/services/bff/publicBffError'
 
 const JSON_NO_STORE = { 'cache-control': 'no-store' } as const
 
-function isKpiDashboardPath(path: string): boolean {
-  return path.includes('/v1/intelligence/dashboard/')
+type IntelligenceAvailability = 'AVAILABLE' | 'EMPTY' | 'STALE' | 'UNAVAILABLE'
+type JsonRecord = Record<string, unknown>
+
+function readAvailability(value: unknown): IntelligenceAvailability | null {
+  return value === 'AVAILABLE' || value === 'EMPTY' || value === 'STALE' || value === 'UNAVAILABLE'
+    ? value
+    : null
 }
 
-function isOperationsOrExceptionsPath(path: string): boolean {
-  return (
-    path === BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.OPERATIONS_SUMMARY
-    || path === BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.EXCEPTIONS_SUMMARY
-  )
+function inferAvailability(payload: JsonRecord): IntelligenceAvailability {
+  const explicit = readAvailability(payload.availability)
+  if (explicit) return explicit
+  if (payload.data_available === true) return 'AVAILABLE'
+  if (payload.data_available === false) return 'EMPTY'
+
+  for (const key of ['batches', 'snapshots', 'items', 'data']) {
+    const value = payload[key]
+    if (Array.isArray(value)) return value.length > 0 ? 'AVAILABLE' : 'EMPTY'
+  }
+
+  return 'AVAILABLE'
 }
 
-function isPatternDetailPath(path: string): boolean {
-  return path === BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.PATTERN
-    || path === BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.PATTERN_HISTORY
-}
-
-function isBatchesListPath(path: string): boolean {
-  return path === BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.BATCHES
-}
-
-function emptyPatternResponse(reason: string) {
+function unavailableResponse(reason: string): NextResponse {
   return NextResponse.json(
     {
+      availability: 'UNAVAILABLE' as const,
       data_available: false as const,
       reason,
-      data: null,
+      retryable: true,
     },
-    { status: 200, headers: JSON_NO_STORE },
+    { status: 503, headers: JSON_NO_STORE },
   )
 }
 
-function emptyPatternHistoryResponse(tenantId: string) {
+function normalizedSuccessResponse(text: string, upstreamStatus: number): NextResponse {
+  if (upstreamStatus === 204 || !text.trim()) {
+    return NextResponse.json(
+      {
+        availability: 'EMPTY' as const,
+        data_available: false as const,
+        reason: 'No intelligence data is available for this scope.',
+      },
+      { status: 200, headers: JSON_NO_STORE },
+    )
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return unavailableResponse('Intelligence returned an unreadable response. Retry shortly.')
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return unavailableResponse('Intelligence returned an invalid response. Retry shortly.')
+  }
+
+  const payload = parsed as JsonRecord
+  const availability = inferAvailability(payload)
   return NextResponse.json(
-    {
-      tenant_id: tenantId,
-      intelligence_mode: 'offline',
-      snapshot_type: 'PATTERN',
-      snapshots: [] as const,
-      count: 0,
-    },
-    { status: 200, headers: JSON_NO_STORE },
+    { ...payload, availability },
+    { status: availability === 'UNAVAILABLE' ? 503 : 200, headers: JSON_NO_STORE },
   )
 }
 
-function emptyKpiResponse(reason: string) {
-  return NextResponse.json({ data_available: false as const, reason }, { status: 200, headers: JSON_NO_STORE })
-}
-
-function emptyBatchesResponse(tenantId: string, request: NextRequest) {
-  const params = request.nextUrl.searchParams
-  return NextResponse.json(
-    {
-      tenant_id: tenantId,
-      intelligence_mode: 'offline',
-      status_filter: params.get('status')?.trim() || '',
-      batches: [] as const,
-    },
-    { status: 200, headers: JSON_NO_STORE },
-  )
+function logUpstreamFailure(details: {
+  url: string
+  status?: number
+  traceId?: string | null
+  error?: unknown
+}) {
+  console.error('[zord-bff]', {
+    route: '/api/prod/intelligence',
+    upstream: details.url,
+    upstreamStatus: details.status,
+    upstreamTraceId: details.traceId || undefined,
+    error: details.error instanceof Error ? details.error.message : details.error ? 'unknown' : undefined,
+  })
 }
 
 /**
  * Shared forwarder for `/api/prod/intelligence/*` Next routes → zord-intelligence (:8089).
  * Tenant is taken from the signed-in session; client-supplied tenant_id is ignored.
+ *
+ * Successful empty payloads are `EMPTY`. Upstream failures are HTTP 503 with
+ * `UNAVAILABLE`; they are never rewritten as successful empty KPI/list payloads.
  */
 export async function forwardIntelligence(request: NextRequest, path: string): Promise<NextResponse> {
   const gate = await requireSessionTenantForProdProxy(request)
@@ -95,76 +117,22 @@ export async function forwardIntelligence(request: NextRequest, path: string): P
     const text = await upstream.text()
 
     if (!upstream.ok) {
-      if (isKpiDashboardPath(path) || isOperationsOrExceptionsPath(path)) {
-        const reason =
-          upstream.status === 404
-            ? 'Intelligence KPIs not available (service or route missing).'
-            : `Intelligence upstream returned HTTP ${upstream.status}.`
-        const res = emptyKpiResponse(reason)
-        applyRefreshedSessionCookies(res, gate.refreshedPayload)
-        return res
-      }
-      if (isPatternDetailPath(path)) {
-        const reason =
-          upstream.status === 404
-            ? 'Pattern intelligence not available (service or route missing).'
-            : `Intelligence upstream returned HTTP ${upstream.status}.`
-        const res = path === BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.PATTERN_HISTORY
-          ? emptyPatternHistoryResponse(tenantId)
-          : emptyPatternResponse(reason)
-        applyRefreshedSessionCookies(res, gate.refreshedPayload)
-        return res
-      }
-      if (isBatchesListPath(path)) {
-        const res = emptyBatchesResponse(tenantId, request)
-        applyRefreshedSessionCookies(res, gate.refreshedPayload)
-        return res
-      }
+      logUpstreamFailure({
+        url,
+        status: upstream.status,
+        traceId: upstream.headers.get('x-request-id') || upstream.headers.get('traceparent'),
+      })
+      const res = unavailableResponse('Intelligence service is temporarily unavailable. Retry shortly.')
+      applyRefreshedSessionCookies(res, gate.refreshedPayload)
+      return res
     }
 
-    const res = new NextResponse(text, {
-      status: upstream.status,
-      headers: {
-        'content-type': upstream.headers.get('content-type') || 'application/json; charset=utf-8',
-        'cache-control': 'no-store',
-      },
-    })
+    const res = normalizedSuccessResponse(text, upstream.status)
     applyRefreshedSessionCookies(res, gate.refreshedPayload)
     return res
   } catch (error) {
-    // CON-P1-06: never put error.message / upstream hosts into customer-facing bodies.
-    console.error('[zord-bff]', {
-      route: '/api/prod/intelligence',
-      upstream: url,
-      error: error instanceof Error ? error.message : 'unknown',
-    })
-    if (isKpiDashboardPath(path) || isOperationsOrExceptionsPath(path)) {
-      const res = emptyKpiResponse('Intelligence service is temporarily unavailable.')
-      applyRefreshedSessionCookies(res, gate.refreshedPayload)
-      return res
-    }
-    if (isPatternDetailPath(path)) {
-      const res = path === BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.PATTERN_HISTORY
-        ? emptyPatternHistoryResponse(tenantId)
-        : emptyPatternResponse('Pattern intelligence is temporarily unavailable.')
-      applyRefreshedSessionCookies(res, gate.refreshedPayload)
-      return res
-    }
-    if (isBatchesListPath(path)) {
-      const res = emptyBatchesResponse(tenantId, request)
-      applyRefreshedSessionCookies(res, gate.refreshedPayload)
-      return res
-    }
-    const res = publicBffError({
-      code: 'UPSTREAM_UNAVAILABLE',
-      message: 'Intelligence service is temporarily unavailable. Retry shortly.',
-      status: 502,
-      log: {
-        route: '/api/prod/intelligence',
-        upstream: url,
-        error,
-      },
-    })
+    logUpstreamFailure({ url, error })
+    const res = unavailableResponse('Intelligence service is temporarily unavailable. Retry shortly.')
     applyRefreshedSessionCookies(res, gate.refreshedPayload)
     return res
   }

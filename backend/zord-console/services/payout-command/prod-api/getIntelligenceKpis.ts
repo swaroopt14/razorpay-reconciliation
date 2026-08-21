@@ -1,4 +1,4 @@
-import { fetchProdJsonGet } from './fetchProdJsonGet'
+import { fetchProdJsonGetWithAvailability } from './fetchProdJsonGet'
 import { apiTrimmedString } from './coerceApiField'
 import type {
   AmbiguityHeatmapResponse,
@@ -41,7 +41,7 @@ export async function getLeakageKpis(dates?: IntelligenceDateQuery, batchId?: st
   const extra = dateQueryExtra(dates)
   const bid = apiTrimmedString(batchId)
   if (bid) extra.batch_id = bid
-  return fetchProdJsonGet<LeakageKpiResponse>(
+  return fetchProdJsonGetWithAvailability<LeakageKpiResponse>(
     intelQueryPath(`${INTEL_BASE}/leakage`, extra),
   )
 }
@@ -50,14 +50,14 @@ export async function getAmbiguityKpis(dates?: IntelligenceDateQuery, batchId?: 
   const extra = dateQueryExtra(dates)
   const bid = apiTrimmedString(batchId)
   if (bid) extra.batch_id = bid
-  return fetchProdJsonGet<AmbiguityKpiResponse>(
+  return fetchProdJsonGetWithAvailability<AmbiguityKpiResponse>(
     intelQueryPath(`${INTEL_BASE}/ambiguity`, extra),
   )
 }
 
 /** Per-batch matching execution heatmap — BFF injects session tenant. */
 export async function getAmbiguityHeatmap(): Promise<AmbiguityHeatmapResponse | null> {
-  return fetchProdJsonGet<AmbiguityHeatmapResponse>(`${INTEL_BASE}/ambiguity/heatmap`)
+  return fetchProdJsonGetWithAvailability<AmbiguityHeatmapResponse>(`${INTEL_BASE}/ambiguity/heatmap`)
 }
 
 export async function getDefensibilityKpis(
@@ -67,7 +67,7 @@ export async function getDefensibilityKpis(
   const extra = dateQueryExtra(dates)
   const bid = apiTrimmedString(batchId)
   if (bid) extra.batch_id = bid
-  return fetchProdJsonGet<DefensibilityKpiResponse>(
+  return fetchProdJsonGetWithAvailability<DefensibilityKpiResponse>(
     intelQueryPath(`${INTEL_BASE}/defensibility`, extra),
   )
 }
@@ -78,7 +78,7 @@ export async function getPatternsKpis(batchId?: string): Promise<PatternsKpiResp
   const path = bid
     ? intelQueryPath(`${INTEL_BASE}/patterns`, { batch_id: bid })
     : intelQueryPath(`${INTEL_BASE}/patterns`)
-  return fetchProdJsonGet<PatternsKpiResponse>(path)
+  return fetchProdJsonGetWithAvailability<PatternsKpiResponse>(path)
 }
 
 export async function getRecommendationsKpis(
@@ -88,7 +88,7 @@ export async function getRecommendationsKpis(
   const extra = dateQueryExtra(dates)
   const bid = apiTrimmedString(batchId)
   if (bid) extra.batch_id = bid
-  return fetchProdJsonGet<RecommendationsKpiResponse>(
+  return fetchProdJsonGetWithAvailability<RecommendationsKpiResponse>(
     intelQueryPath(`${INTEL_BASE}/recommendations`, extra),
   )
 }
@@ -100,7 +100,7 @@ export async function getRcaKpis(
   const extra = dateQueryExtra(dates)
   const bid = apiTrimmedString(batchId)
   if (bid) extra.batch_id = bid
-  return fetchProdJsonGet<RcaKpiResponse>(
+  return fetchProdJsonGetWithAvailability<RcaKpiResponse>(
     intelQueryPath(`${INTEL_BASE}/rca`, extra),
   )
 }
@@ -117,14 +117,14 @@ export async function getIntelligenceBatches(
   const extra: Record<string, string> = {}
   if (opts.status) extra.status = opts.status
   if (opts.limit) extra.limit = String(opts.limit)
-  return fetchProdJsonGet<BatchesListResponse>(intelQueryPath(`${INTEL_BASE}/batches`, extra))
+  return fetchProdJsonGetWithAvailability<BatchesListResponse>(intelQueryPath(`${INTEL_BASE}/batches`, extra))
 }
 
 /** Per-batch intelligence snapshot — BFF injects session tenant. */
 export async function getIntelligenceBatchDetail(batchId: string): Promise<BatchDetailResponse | null> {
   const bid = apiTrimmedString(batchId)
   if (!bid) return null
-  return fetchProdJsonGet<BatchDetailResponse>(
+  return fetchProdJsonGetWithAvailability<BatchDetailResponse>(
     intelQueryPath(`${INTEL_BASE}/batches/${encodeURIComponent(bid)}`),
   )
 }
@@ -133,7 +133,7 @@ export async function getIntelligenceBatchDetail(batchId: string): Promise<Batch
 export async function getBatchContractKpis(batchId: string): Promise<BatchContractKpiResponse | null> {
   const bid = apiTrimmedString(batchId)
   if (!bid) return null
-  return fetchProdJsonGet<BatchContractKpiResponse>(
+  return fetchProdJsonGetWithAvailability<BatchContractKpiResponse>(
     intelQueryPath(`${INTEL_BASE}/batch_contract/${encodeURIComponent(bid)}`),
   )
 }

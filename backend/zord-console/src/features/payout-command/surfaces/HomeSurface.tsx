@@ -135,16 +135,28 @@ export function HomeSurface({
     range: carouselTrendRange,
   })
 
-  const { leakage, ambiguity, defensibility, patterns, recommendations, loading, refresh } = useIntelligenceKpis({
-    tenantReady,
-    batchId,
-    dateQuery: intelligenceDateQuery,
-  })
+  const {
+    leakage,
+    ambiguity,
+    defensibility,
+    patterns,
+    recommendations,
+    availability: intelligenceState,
+    unavailableReason,
+    loading,
+    refresh,
+  } = useIntelligenceKpis({ tenantReady, batchId, dateQuery: intelligenceDateQuery })
   const leakageData = isDataAvailable(leakage) ? leakage : null
   const ambData = isDataAvailable(ambiguity) ? ambiguity : null
   const defData = isDataAvailable(defensibility) ? defensibility : null
   const patternsData = isDataAvailable(patterns) ? patterns : null
   const recsData = isDataAvailable(recommendations) ? recommendations : null
+  const intelligenceEmptyInsight =
+    intelligenceState === 'UNAVAILABLE'
+      ? 'Intelligence metrics are temporarily unavailable. Risk and exception values are unknown, not zero.'
+      : intelligenceState === 'STALE'
+        ? 'Current intelligence is delayed. The latest available snapshot is labelled stale.'
+        : TENANT_KPI_EMPTY_CAROUSEL_INSIGHT
 
   const handlePageRefresh = useCallback(async () => {
     await Promise.all([
@@ -296,7 +308,7 @@ export function HomeSurface({
         tenantReady,
         kpiLoading: loading || carouselTrendLoading,
         carouselPeriod,
-        emptyInsightParagraph: TENANT_KPI_EMPTY_CAROUSEL_INSIGHT,
+        emptyInsightParagraph: intelligenceEmptyInsight,
         trendSeries: carouselTrendSeries,
         trendChartReady: Boolean(
           carouselTrendSeries?.data_available && (carouselTrendSeries.buckets?.length ?? 0) > 0,
@@ -316,6 +328,7 @@ export function HomeSurface({
       ambData,
       defData,
       patternsData,
+      intelligenceEmptyInsight,
     ],
   )
 
@@ -330,7 +343,7 @@ export function HomeSurface({
         id: `empty-insight-${cards.length}`,
         type: 'insight' as const,
         label: 'Insights',
-        paragraph: TENANT_KPI_EMPTY_CAROUSEL_INSIGHT,
+        paragraph: intelligenceEmptyInsight,
       })
     }
     return cards.map((card, index) => (
@@ -342,7 +355,7 @@ export function HomeSurface({
         cards={[card]}
       />
     ))
-  }, [insightCarouselCards, tenantReady, insightCarouselLoading])
+  }, [insightCarouselCards, intelligenceEmptyInsight, tenantReady, insightCarouselLoading])
 
   const matchConfidencePct = useMemo(() => {
     const withPct = (v: string) => (v === '—' || v === '…' ? v : `${v}%`)
@@ -536,6 +549,23 @@ export function HomeSurface({
 
   return (
     <div className="mt-0 w-full min-w-0">
+        {!isSandbox && intelligenceState === 'UNAVAILABLE' ? (
+          <div className="px-4 pb-4 sm:px-6 lg:px-8" role="alert" data-testid="intelligence-unavailable">
+            <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-left">
+              <p className="text-[14px] font-semibold text-amber-950">Intelligence data is unavailable</p>
+              <p className="mt-1 text-[13px] leading-relaxed text-amber-900">
+                {unavailableReason || 'Risk, exception, and evidence metrics could not be loaded. Values are not zero.'}
+              </p>
+            </div>
+          </div>
+        ) : null}
+        {!isSandbox && intelligenceState === 'STALE' ? (
+          <div className="px-4 pb-4 sm:px-6 lg:px-8" role="status" data-testid="intelligence-stale">
+            <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-left text-[13px] text-sky-950">
+              Intelligence is showing the latest available snapshot. Current upstream data is delayed.
+            </div>
+          </div>
+        ) : null}
         {isSandbox ? (
           <div className="px-4 pt-2 sm:px-6 lg:px-8">
             <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between lg:gap-8">

@@ -48,6 +48,19 @@ export type EmailMessageInput = {
   body: string
 }
 
+/** Normalize legacy records created before an outbound mail provider existed. */
+export function normalizeSupportDeliveryClaims(ticket: SupportTicket): SupportTicket {
+  return {
+    ...ticket,
+    preview: ticket.preview.replace(/^Email\s+sent:/i, 'Email logged for support:'),
+    messages: ticket.messages.map((message) =>
+      message.kind === 'email' && message.emailDirection === 'outbound'
+        ? { ...message, author: 'Email logged' }
+        : message,
+    ),
+  }
+}
+
 const STORAGE_PREFIX = 'zord:support-tickets'
 
 function storageKey(tenantId: string) {
@@ -173,7 +186,9 @@ export function loadSupportTickets(tenantId: string): SupportTicket[] {
     const raw = window.localStorage.getItem(storageKey(tenantId))
     if (!raw) return seedSupportTickets()
     const parsed = JSON.parse(raw) as SupportTicket[]
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : seedSupportTickets()
+    return Array.isArray(parsed) && parsed.length > 0
+      ? parsed.map(normalizeSupportDeliveryClaims)
+      : seedSupportTickets()
   } catch {
     return seedSupportTickets()
   }
@@ -241,7 +256,7 @@ export function appendEmailMessage(ticket: SupportTicket, input: EmailMessageInp
   const ts = nowIso()
   const msg: SupportMessage = {
     id: `m-${Date.now()}`,
-    author: 'Email sent',
+    author: 'Email logged',
     role: 'customer',
     kind: 'email',
     emailDirection: 'outbound',
@@ -255,7 +270,7 @@ export function appendEmailMessage(ticket: SupportTicket, input: EmailMessageInp
     ...ticket,
     updatedAt: ts,
     state: 'awaiting_zord',
-    preview: `Email sent: ${input.subject.trim()}`,
+    preview: `Email logged for support: ${input.subject.trim()}`,
     messages: [...ticket.messages, msg],
   }
 }
