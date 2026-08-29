@@ -64,6 +64,10 @@ func Routes(router *gin.Engine, h *handler.Handler) {
 		h.BulkIntentHandler,
 	)
 
+	// Razorpay connector routes (authenticated, tenant-scoped)
+	connectorHandler := handler.NewConnectorHandler()
+	handler.RegisterConnectorRoutes(protected, connectorHandler)
+
 	// Console / JWT-protected routes (e.g. Session check, Session status)
 	jwtProtected := router.Group("/v1")
 	jwtProtected.Use(

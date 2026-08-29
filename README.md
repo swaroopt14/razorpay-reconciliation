@@ -32,20 +32,18 @@ A verifiable payment lifecycle platform. Ingestion, canonicalization, settlement
 - [Tech Stack](#tech-stack)
 - [Getting Started](#getting-started)
 - [Configuration](#configuration)
+- [Razorpay Connector (Phase 1)](#razorpay-connector-phase-1)
 - [API Documentation](#api-documentation)
 - [Database Design](#database-design)
 - [Workflow](#workflow)
-- [Screenshots](#screenshots)
 - [Performance](#performance)
 - [Security](#security)
 - [Deployment](#deployment)
 - [CI/CD](#cicd)
 - [Testing](#testing)
-- [Monitoring](#monitoring)
 - [Roadmap](#roadmap)
 - [Contributing](#contributing)
 - [License](#license)
-- [Acknowledgements](#acknowledgements)
 - [Contact](#contact)
 
 ---
@@ -101,6 +99,7 @@ Instead of asking finance teams to trust a single system's view, Zord constructs
 - **Dead Letter Queue Management** — Structured DLQ with replay, retry, and investigation workflows
 - **PII Tokenization** — Format-preserving encryption boundary for GDPR/PCI DSS compliance
 - **Real-Time Dashboards** — Operator, customer, and admin views with role-based access control
+- **Razorpay Connector** — Secure provider client with Test/Live mode, Basic Auth, retry, and redacted logging
 
 ---
 
@@ -148,6 +147,7 @@ Arealis-Zord/
 │   ├── zord-intent-engine/         # Canonicalization engine (Go, port 8083)
 │   ├── zord-relay/                 # Event relay and dispatch (Go, port 8082)
 │   ├── zord-outcome-engine/        # Settlement processing (Go, port 8081)
+│   │   └── internal/poll/          # ← Razorpay provider client (Phase 1)
 │   ├── zord-evidence/              # Evidence pack generation (Go)
 │   ├── zord-intelligence/          # ZPI — projections, policies, SLA (Go)
 │   ├── zord-prompt-layer/          # LLM-assisted query (Go)
@@ -156,6 +156,7 @@ Arealis-Zord/
 │   ├── ml-service/                 # ML inference via Kafka (Python/FastAPI)
 │   ├── zord-airflow/               # Apache Airflow DAGs (Python)
 │   ├── payout-smoke-simulator/     # Payout testing tool (Node.js)
+│   ├── shared/                     # Event contracts and fixtures
 │   └── generated/                  # Pre-trained ML model artifacts
 ├── kubernetes/
 │   ├── api-gateway/                # Kong API Gateway manifests
@@ -167,7 +168,10 @@ Arealis-Zord/
 ├── jenkins/                        # CI/CD pipeline assets
 ├── functional-tests/               # End-to-end functional tests
 ├── performance-tests/              # Load and performance testing
-├── docs/                           # Architecture and design docs
+├── docs/
+│   └── razorpay/                   # Razorpay integration docs
+│       ├── phase1-implementation-plan.md
+│       └── test-mode-runbook.md
 ├── CONTRIBUTING.md
 ├── SECURITY.md
 └── LICENSE
@@ -194,6 +198,7 @@ Arealis-Zord/
 | **Secrets** | AWS Secrets Manager, External Secrets Operator |
 | **Auth** | JWT (HS256), API keys, ed25519 signing |
 | **Compliance** | Format-preserving encryption, GDPR/PCI DSS tokenization |
+| **PSP Integration** | Razorpay (Test/Live mode, Basic Auth, webhook-ready) |
 
 ---
 
@@ -212,8 +217,8 @@ Arealis-Zord/
 ### Installation
 
 ```bash
-git clone https://github.com/swaroopt14/swaroopt14.git
-cd Arealis-Zord
+git clone https://github.com/swaroopt14/razorpay-reconciliation.git
+cd razorpay-reconciliation
 ```
 
 ### Start the full stack
@@ -270,25 +275,116 @@ Each service reads configuration from environment variables. Copy `.env.example`
 | `DB_PASSWORD` | Yes | Database password |
 | `DB_NAME` | Yes | Database name (service-specific) |
 | `DB_SSLMODE` | Yes | SSL mode (`disable` for local) |
-| `AWS_ACCESS_KEY_ID` | No | AWS credentials for SES (email) |
-| `AWS_SECRET_ACCESS_KEY` | No | AWS credentials for SES |
-| `SES_FROM_EMAIL` | No | Sender email for MFA OTPs |
-| `INTERNAL_ADMIN_KEY` | No | Internal admin API key |
-| `SIGNING_KEY_PATH` | No | Path to ed25519 private key |
 
-### Console Variables
+### Razorpay Connector Variables
 
-| Variable | Description |
-|---|---|
-| `ZORD_EDGE_URL` | Edge API base URL |
-| `ZORD_INTENT_ENGINE_URL` | Intent engine base URL |
-| `ZORD_SETTLEMENT_URL` | Outcome engine base URL |
-| `ZORD_INTELLIGENCE_URL` | Intelligence service URL |
-| `ZORD_EVIDENCE_URL` | Evidence service URL |
-| `PROMPT_LAYER_URL` | Prompt layer service URL |
-| `NEXT_PUBLIC_ZORD_TENANT_ID` | Default tenant ID for UI |
-| `ZORD_SETTLEMENT_API_KEY` | API key for settlement operations |
-| `AUTH_COOKIE_SECURE` | Set `true` in production |
+| Variable | Required | Description |
+|---|---|---|
+| `RAZORPAY_ENABLED` | No | Enable Razorpay connector (`true`/`false`) |
+| `RAZORPAY_MODE` | Yes | `test` or `live` |
+| `RAZORPAY_API_BASE_URL` | Yes | Razorpay API base URL |
+| `RAZORPAY_KEY_ID` | Yes | Razorpay API key ID |
+| `RAZORPAY_KEY_SECRET` | Yes | Razorpay API key secret |
+| `RAZORPAY_HTTP_TIMEOUT` | No | Request timeout (default: `10s`) |
+| `RAZORPAY_MAX_RETRIES` | No | Max retry attempts (default: `3`) |
+| `RAZORPAY_RETRY_BASE_DELAY` | No | Base delay for retries (default: `250ms`) |
+| `RAZORPAY_MAX_PAGE_SIZE` | No | Max items per page (default: `100`) |
+
+---
+
+## Razorpay Connector (Phase 1)
+
+Phase 1 establishes a secure, testable Razorpay provider client. The connector flow:
+
+```
+Tenant connector configuration
+        ↓
+Test/Live credential resolution
+        ↓
+Authenticated Razorpay API request (Basic Auth)
+        ↓
+Typed provider response
+        ↓
+Redacted audit log and metrics
+        ↓
+Connection-test result
+```
+
+### Architecture
+
+| Component | Location | Responsibility |
+|---|---|---|
+| **Edge Connector API** | `zord-edge/handler/connector_handler.go` | CRUD, tenant auth, health status |
+| **Edge Connector Service** | `zord-edge/services/connector_service.go` | DB ops, secret resolution |
+| **Edge Connector Model** | `zord-edge/model/connector.go` | Types, request/response DTOs |
+| **Provider Interface** | `zord-outcome-engine/internal/poll/provider.go` | Provider-neutral interface |
+| **Razorpay Client** | `zord-outcome-engine/internal/poll/providers/razorpay/client.go` | HTTP client, Basic Auth, retry |
+| **Razorpay Config** | `zord-outcome-engine/internal/poll/providers/razorpay/config.go` | Validation, mode enforcement |
+| **Razorpay Types** | `zord-outcome-engine/internal/poll/providers/razorpay/types.go` | Provider DTOs (not exposed to frontend) |
+| **Error Classification** | `zord-outcome-engine/internal/poll/providers/razorpay/errors.go` | Typed error categories |
+| **Redaction Helpers** | `zord-outcome-engine/internal/poll/providers/razorpay/redact.go` | Safe logging |
+| **Database Migration** | `zord-edge/db/migrations/20260826_add_razorpay_connector_fields.sql` | Extends connectors table |
+
+### Connector API Endpoints
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/v1/connectors/razorpay` | Save connector config |
+| `POST` | `/v1/connectors/razorpay/test` | Run connection test |
+| `GET` | `/v1/connectors/razorpay/status` | Get health status |
+| `GET` | `/v1/connectors` | List all connectors |
+
+### Quick Start (Local Testing)
+
+```bash
+# 1. Configure connector
+curl -X POST http://localhost:8080/v1/connectors/razorpay \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <your-token>' \
+  -d '{
+    "mode": "test",
+    "key_id": "rzp_test_TVY5EjjWRxV6HQ",
+    "key_secret": "<your-secret>"
+  }'
+
+# 2. Run connection test
+curl -X POST http://localhost:8080/v1/connectors/razorpay/test \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <your-token>' \
+  -d '{"connector_id":"<connector-id>"}'
+
+# 3. Check status
+curl http://localhost:8080/v1/connectors/razorpay/status \
+  -H 'Authorization: Bearer <your-token>'
+```
+
+### Test Suite (45 tests)
+
+```bash
+cd backend/zord-outcome-engine
+go test ./internal/poll/providers/razorpay/... -v
+```
+
+Tests cover:
+- Basic Auth header generation
+- Correct HTTP method, path, and headers
+- Response decoding (200 → typed DTO)
+- Error classification (400, 401, 403, 404, 429, 500)
+- Retry behavior (429/5xx retries, 4xx no retry)
+- Context cancellation and deadline
+- Pagination helpers
+- Redaction (no secrets in logs)
+- Health check success and failure
+
+### What Phase 1 Does NOT Do
+
+- Webhook signature validation
+- payment.captured event processing
+- Settlement reconciliation
+- Bank statement ingestion
+- UTR matching
+- Razorpay mutations/refunds
+- AI agent actions
 
 ---
 
@@ -299,11 +395,13 @@ Each service reads configuration from environment variables. Copy `.env.example`
 | Method | Endpoint | Description |
 |---|---|---|
 | `GET` | `/health` | Health check |
-| `GET` | `/metrics` | Prometheus metrics |
 | `POST` | `/v1/admin/tenantReg` | Register new tenant |
 | `GET` | `/v1/admin/tenants` | List all tenants |
 | `POST` | `/v1/ingest` | JSON intent ingestion |
 | `POST` | `/v1/bulk-ingest` | Multipart bulk file ingestion |
+| `POST` | `/v1/connectors/razorpay` | Create Razorpay connector |
+| `POST` | `/v1/connectors/razorpay/test` | Test Razorpay connection |
+| `GET` | `/v1/connectors/razorpay/status` | Get connector status |
 | `POST` | `/v1/raw/envelopes/webhooks/:provider/:connectorID` | Webhook intake |
 
 #### Ingest a payment intent
@@ -323,15 +421,6 @@ curl -X POST http://localhost:8080/v1/ingest \
   }'
 ```
 
-```json
-{
-  "status": "accepted",
-  "envelope_id": "env_8f3a2b1c",
-  "intent_id": "int_4d5e6f7a",
-  "processing_stage": "canonicalization"
-}
-```
-
 ### zord-outcome-engine — Settlement Processing
 
 | Method | Endpoint | Description |
@@ -340,15 +429,6 @@ curl -X POST http://localhost:8080/v1/ingest \
 | `POST` | `/v1/settlement/upload` | Upload settlement file |
 | `GET` | `/v1/settlement/jobs/:job_id` | Check job status |
 | `POST` | `/v1/attachment/run` | Trigger attachment job |
-| `GET` | `/v1/attachment/decision/intent/:intent_id` | Get attachment decision |
-
-#### Upload a settlement file
-
-```bash
-curl -X POST http://localhost:8081/v1/settlement/upload \
-  -F "file=@settlement_march_2025.csv" \
-  -F "provider=stripe"
-```
 
 ### zord-evidence — Evidence Packaging
 
@@ -357,21 +437,8 @@ curl -X POST http://localhost:8081/v1/settlement/upload \
 | `POST` | `/v1/evidence/packs` | Generate evidence pack |
 | `GET` | `/v1/evidence/packs` | List evidence packs |
 | `GET` | `/v1/evidence/packs/:packID` | Get enriched pack |
-| `GET` | `/v1/evidence/packs/:packID/timeline` | Operational timeline |
 | `POST` | `/v1/evidence/packs/:packID/verify` | Cryptographic verification |
 | `POST` | `/v1/dispute/export` | Dispute export |
-
-#### Generate an evidence pack
-
-```bash
-curl -X POST http://localhost:8084/v1/evidence/packs \
-  -H "Content-Type: application/json" \
-  -d '{
-    "intent_id": "int_4d5e6f7a",
-    "include_timeline": true,
-    "include_lineage": true
-  }'
-```
 
 ### zord-intelligence — ZPI
 
@@ -408,6 +475,7 @@ Zord uses per-service PostgreSQL databases. Each service owns its schema and mig
 
 ```mermaid
 erDiagram
+    TENANTS ||--o{ CONNECTORS : owns
     TENANTS ||--o{ INGRESS_ENVELOPES : owns
     INGRESS_ENVELOPES ||--o{ PAYMENT_INTENTS : produces
     PAYMENT_INTENTS ||--o{ ATTACHMENT_DECISIONS : matched_by
@@ -418,14 +486,14 @@ erDiagram
     PAYMENT_INTENTS ||--o{ INTENT_VERSIONS : versioned_as
     PAYMENT_INTENTS ||--o{ SLA_TIMERS : tracked_by
     PAYMENT_INTENTS ||--o{ ACTION_CONTRACTS : decided_via
-    CANONICAL_OUTCOME_EVENTS ||--o{ FINALITY_CERTIFICATES : certified_by
-    PAYMENT_INTENTS ||--o{ VARIANCE_RECORDS : has_discrepancy
+    CONNECTORS ||--o{ INGRESS_ENVELOPES : routes
 ```
 
 ### Key Tables
 
 **zord-edge**
 - `tenants` — Tenant registry with API key hashes
+- `connectors` — Provider connections (razorpay, stripe, etc.) with mode, health status
 - `ingress_envelopes` — Raw ingestion envelopes with metadata
 - `ingress_outbox` — Transactional outbox for Kafka publishing
 
@@ -437,7 +505,6 @@ erDiagram
 **zord-outcome-engine**
 - `canonical_settlement_observations` — Normalized settlement data
 - `attachment_decisions` — Authoritative intent-to-settlement matching
-- `variance_records` — Detected discrepancies
 - `finality_certificates` — Cryptographic settlement proofs
 
 **zord-evidence**
@@ -448,77 +515,6 @@ erDiagram
 - `projection_state` — Computed KPIs across 7 intelligence families
 - `policy_registry` — DSL-based IF-THEN rules
 - `action_contracts` — Immutable signed audit trail
-- `ml_feature_store` — Engineered features for ML scoring
-
----
-
-## Workflow
-
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant E as zord-edge
-    participant K as Kafka
-    participant I as intent-engine
-    participant R as zord-relay
-    participant O as outcome-engine
-    participant V as zord-evidence
-    participant Z as intelligence
-
-    C->>E: POST /v1/ingest (payment intent)
-    E->>E: API key auth, idempotency check
-    E->>K: Publish envelope event
-    K->>I: Consume envelope
-    I->>I: Canonicalize, validate, deduplicate
-    I->>K: Publish canonical intent
-    K->>R: Consume intent event
-    R->>R: Circuit breaker check, dispatch
-    K->>O: Consume settlement file
-    O->>O: Parse, normalize, attach
-    O->>O: Variance detection
-    O->>K: Publish outcome event
-    K->>V: Consume for evidence
-    V->>V: Build Merkle tree, sign pack
-    K->>Z: Consume for projections
-    Z->>Z: Update KPIs, evaluate policies
-    Z->>Z: SLA timer management
-    Z-->>C: Real-time dashboard updates
-```
-
----
-
-## Screenshots
-
-<!-- Update these paths to match your actual screenshots -->
-
-| Dashboard | View |
-|---|---|
-| ![Platform Health](assets/dashboard.png) | Platform Health |
-| ![Intent Analytics](assets/analytics.png) | Intent Analytics |
-| ![Evidence Timeline](assets/evidence.png) | Evidence Timeline |
-| ![Architecture](assets/architecture.png) | Architecture Overview |
-
----
-
-## Performance
-
-| Metric | Target |
-|---|---|
-| **Ingestion Latency** | < 50ms p99 (edge to envelope) |
-| **Canonicalization** | < 200ms p99 (intent normalization) |
-| **Attachment Matching** | < 500ms p99 (intent to settlement) |
-| **Evidence Pack Generation** | < 2s for standard packs |
-| **Throughput** | 10K+ intents/second sustained |
-| **Availability** | 99.9% across all services |
-
-### Optimization Strategies
-
-- **Transactional outbox** — Guaranteed Kafka delivery without dual writes
-- **Per-service databases** — No cross-service SQL contention
-- **Connection pooling** — PgBouncer-ready, per-service pool tuning
-- **Kafka partitions** — Sharded by tenant for parallel consumption
-- **Merkle batching** — Evidence packs batched before tree construction
-- **ML feature caching** — Pre-computed features in the projection state
 
 ---
 
@@ -533,9 +529,9 @@ sequenceDiagram
 | **PII Protection** | Dedicated token enclave with format-preserving tokenization |
 | **Integrity** | ed25519 signing on evidence packs, Merkle inclusion proofs |
 | **Secrets Management** | AWS Secrets Manager with External Secrets Operator |
+| **Connector Security** | Secrets stored by reference only, Basic Auth, redacted logging |
 | **Rate Limiting** | Kong gateway rate limits per tenant and endpoint |
 | **Audit Trail** | Immutable action contracts, version history, DLQ tracking |
-| **Input Validation** | JSON Schema validation at ingestion boundary |
 
 > Read [SECURITY.md](./SECURITY.md) before deploying to any shared or production environment.
 
@@ -549,41 +545,14 @@ sequenceDiagram
 docker-compose up -d --build
 ```
 
-### Docker
-
-Each service has its own Dockerfile with multi-stage builds:
-
-```bash
-cd backend/zord-edge
-docker build -t zord-edge .
-docker run -p 8080:8080 --env-file .env zord-edge
-```
-
 ### Kubernetes (AWS EKS)
 
 Full manifests in `kubernetes/`:
 
 ```bash
-# Core services
 kubectl apply -k kubernetes/eks/
-
-# API Gateway
 kubectl apply -f kubernetes/api-gateway/
-
-# Monitoring
 kubectl apply -f kubernetes/monitoring/
-
-# Logging
-kubectl apply -f kubernetes/logging/
-
-# Tracing
-kubectl apply -f kubernetes/tracing/
-```
-
-### Argo CD (GitOps)
-
-```bash
-kubectl apply -f kubernetes/argocd/
 ```
 
 ### AWS Deployment
@@ -599,8 +568,6 @@ kubectl apply -f kubernetes/argocd/
 
 ### Jenkins
 
-Two pipeline configurations:
-
 | Pipeline | Purpose |
 |---|---|
 | `Jenkinsfile.all-services-ecr` | Full rebuild — builds and pushes all services |
@@ -612,15 +579,16 @@ Two pipeline configurations:
 pre-commit install
 ```
 
-Hooks configured in `.pre-commit-config.yaml` for linting, formatting, and validation.
-
-### SonarQube
-
-Configured via `sonar-project.properties` for continuous code quality analysis.
-
 ---
 
 ## Testing
+
+### Razorpay Client Tests (45 tests)
+
+```bash
+cd backend/zord-outcome-engine
+go test ./internal/poll/providers/razorpay/... -v -count=1
+```
 
 ### Functional Tests
 
@@ -629,17 +597,6 @@ cd functional-tests
 npm install
 npm test
 ```
-
-End-to-end tests covering ingestion, canonicalization, settlement, and evidence workflows.
-
-### Performance Tests
-
-```bash
-cd performance-tests
-# See performance-tests/README.md for configuration
-```
-
-Load testing against ingestion and settlement endpoints.
 
 ### Console E2E (Playwright)
 
@@ -650,54 +607,27 @@ npx playwright test
 
 ---
 
-## Monitoring
-
-### Observability Stack
-
-| Component | Purpose |
-|---|---|
-| **OpenTelemetry** | Distributed tracing and metrics collection |
-| **Prometheus** | Metrics scraping and storage |
-| **Grafana** | Dashboard visualization and alerting |
-| **Jaeger** | Trace analysis and service dependency mapping |
-| **Elasticsearch** | Log aggregation and search |
-| **Fluentd** | Log forwarding and transformation |
-| **Kibana** | Log visualization and exploration |
-
-### Health Checks
-
-Every service exposes:
-
-- `GET /health` or `GET /healthz` — Liveness probe
-- `GET /metrics` — Prometheus scrape endpoint
-- `GET /ready` — Readiness probe (where applicable)
-
----
-
 ## Roadmap
 
-- [ ] Webhook signature verification per PSP provider
+- [x] Razorpay connector — Phase 1 (client, config, health check, tests)
+- [ ] Razorpay webhook signature verification (Phase 2)
+- [ ] payment.captured event processing (Phase 2)
+- [ ] Settlement reconciliation with Razorpay (Phase 3)
+- [ ] Bank statement ingestion and UTR matching (Phase 3)
+- [ ] Razorpay refunds and mutations (Phase 4)
+- [ ] AI-powered payment recovery agents (Phase 5)
 - [ ] Batch settlement file scheduling via Airflow
 - [ ] Real-time streaming dashboard (WebSocket)
 - [ ] Multi-region EKS deployment
 - [ ] Custom evidence pack templates
 - [ ] SLA breach automated escalation workflows
-- [ ] Client-side SDK for direct integration
-- [ ] GraphQL API for complex queries
 - [ ] Terraform modules for AWS infrastructure
-- [ ] SOC 2 compliance audit trail enhancements
 
 ---
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines on:
-
-- Development setup
-- Branch naming conventions
-- Pull request process
-- Code review standards
-- Commit message format
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
 
 ---
 
@@ -707,14 +637,7 @@ MIT License. See [LICENSE](./LICENSE) for details.
 
 ---
 
-## Acknowledgements
-
-Built on principles from payment infrastructure research and modern distributed systems. Inspired by the engineering work at Arealis on production payment reconciliation and observability systems.
-
----
-
 ## Contact
 
 - **GitHub**: [swaroopt14](https://github.com/swaroopt14)
 - **LinkedIn**: [Swaroop Thakare](https://www.linkedin.com/in/swaroop-thakare-136484259/)
-- **Email**: [Contact](mailto:swaroop@example.com)
