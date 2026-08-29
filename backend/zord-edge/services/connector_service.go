@@ -22,18 +22,22 @@ func NewConnectorService() *ConnectorService {
 // CreateConnector saves a new Razorpay connector configuration.
 // It stores secret references, not raw secret values.
 func (s *ConnectorService) CreateConnector(
-	tenantID uuid.UUID,
+	tenantID string,
 	provider string,
 	mode string,
 	apiKeyRef string,
 	apiSecretRef string,
 ) (*model.Connector, error) {
+	tenantUUID, err := uuid.Parse(tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid tenant ID: %w", err)
+	}
 	connectorID := fmt.Sprintf("con_%s_%s_%s", provider, mode, uuid.New().String()[:8])
 
 	now := time.Now().UTC()
 	conn := &model.Connector{
 		ID:           uuid.New(),
-		TenantID:     tenantID,
+		TenantID:     tenantUUID,
 		Provider:     provider,
 		ConnectorID:  connectorID,
 		ProviderMode: mode,
@@ -44,7 +48,7 @@ func (s *ConnectorService) CreateConnector(
 		UpdatedAt:    now,
 	}
 
-	_, err := db.DB.Exec(`
+	_, err = db.DB.Exec(`
 		INSERT INTO connectors (
 			id, tenant_id, provider, connector_id,
 			provider_mode, api_key_ref, api_secret_ref,
@@ -63,7 +67,7 @@ func (s *ConnectorService) CreateConnector(
 }
 
 // GetConnector retrieves a connector by ID and tenant.
-func (s *ConnectorService) GetConnector(tenantID uuid.UUID, connectorID string) (*model.Connector, error) {
+func (s *ConnectorService) GetConnector(tenantID string, connectorID string) (*model.Connector, error) {
 	var conn model.Connector
 	err := db.DB.QueryRow(`
 		SELECT id, tenant_id, provider, connector_id,
@@ -90,7 +94,7 @@ func (s *ConnectorService) GetConnector(tenantID uuid.UUID, connectorID string) 
 // UpdateHealthStatus updates the health check fields after a connection test.
 func (s *ConnectorService) UpdateHealthStatus(
 	connectorID string,
-	tenantID uuid.UUID,
+	tenantID string,
 	status string,
 	errorCode string,
 ) error {
@@ -110,7 +114,7 @@ func (s *ConnectorService) UpdateHealthStatus(
 }
 
 // ListConnectors returns all connectors for a tenant.
-func (s *ConnectorService) ListConnectors(tenantID uuid.UUID) ([]model.Connector, error) {
+func (s *ConnectorService) ListConnectors(tenantID string) ([]model.Connector, error) {
 	rows, err := db.DB.Query(`
 		SELECT id, tenant_id, provider, connector_id,
 		       provider_mode, api_key_ref, active,

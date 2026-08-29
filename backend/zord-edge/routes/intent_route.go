@@ -68,6 +68,14 @@ func Routes(router *gin.Engine, h *handler.Handler) {
 	connectorHandler := handler.NewConnectorHandler()
 	handler.RegisterConnectorRoutes(protected, connectorHandler)
 
+	// Razorpay webhook routes (public, signature-verified)
+	razorpayWebhooks := router.Group("/v1/webhooks/razorpay")
+	{
+		razorpayWebhooks.POST("/:connectorID", h.HandleRazorpayWebhook)
+		razorpayWebhooks.GET("/receipt/:receiptID", h.HandleRazorpayWebhookStatus)
+		razorpayWebhooks.GET("/receipts/:connectorID", h.HandleRazorpayWebhookList)
+	}
+
 	// Console / JWT-protected routes (e.g. Session check, Session status)
 	jwtProtected := router.Group("/v1")
 	jwtProtected.Use(
