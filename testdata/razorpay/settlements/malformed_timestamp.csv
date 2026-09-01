@@ -1,0 +1,2 @@
+entity_id,type,debit,credit,amount,currency,fee,tax,settlement_id,settlement_utr,payment_id,created_at,settled_at
+pay_x,payment,0,100,100,INR,0,0,setl_x,utr_x,pay_x,not-a-date,also-bad

@@ -107,4 +107,5 @@ type SettlementReconItem struct {
 	SettlementUTR string `json:"settlement_utr"`
 	PaymentID     string `json:"payment_id"`
 	OrderID       string `json:"order_id"`
+	RefundID      string `json:"refund_id"`
 }

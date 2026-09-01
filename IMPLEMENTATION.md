@@ -14,6 +14,7 @@
 - [Phase 3: Settlement Reconciliation](#phase-3-settlement-reconciliation)
 - [PDF Phase 3: Razorpay polling & API backfill](#pdf-phase-3-razorpay-polling--api-backfill)
 - [PDF Phases 4–6: Bank CSV, matcher, proof](#pdf-phases-46-bank-csv-matcher-proof)
+- [Settlement and bank file ingestion](#settlement-and-bank-file-ingestion)
 - [Phase 4: Refunds & Mutations](#phase-4-refunds--mutations)
 - [Phase 5: AI Recovery Agents](#phase-5-ai-recovery-agents)
 - [Infrastructure & Deployment](#infrastructure--deployment)
@@ -32,6 +33,7 @@
 | **Phase 3** | Settlement-file parsing, canonicalization, attachment | ✅ Complete | 61 |
 | **PDF Phase 3** | Razorpay polling / API backfill, freshness, Airflow HTTP triggers | ✅ Complete | mock-first |
 | **PDF Phases 4–6** | Bank CSV, hierarchical matcher, separate proof states | ✅ Complete | mock-first |
+| **Ingestion Phase 4** | Settlement/bank file import lifecycle (validate → commit) | ✅ Complete | mock-first |
 | **Phase 4** | Refunds, mutations, payment.captured processing | ❌ Not started | 0 |
 | **Phase 5** | AI recovery agents, autonomous actions | ❌ Not started | 0 |
 | **Infrastructure** | K8s, Airflow, CI/CD, monitoring | ✅ Complete | — |
@@ -242,6 +244,24 @@ This phase is PSP settlement **file** ingest (Razorpay XLSX / Cashfree CSV) → 
 | `GET` | `/v1/merchant/reconciliation/gaps` | ✅ |
 | `POST` | `/internal/recon/run` | ✅ |
 | `GET` | `/internal/recon/gaps` | ✅ |
+
+---
+
+## Settlement and bank file ingestion
+
+> ✅ **COMPLETE** — validate-then-commit imports into existing observation tables. Does **not** run the matcher or claim `bank_credited`. Leftover proof-loop work is listed in `docs/phase-6-evidence-and-proof.md`.
+
+### What's built
+
+- [x] `data_imports`, `import_row_results`; extra columns on settlement/bank observations
+- [x] Settlement JSON/CSV recon mapper (`internal/imports/settlement.go`) — payment/refund/transfer/adjustment
+- [x] Bank format profiles (generic, HDFC/ICICI/SBI-like) with mapping, timezone, amount unit
+- [x] Merchant import APIs + one-shot `POST /v1/bank-statements/upload` wrapper
+- [x] Outbox events `bank.observation.normalized.v1`, `import.completed.v1` (constants in `event_contract.go`, not a new zord-contracts module)
+
+### Explicitly not in this phase
+
+Bank ↔ PSP matching, three-way proof, refund create API, live bank APIs, zord-edge `bank_parser`, merkle packs (Phase 6).
 
 ---
 

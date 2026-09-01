@@ -2,6 +2,7 @@ package razorpay
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
@@ -35,7 +36,10 @@ type NeutralSettlementLine struct {
 	UTR           string
 	Settled       bool
 	SettledAt     time.Time
+	CreatedAt     time.Time
+	RefundID      string
 	PayloadHash   string
+	Raw           json.RawMessage
 }
 
 // NeutralPage is one provider page plus response evidence.
@@ -119,6 +123,7 @@ func (a *BackfillAdapter) ListSettlementDay(ctx context.Context, day CivilDate, 
 			Currency:     currency,
 			UTR:          item.SettlementUTR,
 			Settled:      item.Settled,
+			RefundID:     item.RefundID,
 			PayloadHash:  HashRawResponse(canonical),
 		}
 		if item.SettledAt > 0 {

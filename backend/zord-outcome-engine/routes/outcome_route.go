@@ -38,12 +38,18 @@ func OutboxRoutes(router *gin.Engine, h *handlers.OutboxHandler) {
 	}
 }
 
-func ReconRoutes(router *gin.Engine, h *handlers.ReconHandler) {
+func ReconRoutes(router *gin.Engine, h *handlers.ReconHandler, imp *handlers.ImportHandler) {
 	protected := router.Group("/v1")
 	protected.Use(auth.GinProtect())
 	{
-		protected.POST("/bank-statements/upload", h.UploadBankStatement)
+		protected.POST("/bank-statements/upload", imp.OneShotBankUpload)
 		protected.GET("/bank-statements/:upload_id", h.GetUpload)
+		protected.POST("/merchant/imports", imp.Upload)
+		protected.GET("/merchant/imports/:import_id", imp.Get)
+		protected.POST("/merchant/imports/:import_id/validate", imp.Validate)
+		protected.GET("/merchant/imports/:import_id/rows", imp.Rows)
+		protected.POST("/merchant/imports/:import_id/commit", imp.Commit)
+		protected.POST("/merchant/imports/:import_id/cancel", imp.Cancel)
 		protected.GET("/merchant/transactions/:payment_id/proof", h.GetProof)
 		protected.GET("/merchant/transactions", h.Transactions)
 		protected.GET("/merchant/reconciliation/summary", h.Summary)

@@ -18,3 +18,5 @@ const EventTypePaymentObservationNormalizedV1 = "payment.observation.normalized.
 const EventTypeSettlementObservationNormalizedV1 = "settlement.observation.normalized.v1"
 const EventTypeBackfillCompletedV1 = "backfill.completed.v1"
 const EventTypeReconDecisionV1 = "reconciliation.decision.v1"
+const EventTypeBankObservationNormalizedV1 = "bank.observation.normalized.v1"
+const EventTypeImportCompletedV1 = "import.completed.v1"

@@ -14,6 +14,7 @@ import (
 	"zord-outcome-engine/handlers"
 	"zord-outcome-engine/internal/auth"
 	"zord-outcome-engine/internal/health"
+	"zord-outcome-engine/internal/imports"
 	"zord-outcome-engine/internal/persistence"
 	"zord-outcome-engine/internal/poll"
 	"zord-outcome-engine/internal/poll/providers/razorpay"
@@ -146,7 +147,8 @@ func main() {
 
 	reconStore := persistence.NewReconSQLStore(db.DB)
 	reconSvc := recon.NewService(reconStore)
-	routes.ReconRoutes(server, &handlers.ReconHandler{Service: reconSvc, Parser: services.BankStatementParser{}})
+	importSvc := imports.NewService(persistence.NewImportSQLStore(db.DB))
+	routes.ReconRoutes(server, &handlers.ReconHandler{Service: reconSvc, Parser: services.BankStatementParser{}}, &handlers.ImportHandler{Service: importSvc})
 
 	// Readiness endpoint — checks DB connectivity
 	readinessHandler := health.NewReadinessHandler([]health.DependencyCheck{
