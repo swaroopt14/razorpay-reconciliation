@@ -27,6 +27,7 @@ import (
 	"zord-prompt-layer/repositories"
 	"zord-prompt-layer/routes"
 	"zord-prompt-layer/services"
+	"zord-prompt-layer/tools"
 	"zord-prompt-layer/tracing"
 )
 
@@ -160,6 +161,7 @@ func main() {
 
 	retriever := services.NewHybridEvidenceRetriever(liveRetriever, vectorRetriever)
 	ragService := services.NewDefaultRAGService(cfg.GeminiModel, cfg.DefaultTopK, retriever, llmService, intelligenceClient, memoryStore)
+	ragService.SetReconClient(tools.NewOutcomeClient(cfg.OutcomeEngineBaseURL, cfg.OutcomeEngineToken), cfg.DefaultConnectorID)
 	queryHandler := handler.NewQueryHandler(ragService)
 	authCfg := plmiddleware.AuthConfig{
 		SigningSecret: cfg.JWTSigningSecret,

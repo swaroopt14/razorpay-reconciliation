@@ -8,6 +8,7 @@ import (
 	"time"
 	"zord-prompt-layer/client"
 	"zord-prompt-layer/dto"
+	"zord-prompt-layer/tools"
 	"zord-prompt-layer/utils"
 )
 
@@ -16,12 +17,14 @@ type RAGService interface {
 }
 
 type DefaultRAGService struct {
-	model        string
-	retriever    EvidenceRetriever
-	llm          *LLMService
-	defaultK     int
-	intelligence *client.IntelligenceClient
-	memory       ChatMemoryStore
+	model            string
+	retriever        EvidenceRetriever
+	llm              *LLMService
+	defaultK         int
+	intelligence     *client.IntelligenceClient
+	memory           ChatMemoryStore
+	recon            *tools.OutcomeClient
+	defaultConnector string
 }
 
 func NewDefaultRAGService(model string, defaultK int, retriever EvidenceRetriever, llm *LLMService, intelligence *client.IntelligenceClient, memory ChatMemoryStore) *DefaultRAGService {
@@ -33,6 +36,11 @@ func NewDefaultRAGService(model string, defaultK int, retriever EvidenceRetrieve
 		intelligence: intelligence,
 		memory:       memory,
 	}
+}
+
+func (s *DefaultRAGService) SetReconClient(c *tools.OutcomeClient, connectorID string) {
+	s.recon = c
+	s.defaultConnector = connectorID
 }
 
 func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, error) {
@@ -88,6 +96,20 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 
 		if !strings.EqualFold(strings.TrimSpace(resolvedQuery), strings.TrimSpace(req.Query)) {
 			log.Printf("[prompt-layer][memory] followup resolved tenant=%s user=%s session=%s", req.TenantID, req.UserID, req.SessionID)
+		}
+	}
+
+	if s.recon != nil {
+		if ans, ok := tools.Answer(s.recon, req.TenantID, s.defaultConnector, resolvedQuery); ok {
+			resp := dto.QueryResponse{
+				Answer:        utils.SanitizeAnswerText(ans),
+				Confidence:    "high",
+				EntitiesFound: dto.EntitiesFound{},
+				Citations:     []dto.Citation{{SourceType: "payment_proof", Snippet: "outcome-engine proof API; bank credit only when a bank row is matched"}},
+				NextActions:   []string{},
+			}
+			s.persistConversationMemory(ctx, req, memorySummary, resp.Answer)
+			return resp, nil
 		}
 	}
 	selectedUIContext := buildSelectedUIContextBlock(req.UIContext)

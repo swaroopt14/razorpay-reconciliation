@@ -113,22 +113,30 @@ func (s *RazorpayWebhookService) ParseMetadata(rawBody []byte) (model.WebhookMet
 		meta.ProviderCreatedAt = &t
 	}
 
-	// Extract entity type and ID from the event structure
-	// Razorpay puts entity info in payload.payment.entity.id etc.
+	// Extract entity type and ID from payload.<entity>.entity.id (Razorpay nested wrapper).
 	var payload map[string]json.RawMessage
 	if err := json.Unmarshal(event.Payload, &payload); err == nil {
 		for entityType, entityRaw := range payload {
-			var entity struct {
-				ID     string `json:"id"`
-				Entity string `json:"entity"`
+			var wrapper struct {
+				Entity struct {
+					ID     string `json:"id"`
+					Entity string `json:"entity"`
+				} `json:"entity"`
+				ID string `json:"id"`
 			}
-			if err := json.Unmarshal(entityRaw, &entity); err == nil {
-				meta.EntityType = entityType
-				if entity.ID != "" {
-					meta.EntityID = entity.ID
-				}
-				break
+			if err := json.Unmarshal(entityRaw, &wrapper); err != nil {
+				continue
 			}
+			id := wrapper.Entity.ID
+			if id == "" {
+				id = wrapper.ID
+			}
+			if id == "" {
+				continue
+			}
+			meta.EntityType = entityType
+			meta.EntityID = id
+			break
 		}
 	}
 
@@ -339,4 +347,38 @@ func (s *RazorpayWebhookService) ListReceiptsByConnector(connectorID uuid.UUID, 
 		receipts = append(receipts, r)
 	}
 	return receipts, nil
+}
+
+type ReceiptIndexRow struct {
+	ProviderEntityID string    `json:"provider_entity_id"`
+	EventID          string    `json:"event_id"`
+	EventType        string    `json:"event_type"`
+	ReceivedAt       time.Time `json:"received_at"`
+	RawBodyHash      string    `json:"raw_body_hash"`
+}
+
+func (s *RazorpayWebhookService) IndexReceipts(ctx context.Context, tenantID, connectorID uuid.UUID, from, to time.Time) ([]ReceiptIndexRow, error) {
+	rows, err := db.DB.QueryContext(ctx, `
+		SELECT COALESCE(provider_entity_id,''), event_id, COALESCE(event_type,''), received_at, raw_body_hash
+		FROM provider_webhook_receipts
+		WHERE tenant_id = $1 AND connector_id = $2
+		  AND (
+		    (received_at >= $3 AND received_at < $4)
+		    OR (provider_created_at >= $3 AND provider_created_at < $4)
+		  )
+		  AND provider_entity_id IS NOT NULL AND provider_entity_id <> ''
+	`, tenantID, connectorID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ReceiptIndexRow
+	for rows.Next() {
+		var r ReceiptIndexRow
+		if err := rows.Scan(&r.ProviderEntityID, &r.EventID, &r.EventType, &r.ReceivedAt, &r.RawBodyHash); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }

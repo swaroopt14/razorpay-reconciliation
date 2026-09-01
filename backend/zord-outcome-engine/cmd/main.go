@@ -14,6 +14,10 @@ import (
 	"zord-outcome-engine/handlers"
 	"zord-outcome-engine/internal/auth"
 	"zord-outcome-engine/internal/health"
+	"zord-outcome-engine/internal/persistence"
+	"zord-outcome-engine/internal/poll"
+	"zord-outcome-engine/internal/poll/providers/razorpay"
+	"zord-outcome-engine/internal/recon"
 	"zord-outcome-engine/kafka"
 	"zord-outcome-engine/routes"
 	"zord-outcome-engine/services"
@@ -127,6 +131,22 @@ func main() {
 	outboxRepo := storage.NewOutboxPullRepo(db.DB)
 	outboxHandler := handlers.NewOutboxHandler(outboxRepo)
 	routes.OutboxRoutes(server, outboxHandler)
+
+	backfillStore := persistence.NewSQLStore(db.DB)
+	edgeURL := os.Getenv("ZORD_EDGE_URL")
+	freshness := poll.NewFreshnessService(backfillStore, poll.NewEdgeReceiptClient(edgeURL, os.Getenv("RELAY_AUTH_TOKEN")))
+	backfillSvc := poll.NewBackfillService(backfillStore, freshness, poll.EnvCredentialResolver{}, func(cfg razorpay.Config) (poll.BackfillProvider, error) {
+		client, err := razorpay.NewClient(cfg, nil, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		return razorpay.NewBackfillAdapter(client), nil
+	})
+	routes.BackfillRoutes(server, &handlers.BackfillHandler{Service: backfillSvc, Freshness: freshness})
+
+	reconStore := persistence.NewReconSQLStore(db.DB)
+	reconSvc := recon.NewService(reconStore)
+	routes.ReconRoutes(server, &handlers.ReconHandler{Service: reconSvc, Parser: services.BankStatementParser{}})
 
 	// Readiness endpoint — checks DB connectivity
 	readinessHandler := health.NewReadinessHandler([]health.DependencyCheck{

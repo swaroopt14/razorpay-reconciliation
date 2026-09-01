@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"zord-edge/db"
 	"zord-edge/logger"
@@ -75,15 +76,14 @@ func (h *Handler) HandleRazorpayWebhook(c *gin.Context) {
 		return
 	}
 
-	// Step 3: Resolve tenant from authenticated context
-	tenantIDStr := c.GetString("tenant_id")
-	if tenantIDStr == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "tenant context required"})
-		return
-	}
-	tenantID, err := uuid.Parse(tenantIDStr)
+	// Resolve tenant from the connector record (webhook routes are not JWT-authenticated).
+	var tenantID uuid.UUID
+	err = db.DB.QueryRow(
+		`SELECT tenant_id FROM connectors WHERE id = $1 AND active = true`,
+		connectorID,
+	).Scan(&tenantID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid tenant ID"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "connector not found"})
 		return
 	}
 
@@ -100,7 +100,7 @@ func (h *Handler) HandleRazorpayWebhook(c *gin.Context) {
 	logger.Log.Info("razorpay webhook: received",
 		slog.String("event_id", eventID),
 		slog.String("connector_id", connectorIDStr),
-		slog.String("tenant_id", tenantIDStr),
+		slog.String("tenant_id", tenantID.String()),
 		slog.Int("body_size", len(rawBody)),
 		slog.String("body_hash", bodyHash[:16]+"..."),
 		slog.String("trace_id", traceID),
@@ -244,6 +244,53 @@ func resolveProviderMode(connectorID uuid.UUID) string {
 		return "test" // default
 	}
 	return mode
+}
+
+// HandleWebhookReceiptIndex is GET /internal/webhooks/receipts/index
+func (h *Handler) HandleWebhookReceiptIndex(c *gin.Context) {
+	if !authorizeRelay(c.Request) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	tenantID, err := uuid.Parse(strings.TrimSpace(c.Query("tenant_id")))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid tenant_id"})
+		return
+	}
+	connectorID, err := uuid.Parse(strings.TrimSpace(c.Query("connector_id")))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connector_id"})
+		return
+	}
+	from, err := time.Parse(time.RFC3339, strings.TrimSpace(c.Query("from")))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid from"})
+		return
+	}
+	to, err := time.Parse(time.RFC3339, strings.TrimSpace(c.Query("to")))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid to"})
+		return
+	}
+	if !to.After(from) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "to must be after from"})
+		return
+	}
+	svc := services.NewRazorpayWebhookService()
+	rows, err := svc.IndexReceipts(c.Request.Context(), tenantID, connectorID, from.UTC(), to.UTC())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	if rows == nil {
+		rows = []services.ReceiptIndexRow{}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"tenant_id":    tenantID.String(),
+		"connector_id": connectorID.String(),
+		"count":        len(rows),
+		"receipts":     rows,
+	})
 }
 
 // Ensure sql is used (imported for the db reference)

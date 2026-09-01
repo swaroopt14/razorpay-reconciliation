@@ -13,3 +13,8 @@ const SchemaVersionV1 = "v1"
 // accepts for canonical_intents upsert (OUT-03). Matches intent-engine and
 // relay allow-list: intent.created.v1
 const EventTypeIntentCreatedV1 = "intent.created.v1"
+
+const EventTypePaymentObservationNormalizedV1 = "payment.observation.normalized.v1"
+const EventTypeSettlementObservationNormalizedV1 = "settlement.observation.normalized.v1"
+const EventTypeBackfillCompletedV1 = "backfill.completed.v1"
+const EventTypeReconDecisionV1 = "reconciliation.decision.v1"

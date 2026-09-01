@@ -54,6 +54,9 @@ type AppConfig struct {
 	VectorIndexKafkaGroupID     string
 	VectorIndexKafkaMaxRetries  int
 	VectorIndexStateDSN         string
+	OutcomeEngineBaseURL        string
+	OutcomeEngineToken          string
+	DefaultConnectorID          string
 }
 
 func parseCSVKeys(v string) []string {
@@ -224,5 +227,8 @@ func Load() AppConfig {
 		VectorIndexKafkaGroupID:     get("VECTOR_INDEX_KAFKA_GROUP_ID", "zord-prompt-layer-vector-indexer"),
 		VectorIndexKafkaMaxRetries:  vectorIndexKafkaMaxRetries,
 		VectorIndexStateDSN:         os.Getenv("VECTOR_INDEX_STATE_DSN"),
+		OutcomeEngineBaseURL:        get("OUTCOME_ENGINE_BASE_URL", "http://zord-outcome-engine:8081"),
+		OutcomeEngineToken:          os.Getenv("OUTCOME_ENGINE_TOKEN"),
+		DefaultConnectorID:          get("RAZORPAY_CONNECTOR_ID", ""),
 	}
 }

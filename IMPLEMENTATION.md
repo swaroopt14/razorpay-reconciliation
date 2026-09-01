@@ -1,8 +1,8 @@
 # Arealis Zord — Implementation Guide & Checklist
 
 > **Purpose:** Authoritative reference for what is built, what is missing, and what to do next.
-> **Last updated:** 2026-09-01
-> **Current test count:** 161 tests passing
+> **Last updated:** 2026-09-02
+> **Current test count:** 161 tests passing (settlement-file) + PDF Phase 3 polling/backfill suite
 
 ---
 
@@ -12,6 +12,8 @@
 - [Phase 1: Razorpay Client & Connector](#phase-1-razorpay-client--connector)
 - [Phase 2: Webhook Ingestion & Signature Verification](#phase-2-webhook-ingestion--signature-verification)
 - [Phase 3: Settlement Reconciliation](#phase-3-settlement-reconciliation)
+- [PDF Phase 3: Razorpay polling & API backfill](#pdf-phase-3-razorpay-polling--api-backfill)
+- [PDF Phases 4–6: Bank CSV, matcher, proof](#pdf-phases-46-bank-csv-matcher-proof)
 - [Phase 4: Refunds & Mutations](#phase-4-refunds--mutations)
 - [Phase 5: AI Recovery Agents](#phase-5-ai-recovery-agents)
 - [Infrastructure & Deployment](#infrastructure--deployment)
@@ -27,7 +29,9 @@
 |-------|------------|--------|-------|
 | **Phase 1** | Razorpay client, config, health check | ✅ Complete | 45 |
 | **Phase 2** | Webhook signature verification, receipt pipeline | ✅ Complete | 9 |
-| **Phase 3** | Settlement parsing, canonicalization, attachment | ✅ Complete | 61 |
+| **Phase 3** | Settlement-file parsing, canonicalization, attachment | ✅ Complete | 61 |
+| **PDF Phase 3** | Razorpay polling / API backfill, freshness, Airflow HTTP triggers | ✅ Complete | mock-first |
+| **PDF Phases 4–6** | Bank CSV, hierarchical matcher, separate proof states | ✅ Complete | mock-first |
 | **Phase 4** | Refunds, mutations, payment.captured processing | ❌ Not started | 0 |
 | **Phase 5** | AI recovery agents, autonomous actions | ❌ Not started | 0 |
 | **Infrastructure** | K8s, Airflow, CI/CD, monitoring | ✅ Complete | — |
@@ -107,7 +111,9 @@ Razorpay POST → Read raw body (1MB) → Extract Signature + Event ID
 
 ## Phase 3: Settlement Reconciliation
 
-> ✅ **COMPLETE** — 61 tests, 27-col parser, 50-col canonicalization, attachment engine
+> ✅ **COMPLETE (already built)** — settlement-file matching is in place. This is **not** the PDF Phase 3 polling/backfill work; see the next section.
+
+This phase is PSP settlement **file** ingest (Razorpay XLSX / Cashfree CSV) → canonical observations → attachment to intents. Bank statement / UTR matching is still the remaining reconciliation gap.
 
 ### What's Built
 
@@ -169,12 +175,73 @@ Razorpay POST → Read raw body (1MB) → Extract Signature + Event ID
 | `GET` | `/v1/settlement/jobs/:job_id` | ✅ |
 | `POST` | `/v1/attachment/run` | ✅ |
 
-### What Phase 3 Does NOT Do
+### What settlement-file matching does not do
 
 - [ ] Bank statement ingestion (no bank CSV/PDF parser)
 - [ ] UTR matching (no Bank↔PSP↔Intent triple reconciliation)
 - [ ] Settlement upload handler integration tests (requires mock S3 + DB)
 - [ ] Canonicalization pipeline integration tests (requires mock DB)
+
+---
+
+## PDF Phase 3: Razorpay polling & API backfill
+
+> ✅ **COMPLETE** — webhook remains the fast path; API backfill is the repair/verification path. Implemented inside `zord-outcome-engine` (no `zord-razorpay-service`).
+
+### What's built
+
+- [x] `backfill_jobs`, `backfill_cursors`, `provider_response_receipts`, `provider_payment_observations`, `provider_settlement_line_observations`
+- [x] Edge index on `provider_webhook_receipts (connector_id, provider_entity_id)` and `payload.payment.entity.id` parse
+- [x] Razorpay client raw bytes + hash; `ListPaymentsPage` (`from`/`to` unix, count ≤ 100); `ListSettlementReconDay` (`GET /settlements/recon/combined`, count ≤ 1000)
+- [x] Provider-neutral `BackfillProvider` adapter; job/window/lease/cursor orchestration; provider-ID upsert; `outcome_outbox` events
+- [x] `GET /internal/webhooks/receipts/index` on zord-edge (`X-Relay-Token`)
+- [x] `FreshnessService.CompareWindow` (`api_and_webhook_present`, `api_only_missing_webhook`, `webhook_only_missing_api`, `both_present_payload_changed`)
+- [x] Outcome-engine internal routes: create/resume/cancel/get job + freshness (service token)
+- [x] Airflow DAGs that HTTP-call outcome-engine only (`razorpay_payment_backfill_dag`, `razorpay_settlement_backfill_dag`, `reconciliation_freshness_dag`)
+
+### Internal API
+
+| Method | Endpoint | Status |
+|--------|----------|--------|
+| `POST` | `/internal/backfill/payments` | ✅ |
+| `POST` | `/internal/backfill/settlements` | ✅ |
+| `GET` | `/internal/backfill/jobs/:job_id` | ✅ |
+| `POST` | `/internal/backfill/jobs/:job_id/resume` | ✅ |
+| `POST` | `/internal/backfill/jobs/:job_id/cancel` | ✅ |
+| `GET` | `/internal/freshness/:job_id` | ✅ |
+| `GET` | `/internal/webhooks/receipts/index` (zord-edge) | ✅ |
+
+### Explicitly deferred (not this phase)
+
+`payment.captured` → intent, refund API mutations, WebSockets, S3 raw response blobs, Grafana dashboards, live console proof pages.
+
+---
+
+## PDF Phases 4–6: Bank CSV, matcher, proof
+
+> ✅ **COMPLETE** — `provider_settlement_state = settled` is never shown as `bank_credited`. Only a matched bank observation proves cash in the merchant account.
+
+### What's built
+
+- [x] `bank_statement_uploads`, `bank_transaction_observations`, `payment_proof_subjects`, `recon_match_decisions`, `payment_evidence_leaves`
+- [x] Bank CSV parser in outcome-engine (`services/bank_statement_parser.go`) — not zord-edge `bank_parser`
+- [x] Hierarchical matcher L1–L6 (`internal/recon`); L6 cannot verify; UTR match can fully reconcile
+- [x] `POST /v1/bank-statements/upload`, `GET /v1/merchant/transactions/:payment_id/proof`, `POST /internal/recon/run`
+- [x] Freshness DAG calls recon-run after backfill; never calls Razorpay or the bank
+- [x] Payment-subject evidence leaves + `GET /v1/merchant/evidence/:id/verify`
+- [x] Ask Zord read tools in prompt-layer (`get_transaction_proof`, `get_bank_match`, …)
+- [x] Console wireframes in `docs/frontend/` (live React pages still later; do not overload Settlement Journal)
+
+### Merchant / internal API
+
+| Method | Endpoint | Status |
+|--------|----------|--------|
+| `POST` | `/v1/bank-statements/upload` | ✅ |
+| `GET` | `/v1/merchant/transactions/:payment_id/proof` | ✅ |
+| `GET` | `/v1/merchant/reconciliation/summary` | ✅ |
+| `GET` | `/v1/merchant/reconciliation/gaps` | ✅ |
+| `POST` | `/internal/recon/run` | ✅ |
+| `GET` | `/internal/recon/gaps` | ✅ |
 
 ---
 
@@ -322,6 +389,7 @@ zord-outcome-engine/services/
 
 ### What's Missing
 
+- [ ] Live payment-proof chips (wireframes in `docs/frontend/`; do not overload Settlement Journal)
 - [ ] WebSocket streaming (currently uses HTTP polling via React Query/SWR)
 - [ ] Real-time settlement job progress
 - [ ] Live attachment progress updates
@@ -343,6 +411,12 @@ zord-outcome-engine/services/
 | Phase 3 Parser registry | `zord-outcome-engine/services/parser_registry_test.go` | 4 | ✅ |
 | Phase 3 Mapping profiles | `zord-outcome-engine/models/mapping_profile_test.go` | 7 | ✅ |
 | Phase 3 Attachment engine | `zord-outcome-engine/services/attachment_engine_test.go` | 40 | ✅ |
+| PDF Phase 3 payments page / hasher | `zord-outcome-engine/internal/poll/providers/razorpay/*_test.go` | added | ✅ |
+| PDF Phase 3 backfill + freshness | `zord-outcome-engine/internal/poll/backfill_service_test.go` | added | ✅ |
+| PDF Phase 3 internal HTTP | `zord-outcome-engine/handlers/backfill_handler_test.go` | added | ✅ |
+| PDF Phase 3 Airflow DAGs | `zord-airflow/tests/test_razorpay_dags.py` | 4 | ✅ |
+| PDF Phases 4–6 matcher + parser | `zord-outcome-engine/internal/recon/*_test.go`, `services/bank_statement_parser_test.go` | added | ✅ |
+| PDF Phases 4–6 Ask Zord tools | `zord-prompt-layer/tools/*_test.go` | added | ✅ |
 | Pre-existing other | Various | 15 | ✅ |
 | **Total** | | **161** | **All passing** |
 
@@ -359,20 +433,11 @@ zord-outcome-engine/services/
 
 ## Recommended Next Steps
 
-### Priority 1: Close the Reconciliation Loop (Phase 3 Gap)
+### Priority 1: Close the Reconciliation Loop (bank / UTR)
 
-**Bank statement ingestion and UTR matching** — This is the single biggest gap. Currently:
-- ✅ PSP ↔ Intent matching works (settlement reconciliation)
-- ❌ Bank ↔ PSP matching does NOT exist
-- Result: 2 of 3 reconciliation legs work
+✅ **Done.** Bank CSV ingestion, UTR matcher, and separate payment / settlement / bank / proof states live in `zord-outcome-engine/internal/recon`. Live console chips are still wireframes in `docs/frontend/`.
 
-**What to build:**
-1. Bank statement CSV/PDF parser (similar to Razorpay/Cashfree parsers)
-2. UTR (Unique Transaction Reference) extraction from bank statements
-3. UTR ↔ PSP settlement matching algorithm
-4. Triple reconciliation: Bank ↔ PSP ↔ Intent
-
-**Estimated effort:** 2-3 weeks
+Still later: bank APIs (CSV first), ML anomaly / cash forecast, live React proof pages.
 
 ---
 

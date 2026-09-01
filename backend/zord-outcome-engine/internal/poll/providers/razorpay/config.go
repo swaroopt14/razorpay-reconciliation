@@ -21,9 +21,10 @@ type Config struct {
 	KeySecret   string
 	Mode        Mode
 	Timeout     time.Duration
-	MaxRetries  int
-	BaseDelay   time.Duration
-	MaxPageSize int
+	MaxRetries       int
+	BaseDelay        time.Duration
+	MaxPageSize      int
+	ReconMaxPageSize int
 }
 
 // DefaultConfig returns a sensible default configuration for local testing.
@@ -34,8 +35,31 @@ func DefaultConfig() Config {
 		Timeout:     10 * time.Second,
 		MaxRetries:  3,
 		BaseDelay:   250 * time.Millisecond,
-		MaxPageSize: 100,
+		MaxPageSize:      100,
+		ReconMaxPageSize: 1000,
 	}
+}
+
+// PaymentPageSize returns the capped payments page size (max 100).
+func (c Config) PaymentPageSize() int {
+	if c.MaxPageSize <= 0 {
+		return 100
+	}
+	if c.MaxPageSize > 100 {
+		return 100
+	}
+	return c.MaxPageSize
+}
+
+// SettlementReconPageSize returns the capped recon page size (max 1000).
+func (c Config) SettlementReconPageSize() int {
+	if c.ReconMaxPageSize <= 0 {
+		return 1000
+	}
+	if c.ReconMaxPageSize > 1000 {
+		return 1000
+	}
+	return c.ReconMaxPageSize
 }
 
 // Validate checks the configuration for required fields and valid values.

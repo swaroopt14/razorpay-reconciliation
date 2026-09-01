@@ -1,6 +1,9 @@
 package poll
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // PaymentReference identifies a single payment at the provider.
 type PaymentReference struct {

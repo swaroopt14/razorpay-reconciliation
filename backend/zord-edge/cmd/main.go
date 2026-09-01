@@ -169,6 +169,7 @@ func main() {
 	server.GET("/internal/outbox/lease", outboxHandler.Lease)
 	server.POST("/internal/outbox/ack", outboxHandler.Ack)
 	server.POST("/internal/outbox/nack", outboxHandler.Nack)
+	server.GET("/internal/webhooks/receipts/index", h.HandleWebhookReceiptIndex)
 
 	logger.Log.Info("starting zord-edge service",
 		slog.String("addr", ":8080"),

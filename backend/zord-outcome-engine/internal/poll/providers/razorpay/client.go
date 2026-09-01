@@ -137,11 +137,20 @@ func (c *Client) HealthCheck(ctx context.Context) (*HealthResult, error) {
 
 // do executes an HTTP request with retry logic and response decoding.
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, out any) error {
+	_, err := c.doRaw(ctx, method, path, query, out)
+	return err
+}
+
+func (c *Client) doRaw(ctx context.Context, method, path string, query url.Values, out any) (ResponseMeta, error) {
 	var lastErr error
+	meta := ResponseMeta{
+		Path:      path,
+		QueryHash: HashRequestQuery(query),
+	}
 
 	for attempt := 0; attempt <= c.config.MaxRetries; attempt++ {
 		if err := ctx.Err(); err != nil {
-			return &ProviderError{
+			return meta, &ProviderError{
 				Kind:    ErrTimeout,
 				Message: "context cancelled",
 			}
@@ -158,7 +167,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 			select {
 			case <-time.After(delay):
 			case <-ctx.Done():
-				return &ProviderError{Kind: ErrTimeout, Message: "context cancelled during retry wait"}
+				return meta, &ProviderError{Kind: ErrTimeout, Message: "context cancelled during retry wait"}
 			}
 		}
 
@@ -169,7 +178,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 
 		req, err := http.NewRequestWithContext(ctx, method, fullURL, nil)
 		if err != nil {
-			return &ProviderError{Kind: ErrTransport, Message: fmt.Sprintf("failed to create request: %v", err)}
+			return meta, &ProviderError{Kind: ErrTransport, Message: fmt.Sprintf("failed to create request: %v", err)}
 		}
 
 		c.setHeaders(req)
@@ -177,7 +186,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			if ctx.Err() != nil {
-				return &ProviderError{Kind: ErrTimeout, Message: "context cancelled"}
+				return meta, &ProviderError{Kind: ErrTimeout, Message: "context cancelled"}
 			}
 			lastErr = &ProviderError{
 				Kind:      ErrTransport,
@@ -191,11 +200,15 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		meta.Body = bodyBytes
+		meta.Status = resp.StatusCode
+		meta.RequestID = resp.Header.Get("X-Request-Id")
+		meta.Hash = HashRawResponse(bodyBytes)
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			if out != nil && len(bodyBytes) > 0 {
 				if err := json.Unmarshal(bodyBytes, out); err != nil {
-					return &ProviderError{
+					return meta, &ProviderError{
 						Kind:       ErrDecode,
 						Code:       "RAZORPAY_DECODE_ERROR",
 						Message:    "failed to parse response JSON",
@@ -204,21 +217,23 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 				}
 			}
 			c.emitMetrics(method+" "+path, 0, "success")
-			return nil
+			return meta, nil
 		}
 
-		requestID := resp.Header.Get("X-Request-Id")
-		pErr := ClassifyHTTPStatus(resp.StatusCode, string(bodyBytes), requestID)
+		pErr := ClassifyHTTPStatus(resp.StatusCode, string(bodyBytes), meta.RequestID)
 
 		if !pErr.Retryable {
-			return pErr
+			return meta, pErr
 		}
 
 		lastErr = pErr
 		c.emitMetrics(method+" "+path, 0, string(pErr.Kind))
 	}
 
-	return lastErr
+	if lastErr == nil {
+		lastErr = &ProviderError{Kind: ErrProvider, Message: "request failed"}
+	}
+	return meta, lastErr
 }
 
 // setHeaders adds Basic Auth, User-Agent, Accept, and trace headers.
@@ -247,15 +262,63 @@ func (c *Client) retryDelay(attempt int) time.Duration {
 
 // ListPayments fetches a single page of payments within a time window.
 func (c *Client) ListPayments(ctx context.Context, window TimeWindow, page SkipCount) ([]PaymentResponse, error) {
+	result, _, err := c.ListPaymentsPage(ctx, window, page.Skip, page.Count)
+	if err != nil {
+		return nil, err
+	}
+	return result.Items, nil
+}
+
+// ListPaymentsPage fetches one payments page and returns raw response metadata for hashing.
+func (c *Client) ListPaymentsPage(ctx context.Context, window TimeWindow, skip, count int) (ListResponse[PaymentResponse], ResponseMeta, error) {
+	if skip < 0 {
+		skip = 0
+	}
+	maxCount := c.config.PaymentPageSize()
+	if count <= 0 || count > maxCount {
+		count = maxCount
+	}
+
+	page := SkipCount{Skip: skip, Count: count}
 	q := PaginationParams(page)
 	q.Set("from", strconv.FormatInt(window.From.Unix(), 10))
 	q.Set("to", strconv.FormatInt(window.To.Unix(), 10))
 
 	var result ListResponse[PaymentResponse]
-	if err := c.do(ctx, http.MethodGet, "/payments", q, &result); err != nil {
-		return nil, err
+	meta, err := c.doRaw(ctx, http.MethodGet, "/payments", q, &result)
+	if err != nil {
+		return result, meta, err
 	}
-	return result.Items, nil
+	return result, meta, nil
+}
+
+// ListSettlementReconDay fetches one settlement-recon page for a civil date.
+func (c *Client) ListSettlementReconDay(ctx context.Context, day CivilDate, skip, count int) (ListResponse[SettlementReconItem], ResponseMeta, error) {
+	if skip < 0 {
+		skip = 0
+	}
+	maxCount := c.config.SettlementReconPageSize()
+	if count <= 0 || count > maxCount {
+		count = maxCount
+	}
+
+	q := url.Values{}
+	q.Set("year", strconv.Itoa(day.Year))
+	q.Set("month", fmt.Sprintf("%02d", day.Month))
+	if day.Day > 0 {
+		q.Set("day", fmt.Sprintf("%02d", day.Day))
+	}
+	if skip > 0 {
+		q.Set("skip", strconv.Itoa(skip))
+	}
+	q.Set("count", strconv.Itoa(count))
+
+	var result ListResponse[SettlementReconItem]
+	meta, err := c.doRaw(ctx, http.MethodGet, "/settlements/recon/combined", q, &result)
+	if err != nil {
+		return result, meta, err
+	}
+	return result, meta, nil
 }
 
 // ListSettlements fetches a single page of settlements within a time window.

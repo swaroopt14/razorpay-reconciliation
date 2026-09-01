@@ -37,3 +37,37 @@ func OutboxRoutes(router *gin.Engine, h *handlers.OutboxHandler) {
 		internal.POST("/nack", gin.WrapF(h.Nack))
 	}
 }
+
+func ReconRoutes(router *gin.Engine, h *handlers.ReconHandler) {
+	protected := router.Group("/v1")
+	protected.Use(auth.GinProtect())
+	{
+		protected.POST("/bank-statements/upload", h.UploadBankStatement)
+		protected.GET("/bank-statements/:upload_id", h.GetUpload)
+		protected.GET("/merchant/transactions/:payment_id/proof", h.GetProof)
+		protected.GET("/merchant/transactions", h.Transactions)
+		protected.GET("/merchant/reconciliation/summary", h.Summary)
+		protected.GET("/merchant/reconciliation/gaps", h.Gaps)
+		protected.GET("/merchant/settlements/:settlement_id/breakdown", h.Breakdown)
+		protected.GET("/merchant/freshness", h.Freshness)
+		protected.GET("/merchant/evidence/:id/verify", h.VerifyEvidence)
+		protected.GET("/merchant/ask/proof", h.AskProof)
+	}
+	internal := router.Group("/internal")
+	{
+		internal.POST("/recon/run", h.Run)
+		internal.GET("/recon/gaps", h.InternalGaps)
+	}
+}
+
+func BackfillRoutes(router *gin.Engine, h *handlers.BackfillHandler) {
+	internal := router.Group("/internal")
+	{
+		internal.POST("/backfill/payments", h.CreatePayments)
+		internal.POST("/backfill/settlements", h.CreateSettlements)
+		internal.GET("/backfill/jobs/:job_id", h.GetJob)
+		internal.POST("/backfill/jobs/:job_id/resume", h.ResumeJob)
+		internal.POST("/backfill/jobs/:job_id/cancel", h.CancelJob)
+		internal.GET("/freshness/:job_id", h.GetFreshness)
+	}
+}

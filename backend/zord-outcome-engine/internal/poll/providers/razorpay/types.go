@@ -72,3 +72,39 @@ type PageResult[T any] struct {
 	Skip    int
 	HasMore bool
 }
+
+// CivilDate is a year/month/day used by the settlement recon endpoint.
+type CivilDate struct {
+	Year  int
+	Month int
+	Day   int
+}
+
+// ResponseMeta captures evidence about a single provider HTTP response.
+type ResponseMeta struct {
+	Status    int
+	Body      []byte
+	Hash      string
+	RequestID string
+	Path      string
+	QueryHash string
+}
+
+// SettlementReconItem is one row from GET /settlements/recon/combined.
+type SettlementReconItem struct {
+	EntityID      string `json:"entity_id"`
+	Type          string `json:"type"`
+	Debit         int64  `json:"debit"`
+	Credit        int64  `json:"credit"`
+	Amount        int64  `json:"amount"`
+	Currency      string `json:"currency"`
+	Fee           int64  `json:"fee"`
+	Tax           int64  `json:"tax"`
+	Settled       bool   `json:"settled"`
+	CreatedAt     int64  `json:"created_at"`
+	SettledAt     int64  `json:"settled_at"`
+	SettlementID  string `json:"settlement_id"`
+	SettlementUTR string `json:"settlement_utr"`
+	PaymentID     string `json:"payment_id"`
+	OrderID       string `json:"order_id"`
+}

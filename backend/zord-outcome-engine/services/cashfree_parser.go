@@ -45,6 +45,7 @@ var cashfreeHeaders = []string{
 // Parse reads raw file bytes and returns one ParsedRowResult per data row.
 func (p *CashfreeParser) Parse(fileBytes []byte, sourceFileRef string, envelopeID uuid.UUID, profile models.MappingProfile) ([]ParsedRowResult, error) {
 	reader := csv.NewReader(bytes.NewReader(fileBytes))
+	reader.FieldsPerRecord = -1 // Allow variable-length rows for footer/empty detection
 
 	// Read header and validate
 	header, err := reader.Read()
