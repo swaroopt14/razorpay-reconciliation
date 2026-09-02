@@ -28,4 +28,7 @@ func TestParseMetadataNestedEntityID(t *testing.T) {
 	if meta.EventType != "payment.captured" {
 		t.Fatalf("event=%q", meta.EventType)
 	}
+	if meta.AmountMinor != 100000 {
+		t.Fatalf("amount=%d", meta.AmountMinor)
+	}
 }

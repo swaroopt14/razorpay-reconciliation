@@ -2,9 +2,7 @@ package services
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,11 +18,21 @@ import (
 )
 
 // RazorpayWebhookService handles Razorpay webhook processing.
-type RazorpayWebhookService struct{}
+type RazorpayWebhookService struct {
+	store webhookObservationStore
+}
 
-// NewRazorpayWebhookService creates a new service instance.
+// NewRazorpayWebhookService creates a service that persists to Postgres.
 func NewRazorpayWebhookService() *RazorpayWebhookService {
-	return &RazorpayWebhookService{}
+	return &RazorpayWebhookService{store: sqlWebhookStore{}}
+}
+
+// NewRazorpayWebhookServiceWithStore creates a service with an injected store (tests).
+func NewRazorpayWebhookServiceWithStore(store webhookObservationStore) *RazorpayWebhookService {
+	if store == nil {
+		store = sqlWebhookStore{}
+	}
+	return &RazorpayWebhookService{store: store}
 }
 
 // WebhookRequest holds the parsed input from the HTTP handler.
@@ -40,35 +48,67 @@ type WebhookRequest struct {
 	TraceID       string
 }
 
-// Receive processes a Razorpay webhook event end-to-end.
-// Returns a ReceiptResult and an HTTP status code.
+// Receive processes a Razorpay webhook as a durable observation.
+// Order: HMAC on raw bytes, then JSON metadata, then idempotent persist.
 func (s *RazorpayWebhookService) Receive(ctx context.Context, req WebhookRequest) (model.ReceiptResult, int, error) {
-	// Step 1: Parse Razorpay event metadata
-	metadata, err := s.ParseMetadata(req.RawBody)
-	if err != nil {
-		logger.Log.Warn("razorpay webhook: failed to parse event metadata",
-			slog.String("event_id", req.EventID),
-			slog.String("error", err.Error()),
-		)
-		return model.ReceiptResult{}, 400, fmt.Errorf("invalid event payload")
-	}
+	start := time.Now()
+	provider := metricProvider(req.Provider)
+	mode := metricMode(req.ProviderMode)
+	status := "error"
+	eventType := "unknown"
 
-	// Step 2: Verify HMAC-SHA256 signature
+	razorpayWebhookReceivedTotal.WithLabelValues(provider, mode).Inc()
+	defer func() {
+		razorpayWebhookProcessingDuration.WithLabelValues(provider, mode, status).Observe(time.Since(start).Seconds())
+	}()
+
 	if err := validator.VerifyRazorpaySignature(req.RawBody, req.Signature, req.WebhookSecret); err != nil {
+		status = "invalid_signature"
+		razorpayWebhookRejectedTotal.WithLabelValues(provider, mode, status).Inc()
 		logger.Log.Warn("razorpay webhook: invalid signature",
 			slog.String("event_id", req.EventID),
-			slog.String("provider", req.Provider),
+			slog.String("provider", provider),
+			slog.String("connector_id", req.ConnectorID.String()),
+			slog.String("trace_id", req.TraceID),
 		)
 		return model.ReceiptResult{}, 401, fmt.Errorf("invalid signature")
 	}
 
-	// Step 3: Compute SHA-256 hash of raw body
-	hash := sha256.Sum256(req.RawBody)
-	bodyHash := "sha256:" + hex.EncodeToString(hash[:])
-
-	// Step 4: Persist receipt and outbox atomically
-	result, err := s.persistAndEnqueue(ctx, req, metadata, bodyHash)
+	metadata, err := s.ParseMetadata(req.RawBody)
 	if err != nil {
+		status = "malformed_payload"
+		razorpayWebhookRejectedTotal.WithLabelValues(provider, mode, status).Inc()
+		logger.Log.Warn("razorpay webhook: failed to parse event metadata",
+			slog.String("event_id", req.EventID),
+			slog.String("error", err.Error()),
+			slog.String("trace_id", req.TraceID),
+		)
+		return model.ReceiptResult{}, 400, fmt.Errorf("invalid event payload")
+	}
+	eventType = metricEventType(metadata.EventType)
+
+	bodyHash := HashWebhookBody(req.RawBody)
+	result, err := s.store.PersistWebhookObservation(ctx, webhookPersistInput{
+		TenantID:     req.TenantID,
+		ConnectorID:  req.ConnectorID,
+		Provider:     provider,
+		ProviderMode: mode,
+		EventID:      req.EventID,
+		RawBody:      req.RawBody,
+		BodyHash:     bodyHash,
+		Signature:    req.Signature,
+		TraceID:      req.TraceID,
+		Metadata:     metadata,
+	})
+	if err != nil {
+		if errors.Is(err, ErrWebhookOutbox) {
+			status = "outbox_failure"
+			razorpayWebhookOutboxFailureTotal.WithLabelValues(provider, mode).Inc()
+		} else {
+			status = "persist_failure"
+			razorpayWebhookPersistFailureTotal.WithLabelValues(provider, mode).Inc()
+		}
+		razorpayWebhookRejectedTotal.WithLabelValues(provider, mode, status).Inc()
 		logger.Log.Error("razorpay webhook: persist failed",
 			slog.String("event_id", req.EventID),
 			slog.String("trace_id", req.TraceID),
@@ -77,23 +117,48 @@ func (s *RazorpayWebhookService) Receive(ctx context.Context, req WebhookRequest
 		return model.ReceiptResult{}, 500, err
 	}
 
-	// Step 5: Return appropriate status
-	if result.Duplicate {
-		logger.Log.Info("razorpay webhook: duplicate accepted",
+	if result.Conflict {
+		status = "payload_conflict"
+		razorpayWebhookRejectedTotal.WithLabelValues(provider, mode, status).Inc()
+		logger.Log.Warn("razorpay webhook: payload conflict",
 			slog.String("event_id", req.EventID),
-			slog.Int("delivery_count", result.DeliveryCount),
+			slog.String("receipt_id", result.ReceiptID.String()),
+			slog.String("body_sha256", bodyHash),
+			slog.String("trace_id", req.TraceID),
 		)
 		return result, 200, nil
 	}
 
+	if result.Duplicate {
+		status = "duplicate"
+		razorpayWebhookDuplicateTotal.WithLabelValues(provider, mode, eventType).Inc()
+		logger.Log.Info("razorpay webhook: duplicate accepted",
+			slog.String("provider", provider),
+			slog.String("event_type", metadata.EventType),
+			slog.String("event_id", req.EventID),
+			slog.String("connector_id", req.ConnectorID.String()),
+			slog.String("body_sha256", bodyHash),
+			slog.String("status", "duplicate"),
+			slog.String("receipt_id", result.ReceiptID.String()),
+			slog.Int("delivery_count", result.DeliveryCount),
+			slog.String("trace_id", req.TraceID),
+		)
+		return result, 200, nil
+	}
+
+	status = "accepted"
+	razorpayWebhookAcceptedTotal.WithLabelValues(provider, mode, eventType).Inc()
 	logger.Log.Info("razorpay webhook: accepted",
-		slog.String("event_id", req.EventID),
+		slog.String("provider", provider),
 		slog.String("event_type", metadata.EventType),
+		slog.String("event_id", req.EventID),
+		slog.String("connector_id", req.ConnectorID.String()),
 		slog.String("entity_id", metadata.EntityID),
+		slog.String("body_sha256", bodyHash),
+		slog.String("status", "accepted"),
 		slog.String("receipt_id", result.ReceiptID.String()),
 		slog.String("trace_id", req.TraceID),
 	)
-
 	return result, 200, nil
 }
 
@@ -113,14 +178,30 @@ func (s *RazorpayWebhookService) ParseMetadata(rawBody []byte) (model.WebhookMet
 		meta.ProviderCreatedAt = &t
 	}
 
-	// Extract entity type and ID from payload.<entity>.entity.id (Razorpay nested wrapper).
 	var payload map[string]json.RawMessage
 	if err := json.Unmarshal(event.Payload, &payload); err == nil {
-		for entityType, entityRaw := range payload {
+		keys := make([]string, 0, len(payload))
+		if _, ok := payload["payment"]; ok {
+			keys = append(keys, "payment")
+		}
+		for entityType := range payload {
+			if entityType != "payment" {
+				keys = append(keys, entityType)
+			}
+		}
+		for _, entityType := range keys {
+			entityRaw := payload[entityType]
 			var wrapper struct {
 				Entity struct {
-					ID     string `json:"id"`
-					Entity string `json:"entity"`
+					ID       string `json:"id"`
+					Entity   string `json:"entity"`
+					Amount   int64  `json:"amount"`
+					Currency string `json:"currency"`
+					Status   string `json:"status"`
+					OrderID  string `json:"order_id"`
+					Captured bool   `json:"captured"`
+					Fee      int64  `json:"fee"`
+					Tax      int64  `json:"tax"`
 				} `json:"entity"`
 				ID string `json:"id"`
 			}
@@ -136,152 +217,18 @@ func (s *RazorpayWebhookService) ParseMetadata(rawBody []byte) (model.WebhookMet
 			}
 			meta.EntityType = entityType
 			meta.EntityID = id
+			meta.AmountMinor = wrapper.Entity.Amount
+			meta.Currency = wrapper.Entity.Currency
+			meta.Status = wrapper.Entity.Status
+			meta.OrderID = wrapper.Entity.OrderID
+			meta.Captured = wrapper.Entity.Captured
+			meta.FeeMinor = wrapper.Entity.Fee
+			meta.TaxMinor = wrapper.Entity.Tax
 			break
 		}
 	}
 
 	return meta, nil
-}
-
-// persistAndEnqueue atomically inserts the webhook receipt and outbox event.
-func (s *RazorpayWebhookService) persistAndEnqueue(
-	ctx context.Context,
-	req WebhookRequest,
-	metadata model.WebhookMetadata,
-	bodyHash string,
-) (model.ReceiptResult, error) {
-	tx, err := db.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return model.ReceiptResult{}, fmt.Errorf("transaction begin failed: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
-
-	receiptID := uuid.Must(uuid.NewV7())
-	now := time.Now().UTC()
-
-	// Try to insert receipt — the UNIQUE(connector_id, event_id) constraint handles idempotency
-	var existingDeliveryCount int
-	err = tx.QueryRowContext(ctx, `
-		INSERT INTO provider_webhook_receipts (
-			id, tenant_id, connector_id, provider, provider_mode,
-			event_id, event_type, provider_entity_type, provider_entity_id,
-			raw_body_hash, raw_body_size_bytes,
-			signature_header, signature_valid,
-			received_at, provider_created_at,
-			ingestion_status, first_seen_trace_id, delivery_count,
-			created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
-		ON CONFLICT (connector_id, event_id) DO UPDATE SET
-			last_seen_at = now(),
-			delivery_count = provider_webhook_receipts.delivery_count + 1,
-			updated_at = now()
-		RETURNING delivery_count
-	`,
-		receiptID, req.TenantID, req.ConnectorID, req.Provider, req.ProviderMode,
-		req.EventID, metadata.EventType, metadata.EntityType, metadata.EntityID,
-		bodyHash, int64(len(req.RawBody)),
-		req.Signature, true,
-		now, metadata.ProviderCreatedAt,
-		model.WebhookStatusPersisted, req.TraceID, 1,
-		now, now,
-	).Scan(&existingDeliveryCount)
-
-	if err != nil {
-		return model.ReceiptResult{}, fmt.Errorf("receipt persist failed: %w", err)
-	}
-
-	isDuplicate := existingDeliveryCount > 1
-
-	// For duplicates, no second outbox event
-	if !isDuplicate {
-		// Insert transactional outbox event in the same transaction
-		eventPayload := map[string]any{
-			"event_name":            "provider.observation.received",
-			"schema_version":        "v1",
-			"tenant_id":             req.TenantID.String(),
-			"connector_id":          req.ConnectorID.String(),
-			"provider":              req.Provider,
-			"provider_mode":         req.ProviderMode,
-			"source_kind":           "webhook",
-			"provider_event_id":     req.EventID,
-			"provider_event_type":   metadata.EventType,
-			"provider_entity_type":  metadata.EntityType,
-			"provider_entity_id":    metadata.EntityID,
-			"receipt_id":            receiptID.String(),
-			"raw_body_hash":         bodyHash,
-			"received_at":           now.Format(time.RFC3339),
-			"provider_created_at":   metadata.ProviderCreatedAt,
-			"trace_id":              req.TraceID,
-		}
-		payloadJSON, _ := json.Marshal(eventPayload)
-
-		_, err = tx.ExecContext(ctx, `
-			INSERT INTO ingress_outbox (
-				trace_id, envelope_id, tenant_id, artifact_id, artifact_version_id,
-				object_ref, received_at, ingress_channel, source,
-				idempotency_key, encrypted_payload, payload_hash,
-				raw_row_hash, envelope_hash, envelope_signature,
-				content_type, kms_key_version, encryption_key_id,
-				topic, status, event_type
-			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
-		`,
-			req.TraceID,
-			uuid.Must(uuid.NewV7()).String(),
-			req.TenantID,
-			uuid.Must(uuid.NewV7()).String(),
-			uuid.Must(uuid.NewV7()).String(),
-			"",
-			now,
-			"webhook:razorpay:"+req.ConnectorID.String(),
-			"provider.observation.received",
-			req.EventID,
-			payloadJSON,
-			bodyHash,
-			bodyHash,
-			bodyHash,
-			"",
-			"application/json",
-			"",
-			"",
-			"payments.ledger.events.v1",
-			"PENDING",
-			"provider.observation.received",
-		)
-		if err != nil {
-			return model.ReceiptResult{}, fmt.Errorf("outbox insert failed: %w", err)
-		}
-
-		// Update receipt status to published
-		_, err = tx.ExecContext(ctx, `
-			UPDATE provider_webhook_receipts
-			SET ingestion_status = $1, published_at = $2, updated_at = $2
-			WHERE id = $3
-		`, model.WebhookStatusPublished, now, receiptID)
-		if err != nil {
-			return model.ReceiptResult{}, fmt.Errorf("status update failed: %w", err)
-		}
-	}
-
-	if err = tx.Commit(); err != nil {
-		return model.ReceiptResult{}, fmt.Errorf("transaction commit failed: %w", err)
-	}
-
-	status := model.WebhookStatusPublished
-	if isDuplicate {
-		status = model.WebhookStatusDuplicate
-	}
-
-	return model.ReceiptResult{
-		ReceiptID:     receiptID,
-		Status:        status,
-		Duplicate:     isDuplicate,
-		Published:     !isDuplicate,
-		DeliveryCount: existingDeliveryCount,
-	}, nil
 }
 
 // GetReceipt retrieves a receipt by ID.

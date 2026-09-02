@@ -66,6 +66,13 @@ func ReconRoutes(router *gin.Engine, h *handlers.ReconHandler, imp *handlers.Imp
 	}
 }
 
+func ObservationRoutes(router *gin.Engine, h *handlers.ObservationHandler) {
+	internal := router.Group("/internal")
+	{
+		internal.POST("/observations/provider", h.Ingest)
+	}
+}
+
 func BackfillRoutes(router *gin.Engine, h *handlers.BackfillHandler) {
 	internal := router.Group("/internal")
 	{

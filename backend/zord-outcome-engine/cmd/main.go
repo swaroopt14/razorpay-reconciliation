@@ -15,6 +15,7 @@ import (
 	"zord-outcome-engine/internal/auth"
 	"zord-outcome-engine/internal/health"
 	"zord-outcome-engine/internal/imports"
+	"zord-outcome-engine/internal/observe"
 	"zord-outcome-engine/internal/persistence"
 	"zord-outcome-engine/internal/poll"
 	"zord-outcome-engine/internal/poll/providers/razorpay"
@@ -144,6 +145,21 @@ func main() {
 		return razorpay.NewBackfillAdapter(client), nil
 	})
 	routes.BackfillRoutes(server, &handlers.BackfillHandler{Service: backfillSvc, Freshness: freshness})
+
+	observationProc := observe.NewProcessor(backfillStore)
+	handlers.SetObservationProcessor(observationProc)
+	routes.ObservationRoutes(server, &handlers.ObservationHandler{Processor: observationProc})
+	observationTopic := os.Getenv("KAFKA_OBSERVATION_TOPIC")
+	if strings.TrimSpace(observationTopic) == "" {
+		observationTopic = "payments.ledger.events.v1"
+	}
+	go func() {
+		err := kafka.StartConsumer(ctx, brokers, "outcome-engine-observation-group", observationTopic, handlers.HandleProviderObservation, recordConsumerFailure)
+		if err != nil {
+			log.Fatalf("Observation Kafka consumer failed: %v", err)
+		}
+	}()
+	log.Printf("Kafka observation consumer topic=%s", observationTopic)
 
 	reconStore := persistence.NewReconSQLStore(db.DB)
 	reconSvc := recon.NewService(reconStore)

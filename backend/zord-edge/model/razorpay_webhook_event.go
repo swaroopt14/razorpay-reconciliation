@@ -35,10 +35,19 @@ type WebhookHeaders struct {
 }
 
 // WebhookMetadata holds extracted metadata from the Razorpay event.
+// Amount/status fields are a safe payment snapshot for downstream
+// observation processing — not a canonical outcome.
 type WebhookMetadata struct {
 	EventType         string
 	EntityType        string
 	EntityID          string
+	AmountMinor       int64
+	Currency          string
+	Status            string
+	OrderID           string
+	Captured          bool
+	FeeMinor          int64
+	TaxMinor          int64
 	ProviderCreatedAt *time.Time
 }
 
@@ -47,6 +56,7 @@ type ReceiptResult struct {
 	ReceiptID     uuid.UUID
 	Status        string
 	Duplicate     bool
+	Conflict      bool
 	Published     bool
 	DeliveryCount int
 }

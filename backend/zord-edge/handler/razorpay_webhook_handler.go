@@ -13,6 +13,7 @@ import (
 
 	"zord-edge/db"
 	"zord-edge/logger"
+	"zord-edge/model"
 	"zord-edge/services"
 
 	"github.com/gin-gonic/gin"
@@ -23,13 +24,8 @@ const maxWebhookBodyBytes = 1 << 20 // 1 MB
 
 // HandleRazorpayWebhook processes incoming Razorpay webhook events.
 //
-// Flow:
-//  1. Resolve connector from route param
-//  2. Read raw body exactly once (before any JSON parsing)
-//  3. Extract X-Razorpay-Signature and x-razorpay-event-id headers
-//  4. Verify HMAC-SHA256 signature using webhook secret
-//  5. Persist receipt + outbox atomically
-//  6. Return HTTP 2xx
+// The handler only extracts HTTP fields. Signature verification, metadata
+// parse, and durable persist live in RazorpayWebhookService.
 //
 // POST /v1/webhooks/razorpay/:connectorID
 func (h *Handler) HandleRazorpayWebhook(c *gin.Context) {
@@ -45,7 +41,6 @@ func (h *Handler) HandleRazorpayWebhook(c *gin.Context) {
 		return
 	}
 
-	// Step 1: Read raw body EXACTLY ONCE — signature must match these bytes
 	rawBody, err := io.ReadAll(io.LimitReader(c.Request.Body, maxWebhookBodyBytes+1))
 	if err != nil {
 		logger.Log.Error("razorpay webhook: failed to read body",
@@ -60,7 +55,6 @@ func (h *Handler) HandleRazorpayWebhook(c *gin.Context) {
 		return
 	}
 
-	// Step 2: Extract Razorpay-specific headers
 	eventID := c.GetHeader("x-razorpay-event-id")
 	if eventID == "" {
 		eventID = c.GetHeader("X-Razorpay-Event-Id")
@@ -76,42 +70,34 @@ func (h *Handler) HandleRazorpayWebhook(c *gin.Context) {
 		return
 	}
 
-	// Resolve tenant from the connector record (webhook routes are not JWT-authenticated).
-	var tenantID uuid.UUID
-	err = db.DB.QueryRow(
-		`SELECT tenant_id FROM connectors WHERE id = $1 AND active = true`,
-		connectorID,
-	).Scan(&tenantID)
+	tenantID, providerMode, webhookSecret, err := h.lookupRazorpayConnector(connectorID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "connector not found"})
 		return
 	}
 
-	// Step 4: Resolve webhook secret
-	webhookSecret := resolveWebhookSecret(connectorID)
-
-	// Step 5: Generate trace ID
 	traceID := uuid.Must(uuid.NewV7()).String()
-
-	// Step 6: Compute raw body hash for logging
 	hash := sha256.Sum256(rawBody)
 	bodyHash := hex.EncodeToString(hash[:])
+	hashPrefix := bodyHash
+	if len(hashPrefix) > 16 {
+		hashPrefix = hashPrefix[:16]
+	}
 
 	logger.Log.Info("razorpay webhook: received",
 		slog.String("event_id", eventID),
 		slog.String("connector_id", connectorIDStr),
 		slog.String("tenant_id", tenantID.String()),
 		slog.Int("body_size", len(rawBody)),
-		slog.String("body_hash", bodyHash[:16]+"..."),
+		slog.String("body_hash", hashPrefix+"..."),
 		slog.String("trace_id", traceID),
 	)
 
-	// Step 7: Resolve provider mode
-	providerMode := resolveProviderMode(connectorID)
-
-	// Step 8: Call the webhook service
-	svc := services.NewRazorpayWebhookService()
-	result, httpStatus, err := svc.Receive(c.Request.Context(), services.WebhookRequest{
+	receive := h.ReceiveRazorpayWebhook
+	if receive == nil {
+		receive = services.NewRazorpayWebhookService().Receive
+	}
+	result, httpStatus, err := receive(c.Request.Context(), services.WebhookRequest{
 		TenantID:      tenantID,
 		ConnectorID:   connectorID,
 		Provider:      "razorpay",
@@ -129,20 +115,51 @@ func (h *Handler) HandleRazorpayWebhook(c *gin.Context) {
 			slog.Int("http_status", httpStatus),
 			slog.String("error", err.Error()),
 		)
-		c.JSON(httpStatus, gin.H{
-			"error":   "webhook_error",
-			"message": "event not accepted",
-		})
+		switch httpStatus {
+		case http.StatusUnauthorized:
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": gin.H{
+					"code":    "INVALID_WEBHOOK_SIGNATURE",
+					"message": "Webhook signature verification failed",
+				},
+			})
+		case http.StatusBadRequest:
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": gin.H{
+					"code":    "INVALID_WEBHOOK_PAYLOAD",
+					"message": "Webhook payload is invalid",
+				},
+			})
+		default:
+			if httpStatus < 400 {
+				httpStatus = http.StatusInternalServerError
+			}
+			c.JSON(httpStatus, gin.H{
+				"error":   "webhook_error",
+				"message": "event not accepted",
+			})
+		}
 		return
 	}
 
-	// Step 9: Return 2xx
-	response := gin.H{
-		"status":    result.Status,
-		"receipt_id": result.ReceiptID.String(),
-		"trace_id":  traceID,
+	status := "accepted"
+	switch {
+	case result.Conflict:
+		status = "payload_conflict"
+	case result.Duplicate:
+		status = "duplicate"
+	case result.Status == model.WebhookStatusPayloadConflict:
+		status = "payload_conflict"
+	case result.Status == model.WebhookStatusDuplicate:
+		status = "duplicate"
 	}
-	if result.Duplicate {
+
+	response := gin.H{
+		"status":     status,
+		"receipt_id": result.ReceiptID.String(),
+		"trace_id":   traceID,
+	}
+	if result.Duplicate || result.Conflict {
 		response["delivery_count"] = result.DeliveryCount
 	}
 
@@ -210,40 +227,45 @@ func (h *Handler) HandleRazorpayWebhookList(c *gin.Context) {
 	})
 }
 
-// resolveWebhookSecret gets the webhook secret for a connector.
-func resolveWebhookSecret(connectorID uuid.UUID) string {
-	// Try env var first (local dev)
-	if secret := os.Getenv("RAZORPAY_WEBHOOK_SECRET"); secret != "" {
-		return secret
+func (h *Handler) lookupRazorpayConnector(connectorID uuid.UUID) (uuid.UUID, string, string, error) {
+	if h.LookupRazorpayConnector != nil {
+		return h.LookupRazorpayConnector(connectorID)
 	}
-
-	// Try connector's stored secret
-	var secret string
-	err := db.DB.QueryRow(
-		`SELECT secret FROM connectors WHERE id = $1 AND active = true`,
-		connectorID,
-	).Scan(&secret)
-	if err != nil {
-		logger.Log.Warn("razorpay webhook: could not resolve secret",
-			slog.String("connector_id", connectorID.String()),
-			slog.String("error", err.Error()),
-		)
-		return ""
-	}
-	return secret
+	return lookupRazorpayConnectorSQL(connectorID)
 }
 
-// resolveProviderMode gets the provider mode from the connector record.
-func resolveProviderMode(connectorID uuid.UUID) string {
-	var mode string
+func lookupRazorpayConnectorSQL(connectorID uuid.UUID) (uuid.UUID, string, string, error) {
+	var (
+		tenantID  uuid.UUID
+		mode      sql.NullString
+		secret    sql.NullString
+		secretRef sql.NullString
+	)
 	err := db.DB.QueryRow(
-		`SELECT provider_mode FROM connectors WHERE id = $1 AND active = true`,
+		`SELECT tenant_id, provider_mode, secret, webhook_secret_ref
+		 FROM connectors WHERE id = $1 AND active = true`,
 		connectorID,
-	).Scan(&mode)
+	).Scan(&tenantID, &mode, &secret, &secretRef)
 	if err != nil {
-		return "test" // default
+		return uuid.Nil, "", "", err
 	}
-	return mode
+
+	providerMode := mode.String
+	if providerMode == "" {
+		providerMode = "test"
+	}
+
+	webhookSecret := secret.String
+	if webhookSecret == "" && secretRef.Valid {
+		ref := strings.TrimSpace(secretRef.String)
+		if strings.HasPrefix(ref, "env:") {
+			webhookSecret = os.Getenv(strings.TrimPrefix(ref, "env:"))
+		}
+	}
+	if webhookSecret == "" {
+		webhookSecret = os.Getenv("RAZORPAY_WEBHOOK_SECRET")
+	}
+	return tenantID, providerMode, webhookSecret, nil
 }
 
 // HandleWebhookReceiptIndex is GET /internal/webhooks/receipts/index
@@ -292,6 +314,3 @@ func (h *Handler) HandleWebhookReceiptIndex(c *gin.Context) {
 		"receipts":     rows,
 	})
 }
-
-// Ensure sql is used (imported for the db reference)
-var _ = sql.ErrNoRows

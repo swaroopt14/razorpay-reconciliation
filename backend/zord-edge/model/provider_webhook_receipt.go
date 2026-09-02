@@ -39,6 +39,7 @@ const (
 	WebhookStatusPersisted         = "persisted"
 	WebhookStatusPublished         = "published"
 	WebhookStatusDuplicate         = "duplicate"
+	WebhookStatusPayloadConflict   = "payload_conflict"
 	WebhookStatusRejectedSignature = "rejected_signature"
 	WebhookStatusRejectedSchema    = "rejected_schema"
 	WebhookStatusFailedRetryable   = "failed_retryable"

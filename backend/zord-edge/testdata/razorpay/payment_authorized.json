@@ -1,0 +1,17 @@
+{
+  "entity": "event",
+  "account_id": "acc_test",
+  "event": "payment.authorized",
+  "contains": ["payment"],
+  "payload": {
+    "payment": {
+      "entity": {
+        "id": "pay_test_456",
+        "amount": 50000,
+        "currency": "INR",
+        "status": "authorized"
+      }
+    }
+  },
+  "created_at": 1725000001
+}
