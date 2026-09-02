@@ -38,7 +38,7 @@ func OutboxRoutes(router *gin.Engine, h *handlers.OutboxHandler) {
 	}
 }
 
-func ReconRoutes(router *gin.Engine, h *handlers.ReconHandler, imp *handlers.ImportHandler) {
+func ReconRoutes(router *gin.Engine, h *handlers.ReconHandler, imp *handlers.ImportHandler, bank *handlers.BankIngestHandler, fin *handlers.FinancialHandler) {
 	protected := router.Group("/v1")
 	protected.Use(auth.GinProtect())
 	{
@@ -58,11 +58,33 @@ func ReconRoutes(router *gin.Engine, h *handlers.ReconHandler, imp *handlers.Imp
 		protected.GET("/merchant/freshness", h.Freshness)
 		protected.GET("/merchant/evidence/:id/verify", h.VerifyEvidence)
 		protected.GET("/merchant/ask/proof", h.AskProof)
+		if fin != nil {
+			protected.GET("/reconciliation/payments/:payment_id", fin.GetPayment)
+			protected.GET("/reconciliation/payments/:payment_id/evidence", fin.GetEvidence)
+			protected.GET("/reconciliation/payouts/:payout_id", fin.GetPayout)
+			protected.GET("/reconciliation/payouts/:payout_id/evidence", fin.GetPayoutEvidence)
+			protected.GET("/reconciliation/sla-policy", fin.SLAPolicy)
+			protected.GET("/reconciliation/exceptions", fin.ListExceptions)
+			protected.GET("/reconciliation/exceptions/:id", fin.GetException)
+			protected.POST("/reconciliation/run", fin.Run)
+			protected.GET("/reconciliation/runs/:id", fin.GetRun)
+			protected.POST("/reconciliation/investigations", fin.CreateInvestigation)
+			protected.GET("/reconciliation/investigations/:id", fin.GetInvestigation)
+			protected.GET("/reconciliation/settlements", fin.SearchSettlements)
+			protected.GET("/reconciliation/bank-transactions", fin.SearchBank)
+			protected.GET("/reconciliation/bank-transactions/:id", fin.GetBank)
+		}
 	}
 	internal := router.Group("/internal")
 	{
 		internal.POST("/recon/run", h.Run)
 		internal.GET("/recon/gaps", h.InternalGaps)
+		if bank != nil {
+			internal.POST("/bank-statements/ingest", bank.Ingest)
+		}
+		if fin != nil {
+			internal.POST("/reconciliation/run", fin.InternalRun)
+		}
 	}
 }
 
@@ -70,6 +92,20 @@ func ObservationRoutes(router *gin.Engine, h *handlers.ObservationHandler) {
 	internal := router.Group("/internal")
 	{
 		internal.POST("/observations/provider", h.Ingest)
+	}
+}
+
+func PaymentRoutes(router *gin.Engine, h *handlers.PaymentHandler) {
+	internal := router.Group("/internal")
+	{
+		internal.GET("/payments/:payment_id", h.Get)
+	}
+}
+
+func PayoutRoutes(router *gin.Engine, h *handlers.PayoutHandler) {
+	internal := router.Group("/internal")
+	{
+		internal.GET("/payouts/:payout_id", h.Get)
 	}
 }
 

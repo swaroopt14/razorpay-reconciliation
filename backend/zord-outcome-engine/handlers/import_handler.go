@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"strings"
@@ -11,7 +12,8 @@ import (
 )
 
 type ImportHandler struct {
-	Service *imports.Service
+	Service         *imports.Service
+	AfterBankCommit func(ctx context.Context, tenantID, connectorID, accountID string) error
 }
 
 func (h *ImportHandler) Upload(c *gin.Context) {
@@ -91,6 +93,9 @@ func (h *ImportHandler) OneShotBankUpload(c *gin.Context) {
 	if err != nil {
 		writeImportErr(c, err)
 		return
+	}
+	if h.AfterBankCommit != nil && imp.Status != imports.StatusDuplicate && imp.Status != imports.StatusValidationFailed {
+		_ = h.AfterBankCommit(c.Request.Context(), in.TenantID, in.ConnectorID, in.AccountID)
 	}
 	c.JSON(http.StatusAccepted, gin.H{
 		"upload_id": imp.ID, "row_count": imp.ValidRows, "file_hash": imp.FileSHA256,

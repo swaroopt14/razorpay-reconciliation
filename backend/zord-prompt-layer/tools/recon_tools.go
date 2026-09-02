@@ -18,7 +18,7 @@ const (
 	GetFreshnessStatus    = "get_freshness_status"
 )
 
-func Names() []string {
+func LegacyNames() []string {
 	return []string{GetTransactionProof, GetSettlementBreakdown, GetBankMatch, GetPaymentGaps, GetFreshnessStatus}
 }
 
@@ -58,6 +58,17 @@ func (c *OutcomeClient) get(path string, q url.Values) (map[string]any, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+func (c *OutcomeClient) getOptional(path string, q url.Values) (map[string]any, error) {
+	body, err := c.get(path, q)
+	if err != nil {
+		return map[string]any{
+			"error":   "not_found",
+			"message": "No record was returned. Do not invent one.",
+		}, nil
+	}
+	return body, nil
 }
 
 func (c *OutcomeClient) TransactionProof(tenantID, connectorID, paymentID string) (map[string]any, error) {

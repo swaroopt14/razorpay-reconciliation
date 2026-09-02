@@ -13,8 +13,12 @@ func TestToolNames(t *testing.T) {
 	want := map[string]bool{
 		GetTransactionProof: true, GetSettlementBreakdown: true,
 		GetBankMatch: true, GetPaymentGaps: true, GetFreshnessStatus: true,
+		GetPayment: true, GetPaymentEvents: true, GetSettlement: true, SearchSettlements: true,
+		GetBankTransaction: true, SearchBankTxns: true, GetReconciliation: true, GetException: true,
+		GetRefund: true, GetEvidence: true, GetPayout: true, GetPayoutEvents: true,
+		GetSLAPolicy: true, GetSimilarCases: true, GetLedgerEntry: true,
 	}
-	if len(names) != 5 {
+	if len(names) != len(want) {
 		t.Fatalf("%v", names)
 	}
 	for _, n := range names {

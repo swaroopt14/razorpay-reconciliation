@@ -73,21 +73,27 @@ func TestApplyInsertsObservationAndOutbox(t *testing.T) {
 	if len(store.Payments) != 1 {
 		t.Fatalf("payments=%d", len(store.Payments))
 	}
-	if len(store.Outbox) != 1 {
+	if len(store.Outbox) < 1 {
 		t.Fatalf("outbox=%d", len(store.Outbox))
 	}
-	if store.Outbox[0].EventType != models.EventTypePaymentObservationNormalizedV1 {
-		t.Fatalf("event=%s", store.Outbox[0].EventType)
+	foundObs := false
+	for _, row := range store.Outbox {
+		if row.EventType == models.EventTypePaymentObservationNormalizedV1 {
+			foundObs = true
+			var payload map[string]any
+			if err := json.Unmarshal(row.Payload, &payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload["source"] != SourceWebhook {
+				t.Fatalf("source=%v", payload["source"])
+			}
+			if payload["status"] != "captured" {
+				t.Fatalf("status=%v", payload["status"])
+			}
+		}
 	}
-	var payload map[string]any
-	if err := json.Unmarshal(store.Outbox[0].Payload, &payload); err != nil {
-		t.Fatal(err)
-	}
-	if payload["source"] != SourceWebhook {
-		t.Fatalf("source=%v", payload["source"])
-	}
-	if payload["status"] != "captured" {
-		t.Fatalf("status=%v", payload["status"])
+	if !foundObs {
+		t.Fatal("missing observation outbox")
 	}
 }
 
@@ -105,7 +111,7 @@ func TestApplyDuplicateDoesNotSecondOutbox(t *testing.T) {
 	if res.Kind != ResultDuplicate {
 		t.Fatalf("kind=%s", res.Kind)
 	}
-	if len(store.Outbox) != 1 {
+	if len(store.Outbox) != 2 {
 		t.Fatalf("outbox=%d", len(store.Outbox))
 	}
 }
@@ -145,7 +151,7 @@ func TestApplyAuthorizedThenCapturedUpdates(t *testing.T) {
 	if got != "captured" {
 		t.Fatalf("status=%s", got)
 	}
-	if len(store.Outbox) != 2 {
+	if len(store.Outbox) != 4 {
 		t.Fatalf("outbox=%d", len(store.Outbox))
 	}
 }
@@ -216,5 +222,90 @@ func TestApplyRequiresTenant(t *testing.T) {
 	env.TenantID = ""
 	if _, err := p.Apply(context.Background(), env); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func payoutEnvelope(t *testing.T) Envelope {
+	t.Helper()
+	created := time.Unix(1725000000, 0).UTC()
+	return Envelope{
+		EventName:          EventObservationReceived,
+		SchemaVersion:      "v1",
+		TenantID:           "11111111-1111-1111-1111-111111111111",
+		ConnectorID:        "22222222-2222-2222-2222-222222222222",
+		Provider:           "razorpay",
+		ProviderMode:       "test",
+		ProviderEventID:    "evt_payout_1",
+		ProviderEventType:  "payout.processed",
+		ProviderEntityType: "payout",
+		ProviderEntityID:   "pout_test_123",
+		ReceiptID:          "33333333-3333-3333-3333-333333333333",
+		RawBodyHash:        "sha256:payout",
+		Amount:             25000000,
+		Currency:           "INR",
+		Status:             "processed",
+		ProviderCreatedAt:  &created,
+		TraceID:            "trace-payout",
+	}
+}
+
+func TestNormalizePayoutProcessed(t *testing.T) {
+	item, ok, err := NormalizePayout(payoutEnvelope(t))
+	if err != nil || !ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	if item.PayoutID != "pout_test_123" || item.Status != "processed" || item.AmountMinor != 25000000 {
+		t.Fatalf("%+v", item)
+	}
+}
+
+func TestNormalizePaymentSkipsPayout(t *testing.T) {
+	_, ok, err := NormalizePayment(payoutEnvelope(t))
+	if err != nil || ok {
+		t.Fatalf("payout must not normalize as payment ok=%v err=%v", ok, err)
+	}
+}
+
+func TestApplyPayoutInsertsCanonical(t *testing.T) {
+	store := poll.NewMemoryStore()
+	p := NewProcessor(store)
+	res, err := p.Apply(context.Background(), payoutEnvelope(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Kind != ResultInserted || res.PayoutID != "pout_test_123" {
+		t.Fatalf("%+v", res)
+	}
+	if len(store.CanonicalPayouts) != 1 {
+		t.Fatalf("payouts=%d", len(store.CanonicalPayouts))
+	}
+	for _, pay := range store.CanonicalPayouts {
+		if pay.ProviderStatus != "processed" {
+			t.Fatalf("status=%s", pay.ProviderStatus)
+		}
+	}
+}
+
+func TestApplyPayoutLateProcessingDoesNotOverwriteProcessed(t *testing.T) {
+	store := poll.NewMemoryStore()
+	p := NewProcessor(store)
+	env := payoutEnvelope(t)
+	if _, err := p.Apply(context.Background(), env); err != nil {
+		t.Fatal(err)
+	}
+	env.ProviderEventType = "payout.processing"
+	env.Status = "processing"
+	env.ProviderEventID = "evt_payout_late"
+	res, err := p.Apply(context.Background(), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Kind != ResultUpdated && res.Kind != ResultInserted {
+		t.Fatalf("kind=%s", res.Kind)
+	}
+	for _, pay := range store.CanonicalPayouts {
+		if pay.ProviderStatus != "processed" {
+			t.Fatalf("late processing overwrote processed: %s", pay.ProviderStatus)
+		}
 	}
 }

@@ -16,12 +16,13 @@ type BackfillHandler struct {
 }
 
 type createBackfillBody struct {
-	TenantID    string `json:"tenant_id"`
-	ConnectorID string `json:"connector_id"`
-	WindowFrom  string `json:"window_from"`
-	WindowTo    string `json:"window_to"`
-	TriggerType string `json:"trigger_type"`
-	Mode        string `json:"mode"`
+	TenantID       string `json:"tenant_id"`
+	ConnectorID    string `json:"connector_id"`
+	WindowFrom     string `json:"window_from"`
+	WindowTo       string `json:"window_to"`
+	TriggerType    string `json:"trigger_type"`
+	Mode           string `json:"mode"`
+	OverlapMinutes *int   `json:"overlap_minutes"`
 }
 
 func (h *BackfillHandler) requireRelay(c *gin.Context) bool {
@@ -67,15 +68,20 @@ func (h *BackfillHandler) createAndMaybeRun(c *gin.Context, resource string, run
 	if mode == "" {
 		mode = "test"
 	}
+	overlap := poll.DefaultOverlapMinutes
+	if body.OverlapMinutes != nil {
+		overlap = *body.OverlapMinutes
+	}
 	job, err := h.Service.CreateJob(c.Request.Context(), poll.CreateBackfillRequest{
-		TenantID:     body.TenantID,
-		ConnectorID:  body.ConnectorID,
-		Provider:     "razorpay",
-		Mode:         mode,
-		ResourceType: resource,
-		WindowFrom:   from,
-		WindowTo:     to,
-		TriggerType:  body.TriggerType,
+		TenantID:       body.TenantID,
+		ConnectorID:    body.ConnectorID,
+		Provider:       "razorpay",
+		Mode:           mode,
+		ResourceType:   resource,
+		WindowFrom:     from,
+		WindowTo:       to,
+		OverlapMinutes: overlap,
+		TriggerType:    body.TriggerType,
 	})
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "message": err.Error()})
@@ -180,9 +186,9 @@ func jobToJSON(job poll.BackfillJob, cursor poll.BackfillCursor) gin.H {
 		"last_error_code":         job.LastErrorCode,
 		"trace_id":                job.TraceID,
 		"cursor": gin.H{
-			"page_skip":        cursor.PageSkip,
-			"pages_completed":  cursor.PagesCompleted,
-			"status":           cursor.Status,
+			"page_skip":       cursor.PageSkip,
+			"pages_completed": cursor.PagesCompleted,
+			"status":          cursor.Status,
 		},
 	}
 }

@@ -7,8 +7,8 @@ func TestAskBankQuestionRequiresBankRow(t *testing.T) {
 		PaymentID: "pay_test_001", PaymentState: PaymentCaptured,
 		ProviderSettlementState: SettlementSettled, BankCreditState: BankNotFound,
 		ReconciliationState: ReconSettlementConfirmedBankPending,
-		ProofState: ProofProviderSettlementProvenBankUnproven,
-		Message: "provider settlement proven; bank credit unresolved",
+		ProofState:          ProofProviderSettlementProvenBankUnproven,
+		Message:             "provider settlement proven; bank credit unresolved",
 	}
 	body := ProofJSON(sub, nil)
 	ans := GetBankMatchAnswer(body)
@@ -25,8 +25,8 @@ func TestAskSettledCitesReconNotBankWhenPending(t *testing.T) {
 		PaymentID: "pay_test_001", PaymentState: PaymentCaptured,
 		ProviderSettlementState: SettlementSettled, BankCreditState: BankNotFound,
 		ReconciliationState: ReconSettlementConfirmedBankPending,
-		ProofState: ProofProviderSettlementProvenBankUnproven,
-		Message: "bank credit unresolved",
+		ProofState:          ProofProviderSettlementProvenBankUnproven,
+		Message:             "bank credit unresolved",
 	}
 	ans := GetTransactionProofAnswer(ProofJSON(sub, nil))
 	if containsAll(ans, "fully reconciled") {

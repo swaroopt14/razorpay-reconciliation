@@ -5,6 +5,8 @@ import (
 	"sync"
 	"time"
 
+	"zord-outcome-engine/internal/paymenttruth"
+	"zord-outcome-engine/internal/payouttruth"
 	"zord-outcome-engine/models"
 
 	"github.com/google/uuid"
@@ -21,6 +23,22 @@ type MemoryStore struct {
 	Payments    map[string]PaymentObservation
 	Settlements map[string]SettlementLineObservation
 	Outbox      []models.OutboxRow
+	Events      []ObservationEvent
+	Canonicals       map[string]paymenttruth.CanonicalPayment
+	CanonicalPayouts map[string]payouttruth.CanonicalPayout
+	PayoutEvents     []payouttruth.Observation
+	Intents          map[string]string
+}
+
+type ObservationEvent struct {
+	TenantID     string
+	ConnectorID  string
+	PaymentID    string
+	Source       string
+	Status       string
+	PayloadHash  string
+	IdentityHash string
+	SourceEventID string
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -29,6 +47,9 @@ func NewMemoryStore() *MemoryStore {
 		Cursors:     map[string]BackfillCursor{},
 		Payments:    map[string]PaymentObservation{},
 		Settlements: map[string]SettlementLineObservation{},
+		Canonicals:       map[string]paymenttruth.CanonicalPayment{},
+		CanonicalPayouts: map[string]payouttruth.CanonicalPayout{},
+		Intents:          map[string]string{},
 	}
 }
 
@@ -42,6 +63,10 @@ func paymentKey(tenantID, connectorID, paymentID string) string {
 
 func settlementKey(tenantID, connectorID, settlementID, entityID string) string {
 	return tenantID + "|" + connectorID + "|" + settlementID + "|" + entityID
+}
+
+func (m *MemoryStore) RunInTx(ctx context.Context, fn func(context.Context) error) error {
+	return fn(ctx)
 }
 
 func (m *MemoryStore) CreateJob(_ context.Context, job BackfillJob) (BackfillJob, error) {
@@ -173,18 +198,50 @@ func (m *MemoryStore) InsertResponseReceipt(_ context.Context, rec ResponseRecei
 func (m *MemoryStore) UpsertPayment(_ context.Context, obs PaymentObservation) (UpsertResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	obs.Source = NormalizeObservationSource(obs.Source)
 	key := paymentKey(obs.TenantID, obs.ConnectorID, obs.Item.PaymentID)
 	if existing, ok := m.Payments[key]; ok {
+		before := len(existing.Sources)
+		existing.Sources = appendUniqueSource(existing.Sources, obs.Source)
+		if HasWebhookSource(existing.Source, existing.Sources) {
+			existing.WebhookMissing = false
+		} else if obs.WebhookMissing {
+			existing.WebhookMissing = true
+		}
 		if existing.Item.PayloadHash == obs.Item.PayloadHash {
+			m.Payments[key] = existing
+			if len(existing.Sources) > before {
+				m.Events = append(m.Events, ObservationEvent{
+					TenantID: obs.TenantID, ConnectorID: obs.ConnectorID, PaymentID: obs.Item.PaymentID,
+					Source: obs.Source, Status: obs.Item.Status, PayloadHash: obs.Item.PayloadHash,
+				})
+			}
 			return UpsertDuplicate, nil
 		}
+		obs.Sources = existing.Sources
+		obs.WebhookMissing = existing.WebhookMissing
+		if obs.ID == "" {
+			obs.ID = existing.ID
+		}
 		m.Payments[key] = obs
+		m.Events = append(m.Events, ObservationEvent{
+			TenantID: obs.TenantID, ConnectorID: obs.ConnectorID, PaymentID: obs.Item.PaymentID,
+			Source: obs.Source, Status: obs.Item.Status, PayloadHash: obs.Item.PayloadHash,
+		})
 		return UpsertUpdated, nil
 	}
 	if obs.ID == "" {
 		obs.ID = uuid.Must(uuid.NewV7()).String()
 	}
+	obs.Sources = appendUniqueSource(obs.Sources, obs.Source)
+	if HasWebhookSource(obs.Source, obs.Sources) {
+		obs.WebhookMissing = false
+	}
 	m.Payments[key] = obs
+	m.Events = append(m.Events, ObservationEvent{
+		TenantID: obs.TenantID, ConnectorID: obs.ConnectorID, PaymentID: obs.Item.PaymentID,
+		Source: obs.Source, Status: obs.Item.Status, PayloadHash: obs.Item.PayloadHash,
+	})
 	return UpsertInserted, nil
 }
 
@@ -235,6 +292,13 @@ func (m *MemoryStore) GetPaymentHash(_ context.Context, tenantID, connectorID, p
 func (m *MemoryStore) InsertOutbox(_ context.Context, row models.OutboxRow) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if row.IdempotencyKey != "" {
+		for _, existing := range m.Outbox {
+			if existing.IdempotencyKey == row.IdempotencyKey {
+				return nil
+			}
+		}
+	}
 	m.Outbox = append(m.Outbox, row)
 	return nil
 }

@@ -39,7 +39,11 @@ func (s *Service) Upload(ctx context.Context, in UploadInput) (Import, error) {
 	}
 	hash := HashBytes(in.Payload)
 	if existing, err := s.Store.GetByHash(ctx, in.TenantID, in.ImportType, hash); err == nil && existing.ID != "" {
-		return Import{}, &FatalError{Code: ErrDuplicateFile, Message: MessageFor(ErrDuplicateFile)}
+		out := existing
+		out.Status = StatusDuplicate
+		out.InsertedRows = 0
+		out.UpdatedRows = 0
+		return out, nil
 	}
 	imp := Import{
 		ID:            uuid.Must(uuid.NewV7()).String(),
@@ -152,6 +156,9 @@ func (s *Service) UploadValidateCommit(ctx context.Context, in UploadInput, req 
 	if err != nil {
 		return Import{}, err
 	}
+	if imp.Status == StatusDuplicate || imp.Status == StatusCommitted {
+		return imp, nil
+	}
 	imp, _, err = s.Validate(ctx, in.TenantID, imp.ID, req)
 	if err != nil {
 		return imp, err
@@ -243,17 +250,17 @@ func buildOutbox(imp Import, rows []RowResult) []models.OutboxRow {
 		}
 		if r.Bank != nil {
 			payload, _ := json.Marshal(map[string]any{
-				"event_type":     models.EventTypeBankObservationNormalizedV1,
-				"event_version":  models.EventVersionV1,
-				"schema_version": models.SchemaVersionV1,
-				"tenant_id":      imp.TenantID,
-				"account_id":     r.Bank.AccountID,
-				"utr":            r.Bank.UTR,
-				"credit_amount":  r.Bank.CreditMinor,
-				"debit_amount":   r.Bank.DebitMinor,
-				"currency":       r.Bank.Currency,
-				"row_hash":       r.Bank.RowHash,
-				"import_id":      imp.ID,
+				"event_type":        models.EventTypeBankObservationNormalizedV1,
+				"event_version":     models.EventVersionV1,
+				"schema_version":    models.SchemaVersionV1,
+				"tenant_id":         imp.TenantID,
+				"account_id":        r.Bank.AccountID,
+				"utr":               r.Bank.UTR,
+				"credit_amount":     r.Bank.CreditMinor,
+				"debit_amount":      r.Bank.DebitMinor,
+				"currency":          r.Bank.Currency,
+				"row_hash":          r.Bank.RowHash,
+				"import_id":         imp.ID,
 				"source_row_number": r.Bank.SourceRowNumber,
 			})
 			events = append(events, models.OutboxRow{

@@ -26,6 +26,7 @@ def create_and_trigger_backfill(resource_type, window_from, window_to, **context
     connector_id = Variable.get("razorpay_connector_id")
     mode = Variable.get("razorpay_mode", default="test")
 
+    overlap_minutes = int(Variable.get("razorpay_payment_overlap_minutes", default="10"))
     endpoint = BACKFILL_PAYMENTS_ENDPOINT
     if resource_type == "settlements":
         endpoint = BACKFILL_SETTLEMENTS_ENDPOINT
@@ -40,6 +41,7 @@ def create_and_trigger_backfill(resource_type, window_from, window_to, **context
             "window_to": window_to,
             "trigger_type": "airflow",
             "mode": mode,
+            "overlap_minutes": overlap_minutes,
         }),
         headers=_headers(),
     )

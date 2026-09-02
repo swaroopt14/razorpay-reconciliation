@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"zord-outcome-engine/internal/imports"
+	"zord-outcome-engine/internal/poll/providers/razorpay"
 	"zord-outcome-engine/models"
 
 	"github.com/google/uuid"
@@ -188,6 +190,8 @@ func (s *ImportSQLStore) Commit(ctx context.Context, imp imports.Import, rows []
 				inserted++
 			} else if res == "updated" {
 				updated++
+			} else if res == "duplicate" {
+				imp.DuplicateRows++
 			}
 		}
 		if r.Bank != nil {
@@ -197,6 +201,8 @@ func (s *ImportSQLStore) Commit(ctx context.Context, imp imports.Import, rows []
 			}
 			if res == "inserted" {
 				inserted++
+			} else if res == "duplicate" {
+				imp.DuplicateRows++
 			}
 		}
 	}
@@ -248,8 +254,31 @@ func (s *ImportSQLStore) saveTx(ctx context.Context, tx *sql.Tx, imp imports.Imp
 	return err
 }
 
+func lookupCanonicalPaymentAmount(ctx context.Context, q interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, tenantID, connectorID, paymentID string) (int64, bool) {
+	if strings.TrimSpace(paymentID) == "" || strings.TrimSpace(connectorID) == "" {
+		return 0, false
+	}
+	var amt int64
+	err := q.QueryRowContext(ctx, `
+		SELECT amount_minor FROM canonical_payments
+		WHERE tenant_id=$1 AND connector_id=$2 AND payment_id=$3`,
+		tenantID, connectorID, paymentID,
+	).Scan(&amt)
+	if err != nil {
+		return 0, false
+	}
+	return amt, true
+}
+
 func (s *ImportSQLStore) upsertSettlement(ctx context.Context, tx *sql.Tx, imp imports.Import, r imports.RowResult) (string, error) {
 	line := r.Settlement
+	if line.SourceFile == "" {
+		line.SourceFile = imp.FileName
+	}
+	amt, found := lookupCanonicalPaymentAmount(ctx, tx, imp.TenantID, imp.ConnectorID, line.PaymentID)
+	line.PaymentLink = razorpay.PaymentLinkFor(line.PaymentID, line.AmountMinor, amt, found)
 	id := uuid.Must(uuid.NewV7()).String()
 	var settledAt any
 	if !line.SettledAt.IsZero() {
@@ -259,28 +288,54 @@ func (s *ImportSQLStore) upsertSettlement(ctx context.Context, tx *sql.Tx, imp i
 		INSERT INTO provider_settlement_line_observations (
 			id, tenant_id, connector_id, provider, provider_mode, settlement_id, entity_id, line_type,
 			payment_id, order_id, refund_id, amount_minor, debit_minor, credit_minor, fee_minor, tax_minor,
-			currency, settlement_utr, settled, settled_at, payload_hash, source, import_id, raw_record,
+			adjustment_minor, currency, settlement_utr, settled, settled_at, payload_hash, source, import_id, raw_record,
+			provider_status, canonical_status, source_file, source_row, raw_reference, payment_link,
 			observed_at, created_at, updated_at
-		) VALUES ($1,$2,$3,'razorpay',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,'settlement_file',$21,$22,now(),now(),now())
+		) VALUES ($1,$2,$3,'razorpay',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,'settlement_file',$22,$23,$24,$25,$26,$27,$28,$29,now(),now(),now())
 		ON CONFLICT (tenant_id, connector_id, settlement_id, entity_id) DO UPDATE SET
 			line_type=EXCLUDED.line_type, payment_id=EXCLUDED.payment_id, refund_id=EXCLUDED.refund_id,
 			amount_minor=EXCLUDED.amount_minor, debit_minor=EXCLUDED.debit_minor, credit_minor=EXCLUDED.credit_minor,
-			fee_minor=EXCLUDED.fee_minor, tax_minor=EXCLUDED.tax_minor, currency=EXCLUDED.currency,
-			settlement_utr=EXCLUDED.settlement_utr, settled=EXCLUDED.settled, settled_at=EXCLUDED.settled_at,
-			payload_hash=EXCLUDED.payload_hash, import_id=EXCLUDED.import_id, raw_record=EXCLUDED.raw_record, updated_at=now()`,
+			fee_minor=EXCLUDED.fee_minor, tax_minor=EXCLUDED.tax_minor, adjustment_minor=EXCLUDED.adjustment_minor,
+			currency=EXCLUDED.currency, settlement_utr=EXCLUDED.settlement_utr, settled=EXCLUDED.settled, settled_at=EXCLUDED.settled_at,
+			payload_hash=EXCLUDED.payload_hash, import_id=EXCLUDED.import_id, raw_record=EXCLUDED.raw_record,
+			provider_status=EXCLUDED.provider_status, canonical_status=EXCLUDED.canonical_status,
+			source_file=EXCLUDED.source_file, source_row=EXCLUDED.source_row, raw_reference=EXCLUDED.raw_reference,
+			payment_link=EXCLUDED.payment_link, updated_at=now()
+		WHERE provider_settlement_line_observations.payload_hash IS DISTINCT FROM EXCLUDED.payload_hash`,
 		id, imp.TenantID, imp.ConnectorID, imp.ProviderMode, line.SettlementID, line.EntityID, line.LineType,
 		nullIfEmpty(line.PaymentID), nullIfEmpty(line.OrderID), nullIfEmpty(line.RefundID),
-		line.AmountMinor, line.DebitMinor, line.CreditMinor, line.FeeMinor, line.TaxMinor,
+		line.AmountMinor, line.DebitMinor, line.CreditMinor, line.FeeMinor, line.TaxMinor, line.AdjustmentMinor,
 		line.Currency, nullIfEmpty(line.UTR), line.Settled, settledAt, line.PayloadHash, nullIfEmpty(imp.ID), line.Raw,
+		nullIfEmpty(line.ProviderStatus), nullIfEmpty(line.CanonicalStatus), nullIfEmpty(line.SourceFile),
+		nullIfZero(line.SourceRow), nullIfEmpty(line.RawReference), line.PaymentLink,
 	)
 	if err != nil {
 		return "", err
 	}
 	n, _ := tag.RowsAffected()
+	if n == 0 {
+		return "duplicate", nil
+	}
 	if n == 1 {
 		return "inserted", nil
 	}
 	return "updated", nil
+}
+
+func bankCreditDebit(credit, debit int64) string {
+	if credit > 0 && debit == 0 {
+		return "CREDIT"
+	}
+	if debit > 0 && credit == 0 {
+		return "DEBIT"
+	}
+	if credit > 0 {
+		return "CREDIT"
+	}
+	if debit > 0 {
+		return "DEBIT"
+	}
+	return ""
 }
 
 func (s *ImportSQLStore) upsertBank(ctx context.Context, tx *sql.Tx, imp imports.Import, r imports.RowResult) (string, error) {
@@ -290,16 +345,26 @@ func (s *ImportSQLStore) upsertBank(ctx context.Context, tx *sql.Tx, imp imports
 	if !b.ValueDate.IsZero() {
 		vd = b.ValueDate
 	}
+	if b.CreditDebit == "" {
+		b.CreditDebit = bankCreditDebit(b.CreditMinor, b.DebitMinor)
+	}
+	if b.IdentityHash == "" {
+		b.IdentityHash = imports.HashCanonical(map[string]any{
+			"tenant_id": imp.TenantID, "account_id": b.AccountID, "row_hash": b.RowHash,
+		})
+	}
 	tag, err := tx.ExecContext(ctx, `
 		INSERT INTO bank_transaction_observations (
 			id, tenant_id, connector_id, account_id, bank_transaction_id, value_date, description,
 			normalized_description, credit_minor, debit_minor, currency, utr, reference_number,
-			source, row_hash, upload_id, import_id, source_row_number, raw_row
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'bank_csv',$14,$15,$16,$17,$18)
+			source, row_hash, upload_id, import_id, source_row_number, raw_row,
+			credit_debit, utr_raw, observation_identity_hash
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'bank_csv',$14,$15,$16,$17,$18,$19,$20,$21)
 		ON CONFLICT (tenant_id, account_id, row_hash) DO NOTHING`,
 		id, imp.TenantID, imp.ConnectorID, b.AccountID, nullIfEmpty(b.BankTransactionID), vd, b.Description,
 		b.NormalizedDescription, b.CreditMinor, b.DebitMinor, b.Currency, nullIfEmpty(b.UTR), nullIfEmpty(b.ReferenceNumber),
 		b.RowHash, nullIfEmpty(imp.ID), nullIfEmpty(imp.ID), b.SourceRowNumber, b.Raw,
+		nullIfEmpty(b.CreditDebit), nullIfEmpty(b.UTRRaw), nullIfEmpty(b.IdentityHash),
 	)
 	if err != nil {
 		return "", err

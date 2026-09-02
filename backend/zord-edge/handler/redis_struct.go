@@ -16,4 +16,5 @@ type Handler struct {
 	// Optional test hooks. Production leaves these nil.
 	ReceiveRazorpayWebhook  func(ctx context.Context, req services.WebhookRequest) (model.ReceiptResult, int, error)
 	LookupRazorpayConnector func(connectorID uuid.UUID) (tenantID uuid.UUID, mode string, secret string, err error)
+	BankIngest              services.BankIngestStore
 }

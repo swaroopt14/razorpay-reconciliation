@@ -61,17 +61,18 @@ type FatalError struct {
 func (e *FatalError) Error() string { return e.Message }
 
 const (
-	StatusCreated           = "created"
-	StatusUploaded          = "uploaded"
-	StatusValidating        = "validating"
-	StatusValidated         = "validated"
-	StatusPartial           = "partial"
-	StatusCommitting        = "committing"
-	StatusCommitted         = "committed"
-	StatusUploadFailed      = "upload_failed"
-	StatusValidationFailed  = "validation_failed"
-	StatusCommitFailed      = "commit_failed"
-	StatusCancelled         = "cancelled"
+	StatusCreated          = "created"
+	StatusUploaded         = "uploaded"
+	StatusValidating       = "validating"
+	StatusValidated        = "validated"
+	StatusPartial          = "partial"
+	StatusCommitting       = "committing"
+	StatusCommitted        = "committed"
+	StatusUploadFailed     = "upload_failed"
+	StatusValidationFailed = "validation_failed"
+	StatusCommitFailed     = "commit_failed"
+	StatusCancelled        = "cancelled"
+	StatusDuplicate        = "duplicate"
 )
 
 const (

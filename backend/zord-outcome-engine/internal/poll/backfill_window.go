@@ -5,7 +5,18 @@ import (
 	"time"
 )
 
-const maxWindow = 31 * 24 * time.Hour
+const (
+	maxWindow             = 31 * 24 * time.Hour
+	DefaultOverlapMinutes = 10
+)
+
+// ApplyOverlap pads window_from backward. overlapMinutes <= 0 leaves from unchanged.
+func ApplyOverlap(from time.Time, overlapMinutes int) time.Time {
+	if overlapMinutes <= 0 || from.IsZero() {
+		return from
+	}
+	return from.UTC().Add(-time.Duration(overlapMinutes) * time.Minute)
+}
 
 // ValidateWindow rejects inverted, empty, or unbounded windows.
 // window_to is expected to already be frozen at job-create time (not "now" per page).

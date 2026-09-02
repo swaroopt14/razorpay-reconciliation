@@ -39,6 +39,9 @@ func MapReconItem(item razorpay.SettlementReconItem, sourceHash string) (razorpa
 	if len(cur) != 3 {
 		return razorpay.NeutralSettlementLine{}, ErrInvalidCurrency
 	}
+	if item.Amount < 0 || item.Fee < 0 || item.Tax < 0 || item.Debit < 0 || item.Credit < 0 {
+		return razorpay.NeutralSettlementLine{}, ErrInvalidAmount
+	}
 	raw, _ := json.Marshal(item)
 	line := razorpay.NeutralSettlementLine{
 		SettlementID: item.SettlementID,
@@ -57,6 +60,7 @@ func MapReconItem(item razorpay.SettlementReconItem, sourceHash string) (razorpa
 		Settled:      item.Settled,
 		PayloadHash:  sourceHash,
 		Raw:          raw,
+		SourceRow:    0,
 	}
 	if item.SettledAt > 0 {
 		line.SettledAt = time.Unix(item.SettledAt, 0).UTC()
@@ -64,6 +68,10 @@ func MapReconItem(item razorpay.SettlementReconItem, sourceHash string) (razorpa
 	if item.CreatedAt > 0 {
 		line.CreatedAt = time.Unix(item.CreatedAt, 0).UTC()
 	}
+	if item.Adjustment != 0 {
+		line.AdjustmentMinor = item.Adjustment
+	}
+	razorpay.EnrichSettlementLine(&line)
 	return line, ""
 }
 
@@ -187,6 +195,7 @@ func mapItemRow(item razorpay.SettlementReconItem, rowNumber int64, fileHash str
 		res.ErrorMessage = MessageFor(code)
 		return res
 	}
+	line.SourceRow = rowNumber
 	res.Status = RowValid
 	res.Settlement = &line
 	return res
@@ -203,6 +212,7 @@ func indexHeaders(header []string) map[string]int {
 		"settlement_utr": "settlement_utr", "utr": "settlement_utr",
 		"payment_id": "payment_id", "order_id": "order_id", "refund_id": "refund_id",
 		"created_at": "created_at", "settled_at": "settled_at", "settled": "settled",
+		"adjustment": "adjustment",
 	}
 	for i, h := range header {
 		key := strings.ToLower(strings.TrimSpace(h))
@@ -235,6 +245,7 @@ func itemFromCSV(rec []string, idx map[string]int) razorpay.SettlementReconItem 
 		Amount:        parseInt64Field(get("amount")),
 		Fee:           parseInt64Field(get("fee")),
 		Tax:           parseInt64Field(get("tax")),
+		Adjustment:    parseInt64Field(get("adjustment")),
 		Settled:       parseBoolField(get("settled")),
 	}
 	if t, ok := parseUnixOrRFC3339(get("created_at")); ok {

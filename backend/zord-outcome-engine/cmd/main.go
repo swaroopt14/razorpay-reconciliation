@@ -13,6 +13,7 @@ import (
 	"zord-outcome-engine/db"
 	"zord-outcome-engine/handlers"
 	"zord-outcome-engine/internal/auth"
+	"zord-outcome-engine/internal/bankingest"
 	"zord-outcome-engine/internal/health"
 	"zord-outcome-engine/internal/imports"
 	"zord-outcome-engine/internal/observe"
@@ -149,6 +150,8 @@ func main() {
 	observationProc := observe.NewProcessor(backfillStore)
 	handlers.SetObservationProcessor(observationProc)
 	routes.ObservationRoutes(server, &handlers.ObservationHandler{Processor: observationProc})
+	routes.PaymentRoutes(server, &handlers.PaymentHandler{Store: backfillStore})
+	routes.PayoutRoutes(server, &handlers.PayoutHandler{Store: backfillStore})
 	observationTopic := os.Getenv("KAFKA_OBSERVATION_TOPIC")
 	if strings.TrimSpace(observationTopic) == "" {
 		observationTopic = "payments.ledger.events.v1"
@@ -161,10 +164,38 @@ func main() {
 	}()
 	log.Printf("Kafka observation consumer topic=%s", observationTopic)
 
+	bankTopic := os.Getenv("KAFKA_BANK_TOPIC")
+	if strings.TrimSpace(bankTopic) == "" {
+		bankTopic = "payments.bank.events.v1"
+	}
+	go func() {
+		err := kafka.StartConsumer(ctx, brokers, "outcome-engine-bank-group", bankTopic, handlers.HandleBankStatementReceived, recordConsumerFailure)
+		if err != nil {
+			log.Fatalf("Bank statement Kafka consumer failed: %v", err)
+		}
+	}()
+	log.Printf("Kafka bank statement consumer topic=%s", bankTopic)
+
 	reconStore := persistence.NewReconSQLStore(db.DB)
 	reconSvc := recon.NewService(reconStore)
+	financialSvc := recon.NewFinancialService(reconStore)
 	importSvc := imports.NewService(persistence.NewImportSQLStore(db.DB))
-	routes.ReconRoutes(server, &handlers.ReconHandler{Service: reconSvc, Parser: services.BankStatementParser{}}, &handlers.ImportHandler{Service: importSvc})
+	bankIngest := bankingest.NewService(importSvc, reconStore)
+	bankIngest.AfterMatch = func(ctx context.Context, tenantID, connectorID, accountID string) error {
+		_, _, err := financialSvc.Run(ctx, recon.FinancialRunRequest{
+			TenantID: tenantID, ConnectorID: connectorID, AccountID: accountID,
+		})
+		return err
+	}
+	handlers.SetBankIngestService(bankIngest)
+	finHandler := &handlers.FinancialHandler{Service: financialSvc, Store: reconStore}
+	routes.ReconRoutes(server, &handlers.ReconHandler{Service: reconSvc, Parser: services.BankStatementParser{}}, &handlers.ImportHandler{
+		Service: importSvc,
+		AfterBankCommit: func(ctx context.Context, tenantID, connectorID, accountID string) error {
+			_, err := bankIngest.Match(ctx, tenantID, connectorID, accountID)
+			return err
+		},
+	}, &handlers.BankIngestHandler{Service: bankIngest}, finHandler)
 
 	// Readiness endpoint — checks DB connectivity
 	readinessHandler := health.NewReadinessHandler([]health.DependencyCheck{

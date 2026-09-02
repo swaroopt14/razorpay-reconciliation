@@ -63,6 +63,12 @@ func Routes(router *gin.Engine, h *handler.Handler) {
 		middleware.MaxRequestBodyBytes(config.MaxBulkUploadBytes),
 		h.BulkIntentHandler,
 	)
+	protected.POST(
+		"/bank-statements",
+		middleware.MaxRequestBodyBytes(config.MaxBulkUploadBytes),
+		h.PostBankStatement,
+	)
+	protected.GET("/bank-statements/:ingest_id", h.GetBankStatement)
 
 	// Razorpay connector routes (authenticated, tenant-scoped)
 	connectorHandler := handler.NewConnectorHandler()

@@ -8,8 +8,10 @@ import (
 	"time"
 
 	"zord-outcome-engine/internal/recon"
+	"zord-outcome-engine/models"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 var _ recon.Store = (*ReconSQLStore)(nil)
@@ -44,11 +46,12 @@ func (s *ReconSQLStore) InsertBankTxns(ctx context.Context, tenantID, connectorI
 		_, err := s.db.ExecContext(ctx, `
 			INSERT INTO bank_transaction_observations (
 				id, tenant_id, connector_id, account_id, bank_transaction_id, value_date, description,
-				credit_minor, debit_minor, currency, utr, source, row_hash, upload_id
-			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'bank_csv',$12,$13)
+				credit_minor, debit_minor, currency, utr, utr_raw, credit_debit, source, row_hash, upload_id
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'bank_csv',$14,$15)
 			ON CONFLICT (tenant_id, account_id, row_hash) DO NOTHING`,
 			id, tenantID, connectorID, r.AccountID, nullIfEmpty(r.BankTxnID), vd, r.Description,
-			r.CreditMinor, r.DebitMinor, r.Currency, nullIfEmpty(r.UTR), r.RowHash, nullIfEmpty(uploadID),
+			r.CreditMinor, r.DebitMinor, r.Currency, nullIfEmpty(r.UTR), nullIfEmpty(r.UTRRaw),
+			nullIfEmpty(creditDebitOf(r)), r.RowHash, nullIfEmpty(uploadID),
 		)
 		if err != nil {
 			return err
@@ -59,8 +62,8 @@ func (s *ReconSQLStore) InsertBankTxns(ctx context.Context, tenantID, connectorI
 
 func (s *ReconSQLStore) ListBankTxns(ctx context.Context, tenantID, connectorID, accountID string) ([]recon.BankTxn, error) {
 	q := `
-		SELECT id::text, account_id, COALESCE(bank_transaction_id,''), COALESCE(utr,''), description,
-		       credit_minor, debit_minor, currency, COALESCE(row_hash,''), value_date
+		SELECT id::text, account_id, COALESCE(bank_transaction_id,''), COALESCE(utr,''), COALESCE(utr_raw,''), description,
+		       credit_minor, debit_minor, COALESCE(credit_debit,''), currency, COALESCE(row_hash,''), value_date
 		FROM bank_transaction_observations
 		WHERE tenant_id=$1 AND connector_id=$2`
 	args := []any{tenantID, connectorID}
@@ -77,7 +80,7 @@ func (s *ReconSQLStore) ListBankTxns(ctx context.Context, tenantID, connectorID,
 	for rows.Next() {
 		var b recon.BankTxn
 		var vd sql.NullTime
-		if err := rows.Scan(&b.ID, &b.AccountID, &b.BankTxnID, &b.UTR, &b.Description, &b.CreditMinor, &b.DebitMinor, &b.Currency, &b.RowHash, &vd); err != nil {
+		if err := rows.Scan(&b.ID, &b.AccountID, &b.BankTxnID, &b.UTR, &b.UTRRaw, &b.Description, &b.CreditMinor, &b.DebitMinor, &b.CreditDebit, &b.Currency, &b.RowHash, &vd); err != nil {
 			return nil, err
 		}
 		if vd.Valid {
@@ -91,7 +94,8 @@ func (s *ReconSQLStore) ListBankTxns(ctx context.Context, tenantID, connectorID,
 func (s *ReconSQLStore) ListPayments(ctx context.Context, tenantID, connectorID string) ([]recon.PaymentObs, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT payment_id, COALESCE(order_id,''), status, amount_minor, currency, captured,
-		       source, payload_hash, fee_minor, tax_minor
+		       source, payload_hash, fee_minor, tax_minor,
+		       COALESCE(webhook_missing, false), COALESCE(sources, '{}')
 		FROM provider_payment_observations
 		WHERE tenant_id=$1 AND connector_id=$2`, tenantID, connectorID)
 	if err != nil {
@@ -101,18 +105,44 @@ func (s *ReconSQLStore) ListPayments(ctx context.Context, tenantID, connectorID 
 	var out []recon.PaymentObs
 	for rows.Next() {
 		var p recon.PaymentObs
-		if err := rows.Scan(&p.PaymentID, &p.OrderID, &p.Status, &p.AmountMinor, &p.Currency, &p.Captured, &p.Source, &p.PayloadHash, &p.FeeMinor, &p.TaxMinor); err != nil {
+		var sources pq.StringArray
+		var webhookMissing bool
+		if err := rows.Scan(&p.PaymentID, &p.OrderID, &p.Status, &p.AmountMinor, &p.Currency, &p.Captured, &p.Source, &p.PayloadHash, &p.FeeMinor, &p.TaxMinor, &webhookMissing, &sources); err != nil {
 			return nil, err
 		}
-		p.HasWebhook = true
+		p.Source = normalizePaymentSource(p.Source)
+		p.HasWebhook = p.Source == "webhook" || sourceContains(sources, "webhook")
+		if webhookMissing && !p.HasWebhook {
+			p.HasWebhook = false
+		}
 		out = append(out, p)
 	}
 	return out, rows.Err()
 }
 
+func normalizePaymentSource(source string) string {
+	switch source {
+	case "razorpay_api", "API_BACKFILL":
+		return "api_backfill"
+	case "WEBHOOK":
+		return "webhook"
+	default:
+		return source
+	}
+}
+
+func sourceContains(sources []string, want string) bool {
+	for _, s := range sources {
+		if normalizePaymentSource(s) == want {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *ReconSQLStore) ListSettlementLines(ctx context.Context, tenantID, connectorID string) ([]recon.SettlementLine, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT settlement_id, entity_id, COALESCE(payment_id,''), line_type, amount_minor, debit_minor, credit_minor,
+		SELECT id::text, settlement_id, entity_id, COALESCE(payment_id,''), line_type, amount_minor, debit_minor, credit_minor,
 		       fee_minor, tax_minor, currency, COALESCE(settlement_utr,''), settled, settled_at, payload_hash
 		FROM provider_settlement_line_observations
 		WHERE tenant_id=$1 AND connector_id=$2`, tenantID, connectorID)
@@ -124,7 +154,7 @@ func (s *ReconSQLStore) ListSettlementLines(ctx context.Context, tenantID, conne
 	for rows.Next() {
 		var l recon.SettlementLine
 		var settledAt sql.NullTime
-		if err := rows.Scan(&l.SettlementID, &l.EntityID, &l.PaymentID, &l.LineType, &l.AmountMinor, &l.DebitMinor, &l.CreditMinor,
+		if err := rows.Scan(&l.ID, &l.SettlementID, &l.EntityID, &l.PaymentID, &l.LineType, &l.AmountMinor, &l.DebitMinor, &l.CreditMinor,
 			&l.FeeMinor, &l.TaxMinor, &l.Currency, &l.UTR, &l.Settled, &settledAt, &l.PayloadHash); err != nil {
 			return nil, err
 		}
@@ -274,4 +304,83 @@ func (s *ReconSQLStore) ListLeaves(ctx context.Context, tenantID, connectorID, p
 		out = append(out, l)
 	}
 	return out, rows.Err()
+}
+
+func creditDebitOf(r recon.BankTxn) string {
+	if r.CreditDebit != "" {
+		return r.CreditDebit
+	}
+	if r.CreditMinor > 0 && r.DebitMinor == 0 {
+		return "CREDIT"
+	}
+	if r.DebitMinor > 0 && r.CreditMinor == 0 {
+		return "DEBIT"
+	}
+	if r.CreditMinor > 0 {
+		return "CREDIT"
+	}
+	if r.DebitMinor > 0 {
+		return "DEBIT"
+	}
+	return ""
+}
+
+func (s *ReconSQLStore) InsertSettlementBankDecisions(ctx context.Context, tenantID, connectorID string, decisions []recon.SettlementBankDecision) error {
+	now := time.Now().UTC()
+	for _, d := range decisions {
+		id := d.ID
+		if id == "" {
+			id = uuid.Must(uuid.NewV7()).String()
+		}
+		cands, _ := json.Marshal(d.Candidates)
+		if d.Candidates == nil {
+			cands = []byte("[]")
+		}
+		ev, _ := json.Marshal(d.Evidence)
+		if d.Evidence == nil {
+			ev = []byte("{}")
+		}
+		decided := d.DecidedAt
+		if decided.IsZero() {
+			decided = now
+		}
+		if _, err := s.db.ExecContext(ctx, `
+			INSERT INTO settlement_bank_match_decisions (
+				id, tenant_id, connector_id, settlement_line_id, bank_observation_id,
+				state, confidence, rule, candidates, evidence, decided_at
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+			id, tenantID, connectorID, nullIfEmpty(d.SettlementLineID), nullIfEmpty(d.BankObservationID),
+			d.State, d.Confidence, d.Rule, cands, ev, decided,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *ReconSQLStore) InsertMatchOutbox(ctx context.Context, row models.OutboxRow) error {
+	if row.EventID == uuid.Nil {
+		row.EventID = uuid.Must(uuid.NewV7())
+	}
+	if row.CreatedAt.IsZero() {
+		row.CreatedAt = time.Now().UTC()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO outcome_outbox (
+			event_id, tenant_id, trace_id, aggregate_type, aggregate_id,
+			event_type, schema_version, payload, status, retry_count, created_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'PENDING',0,$9)`,
+		row.EventID, row.TenantID, row.TraceID, row.AggregateType, row.AggregateID,
+		row.EventType, models.SchemaVersionV1, row.Payload, row.CreatedAt,
+	)
+	return err
+}
+
+func (s *ReconSQLStore) CountProofs(ctx context.Context, tenantID, connectorID string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM payment_proof_subjects WHERE tenant_id=$1 AND connector_id=$2`,
+		tenantID, connectorID,
+	).Scan(&n)
+	return n, err
 }

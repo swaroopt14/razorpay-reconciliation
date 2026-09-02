@@ -9,66 +9,69 @@ import (
 )
 
 type Import struct {
-	ID               string
-	TenantID         string
-	ConnectorID      string
-	AccountID        string
-	ImportType       string
-	SourceType       string
-	ProviderMode     string
-	FileName         string
-	ContentType      string
-	FileSizeBytes    int64
-	FileSHA256       string
-	StorageURI       string
-	Payload          []byte
-	Currency         string
-	Status           string
-	DetectedColumns  []string
-	SelectedMapping  map[string]string
-	AmountUnit       string
-	Timezone         string
-	Profile          string
-	RowsSeen         int64
-	ValidRows        int64
-	InvalidRows      int64
-	DuplicateRows    int64
-	InsertedRows     int64
-	UpdatedRows      int64
-	RejectedRows     int64
-	CreatedAt        time.Time
-	ValidatedAt      time.Time
-	CommittedAt      time.Time
+	ID              string
+	TenantID        string
+	ConnectorID     string
+	AccountID       string
+	ImportType      string
+	SourceType      string
+	ProviderMode    string
+	FileName        string
+	ContentType     string
+	FileSizeBytes   int64
+	FileSHA256      string
+	StorageURI      string
+	Payload         []byte
+	Currency        string
+	Status          string
+	DetectedColumns []string
+	SelectedMapping map[string]string
+	AmountUnit      string
+	Timezone        string
+	Profile         string
+	RowsSeen        int64
+	ValidRows       int64
+	InvalidRows     int64
+	DuplicateRows   int64
+	InsertedRows    int64
+	UpdatedRows     int64
+	RejectedRows    int64
+	CreatedAt       time.Time
+	ValidatedAt     time.Time
+	CommittedAt     time.Time
 }
 
 type RowResult struct {
-	ID                 string
-	ImportID           string
-	RowNumber          int64
-	RowHash            string
-	Status             string
-	CanonicalRecordID  string
-	ErrorCode          string
-	ErrorMessage       string
-	Raw                json.RawMessage
-	Settlement         *razorpay.NeutralSettlementLine
-	Bank               *BankObservation
+	ID                string
+	ImportID          string
+	RowNumber         int64
+	RowHash           string
+	Status            string
+	CanonicalRecordID string
+	ErrorCode         string
+	ErrorMessage      string
+	Raw               json.RawMessage
+	Settlement        *razorpay.NeutralSettlementLine
+	Bank              *BankObservation
 }
 
 type BankObservation struct {
-	AccountID              string
-	BankTransactionID      string
-	ValueDate              time.Time
-	Description            string
-	NormalizedDescription  string
-	UTR                    string
-	ReferenceNumber        string
-	CreditMinor            int64
-	DebitMinor             int64
-	Currency               string
-	SourceRowNumber        int64
-	RowHash                string
-	Raw                    json.RawMessage
+	AccountID             string
+	BankTransactionID     string
+	ValueDate             time.Time
+	Description           string
+	NormalizedDescription string
+	UTR                   string
+	UTRRaw                string
+	ReferenceNumber       string
+	CreditMinor           int64
+	DebitMinor            int64
+	CreditDebit           string
+	Currency              string
+	SourceRowNumber       int64
+	RowHash               string
+	IdentityHash          string
+	Raw                   json.RawMessage
 }
 
 type ValidateRequest struct {

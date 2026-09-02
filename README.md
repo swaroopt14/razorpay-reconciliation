@@ -32,7 +32,7 @@ A verifiable payment lifecycle platform. Ingestion, canonicalization, settlement
 - [Tech Stack](#tech-stack)
 - [Getting Started](#getting-started)
 - [Configuration](#configuration)
-- [Razorpay Connector (Phase 1)](#razorpay-connector-phase-1)
+- [Razorpay Reconciliation (Phases 1-6)](#razorpay-reconciliation-phases-1-6)
 - [API Documentation](#api-documentation)
 - [Database Design](#database-design)
 - [Workflow](#workflow)
@@ -99,7 +99,7 @@ Instead of asking finance teams to trust a single system's view, Zord constructs
 - **Dead Letter Queue Management** — Structured DLQ with replay, retry, and investigation workflows
 - **PII Tokenization** — Format-preserving encryption boundary for GDPR/PCI DSS compliance
 - **Real-Time Dashboards** — Operator, customer, and admin views with role-based access control
-- **Razorpay Connector** — Secure provider client with Test/Live mode, Basic Auth, retry, and redacted logging
+- **Razorpay Connector** — Test/Live client, signed webhooks, payment API backfill, and canonical payment truth (Phases 1–4). Razorpay `settled` is never `bank_credited`
 
 ---
 
@@ -147,7 +147,9 @@ Arealis-Zord/
 │   ├── zord-intent-engine/         # Canonicalization engine (Go, port 8083)
 │   ├── zord-relay/                 # Event relay and dispatch (Go, port 8082)
 │   ├── zord-outcome-engine/        # Settlement processing (Go, port 8081)
-│   │   └── internal/poll/          # ← Razorpay provider client (Phase 1)
+│   │   ├── internal/poll/          # Razorpay client + payment/settlement backfill (Phases 1, 3)
+│   │   ├── internal/observe/       # Webhook observation → payment truth (Phase 2+)
+│   │   └── internal/paymenttruth/  # Canonical payment reducer (Phase 4)
 │   ├── zord-evidence/              # Evidence pack generation (Go)
 │   ├── zord-intelligence/          # ZPI — projections, policies, SLA (Go)
 │   ├── zord-prompt-layer/          # LLM-assisted query (Go)
@@ -292,99 +294,226 @@ Each service reads configuration from environment variables. Copy `.env.example`
 
 ---
 
-## Razorpay Connector (Phase 1)
+## Razorpay Reconciliation (Phases 1-6)
 
-Phase 1 establishes a secure, testable Razorpay provider client. The connector flow:
+Work lives in this clone only. No new microservice. Edge never canonicalizes payments.
+
+**Hard rule:** Razorpay `settled` is never `bank_credited`. Only a matched bank observation proves cash in the merchant account.
+
+### Status
+
+| Phase | Purpose | Status | Local test (2026-09-02) |
+|---|---|---|---|
+| **1** | Talk to Razorpay safely (REST client) | **Done** | `go test ./internal/poll/providers/razorpay/` pass. Test Mode health=`healthy` |
+| **2** | Signed webhook → observation (not finality) | **Done** | `go test ./validator ./services ./handler` in `zord-edge` pass |
+| **3** | Payments API backfill + provenance | **Done** | Integration tests against local Postgres pass |
+| **4** | Canonical payment truth (reducer + `canonical_payments`) | **Done** | Unit + Postgres + `cmd/phase4-local` pass (see below) |
+| **5A** | Settlement line truth (`provider_settlement_line_observations`) | **Done** | Imports + backfill upserts; duplicate file → `duplicate` |
+| **5B** | Bank ingress + Settlement↔Bank **candidates** | **Done** | Edge `POST /v1/bank-statements`; `MatchSettlementBank`; no `fully_reconciled` |
+| **6** | Payment-first financial recon + prompt-layer investigator | **Done** | PAY-001..008 unit + Postgres; `MATCHED` ≠ bank_credited |
+| Refunds | Refund API + `refund.*` as money movement | **Not started** | — |
+| Proof UI | Live console chips | **Not started** | — |
 
 ```
-Tenant connector configuration
-        ↓
-Test/Live credential resolution
-        ↓
-Authenticated Razorpay API request (Basic Auth)
-        ↓
-Typed provider response
-        ↓
-Redacted audit log and metrics
-        ↓
-Connection-test result
+Razorpay Test Mode
+        │
+        ├──────── REST API ────────► zord-outcome-engine client (Phase 1)
+        │                                    │
+        └──────── Webhook ─────────► zord-edge HMAC + receipt (Phase 2)
+                                             │
+                         provider.observation.received
+                                             │
+                                             ▼
+                           zord-outcome-engine /internal/observe
+                                             │
+                    ┌────────────────────────┴────────────────────────┐
+                    │                                                 │
+                    ▼                                                 ▼
+     provider_payment_observation_events              payment API backfill (Phase 3)
+     (immutable, identity-hashed)                     overlap window, sources[]
+                    │                                                 │
+                    └────────────────────────┬────────────────────────┘
+                                             ▼
+                           paymenttruth.Processor (Phase 4)
+                           one RunInTx path for webhook + API
+                                             │
+                    ┌────────────────────────┼────────────────────────┐
+                    ▼                        ▼                        ▼
+           canonical_payments      GET /internal/payments/:id    payment.canonical.updated.v1
+           (no backward status)    + observation history         outbox (status/amount/intent)
 ```
 
-### Architecture
+Not created on purpose: `zord-razorpay`, `zord-webhook-service`, `razorpay_connectors`.
 
-| Component | Location | Responsibility |
-|---|---|---|
-| **Edge Connector API** | `zord-edge/handler/connector_handler.go` | CRUD, tenant auth, health status |
-| **Edge Connector Service** | `zord-edge/services/connector_service.go` | DB ops, secret resolution |
-| **Edge Connector Model** | `zord-edge/model/connector.go` | Types, request/response DTOs |
-| **Provider Interface** | `zord-outcome-engine/internal/poll/provider.go` | Provider-neutral interface |
-| **Razorpay Client** | `zord-outcome-engine/internal/poll/providers/razorpay/client.go` | HTTP client, Basic Auth, retry |
-| **Razorpay Config** | `zord-outcome-engine/internal/poll/providers/razorpay/config.go` | Validation, mode enforcement |
-| **Razorpay Types** | `zord-outcome-engine/internal/poll/providers/razorpay/types.go` | Provider DTOs (not exposed to frontend) |
-| **Error Classification** | `zord-outcome-engine/internal/poll/providers/razorpay/errors.go` | Typed error categories |
-| **Redaction Helpers** | `zord-outcome-engine/internal/poll/providers/razorpay/redact.go` | Safe logging |
-| **Database Migration** | `zord-edge/db/migrations/20260826_add_razorpay_connector_fields.sql` | Extends connectors table |
+### Phase 1 — Razorpay client
 
-### Connector API Endpoints
+Secure Test/Live HTTP client in `backend/zord-outcome-engine/internal/poll/providers/razorpay/`.
 
-| Method | Endpoint | Description |
-|---|---|---|
-| `POST` | `/v1/connectors/razorpay` | Save connector config |
-| `POST` | `/v1/connectors/razorpay/test` | Run connection test |
-| `GET` | `/v1/connectors/razorpay/status` | Get health status |
-| `GET` | `/v1/connectors` | List all connectors |
+Basic Auth, GET-only retry on 429/5xx/timeout, typed errors, redacted logs. Methods: `HealthCheck`, `FetchPayment`, `ListPayments` / `ListPaymentsPage`, `ListSettlementReconDay`.
 
-### Quick Start (Local Testing)
+Edge config API (does not call Razorpay except a **mock** `/test` leftover):
 
-```bash
-# 1. Configure connector
-curl -X POST http://localhost:8080/v1/connectors/razorpay \
-  -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer <your-token>' \
-  -d '{
-    "mode": "test",
-    "key_id": "rzp_test_TVY5EjjWRxV6HQ",
-    "key_secret": "<your-secret>"
-  }'
-
-# 2. Run connection test
-curl -X POST http://localhost:8080/v1/connectors/razorpay/test \
-  -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer <your-token>' \
-  -d '{"connector_id":"<connector-id>"}'
-
-# 3. Check status
-curl http://localhost:8080/v1/connectors/razorpay/status \
-  -H 'Authorization: Bearer <your-token>'
-```
-
-### Test Suite (45 tests)
+| Method | Endpoint |
+|---|---|
+| `POST` | `/v1/connectors/razorpay` |
+| `POST` | `/v1/connectors/razorpay/test` |
+| `GET` | `/v1/connectors/razorpay/status` |
+| `GET` | `/v1/connectors` |
 
 ```bash
 cd backend/zord-outcome-engine
-go test ./internal/poll/providers/razorpay/... -v
+go test ./internal/poll/providers/razorpay/ -count=1
 ```
 
-Tests cover:
-- Basic Auth header generation
-- Correct HTTP method, path, and headers
-- Response decoding (200 → typed DTO)
-- Error classification (400, 401, 403, 404, 429, 500)
-- Retry behavior (429/5xx retries, 4xx no retry)
-- Context cancellation and deadline
-- Pagination helpers
-- Redaction (no secrets in logs)
-- Health check success and failure
+### Phase 2 — Webhook observation
 
-### What Phase 1 Does NOT Do
+`zord-edge` verifies HMAC over the **raw body**, then persists `provider_webhook_receipts` + `ingress_outbox` in one TX.
 
-- Webhook signature validation
-- payment.captured event processing
-- Settlement reconciliation
-- Bank statement ingestion
-- UTR matching
-- Razorpay mutations/refunds
-- AI agent actions
+- Routes: `POST /v1/webhooks/razorpay/:connectorID`, receipt GET/list
+- Invalid signature → 401, nothing stored
+- Same event + same hash → 200 `duplicate`, no second outbox
+- Outbox event is `provider.observation.received` (not `payment.captured`)
+- Handler does **not** rank `authorized` / `captured` / `failed`
+
+```bash
+cd backend/zord-edge
+go test ./validator ./services ./handler -count=1
+```
+
+Outcome-engine `internal/observe` turns that envelope into a payment observation. Refund/settlement events are skipped.
+
+### Phase 3 — API backfill
+
+Gap-fill of Razorpay Payments API into the same observation store. Overlap window on `window_from` (default 10 minutes). Sources are `webhook` / `api_backfill` (not `razorpay`). Cursor does not advance if the page TX rolls back.
+
+Airflow: `zord-airflow` backfill operator passes `overlap_minutes`.
+
+### Phase 4 — Canonical payment truth
+
+One current row in `canonical_payments`, many immutable rows in `provider_payment_observation_events`.
+
+| Piece | Role |
+|---|---|
+| `internal/paymenttruth` | Mapper + lifecycle reducer |
+| `Processor.Process` | Single path for webhook ingest and payment backfill, inside `RunInTx` |
+| `GET /internal/payments/:payment_id` | Current canonical + observation history (`X-Relay-Token`) |
+| `payment.canonical.updated.v1` | Outbox when status, amount, or intent link changes |
+
+Status vocab stays recon lowercase: `created`, `authorized`, `captured`, `failed`, `refunded`, `partially_refunded`, `unknown`. Native Razorpay status is stored separately as `provider_status`.
+
+Reducer: `unknown < created < authorized < captured < partially_refunded < refunded`. `failed` does not overwrite captured/refunded. Late `authorized` cannot regress `captured`.
+
+Intent link is **exact only**: `canonical_intents.client_payout_ref` or `business_idempotency_key` = Razorpay `order_id`. Else `unlinked`. Never amount-only.
+
+Migration: `backend/zord-outcome-engine/db/migrations/20260902050000_create_canonical_payments.sql`  
+Applied on local Postgres `127.0.0.1:5433` database `zord_outcome_phase3`.
+
+### Local test (Phase 4, this machine)
+
+Postgres on `5433` was used. Razorpay Test Mode keys stay in gitignored `backend/zord-outcome-engine/.env`.
+
+```bash
+cd backend/zord-outcome-engine
+
+# Unit (Phases 1, 3, 4 + observation processor)
+go test ./internal/poll/providers/razorpay/ ./internal/paymenttruth/ \
+  ./internal/poll/ ./internal/observe/ ./handlers/ -count=1
+
+# Postgres integration
+DATABASE_URL='postgres://postgres@127.0.0.1:5433/zord_outcome_phase3?sslmode=disable' \
+  go test -tags=integration ./internal/persistence/ -count=1
+
+# End-to-end against that DB: authorized → captured, late authorized stays captured,
+# duplicate replay, GET /internal/payments/:id, optional Test Mode health
+DATABASE_URL='postgres://postgres@127.0.0.1:5433/zord_outcome_phase3?sslmode=disable' \
+  go run ./cmd/phase4-local
+```
+
+Last local run:
+
+- `payment.authorized` → inserted
+- `payment.captured` → updated
+- late `payment.authorized` → canonical stayed **`captured`**
+- replay captured → duplicate
+- `GET /internal/payments/:id` → **200**, no email/contact in body
+- Postgres row: `canonical_status=captured`, `sources={webhook}`, `intent_link=unlinked`
+- Razorpay Test Mode: `health=healthy`, **0 payments** in the account (empty Test Mode is expected)
+
+### Phase 5 — Settlement line truth, bank truth, Settlement↔Bank candidates
+
+Phase 5 does **not** mark a payment fully reconciled. Razorpay `settled` is still never `bank_credited`.
+
+**5A** extends `provider_settlement_line_observations` (imports + API backfill): `adjustment_minor`, statuses, file/row provenance, `payment_link` via exact `payment_id` → Phase 4 `canonical_payments`. Missing payment id is accepted as `unlinked`. Adjustment is never folded into fee. A second upload of the same file hash returns `status=duplicate` with `inserted_rows=0`.
+
+The XLSX attachment engine and `canonical_settlement_observations` are unchanged.
+
+**5B** Edge ingress (does not parse CSV, does not use payout `bank_parser.go`):
+
+| Method | Endpoint |
+|---|---|
+| `POST` | `/v1/bank-statements` (multipart `file` + `account_id`) → 202 `ACCEPTED` or `DUPLICATE` |
+| `GET` | `/v1/bank-statements/:ingest_id` |
+
+Same hash records a `bank_ingest_runs` row as `DUPLICATE` and does **not** emit a second `bank.statement.received` outbox event. File bytes are stored via Edge S3 (`memory://hash` when S3 is unset).
+
+Outcome-engine consumes via `POST /internal/bank-statements/ingest` (relay token) using the existing `internal/imports` CSV parser (generic + hdfc/icici/sbi). After commit, `MatchSettlementBank` writes `settlement_bank_match_decisions` only (`EXACT_MATCH` / `HIGH_CONFIDENCE` / `AMBIGUOUS` / `UNRESOLVED` / `CONFLICTED` / `ORPHAN_BANK`) and `bank.match.completed.v1`. It does not write `payment_proof_subjects` or emit `reconciliation.decision.v1`. DEBIT rows are never matched via `abs(amount)`.
+
+```bash
+cd backend/zord-outcome-engine
+go test ./internal/imports/ ./internal/recon/ ./internal/poll/ ./internal/bankingest/ ./handlers/ -count=1
+DATABASE_URL='postgres://postgres@127.0.0.1:5433/zord_outcome_phase3?sslmode=disable' \
+  go test -tags=integration ./internal/persistence/ -count=1
+cd backend/zord-edge && go test ./handler ./services -count=1
+```
+
+### Not in Phases 1–6
+
+- Accounting ledger service
+- Refund list/fetch/create API and `refund.*` as money movement
+- New agent service, LangGraph, MCP
+- Phase 7 finance Evidence Packs (planned — [PHASE7_PLAN.md](./PHASE7_PLAN.md); intent Merkle packs already exist in `zord-evidence`)
+- Live React proof chips
+- Edge `POST /v1/connectors/razorpay/test` still returns a **mock** healthy result
+- Live Razorpay keys (`RAZORPAY_ALLOW_LIVE` is refused)
+
+### Phase 6 — Financial recon + prompt-layer investigation
+
+Phase 6 consumes Phase 4 `canonical_payments` and Phase 5 `settlement_bank_match_decisions`. It does **not** re-parse files, re-score UTR, call `recon.Match()`, or write `payment_proof_subjects`. Razorpay lifecycle status and `reconciliation.result` stay separate. `MATCHED` is not `fully_reconciled` and not `bank_credited`.
+
+Failed payments with no settlement and no bank movement are `MATCHED` (accounted; nothing moved) with **no** exception. Failed + unexplained bank CREDIT/DEBIT is `UNRESOLVED` + exception. AMBIGUOUS candidates are never forced to MATCHED. Open `authorized`/`created` past 72h stays that status (`UNRESOLVED` exception; not renamed `STUCK`).
+
+### Phase 6B — Payouts + prompt-layer investigation graph
+
+Payouts are a second first-class entity. Razorpay payout `status` is stored exactly (`pending | scheduled | queued | processing | processed | reversed | cancelled | rejected | failed`) and is never renamed to `STUCK` / `SLA_BREACH` / `SETTLED`. Processed payouts expect a bank **DEBIT**. Failed/cancelled/rejected with no bank movement is `MATCHED` (nothing moved). Open payouts past the 15m SLA stay that Razorpay status with `reconciliation.result=UNRESOLVED` and reason `payout_open_past_sla`.
+
+`POST /v1/reconciliation/run` reconciles payments and payouts. Investigator lives in `zord-prompt-layer/agents/finance` (Go nodes + HTTP tools; no LangGraph/MCP/new service). `get_ledger_entry` stays `source_not_in_this_phase`.
+
+| Method | Endpoint |
+|---|---|
+| `GET` | `/v1/reconciliation/payments/:payment_id` |
+| `GET` | `/v1/reconciliation/payments/:payment_id/evidence` |
+| `GET` | `/v1/reconciliation/payouts/:payout_id` |
+| `GET` | `/v1/reconciliation/payouts/:payout_id/evidence` |
+| `GET` | `/v1/reconciliation/sla-policy` |
+| `GET` | `/v1/reconciliation/exceptions` and `/:id` (`entity_type`, `reason` filters) |
+| `POST` | `/v1/reconciliation/run` |
+| `GET` | `/v1/reconciliation/runs/:id` |
+| `POST` | `/v1/reconciliation/investigations` |
+| `GET` | `/v1/reconciliation/investigations/:id` |
+| `POST` | `/internal/reconciliation/run` (relay) |
+| `GET` | `/internal/payouts/:payout_id` (relay) |
+
+Outbox: `reconciliation.decision.v1`, `payout.canonical.updated.v1`.
+
+```bash
+cd backend/zord-outcome-engine
+go test ./internal/recon/ ./internal/payouttruth/ ./internal/observe/ ./internal/poll/providers/razorpay/ ./handlers/ -count=1
+DATABASE_URL='postgres://postgres@127.0.0.1:5433/zord_outcome_phase3?sslmode=disable' \
+  go test -tags=integration ./internal/persistence/ -count=1
+cd backend/zord-prompt-layer && go test ./tools/ ./agents/finance/ -count=1
+```
+
+Tracked plan: [PHASE6_PLAN.md](./PHASE6_PLAN.md). Next: [PHASE7_PLAN.md](./PHASE7_PLAN.md) — prove the Phase 6 conclusion (evidence, provenance, decision/calculation traces, audit, SHA-256 pack). Does not rebuild intent Merkle packs.
 
 ---
 
@@ -429,6 +558,12 @@ curl -X POST http://localhost:8080/v1/ingest \
 | `POST` | `/v1/settlement/upload` | Upload settlement file |
 | `GET` | `/v1/settlement/jobs/:job_id` | Check job status |
 | `POST` | `/v1/attachment/run` | Trigger attachment job |
+| `POST` | `/internal/observations/provider` | Ingest `provider.observation.received` (relay token) |
+| `GET` | `/internal/payments/:payment_id` | Canonical payment + observation history (relay token) |
+| `POST` | `/internal/backfill/payments` | Queue Razorpay payments API backfill |
+| `GET` | `/v1/reconciliation/payments/:payment_id` | Razorpay status + financial recon result (JWT) |
+| `POST` | `/v1/reconciliation/run` | Run payment-first financial recon (JWT) |
+| `GET` | `/v1/reconciliation/exceptions` | Unexplained money-movement exceptions |
 
 ### zord-evidence — Evidence Packaging
 
@@ -503,6 +638,14 @@ erDiagram
 - `dlq_items` — Dead-letter queue for failed processing
 
 **zord-outcome-engine**
+- `canonical_payments` — Reduced current Razorpay payment truth (Phase 4)
+- `provider_payment_observations` — Latest payment snapshot (webhook + API)
+- `provider_payment_observation_events` — Immutable observation log (identity hash)
+- `provider_settlement_line_observations` — Settlement-line truth (Phase 5A)
+- `bank_transaction_observations` — Bank CREDIT/DEBIT observations (Phase 5B)
+- `settlement_bank_match_decisions` — Settlement↔Bank candidates only (Phase 5B)
+- `reconciliation_results` / `reconciliation_exceptions` — Payment-first financial recon (Phase 6)
+- `canonical_payouts` / `provider_payout_observation_events` — Payout truth (Phase 6B)
 - `canonical_settlement_observations` — Normalized settlement data
 - `attachment_decisions` — Authoritative intent-to-settlement matching
 - `finality_certificates` — Cryptographic settlement proofs
@@ -583,11 +726,31 @@ pre-commit install
 
 ## Testing
 
-### Razorpay Client Tests (45 tests)
+### Razorpay Phases 1–6
 
 ```bash
+# Phase 1 — client
 cd backend/zord-outcome-engine
-go test ./internal/poll/providers/razorpay/... -v -count=1
+go test ./internal/poll/providers/razorpay/ -count=1
+
+# Phase 2 — Edge webhook
+cd backend/zord-edge
+go test ./validator ./services ./handler -count=1
+
+# Phase 3–4 — mapper, reducer, backfill, observe, HTTP
+cd backend/zord-outcome-engine
+go test ./internal/paymenttruth/ ./internal/poll/ ./internal/observe/ ./handlers/ -count=1
+
+# Postgres (needs DATABASE_URL)
+DATABASE_URL='postgres://postgres@127.0.0.1:5433/zord_outcome_phase3?sslmode=disable' \
+  go test -tags=integration ./internal/persistence/ -count=1
+
+# Phase 5–6 — settlement/bank candidates + financial recon
+cd backend/zord-outcome-engine
+go test ./internal/imports/ ./internal/recon/ ./internal/bankingest/ ./handlers/ -count=1
+DATABASE_URL='postgres://postgres@127.0.0.1:5433/zord_outcome_phase3?sslmode=disable' \
+  go test -tags=integration ./internal/persistence/ -count=1
+cd backend/zord-prompt-layer && go test ./tools/ -count=1
 ```
 
 ### Functional Tests
@@ -610,13 +773,18 @@ npx playwright test
 ## Roadmap
 
 - [x] Razorpay connector — Phase 1 (client, config, health check, tests)
-- [ ] Razorpay webhook signature verification (Phase 2)
-- [ ] payment.captured event processing (Phase 2)
-- [ ] Settlement reconciliation with Razorpay (Phase 3)
-- [ ] Bank statement ingestion and UTR matching (Phase 3)
-- [ ] Razorpay refunds and mutations (Phase 4)
-- [ ] AI-powered payment recovery agents (Phase 5)
-- [ ] Batch settlement file scheduling via Airflow
+- [x] Razorpay webhook signature verification — Phase 2
+- [x] `payment.captured` / `authorized` / `failed` as observations — Phase 2
+- [x] Razorpay payments API backfill + provenance — Phase 3
+- [x] Canonical payment truth (`canonical_payments` + reducer) — Phase 4
+- [x] Settlement line truth + bank ingress + Settlement↔Bank candidates — Phase 5
+- [x] Payment-first financial recon + prompt-layer HTTP investigator — Phase 6
+- [x] Canonical payouts + payout recon + prompt-layer finance graph — Phase 6B
+- [ ] Razorpay refunds and mutations (next)
+- [ ] Accounting ledger / `get_ledger_entry`
+- [ ] Phase 7 finance evidence / provenance / audit packs
+- [ ] Live console proof chips
+- [x] Batch settlement file scheduling via Airflow (DAGs already in tree)
 - [ ] Real-time streaming dashboard (WebSocket)
 - [ ] Multi-region EKS deployment
 - [ ] Custom evidence pack templates

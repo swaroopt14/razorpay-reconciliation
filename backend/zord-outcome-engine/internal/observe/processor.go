@@ -4,8 +4,12 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
+	"zord-outcome-engine/internal/paymenttruth"
+	"zord-outcome-engine/internal/payouttruth"
 	"zord-outcome-engine/internal/poll"
+	"zord-outcome-engine/internal/poll/providers/razorpay"
 )
 
 type ResultKind string
@@ -21,15 +25,25 @@ const (
 type Result struct {
 	Kind      ResultKind
 	PaymentID string
+	PayoutID  string
 	EventType string
 }
 
 type Processor struct {
-	store poll.Store
+	store   poll.Store
+	truth   *paymenttruth.Processor
+	payouts *payouttruth.Processor
 }
 
 func NewProcessor(store poll.Store) *Processor {
-	return &Processor{store: store}
+	p := &Processor{store: store}
+	if ts, ok := store.(paymenttruth.Store); ok {
+		p.truth = paymenttruth.NewProcessor(ts)
+	}
+	if ps, ok := store.(payouttruth.Store); ok {
+		p.payouts = payouttruth.NewProcessor(ps)
+	}
+	return p
 }
 
 func (p *Processor) ApplyBytes(ctx context.Context, raw []byte) (Result, error) {
@@ -52,7 +66,7 @@ func (p *Processor) Apply(ctx context.Context, env Envelope) (Result, error) {
 		return Result{Kind: ResultSkipped, EventType: env.ProviderEventType}, nil
 	}
 	if !ok {
-		return Result{Kind: ResultSkipped, EventType: env.ProviderEventType}, nil
+		return p.applyPayout(ctx, env)
 	}
 	if strings.TrimSpace(env.TenantID) == "" || strings.TrimSpace(env.ConnectorID) == "" {
 		return Result{}, fmt.Errorf("missing tenant_id or connector_id")
@@ -65,33 +79,105 @@ func (p *Processor) Apply(ctx context.Context, env Envelope) (Result, error) {
 	if provider == "" {
 		provider = "razorpay"
 	}
-	upsert, err := p.store.UpsertPayment(ctx, poll.PaymentObservation{
-		TenantID:     env.TenantID,
-		ConnectorID:  env.ConnectorID,
-		Provider:     provider,
-		ProviderMode: mode,
-		Item:         item,
-		ReceiptID:    env.ReceiptID,
-		Source:       SourceWebhook,
+	if p.truth != nil {
+		obs, err := paymenttruth.MapNeutral(env.TenantID, env.ConnectorID, provider, mode, SourceWebhook, env.ProviderEventID, env.ReceiptID, item, false, time.Now().UTC())
+		if err != nil {
+			return Result{}, err
+		}
+		res, err := p.truth.Process(ctx, obs)
+		if err != nil {
+			return Result{}, err
+		}
+		out := Result{PaymentID: item.PaymentID, EventType: env.ProviderEventType, Kind: mapTruthKind(res.Kind)}
+		return out, nil
+	}
+	return p.applyLegacy(ctx, env, item, provider, mode)
+}
+
+func (p *Processor) applyPayout(ctx context.Context, env Envelope) (Result, error) {
+	item, ok, err := NormalizePayout(env)
+	if err != nil {
+		return Result{Kind: ResultSkipped, EventType: env.ProviderEventType}, nil
+	}
+	if !ok {
+		return Result{Kind: ResultSkipped, EventType: env.ProviderEventType}, nil
+	}
+	if strings.TrimSpace(env.TenantID) == "" || strings.TrimSpace(env.ConnectorID) == "" {
+		return Result{}, fmt.Errorf("missing tenant_id or connector_id")
+	}
+	if p.payouts == nil {
+		return Result{Kind: ResultSkipped, EventType: env.ProviderEventType, PayoutID: item.PayoutID}, nil
+	}
+	provider := env.Provider
+	if provider == "" {
+		provider = "razorpay"
+	}
+	obs, err := payouttruth.MapNeutral(env.TenantID, env.ConnectorID, provider, SourceWebhook, env.ProviderEventID, item, time.Now().UTC())
+	if err != nil {
+		return Result{}, err
+	}
+	res, err := p.payouts.Process(ctx, obs)
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{PayoutID: item.PayoutID, PaymentID: item.PayoutID, EventType: env.ProviderEventType, Kind: mapPayoutKind(res.Kind)}, nil
+}
+
+func mapPayoutKind(kind payouttruth.Kind) ResultKind {
+	switch kind {
+	case payouttruth.KindDuplicate:
+		return ResultDuplicate
+	case payouttruth.KindUpdated, payouttruth.KindObserved:
+		return ResultUpdated
+	default:
+		return ResultInserted
+	}
+}
+
+func mapTruthKind(kind paymenttruth.Kind) ResultKind {
+	switch kind {
+	case paymenttruth.KindDuplicate:
+		return ResultDuplicate
+	case paymenttruth.KindUpdated, paymenttruth.KindObserved:
+		return ResultUpdated
+	default:
+		return ResultInserted
+	}
+}
+
+func (p *Processor) applyLegacy(ctx context.Context, env Envelope, item razorpay.NeutralPayment, provider, mode string) (Result, error) {
+	var result Result
+	err := p.store.RunInTx(ctx, func(ctx context.Context) error {
+		upsert, err := p.store.UpsertPayment(ctx, poll.PaymentObservation{
+			TenantID:     env.TenantID,
+			ConnectorID:  env.ConnectorID,
+			Provider:     provider,
+			ProviderMode: mode,
+			Item:         item,
+			ReceiptID:    env.ReceiptID,
+			Source:       SourceWebhook,
+			Sources:      []string{SourceWebhook},
+		})
+		if err != nil {
+			return err
+		}
+		result = Result{PaymentID: item.PaymentID, EventType: env.ProviderEventType}
+		switch upsert {
+		case poll.UpsertDuplicate:
+			result.Kind = ResultDuplicate
+			return nil
+		case poll.UpsertUpdated:
+			result.Kind = ResultUpdated
+		default:
+			result.Kind = ResultInserted
+		}
+		row, err := poll.PaymentOutboxRow(env.TenantID, env.ConnectorID, item.PaymentID, SourceWebhook, item)
+		if err != nil {
+			return err
+		}
+		return p.store.InsertOutbox(ctx, row)
 	})
 	if err != nil {
-		return Result{}, err
-	}
-	result := Result{PaymentID: item.PaymentID, EventType: env.ProviderEventType}
-	switch upsert {
-	case poll.UpsertDuplicate:
-		result.Kind = ResultDuplicate
-		return result, nil
-	case poll.UpsertUpdated:
-		result.Kind = ResultUpdated
-	default:
-		result.Kind = ResultInserted
-	}
-	row, err := poll.PaymentOutboxRow(env.TenantID, env.ConnectorID, item.PaymentID, SourceWebhook, item)
-	if err != nil {
-		return Result{}, err
-	}
-	if err := p.store.InsertOutbox(ctx, row); err != nil {
 		return Result{}, err
 	}
 	return result, nil

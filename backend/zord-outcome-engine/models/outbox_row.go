@@ -24,10 +24,11 @@ type OutboxRow struct {
 	ContractID string
 	BatchID    string
 
-	AggregateType string
-	AggregateID   uuid.UUID
-	EventType     string
-	Payload       json.RawMessage
+	AggregateType  string
+	AggregateID    uuid.UUID
+	EventType      string
+	Payload        json.RawMessage
+	IdempotencyKey string
 
 	CreatedAt time.Time
 

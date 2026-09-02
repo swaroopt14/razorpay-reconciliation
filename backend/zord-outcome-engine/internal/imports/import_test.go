@@ -106,8 +106,11 @@ func TestBankParseValidAndPartial(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 2 || rows[0].Bank.CreditMinor != 96578 || rows[0].Bank.UTR != "utr_001" {
+	if len(rows) != 2 || rows[0].Bank.CreditMinor != 96578 || rows[0].Bank.UTR != "UTR_001" {
 		t.Fatalf("%+v", rows[0])
+	}
+	if rows[0].Bank.CreditDebit != "CREDIT" || rows[0].Bank.UTRRaw != "utr_001" {
+		t.Fatalf("credit/raw %+v", rows[0].Bank)
 	}
 	if rows[0].Bank.SourceRowNumber != 1 || rows[0].Bank.Description == "" {
 		t.Fatal("row number/description")
@@ -192,11 +195,14 @@ func TestImportLifecycleNoMatcher(t *testing.T) {
 	if len(store.Banks) == 0 {
 		t.Fatal("expected bank observations")
 	}
-	_, err = svc.Upload(context.Background(), UploadInput{
+	dup, err := svc.Upload(context.Background(), UploadInput{
 		TenantID: imp.TenantID, AccountID: "acc1", ImportType: TypeBankCSV, FileName: "b.csv", Payload: raw,
 	})
-	if err == nil {
-		t.Fatal("duplicate file")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dup.Status != StatusDuplicate || dup.InsertedRows != 0 {
+		t.Fatalf("duplicate file status=%s inserted=%d", dup.Status, dup.InsertedRows)
 	}
 	again, err := svc.Commit(context.Background(), imp.TenantID, imp.ID)
 	if err != nil || again.Status != StatusCommitted {
@@ -253,5 +259,110 @@ func TestPackageDoesNotImportMatcher(t *testing.T) {
 		if strings.Contains(s, "recon.Match") || strings.Contains(s, "/internal/recon/run") {
 			t.Fatalf("%s calls matcher", e.Name())
 		}
+	}
+}
+
+func TestMapReconMissingPaymentIDUnlinked(t *testing.T) {
+	line, code := MapReconItem(razorpay.SettlementReconItem{
+		EntityID: "ent_1", Type: "payment", SettlementID: "setl_1", Amount: 100, Currency: "INR", Credit: 90, Fee: 10,
+	}, "h")
+	if code != "" {
+		t.Fatal(code)
+	}
+	if line.PaymentLink != razorpay.PaymentLinkUnlinked {
+		t.Fatalf("link=%s", line.PaymentLink)
+	}
+}
+
+func TestMapReconNonINRAllowed(t *testing.T) {
+	line, code := MapReconItem(razorpay.SettlementReconItem{
+		EntityID: "ent_1", Type: "payment", SettlementID: "setl_1", Amount: 100, Currency: "USD", PaymentID: "pay_1",
+	}, "h")
+	if code != "" || line.Currency != "USD" {
+		t.Fatalf("code=%s cur=%s", code, line.Currency)
+	}
+}
+
+func TestMapReconNegativeAmountInvalid(t *testing.T) {
+	_, code := MapReconItem(razorpay.SettlementReconItem{
+		EntityID: "ent_1", Type: "payment", SettlementID: "setl_1", Amount: -1, Currency: "INR",
+	}, "h")
+	if code != ErrInvalidAmount {
+		t.Fatalf("code=%s", code)
+	}
+}
+
+func TestAdjustmentNotFoldedIntoFee(t *testing.T) {
+	line, code := MapReconItem(razorpay.SettlementReconItem{
+		EntityID: "adj_1", Type: "adjustment", Amount: 500, Credit: 500, Fee: 0, Tax: 0, Currency: "INR", Adjustment: 500,
+	}, "h")
+	if code != "" {
+		t.Fatal(code)
+	}
+	if line.FeeMinor != 0 {
+		t.Fatalf("fee=%d", line.FeeMinor)
+	}
+	if line.AdjustmentMinor != 500 || line.CanonicalStatus != "adjusted" {
+		t.Fatalf("%+v", line)
+	}
+}
+
+func TestRefundAndTransferCanonicalStatus(t *testing.T) {
+	rf, _ := MapReconItem(razorpay.SettlementReconItem{
+		EntityID: "rf", Type: "refund", SettlementID: "s", Amount: 10, Debit: 10, Currency: "INR", PaymentID: "p",
+	}, "h")
+	if rf.CanonicalStatus != "reversed" {
+		t.Fatalf("refund=%s", rf.CanonicalStatus)
+	}
+	tr, _ := MapReconItem(razorpay.SettlementReconItem{
+		EntityID: "tr", Type: "transfer", SettlementID: "s", Amount: 10, Debit: 10, Currency: "INR", Settled: true,
+	}, "h")
+	if tr.CanonicalStatus != "settled" {
+		t.Fatalf("transfer=%s", tr.CanonicalStatus)
+	}
+}
+
+func TestPartialPaymentLinkOnCommit(t *testing.T) {
+	store := NewMemoryStore()
+	store.PaymentAmounts["pay_123"] = 10000
+	svc := NewService(store)
+	csv := "entity_id,type,debit,credit,amount,currency,fee,tax,settlement_id,settlement_utr,payment_id\n" +
+		"pay_123,payment,0,9728,9728,INR,272,0,setl_1,UTR123,pay_123\n"
+	imp, err := svc.Upload(context.Background(), UploadInput{
+		TenantID: "11111111-1111-1111-1111-111111111111", ConnectorID: "22222222-2222-2222-2222-222222222222",
+		ImportType: TypeSettlementCSV, FileName: "s.csv", Payload: []byte(csv),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := svc.Validate(context.Background(), imp.TenantID, imp.ID, ValidateRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Commit(context.Background(), imp.TenantID, imp.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.Settlements) != 1 || store.Settlements[0].PaymentLink != razorpay.PaymentLinkPartial {
+		t.Fatalf("%+v", store.Settlements)
+	}
+	if store.ProofSubjects != 0 {
+		t.Fatal("must not write proof")
+	}
+}
+
+func TestDuplicateSettlementRowSkipped(t *testing.T) {
+	store := NewMemoryStore()
+	svc := NewService(store)
+	csv := "entity_id,type,debit,credit,amount,currency,fee,tax,settlement_id\n" +
+		"e1,payment,0,100,100,INR,0,0,s1\n" +
+		"e1,payment,0,100,100,INR,0,0,s1\n"
+	imp, err := svc.UploadValidateCommit(context.Background(), UploadInput{
+		TenantID: "11111111-1111-1111-1111-111111111111", ConnectorID: "22222222-2222-2222-2222-222222222222",
+		ImportType: TypeSettlementCSV, FileName: "dup.csv", Payload: []byte(csv),
+	}, ValidateRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.Settlements) != 1 {
+		t.Fatalf("settlements=%d status=%s", len(store.Settlements), imp.Status)
 	}
 }

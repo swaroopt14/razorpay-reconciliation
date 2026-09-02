@@ -173,7 +173,7 @@ func TestL5UniqueAmountDateAccountCanVerify(t *testing.T) {
 	from := time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC)
 	s := Match(Snapshot{
 		AccountID: "a1",
-		Payments: []PaymentObs{{PaymentID: "pay_5", Status: "captured", Captured: true, Currency: "INR", HasWebhook: true}},
+		Payments:  []PaymentObs{{PaymentID: "pay_5", Status: "captured", Captured: true, Currency: "INR", HasWebhook: true}},
 		Lines: []SettlementLine{{
 			SettlementID: "setl_5", EntityID: "pay_5", PaymentID: "pay_5",
 			CreditMinor: 2000, Currency: "INR", Settled: true, SettledAt: from,
@@ -186,4 +186,3 @@ func TestL5UniqueAmountDateAccountCanVerify(t *testing.T) {
 		t.Fatalf("unique L5 should verify, recon=%s proof=%s", s.ReconciliationState, s.ProofState)
 	}
 }
-

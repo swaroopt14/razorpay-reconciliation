@@ -5,12 +5,12 @@ import "time"
 const RuleVersion = "recon_rules_v1"
 
 const (
-	PaymentUnknown          = "unknown"
-	PaymentCreated          = "created"
-	PaymentAuthorized       = "authorized"
-	PaymentCaptured         = "captured"
-	PaymentFailed           = "failed"
-	PaymentRefunded         = "refunded"
+	PaymentUnknown           = "unknown"
+	PaymentCreated           = "created"
+	PaymentAuthorized        = "authorized"
+	PaymentCaptured          = "captured"
+	PaymentFailed            = "failed"
+	PaymentRefunded          = "refunded"
 	PaymentPartiallyRefunded = "partially_refunded"
 )
 
@@ -34,33 +34,33 @@ const (
 )
 
 const (
-	ReconFullyReconciled                 = "fully_reconciled"
-	ReconPaymentConfirmedSettlementPending = "payment_confirmed_settlement_pending"
-	ReconSettlementConfirmedBankPending  = "settlement_confirmed_bank_pending"
+	ReconFullyReconciled                    = "fully_reconciled"
+	ReconPaymentConfirmedSettlementPending  = "payment_confirmed_settlement_pending"
+	ReconSettlementConfirmedBankPending     = "settlement_confirmed_bank_pending"
 	ReconBankCreditConfirmedProviderPending = "bank_credit_confirmed_provider_pending"
-	ReconAmountMismatch                  = "amount_mismatch"
-	ReconMissingWebhookRepairedByAPI     = "missing_webhook_repaired_by_api"
-	ReconDuplicateObservation            = "duplicate_observation"
-	ReconAmbiguousMatch                  = "ambiguous_match"
-	ReconUnresolved                      = "unresolved"
+	ReconAmountMismatch                     = "amount_mismatch"
+	ReconMissingWebhookRepairedByAPI        = "missing_webhook_repaired_by_api"
+	ReconDuplicateObservation               = "duplicate_observation"
+	ReconAmbiguousMatch                     = "ambiguous_match"
+	ReconUnresolved                         = "unresolved"
 )
 
 const (
-	ProofUnproven                              = "unproven"
-	ProofVerified                              = "verified"
-	ProofProviderSettlementProvenBankUnproven  = "provider_settlement_proven_bank_credit_unproven"
-	ProofCaptureProvenSettlementUnproven       = "capture_proven_settlement_unproven"
-	ProofProbable                              = "probable"
+	ProofUnproven                             = "unproven"
+	ProofVerified                             = "verified"
+	ProofProviderSettlementProvenBankUnproven = "provider_settlement_proven_bank_credit_unproven"
+	ProofCaptureProvenSettlementUnproven      = "capture_proven_settlement_unproven"
+	ProofProbable                             = "probable"
 )
 
 const (
-	MatchExactPaymentID        = "exact_payment_id"
-	MatchExactEntityID         = "exact_entity_id"
-	MatchOrderRelationship     = "order_relationship"
-	MatchExactUTR              = "exact_utr"
-	MatchExactUTRAndAmount     = "exact_utr_and_amount"
-	MatchNetAmountDateAccount  = "exact_net_amount_date_account"
-	MatchCompositeFallback     = "composite_fallback"
+	MatchExactPaymentID       = "exact_payment_id"
+	MatchExactEntityID        = "exact_entity_id"
+	MatchOrderRelationship    = "order_relationship"
+	MatchExactUTR             = "exact_utr"
+	MatchExactUTRAndAmount    = "exact_utr_and_amount"
+	MatchNetAmountDateAccount = "exact_net_amount_date_account"
+	MatchCompositeFallback    = "composite_fallback"
 )
 
 const (
@@ -70,20 +70,21 @@ const (
 )
 
 type PaymentObs struct {
-	PaymentID    string
-	OrderID      string
-	Status       string
-	AmountMinor  int64
-	Currency     string
-	Captured     bool
-	Source       string
-	PayloadHash  string
-	HasWebhook   bool
-	FeeMinor     int64
-	TaxMinor     int64
+	PaymentID   string
+	OrderID     string
+	Status      string
+	AmountMinor int64
+	Currency    string
+	Captured    bool
+	Source      string
+	PayloadHash string
+	HasWebhook  bool
+	FeeMinor    int64
+	TaxMinor    int64
 }
 
 type SettlementLine struct {
+	ID           string
 	SettlementID string
 	EntityID     string
 	PaymentID    string
@@ -101,23 +102,25 @@ type SettlementLine struct {
 }
 
 type BankTxn struct {
-	ID            string
-	AccountID     string
-	BankTxnID     string
-	UTR           string
-	Description   string
-	Currency      string
-	CreditMinor   int64
-	DebitMinor    int64
-	ValueDate     time.Time
-	RowHash       string
+	ID          string
+	AccountID   string
+	BankTxnID   string
+	UTR         string
+	UTRRaw      string
+	Description string
+	Currency    string
+	CreditMinor int64
+	DebitMinor  int64
+	CreditDebit string
+	ValueDate   time.Time
+	RowHash     string
 }
 
 type IntentRef struct {
-	IntentID             string
-	ProviderOrderID      string
-	ExpectedAmountMinor  int64
-	Currency             string
+	IntentID            string
+	ProviderOrderID     string
+	ExpectedAmountMinor int64
+	Currency            string
 }
 
 type MatchDecision struct {
@@ -135,24 +138,24 @@ type MatchDecision struct {
 }
 
 type ProofSubject struct {
-	TenantID                 string
-	ConnectorID              string
-	PaymentID                string
-	OrderID                  string
-	PaymentState             string
-	ProviderSettlementState  string
-	BankCreditState          string
-	ReconciliationState      string
-	ProofState               string
-	SettlementID             string
-	BankObservationID        string
-	ExpectedNetMinor         int64
-	BankCreditMinor          int64
-	DifferenceMinor          int64
-	Currency                 string
-	MissingWebhook           bool
-	Message                  string
-	MatchPairs               []MatchDecision
+	TenantID                string
+	ConnectorID             string
+	PaymentID               string
+	OrderID                 string
+	PaymentState            string
+	ProviderSettlementState string
+	BankCreditState         string
+	ReconciliationState     string
+	ProofState              string
+	SettlementID            string
+	BankObservationID       string
+	ExpectedNetMinor        int64
+	BankCreditMinor         int64
+	DifferenceMinor         int64
+	Currency                string
+	MissingWebhook          bool
+	Message                 string
+	MatchPairs              []MatchDecision
 }
 
 type EvidenceLeaf struct {

@@ -8,6 +8,15 @@ import (
 	"zord-outcome-engine/internal/poll/providers/razorpay"
 )
 
+func isPayoutEvent(eventType, entityType string) bool {
+	et := strings.ToLower(strings.TrimSpace(eventType))
+	ent := strings.ToLower(strings.TrimSpace(entityType))
+	if strings.HasPrefix(et, "payout.") {
+		return true
+	}
+	return ent == "payout"
+}
+
 func isPaymentEvent(eventType, entityType string) bool {
 	et := strings.ToLower(strings.TrimSpace(eventType))
 	ent := strings.ToLower(strings.TrimSpace(entityType))
@@ -51,6 +60,7 @@ func NormalizePayment(env Envelope) (razorpay.NeutralPayment, bool, error) {
 		return razorpay.NeutralPayment{}, false, fmt.Errorf("missing provider_entity_id")
 	}
 	status, captured := statusFromEvent(env.ProviderEventType, env.Status)
+	status = razorpay.NormalizePaymentStatus(status)
 	if env.Captured {
 		captured = true
 	}
@@ -73,6 +83,9 @@ func NormalizePayment(env Envelope) (razorpay.NeutralPayment, bool, error) {
 		TaxMinor:    env.Tax,
 		CreatedAt:   created,
 	}
+	if captured && !created.IsZero() {
+		item.CapturedAt = created
+	}
 	canonical, err := razorpay.CanonicalizeForHash(map[string]any{
 		"payment_id":     item.PaymentID,
 		"order_id":       item.OrderID,
@@ -88,6 +101,51 @@ func NormalizePayment(env Envelope) (razorpay.NeutralPayment, bool, error) {
 	})
 	if err != nil {
 		return razorpay.NeutralPayment{}, false, err
+	}
+	item.PayloadHash = razorpay.HashRawResponse(canonical)
+	return item, true, nil
+}
+
+// NormalizePayout maps payout.* webhook observations onto NeutralPayout.
+// Provider status is stored exactly as Razorpay sent it (normalized spelling only).
+func NormalizePayout(env Envelope) (razorpay.NeutralPayout, bool, error) {
+	if !isPayoutEvent(env.ProviderEventType, env.ProviderEntityType) {
+		return razorpay.NeutralPayout{}, false, nil
+	}
+	payoutID := strings.TrimSpace(env.ProviderEntityID)
+	if payoutID == "" {
+		return razorpay.NeutralPayout{}, false, fmt.Errorf("missing provider_entity_id")
+	}
+	status := razorpay.NormalizePayoutStatus(env.Status)
+	if status == "" {
+		status = razorpay.NormalizePayoutStatus(strings.TrimPrefix(strings.ToLower(env.ProviderEventType), "payout."))
+	}
+	currency := strings.TrimSpace(env.Currency)
+	if currency == "" {
+		currency = "INR"
+	}
+	created := time.Time{}
+	if env.ProviderCreatedAt != nil {
+		created = env.ProviderCreatedAt.UTC()
+	}
+	item := razorpay.NeutralPayout{
+		PayoutID:    payoutID,
+		AmountMinor: env.Amount,
+		Currency:    currency,
+		Status:      status,
+		CreatedAt:   created,
+	}
+	canonical, err := razorpay.CanonicalizeForHash(map[string]any{
+		"payout_id":      item.PayoutID,
+		"amount":         item.AmountMinor,
+		"currency":       item.Currency,
+		"status":         item.Status,
+		"event_type":     env.ProviderEventType,
+		"raw_body_hash":  env.RawBodyHash,
+		"provider_event": env.ProviderEventID,
+	})
+	if err != nil {
+		return razorpay.NeutralPayout{}, false, err
 	}
 	item.PayloadHash = razorpay.HashRawResponse(canonical)
 	return item, true, nil

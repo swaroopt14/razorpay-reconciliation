@@ -194,6 +194,56 @@ func TestListPaymentsPageContextCancel(t *testing.T) {
 	}
 }
 
+func TestFetchPaymentsAliasAndOptionalFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		fmt.Fprint(w, collection([]map[string]any{{
+			"id": "pay_x", "entity": "payment", "amount": 50000, "currency": "INR",
+			"status": "captured", "order_id": "order_9", "method": "upi",
+			"captured": true, "fee": 100, "tax": 18, "created_at": 1700000000,
+			"captured_at": 1700000060, "email": "payer@example.com", "contact": "+91000",
+			"notes": map[string]string{"invoice": "inv_1"},
+		}}))
+	}))
+	defer server.Close()
+	cfg := testConfig()
+	cfg.BaseURL = server.URL
+	client, _ := NewClient(cfg, nil, nil, nil)
+	page, _, err := client.FetchPayments(context.Background(), PaymentFetchOptions{
+		From: time.Unix(1, 0), To: time.Unix(2, 0), Count: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("items=%d", len(page.Items))
+	}
+	got := page.Items[0]
+	if got.Method != "upi" || got.Email != "payer@example.com" || got.Contact != "+91000" {
+		t.Fatalf("optional fields missing: %+v", got)
+	}
+	if got.Notes["invoice"] != "inv_1" || got.CapturedAt != 1700000060 {
+		t.Fatalf("notes/captured_at=%+v", got)
+	}
+	adapter := NewBackfillAdapter(client)
+	neutral, err := adapter.ListPaymentsPage(context.Background(), time.Unix(1, 0), time.Unix(2, 0), 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(neutral.Items) != 1 || neutral.Items[0].Status != "captured" || neutral.Items[0].Method != "upi" {
+		t.Fatalf("neutral=%+v", neutral.Items)
+	}
+}
+
+func TestNormalizePaymentStatusUnknown(t *testing.T) {
+	if NormalizePaymentStatus("CAPTURED") != "captured" {
+		t.Fatal("expected lowercase captured")
+	}
+	if NormalizePaymentStatus("nope") != "unknown" {
+		t.Fatal("expected unknown")
+	}
+}
+
 func TestListPaymentsPageEmptyStops(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)

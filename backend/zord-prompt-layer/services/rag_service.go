@@ -6,6 +6,7 @@ import (
 	"log"
 	"strings"
 	"time"
+	"zord-prompt-layer/agents/finance"
 	"zord-prompt-layer/client"
 	"zord-prompt-layer/dto"
 	"zord-prompt-layer/tools"
@@ -100,6 +101,28 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 	}
 
 	if s.recon != nil {
+		if ans, ok := finance.Investigate(s.recon, req.TenantID, s.defaultConnector, resolvedQuery); ok {
+			resp := dto.QueryResponse{
+				Answer:        utils.SanitizeAnswerText(ans),
+				Confidence:    "high",
+				EntitiesFound: dto.EntitiesFound{},
+				Citations:     []dto.Citation{{SourceType: "reconciliation_exception", Snippet: "outcome-engine financial recon APIs; amounts copied from structured fields"}},
+				NextActions:   []string{},
+			}
+			s.persistConversationMemory(ctx, req, memorySummary, resp.Answer)
+			return resp, nil
+		}
+		if ans, ok := tools.Investigate(s.recon, req.TenantID, s.defaultConnector, resolvedQuery); ok {
+			resp := dto.QueryResponse{
+				Answer:        utils.SanitizeAnswerText(ans),
+				Confidence:    "high",
+				EntitiesFound: dto.EntitiesFound{},
+				Citations:     []dto.Citation{{SourceType: "reconciliation_exception", Snippet: "outcome-engine financial recon APIs; amounts copied from structured fields"}},
+				NextActions:   []string{},
+			}
+			s.persistConversationMemory(ctx, req, memorySummary, resp.Answer)
+			return resp, nil
+		}
 		if ans, ok := tools.Answer(s.recon, req.TenantID, s.defaultConnector, resolvedQuery); ok {
 			resp := dto.QueryResponse{
 				Answer:        utils.SanitizeAnswerText(ans),

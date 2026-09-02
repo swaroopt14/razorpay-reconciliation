@@ -3,6 +3,7 @@ package imports
 import (
 	"context"
 
+	"zord-outcome-engine/internal/poll/providers/razorpay"
 	"zord-outcome-engine/models"
 )
 
@@ -18,23 +19,17 @@ type Store interface {
 }
 
 type MemoryStore struct {
-	Imports       map[string]Import
-	Rows          map[string][]RowResult
-	Settlements   []razorpayLine
-	Banks         []BankObservation
-	Outbox        []models.OutboxRow
-	ProofSubjects int
-}
-
-type razorpayLine struct {
-	EntityID     string
-	SettlementID string
-	LineType     string
-	UTR          string
+	Imports        map[string]Import
+	Rows           map[string][]RowResult
+	Settlements    []razorpay.NeutralSettlementLine
+	Banks          []BankObservation
+	Outbox         []models.OutboxRow
+	ProofSubjects  int
+	PaymentAmounts map[string]int64
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{Imports: map[string]Import{}, Rows: map[string][]RowResult{}}
+	return &MemoryStore{Imports: map[string]Import{}, Rows: map[string][]RowResult{}, PaymentAmounts: map[string]int64{}}
 }
 
 func (m *MemoryStore) Create(_ context.Context, imp Import) (Import, error) {
@@ -90,13 +85,22 @@ func (m *MemoryStore) Commit(_ context.Context, imp Import, rows []RowResult, ev
 		}
 		seen[key] = struct{}{}
 		if rows[i].Settlement != nil {
-			m.Settlements = append(m.Settlements, razorpayLine{
-				EntityID: rows[i].Settlement.EntityID, SettlementID: rows[i].Settlement.SettlementID,
-				LineType: rows[i].Settlement.LineType, UTR: rows[i].Settlement.UTR,
-			})
+			line := *rows[i].Settlement
+			if line.SourceFile == "" {
+				line.SourceFile = imp.FileName
+			}
+			if line.PaymentID != "" {
+				amt, found := m.PaymentAmounts[line.PaymentID]
+				line.PaymentLink = razorpay.PaymentLinkFor(line.PaymentID, line.AmountMinor, amt, found)
+			}
+			m.Settlements = append(m.Settlements, line)
 		}
 		if rows[i].Bank != nil {
-			m.Banks = append(m.Banks, *rows[i].Bank)
+			b := *rows[i].Bank
+			if b.CreditDebit == "" {
+				b.CreditDebit = bankSide(b.CreditMinor, b.DebitMinor)
+			}
+			m.Banks = append(m.Banks, b)
 		}
 		rows[i].Status = RowInserted
 		inserted++
@@ -111,4 +115,20 @@ func (m *MemoryStore) Commit(_ context.Context, imp Import, rows []RowResult, ev
 	m.Rows[imp.ID] = rows
 	m.Outbox = append(m.Outbox, events...)
 	return imp, nil
+}
+
+func bankSide(credit, debit int64) string {
+	if credit > 0 && debit == 0 {
+		return "CREDIT"
+	}
+	if debit > 0 && credit == 0 {
+		return "DEBIT"
+	}
+	if credit > 0 {
+		return "CREDIT"
+	}
+	if debit > 0 {
+		return "DEBIT"
+	}
+	return ""
 }

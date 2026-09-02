@@ -13,6 +13,8 @@ var ErrJobNotFound = errors.New("backfill job not found")
 var ErrCursorLeaseHeld = errors.New("cursor lease held by another worker")
 
 type Store interface {
+	RunInTx(ctx context.Context, fn func(ctx context.Context) error) error
+
 	CreateJob(ctx context.Context, job BackfillJob) (BackfillJob, error)
 	FindActiveJob(ctx context.Context, tenantID, connectorID, resourceType string, from, to time.Time) (*BackfillJob, error)
 	GetJob(ctx context.Context, jobID string) (BackfillJob, error)
@@ -49,14 +51,16 @@ type ResponseReceipt struct {
 }
 
 type PaymentObservation struct {
-	ID           string
-	TenantID     string
-	ConnectorID  string
-	Provider     string
-	ProviderMode string
-	Item         razorpay.NeutralPayment
-	ReceiptID    string
-	Source       string
+	ID             string
+	TenantID       string
+	ConnectorID    string
+	Provider       string
+	ProviderMode   string
+	Item           razorpay.NeutralPayment
+	ReceiptID      string
+	Source         string
+	Sources        []string
+	WebhookMissing bool
 }
 
 type SettlementLineObservation struct {

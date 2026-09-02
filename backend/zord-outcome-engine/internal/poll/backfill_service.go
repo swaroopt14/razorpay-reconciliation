@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"zord-outcome-engine/internal/paymenttruth"
 	"zord-outcome-engine/internal/poll/providers/razorpay"
 
 	"github.com/google/uuid"
@@ -35,6 +36,7 @@ type BackfillService struct {
 	factory   ProviderFactory
 	now       func() time.Time
 	owner     string
+	truth     *paymenttruth.Processor
 }
 
 func NewBackfillService(store Store, freshness *FreshnessService, creds CredentialResolver, factory ProviderFactory) *BackfillService {
@@ -42,7 +44,7 @@ func NewBackfillService(store Store, freshness *FreshnessService, creds Credenti
 	if hostname == "" {
 		hostname = "outcome-engine"
 	}
-	return &BackfillService{
+	s := &BackfillService{
 		store:     store,
 		freshness: freshness,
 		creds:     creds,
@@ -50,6 +52,10 @@ func NewBackfillService(store Store, freshness *FreshnessService, creds Credenti
 		now:       func() time.Time { return time.Now().UTC() },
 		owner:     hostname,
 	}
+	if ts, ok := store.(paymenttruth.Store); ok {
+		s.truth = paymenttruth.NewProcessor(ts)
+	}
+	return s
 }
 
 func (s *BackfillService) CreateJob(ctx context.Context, req CreateBackfillRequest) (BackfillJob, error) {
@@ -63,6 +69,7 @@ func (s *BackfillService) CreateJob(ctx context.Context, req CreateBackfillReque
 	if req.TraceID == "" {
 		req.TraceID = uuid.Must(uuid.NewV7()).String()
 	}
+	req.WindowFrom = ApplyOverlap(req.WindowFrom, req.OverlapMinutes)
 	from, to := FreezeWindow(req.WindowFrom, req.WindowTo, now)
 	req.WindowFrom, req.WindowTo = from, to
 	if err := req.Validate(now); err != nil {
@@ -216,12 +223,17 @@ func (s *BackfillService) run(ctx context.Context, jobID, expectedResource strin
 		return s.failJob(ctx, job, cursor, "PROVIDER", err)
 	}
 
+	observeBackfillRun()
+	started := s.now()
 	var runErr error
 	if job.ResourceType == ResourceSettlements {
 		runErr = s.paginateSettlements(ctx, &job, &cursor, provider)
 	} else {
 		runErr = s.paginatePayments(ctx, &job, &cursor, provider)
 	}
+	observeBackfillAPILatency(s.now().Sub(started))
+	observeCursorAge(s.now().Sub(job.WindowTo))
+	observeBackfillLag(s.now().Sub(job.WindowTo))
 
 	completed := s.now()
 	job.CompletedAt = &completed
@@ -248,7 +260,13 @@ func (s *BackfillService) run(ctx context.Context, jobID, expectedResource strin
 		job.Status = JobPartial
 	}
 	if err := s.store.UpdateJob(ctx, job); err != nil {
+		observeBackfillFailure()
 		return SummaryFromJob(job, cursor), err
+	}
+	if job.Status == JobSucceeded {
+		observeBackfillSuccess()
+	} else if job.Status == JobFailed {
+		observeBackfillFailure()
 	}
 	return SummaryFromJob(job, cursor), runErr
 }
@@ -267,21 +285,28 @@ func (s *BackfillService) paginatePayments(ctx context.Context, job *BackfillJob
 		if err != nil {
 			return err
 		}
-		if err := s.persistPaymentPage(ctx, job, cursor, page); err != nil {
-			return err
-		}
-		if !page.HasMore || len(page.Items) == 0 {
-			cursor.Status = CursorComplete
+		snapshot := *job
+		cursorSnap := *cursor
+		if err := s.store.RunInTx(ctx, func(ctx context.Context) error {
+			if err := s.persistPaymentPage(ctx, &snapshot, &cursorSnap, page); err != nil {
+				return err
+			}
+			if !page.HasMore || len(page.Items) == 0 {
+				cursorSnap.Status = CursorComplete
+			} else {
+				cursorSnap.PageSkip += len(page.Items)
+				cursorSnap.PagesCompleted++
+			}
 			exp := s.now().Add(DefaultLeaseTTL)
-			cursor.LeaseExpiresAt = &exp
-			return s.store.AdvanceCursor(ctx, *cursor)
-		}
-		cursor.PageSkip += len(page.Items)
-		cursor.PagesCompleted++
-		exp := s.now().Add(DefaultLeaseTTL)
-		cursor.LeaseExpiresAt = &exp
-		if err := s.store.AdvanceCursor(ctx, *cursor); err != nil {
+			cursorSnap.LeaseExpiresAt = &exp
+			return s.store.AdvanceCursor(ctx, cursorSnap)
+		}); err != nil {
 			return err
+		}
+		*job = snapshot
+		*cursor = cursorSnap
+		if cursor.Status == CursorComplete {
+			return nil
 		}
 	}
 }
@@ -321,14 +346,44 @@ func (s *BackfillService) persistPaymentPage(ctx context.Context, job *BackfillJ
 	var lastID string
 	for _, item := range page.Items {
 		job.FetchedCount++
+		backfillFetchedTotal.Inc()
+		_, hadWebhook := webhookIDs[item.PaymentID]
+		missingWebhook := !hadWebhook
+		if s.truth != nil {
+			res, err := s.truth.ProcessNeutral(ctx, job.TenantID, job.ConnectorID, job.Provider, job.ProviderMode, SourceAPIBackfill, "", receiptID, item, missingWebhook)
+			if err != nil {
+				return err
+			}
+			switch res.Kind {
+			case paymenttruth.KindInserted:
+				job.InsertedCount++
+				backfillInsertedTotal.Inc()
+				if missingWebhook {
+					job.MissingWebhookCount++
+					backfillMissingWebhook.Inc()
+				}
+				observeObservationSource(SourceAPIBackfill)
+			case paymenttruth.KindUpdated, paymenttruth.KindObserved:
+				job.UpdatedCount++
+				backfillUpdatedTotal.Inc()
+				observeObservationSource(SourceAPIBackfill)
+			case paymenttruth.KindDuplicate:
+				job.DuplicateCount++
+				backfillDuplicatesTotal.Inc()
+			}
+			lastID = item.PaymentID
+			continue
+		}
 		res, err := s.store.UpsertPayment(ctx, PaymentObservation{
-			TenantID:     job.TenantID,
-			ConnectorID:  job.ConnectorID,
-			Provider:     job.Provider,
-			ProviderMode: job.ProviderMode,
-			Item:         item,
-			ReceiptID:    receiptID,
-			Source:       "razorpay_api",
+			TenantID:       job.TenantID,
+			ConnectorID:    job.ConnectorID,
+			Provider:       job.Provider,
+			ProviderMode:   job.ProviderMode,
+			Item:           item,
+			ReceiptID:      receiptID,
+			Source:         SourceAPIBackfill,
+			Sources:        []string{SourceAPIBackfill},
+			WebhookMissing: missingWebhook,
 		})
 		if err != nil {
 			return err
@@ -336,27 +391,33 @@ func (s *BackfillService) persistPaymentPage(ctx context.Context, job *BackfillJ
 		switch res {
 		case UpsertInserted:
 			job.InsertedCount++
-			row, err := PaymentOutboxRow(job.TenantID, job.ConnectorID, item.PaymentID, "razorpay_api", item)
+			backfillInsertedTotal.Inc()
+			row, err := PaymentOutboxRow(job.TenantID, job.ConnectorID, item.PaymentID, SourceAPIBackfill, item)
 			if err != nil {
 				return err
 			}
 			if err := s.store.InsertOutbox(ctx, row); err != nil {
 				return err
 			}
-			if _, ok := webhookIDs[item.PaymentID]; !ok {
+			if missingWebhook {
 				job.MissingWebhookCount++
+				backfillMissingWebhook.Inc()
 			}
+			observeObservationSource(SourceAPIBackfill)
 		case UpsertUpdated:
 			job.UpdatedCount++
-			row, err := PaymentOutboxRow(job.TenantID, job.ConnectorID, item.PaymentID, "razorpay_api", item)
+			backfillUpdatedTotal.Inc()
+			row, err := PaymentOutboxRow(job.TenantID, job.ConnectorID, item.PaymentID, SourceAPIBackfill, item)
 			if err != nil {
 				return err
 			}
 			if err := s.store.InsertOutbox(ctx, row); err != nil {
 				return err
 			}
+			observeObservationSource(SourceAPIBackfill)
 		case UpsertDuplicate:
 			job.DuplicateCount++
+			backfillDuplicatesTotal.Inc()
 		}
 		lastID = item.PaymentID
 	}
@@ -380,24 +441,35 @@ func (s *BackfillService) paginateSettlements(ctx context.Context, job *Backfill
 			if err != nil {
 				return err
 			}
-			if err := s.persistSettlementPage(ctx, job, cursor, page); err != nil {
+			snapshot := *job
+			cursorSnap := *cursor
+			if err := s.store.RunInTx(ctx, func(ctx context.Context) error {
+				if err := s.persistSettlementPage(ctx, &snapshot, &cursorSnap, page); err != nil {
+					return err
+				}
+				if page.HasMore && len(page.Items) > 0 {
+					cursorSnap.PageSkip += len(page.Items)
+					cursorSnap.PagesCompleted++
+					exp := s.now().Add(DefaultLeaseTTL)
+					cursorSnap.LeaseExpiresAt = &exp
+					return s.store.AdvanceCursor(ctx, cursorSnap)
+				}
+				return nil
+			}); err != nil {
 				return err
 			}
+			*job = snapshot
+			*cursor = cursorSnap
 			if !page.HasMore || len(page.Items) == 0 {
 				break
 			}
 			daySkip += len(page.Items)
-			cursor.PageSkip += len(page.Items)
-			cursor.PagesCompleted++
-			exp := s.now().Add(DefaultLeaseTTL)
-			cursor.LeaseExpiresAt = &exp
-			if err := s.store.AdvanceCursor(ctx, *cursor); err != nil {
-				return err
-			}
 		}
 	}
 	cursor.Status = CursorComplete
-	return s.store.AdvanceCursor(ctx, *cursor)
+	return s.store.RunInTx(ctx, func(ctx context.Context) error {
+		return s.store.AdvanceCursor(ctx, *cursor)
+	})
 }
 
 func (s *BackfillService) persistSettlementPage(ctx context.Context, job *BackfillJob, cursor *BackfillCursor, page razorpay.NeutralPage[razorpay.NeutralSettlementLine]) error {

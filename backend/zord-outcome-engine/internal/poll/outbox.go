@@ -11,25 +11,34 @@ import (
 	"github.com/google/uuid"
 )
 
+func ObservationIdempotencyKey(connectorID, paymentID, payloadHash string) string {
+	return fmt.Sprintf("razorpay:%s:payment:%s:%s", connectorID, paymentID, payloadHash)
+}
+
 func PaymentOutboxRow(tenantID, connectorID, paymentID, source string, item razorpay.NeutralPayment) (models.OutboxRow, error) {
 	eventID := uuid.Must(uuid.NewV7())
+	source = NormalizeObservationSource(source)
+	idempotency := ObservationIdempotencyKey(connectorID, paymentID, item.PayloadHash)
 	payload := map[string]any{
-		"event_id":       eventID.String(),
-		"event_type":     models.EventTypePaymentObservationNormalizedV1,
-		"event_version":  models.EventVersionV1,
-		"schema_version": models.SchemaVersionV1,
-		"tenant_id":      tenantID,
-		"connector_id":   connectorID,
-		"source":         source,
-		"payment_id":     item.PaymentID,
-		"order_id":       item.OrderID,
-		"amount":         item.AmountMinor,
-		"currency":       item.Currency,
-		"status":         item.Status,
-		"captured":       item.Captured,
-		"fee":            item.FeeMinor,
-		"tax":            item.TaxMinor,
-		"payload_hash":   item.PayloadHash,
+		"event_id":        eventID.String(),
+		"event_type":      models.EventTypePaymentObservationNormalizedV1,
+		"event_version":   models.EventVersionV1,
+		"schema_version":  models.SchemaVersionV1,
+		"tenant_id":       tenantID,
+		"connector_id":    connectorID,
+		"provider":        "razorpay",
+		"source":          source,
+		"sources":         []string{source},
+		"payment_id":      item.PaymentID,
+		"order_id":        item.OrderID,
+		"amount":          item.AmountMinor,
+		"currency":        item.Currency,
+		"status":          item.Status,
+		"captured":        item.Captured,
+		"fee":             item.FeeMinor,
+		"tax":             item.TaxMinor,
+		"payload_hash":    item.PayloadHash,
+		"idempotency_key": idempotency,
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -40,13 +49,14 @@ func PaymentOutboxRow(tenantID, connectorID, paymentID, source string, item razo
 		return models.OutboxRow{}, fmt.Errorf("tenant_id: %w", err)
 	}
 	return models.OutboxRow{
-		EventID:       eventID,
-		TenantID:      tid,
-		AggregateType: "provider_payment_observation",
-		AggregateID:   eventID,
-		EventType:     models.EventTypePaymentObservationNormalizedV1,
-		Payload:       raw,
-		CreatedAt:     time.Now().UTC(),
+		EventID:        eventID,
+		TenantID:       tid,
+		AggregateType:  "provider_payment_observation",
+		AggregateID:    eventID,
+		EventType:      models.EventTypePaymentObservationNormalizedV1,
+		Payload:        raw,
+		IdempotencyKey: idempotency,
+		CreatedAt:      time.Now().UTC(),
 	}, nil
 }
 

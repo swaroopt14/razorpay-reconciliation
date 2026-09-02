@@ -14,12 +14,12 @@ const (
 	TriggerRepair    = "repair"
 	TriggerScheduled = "scheduled"
 
-	JobQueued     = "queued"
-	JobRunning    = "running"
-	JobSucceeded  = "succeeded"
-	JobPartial    = "partial"
-	JobFailed     = "failed"
-	JobCancelled  = "cancelled"
+	JobQueued    = "queued"
+	JobRunning   = "running"
+	JobSucceeded = "succeeded"
+	JobPartial   = "partial"
+	JobFailed    = "failed"
+	JobCancelled = "cancelled"
 
 	CursorActive   = "active"
 	CursorComplete = "complete"
@@ -33,16 +33,17 @@ const (
 
 // CreateBackfillRequest is the validated input for a new or reused job.
 type CreateBackfillRequest struct {
-	TenantID     string
-	ConnectorID  string
-	Provider     string
-	Mode         string
-	ResourceType string
-	WindowFrom   time.Time
-	WindowTo     time.Time
-	TriggerType  string
-	RequestedBy  *string
-	TraceID      string
+	TenantID       string
+	ConnectorID    string
+	Provider       string
+	Mode           string
+	ResourceType   string
+	WindowFrom     time.Time
+	WindowTo       time.Time
+	OverlapMinutes int
+	TriggerType    string
+	RequestedBy    *string
+	TraceID        string
 }
 
 func (r CreateBackfillRequest) Validate(now time.Time) error {
@@ -72,69 +73,69 @@ func (r CreateBackfillRequest) Validate(now time.Time) error {
 
 // BackfillJob is the durable job record.
 type BackfillJob struct {
-	ID                   string
-	TenantID             string
-	ConnectorID          string
-	Provider             string
-	ProviderMode         string
-	ResourceType         string
-	WindowFrom           time.Time
-	WindowTo             time.Time
-	TriggerType          string
-	Status               string
-	RequestedBy          *string
-	StartedAt            *time.Time
-	CompletedAt          *time.Time
-	FetchedCount         int64
-	InsertedCount        int64
-	UpdatedCount         int64
-	DuplicateCount       int64
-	MissingWebhookCount  int64
-	ErrorCount           int64
-	LastErrorCode        string
-	LastErrorMessage     string
-	TraceID              string
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+	ID                  string
+	TenantID            string
+	ConnectorID         string
+	Provider            string
+	ProviderMode        string
+	ResourceType        string
+	WindowFrom          time.Time
+	WindowTo            time.Time
+	TriggerType         string
+	Status              string
+	RequestedBy         *string
+	StartedAt           *time.Time
+	CompletedAt         *time.Time
+	FetchedCount        int64
+	InsertedCount       int64
+	UpdatedCount        int64
+	DuplicateCount      int64
+	MissingWebhookCount int64
+	ErrorCount          int64
+	LastErrorCode       string
+	LastErrorMessage    string
+	TraceID             string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 // BackfillCursor is skip/count state for a fixed window.
 type BackfillCursor struct {
-	ID              string
-	TenantID        string
-	ConnectorID     string
-	ResourceType    string
-	WindowFrom      time.Time
-	WindowTo        time.Time
-	PageSkip        int
-	PageCount       int
-	PagesCompleted  int
-	LastProviderID  string
+	ID               string
+	TenantID         string
+	ConnectorID      string
+	ResourceType     string
+	WindowFrom       time.Time
+	WindowTo         time.Time
+	PageSkip         int
+	PageCount        int
+	PagesCompleted   int
+	LastProviderID   string
 	LastResponseHash string
-	Status          string
-	LeaseOwner      string
-	LeaseExpiresAt  *time.Time
-	UpdatedAt       time.Time
+	Status           string
+	LeaseOwner       string
+	LeaseExpiresAt   *time.Time
+	UpdatedAt        time.Time
 }
 
 // BackfillSummary is the job output contract.
 type BackfillSummary struct {
-	JobID                   string         `json:"job_id"`
-	Status                  string         `json:"status"`
-	FetchedCount            int64          `json:"fetched_count"`
-	InsertedCount           int64          `json:"inserted_count"`
-	UpdatedCount            int64          `json:"updated_count"`
-	SkippedDuplicateCount   int64          `json:"skipped_duplicate_count"`
-	MissingWebhookCount     int64          `json:"missing_webhook_count"`
-	APIErrorCount           int64          `json:"api_error_count"`
-	Cursor                  CursorSummary  `json:"cursor"`
-	FreshnessTimestamp      *time.Time     `json:"freshness_timestamp,omitempty"`
+	JobID                 string        `json:"job_id"`
+	Status                string        `json:"status"`
+	FetchedCount          int64         `json:"fetched_count"`
+	InsertedCount         int64         `json:"inserted_count"`
+	UpdatedCount          int64         `json:"updated_count"`
+	SkippedDuplicateCount int64         `json:"skipped_duplicate_count"`
+	MissingWebhookCount   int64         `json:"missing_webhook_count"`
+	APIErrorCount         int64         `json:"api_error_count"`
+	Cursor                CursorSummary `json:"cursor"`
+	FreshnessTimestamp    *time.Time    `json:"freshness_timestamp,omitempty"`
 }
 
 type CursorSummary struct {
-	PageSkip        int    `json:"page_skip"`
-	PagesCompleted  int    `json:"pages_completed"`
-	Status          string `json:"status"`
+	PageSkip       int    `json:"page_skip"`
+	PagesCompleted int    `json:"pages_completed"`
+	Status         string `json:"status"`
 }
 
 func SummaryFromJob(job BackfillJob, cursor BackfillCursor) BackfillSummary {

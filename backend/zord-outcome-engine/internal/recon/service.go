@@ -95,13 +95,13 @@ func (s *Service) Summary(ctx context.Context, tenantID, connectorID string) (ma
 		return nil, err
 	}
 	counts := map[string]int{
-		ReconFullyReconciled: 0,
-		ReconSettlementConfirmedBankPending: 0,
-		ReconPaymentConfirmedSettlementPending: 0,
-		ReconMissingWebhookRepairedByAPI: 0,
-		ReconAmountMismatch: 0,
-		ReconAmbiguousMatch: 0,
-		ReconUnresolved: 0,
+		ReconFullyReconciled:                    0,
+		ReconSettlementConfirmedBankPending:     0,
+		ReconPaymentConfirmedSettlementPending:  0,
+		ReconMissingWebhookRepairedByAPI:        0,
+		ReconAmountMismatch:                     0,
+		ReconAmbiguousMatch:                     0,
+		ReconUnresolved:                         0,
 		ReconBankCreditConfirmedProviderPending: 0,
 	}
 	for _, s := range list {
@@ -197,11 +197,11 @@ func ProofJSON(sub ProofSubject, leaves []EvidenceLeaf) map[string]any {
 			"transaction_id": sub.PaymentID,
 			"message":        msg,
 			"states": map[string]string{
-				"payment_state":            sub.PaymentState,
+				"payment_state":             sub.PaymentState,
 				"provider_settlement_state": sub.ProviderSettlementState,
-				"bank_credit_state":        sub.BankCreditState,
-				"reconciliation_state":     sub.ReconciliationState,
-				"proof_state":              sub.ProofState,
+				"bank_credit_state":         sub.BankCreditState,
+				"reconciliation_state":      sub.ReconciliationState,
+				"proof_state":               sub.ProofState,
 			},
 			"proof_summary": map[string]any{
 				"overall":          overall,
@@ -222,8 +222,8 @@ func ProofJSON(sub ProofSubject, leaves []EvidenceLeaf) map[string]any {
 				"confidence":            conf,
 			},
 			"evidence": map[string]any{
-				"leaf_count":  len(leaves),
-				"leaves":      leaves,
+				"leaf_count":   len(leaves),
+				"leaves":       leaves,
 				"rule_version": RuleVersion,
 			},
 			"chips": map[string]bool{
@@ -255,8 +255,8 @@ func LeavesFor(sub ProofSubject, pays []PaymentObs, lines []SettlementLine, bank
 			continue
 		}
 		src := p.Source
-		if src == "" {
-			src = "razorpay_api"
+		if src == "" || src == "razorpay_api" {
+			src = "api_backfill"
 		}
 		leaves = append(leaves, EvidenceLeaf{
 			PaymentID: p.PaymentID, Source: src, SourceRecordID: p.PaymentID,

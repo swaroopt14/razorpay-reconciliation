@@ -21,18 +21,27 @@ type BankOptions struct {
 }
 
 type BankFormatProfile struct {
-	Name                 string
-	DateColumns          []string
-	DescriptionColumns   []string
-	CreditColumns        []string
-	DebitColumns         []string
-	AmountColumns        []string
-	CurrencyColumns      []string
-	UTRColumns           []string
-	ReferenceColumns     []string
-	TxnIDColumns         []string
-	DateLayouts          []string
-	AmountUnit           string
+	Name               string
+	DateColumns        []string
+	DescriptionColumns []string
+	CreditColumns      []string
+	DebitColumns       []string
+	AmountColumns      []string
+	CurrencyColumns    []string
+	UTRColumns         []string
+	ReferenceColumns   []string
+	TxnIDColumns       []string
+	DateLayouts        []string
+	AmountUnit         string
+}
+
+func Profiles() map[string]BankFormatProfile {
+	return map[string]BankFormatProfile{
+		"generic": ProfileByName("generic"),
+		"hdfc":    ProfileByName("hdfc"),
+		"icici":   ProfileByName("icici"),
+		"sbi":     ProfileByName("sbi"),
+	}
 }
 
 func ProfileByName(name string) BankFormatProfile {
@@ -270,9 +279,11 @@ func parseBankRecord(rec []string, idx map[string]int, accountID, unit, wantCur 
 		Description:           desc,
 		NormalizedDescription: norm,
 		UTR:                   utrNorm,
+		UTRRaw:                utrRaw,
 		ReferenceNumber:       get("reference"),
 		CreditMinor:           credit,
 		DebitMinor:            debit,
+		CreditDebit:           bankSide(credit, debit),
 		Currency:              cur,
 		SourceRowNumber:       rowNum,
 		RowHash:               rowHash,
@@ -374,10 +385,12 @@ func normalizeUTR(s string) (string, bool) {
 	case "-", "n/a", "na", "null", "none":
 		return "", true
 	}
-	if len(s) > 128 {
+	compact := strings.NewReplacer(" ", "", "-", "").Replace(s)
+	compact = strings.ToUpper(compact)
+	if len(compact) > 128 {
 		return "", true
 	}
-	return s, false
+	return compact, false
 }
 
 func isTotal(rec []string) bool {

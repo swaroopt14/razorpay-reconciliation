@@ -1,12 +1,12 @@
 package recon
 
 const (
-	ScoreExactPaymentID     = 0.50
-	ScoreExactUTR           = 0.35
-	ScoreExactNetAmount     = 0.08
-	ScoreCurrency           = 0.03
-	ScoreDateWindow         = 0.03
-	ScoreDescription        = 0.01
+	ScoreExactPaymentID = 0.50
+	ScoreExactUTR       = 0.35
+	ScoreExactNetAmount = 0.08
+	ScoreCurrency       = 0.03
+	ScoreDateWindow     = 0.03
+	ScoreDescription    = 0.01
 )
 
 func ScoreUTRAndAmount(utrEqual, amountEqual, currencyEqual, dateInWindow bool) (float64, map[string]float64) {

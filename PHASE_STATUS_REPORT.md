@@ -1,5 +1,7 @@
 # Razorpay reconciliation — what is implemented
 
+User-facing copy through Phase 6B is in [README.md](./README.md) (`Razorpay Reconciliation (Phases 1–6)`). Phase 7 is planned in [PHASE7_PLAN.md](./PHASE7_PLAN.md).
+
 **Repo:** `razorpay-reconciliation` (`feat/new-feature`)  
 **Date:** 2026-09-02  
 **Scope:** this clone only. No new microservice. No Arealis-Zord edits.
@@ -13,16 +15,22 @@ Hard rule that still holds: Razorpay `settled` is never `bank_credited`. Only a 
 | Phase | Purpose | Status |
 | --- | --- | --- |
 | Phase 1 | Talk to Razorpay safely (REST client) | **Done** |
-| Phase 2 | Accept a real Razorpay webhook as an observation | **Done** (unit-tested; Postgres smoke needs `DATABASE_URL`) |
-| Observation processor | `provider.observation.received` → canonical payment observation | **Done** |
-| PDF Phase 3 | API backfill / freshness / Airflow | Done (already in tree) |
+| Phase 2 | Accept a real Razorpay webhook as an observation | **Done** |
+| Observation processor | `provider.observation.received` → payment observation | **Done** |
+| PDF Phase 3 | API backfill / freshness / Airflow | **Done** (gap-fill + provenance) |
+| Phase 4 | Canonical payment truth (`canonical_payments` + reducer) | **Done** (unit + Postgres integration) |
+| Phase 5A | Settlement line truth on `provider_settlement_line_observations` | **Done** |
+| Phase 5B | Bank statement ingress + Settlement↔Bank candidates | **Done** (candidates only; no `fully_reconciled`) |
+| Phase 6 | Payment-first financial recon + prompt-layer investigation | **Done** (`MATCHED` ≠ bank_credited) |
+| Phase 6B | Canonical payouts + payout recon + prompt-layer finance graph | **Done** (ledger still stubbed) |
+| Phase 7 | Finance evidence, provenance, decision/calc traces, audit, pack | **Planned** ([PHASE7_PLAN.md](./PHASE7_PLAN.md)) |
 | Bank / matcher / proof | Multi-source recon, not bank_credited from PSP settled | Done (already in tree) |
 | Ingestion (file import) | Validate-then-commit settlement/bank files | Done (already in tree) |
 | Refunds / mutations | Refund API + refund webhooks as money movement | **Not started** |
-| AI agents | Recovery / retry agents | **Not started** |
+| AI agents | Prompt-layer finance graph (HTTP tools; no LangGraph/MCP) | **Done** (Phase 6B; ledger tool not faked) |
 | Live console proof UI | React chips; wireframes only | **Not started** |
 
-Phase 1 and Phase 2 are not blocking. The webhook handler does **not** create canonical payments. That happens downstream.
+Edge still does **not** canonicalize. Outcome-engine `paymenttruth.Processor` is the single path for webhook ingest and payment API backfill.
 
 ---
 
@@ -225,24 +233,91 @@ These were already present on `feat/new-feature` and stay in scope as later surf
 
 ---
 
+## Phase 4 — Canonical payment truth
+
+**Purpose:** one current payment row, many immutable observations, no last-write-wins regression.
+
+**Where:** `backend/zord-outcome-engine/internal/paymenttruth/`
+
+| Piece | Role |
+| --- | --- |
+| `db/migrations/20260902050000_create_canonical_payments.sql` | Identity-hash columns on events + `canonical_payments` |
+| mapper / reducer | Razorpay status → recon vocab; no backward transitions |
+| `Processor.Process` | Single `RunInTx` path for webhook + API backfill |
+| `GET /internal/payments/:payment_id` | Current canonical + observation history |
+| `payment.canonical.updated.v1` | Outbox when status / amount / intent link changes |
+
+Exact intent link only: `canonical_intents.client_payout_ref` or `business_idempotency_key` = Razorpay `order_id`. Else `unlinked`. Never amount-only.
+
+Applied on local Postgres `127.0.0.1:5433` database `zord_outcome_phase3`.
+
+---
+
+## Phase 5 — Settlement line + bank candidates
+
+**Purpose:** persist settlement-line truth and bank CREDIT observations, then emit Settlement↔Bank **candidates**. Not full Payment↔Settlement↔Bank recon (Phase 6).
+
+**5A** `provider_settlement_line_observations`: adjustment, canonical/provider status, file/row provenance, `payment_link` (`unlinked`/`linked`/`partial`) via exact `payment_id` lookup into `canonical_payments`. Duplicate file hash → `status=duplicate`, zero new rows.
+
+**5B** Edge `POST /v1/bank-statements` hashes the file, stores it, writes `bank_ingest_runs`, emits `bank.statement.received` once. Outcome-engine `POST /internal/bank-statements/ingest` parses with `internal/imports` (not Edge payout parser). `MatchSettlementBank` writes `settlement_bank_match_decisions` and `bank.match.completed.v1`. No `payment_proof_subjects` / `fully_reconciled`.
+
+Migrations: `backend/zord-outcome-engine/db/migrations/20260902100000_phase5_settlement_bank_truth.sql`, `backend/zord-edge/db/migrations/20260902100000_create_bank_ingest_runs.sql`.
+
+---
+
+## Phase 6 — Financial recon + investigation
+
+**Purpose:** explain each canonical payment against Phase 5 settlement/bank candidates. Write `reconciliation_results` / exceptions. Do not call `recon.Match()` from ingest. Do not treat PSP `settled` or recon `MATCHED` as `bank_credited`.
+
+Failed + no settlement + no bank → `MATCHED` with **no** exception and `bank_credit_proven=false`. Failed + unexplained bank movement → `UNRESOLVED` + exception. Orphan bank CREDIT → `ORPHAN`. AMBIGUOUS stays AMBIGUOUS.
+
+APIs under `/v1/reconciliation/*`. Outbox `reconciliation.decision.v1`. Investigator is `zord-prompt-layer` HTTP tools; `get_ledger_entry` returns `source_not_in_this_phase`.
+
+Migration: `backend/zord-outcome-engine/db/migrations/20260902200000_phase6_reconciliation.sql`. Plan: [PHASE6_PLAN.md](./PHASE6_PLAN.md).
+
+---
+
+## Phase 6B — Payouts + agentic investigation
+
+**Purpose:** first-class Razorpay payouts beside payments, and a real investigation graph in `zord-prompt-layer/agents/finance`.
+
+Razorpay payout status is stored exactly (`pending | scheduled | queued | processing | processed | reversed | cancelled | rejected | failed`). Failed does not overwrite `processed`; late `processing` does not regress `processed`. SLA/age is an exception reason (`payout_open_past_sla`), never a status.
+
+`ReconcilePayout` joins bank **DEBIT** only. Failed/cancelled/rejected with no movement → `MATCHED` (no exception). Processed + exact debit → `MATCHED`. Open past 15m SLA → `UNRESOLVED`, status unchanged. `POST /v1/reconciliation/run` loads payments and payouts.
+
+Observe: `payout.*` webhooks reuse `provider.observation.received`. APIs: `GET /v1/reconciliation/payouts/:id`, `GET /internal/payouts/:id`.
+
+Investigator graph: Classify → LoadPrimary → LoadLifecycle → LoadFinancialLinks → LoadBankSettlement → CheckSLA → VerifyEvidence → Draft. Tools: `get_payout`, `get_payout_events`, `get_sla_policy`, `get_similar_cases`. Ledger stays stubbed.
+
+Migration: `backend/zord-outcome-engine/db/migrations/20260903010000_phase6b_canonical_payouts.sql`.
+
+---
+
 ## How to verify
 
 ```bash
 # Phase 1
 cd backend/zord-outcome-engine && go test ./internal/poll/providers/razorpay/
 
-# Phase 2
+# Phase 2 + bank ingress
 cd backend/zord-edge && go test ./validator ./services ./handler
 
-# Observation processor
-cd backend/zord-outcome-engine && go test ./internal/observe/
+# Observation processor + canonical truth + Phase 5 matcher
+cd backend/zord-outcome-engine && go test ./internal/paymenttruth/ ./internal/payouttruth/ ./internal/poll/ ./internal/observe/ ./internal/imports/ ./internal/recon/ ./internal/bankingest/ ./handlers/ -count=1
+
+# Postgres (Phase 3 provenance + Phase 4 canonical + Phase 5 chain + Phase 6/6B recon)
+DATABASE_URL='postgres://postgres@127.0.0.1:5433/zord_outcome_phase3?sslmode=disable' \
+  go test -tags=integration ./internal/persistence/ -count=1
+
+# Prompt-layer investigation graph (no live Gemini)
+cd backend/zord-prompt-layer && go test ./tools/ ./agents/finance/ -count=1
 ```
 
 ---
 
-## Suggested next coding work (after 1 / 2)
+## Suggested next coding work
 
-1. Optional: point `POST /v1/connectors/razorpay/test` at the real client (last Phase 1 hole).
-2. Optional: run the Postgres webhook integration test against a real DB.
-3. Refunds phase (new): Razorpay refund client + `refund.*` as a **separate** observation type — not inside the payment webhook handler.
-4. Proof UI / Phase 6 evidence leftovers (`HasWebhook` flag, intent L3, merkle verify).
+1. Phase 7 finance Evidence Packs — [PHASE7_PLAN.md](./PHASE7_PLAN.md). Reuse `zord-evidence`; do not rebuild Merkle/ed25519 intent packs.
+2. Refunds: Razorpay refund client + `refund.*` as a **separate** observation type — not inside the payment webhook handler.
+3. Accounting ledger / `get_ledger_entry` (still `source_not_in_this_phase`).
+4. Optional: point `POST /v1/connectors/razorpay/test` at the real client.

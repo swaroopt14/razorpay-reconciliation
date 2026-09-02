@@ -7,11 +7,16 @@ import (
 
 var (
 	payRe  = regexp.MustCompile(`(?i)\bpay_[A-Za-z0-9_]+\b`)
+	poutRe = regexp.MustCompile(`(?i)\bpout_[A-Za-z0-9_]+\b`)
 	setlRe = regexp.MustCompile(`(?i)\bsetl_[A-Za-z0-9_]+\b`)
 )
 
 func ExtractPaymentID(q string) string {
 	return payRe.FindString(q)
+}
+
+func ExtractPayoutID(q string) string {
+	return poutRe.FindString(q)
 }
 
 func ExtractSettlementID(q string) string {

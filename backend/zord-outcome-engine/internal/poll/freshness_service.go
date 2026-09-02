@@ -12,20 +12,20 @@ import (
 )
 
 const (
-	FreshnessAPIAndWebhook       = "api_and_webhook_present"
-	FreshnessAPIOnly             = "api_only_missing_webhook"
-	FreshnessWebhookOnly         = "webhook_only_missing_api"
-	FreshnessPayloadChanged      = "both_present_payload_changed"
-	FreshnessAPIDelayed          = "api_delayed"
-	FreshnessAPIFailedUnknown    = "api_failed_unknown"
+	FreshnessAPIAndWebhook    = "api_and_webhook_present"
+	FreshnessAPIOnly          = "api_only_missing_webhook"
+	FreshnessWebhookOnly      = "webhook_only_missing_api"
+	FreshnessPayloadChanged   = "both_present_payload_changed"
+	FreshnessAPIDelayed       = "api_delayed"
+	FreshnessAPIFailedUnknown = "api_failed_unknown"
 )
 
 type WebhookReceiptRef struct {
-	ProviderEntityID string `json:"provider_entity_id"`
-	EventID          string `json:"event_id"`
-	EventType        string `json:"event_type"`
+	ProviderEntityID string    `json:"provider_entity_id"`
+	EventID          string    `json:"event_id"`
+	EventType        string    `json:"event_type"`
 	ReceivedAt       time.Time `json:"received_at"`
-	RawBodyHash      string `json:"raw_body_hash,omitempty"`
+	RawBodyHash      string    `json:"raw_body_hash,omitempty"`
 }
 
 type FreshnessRecord struct {
@@ -34,17 +34,17 @@ type FreshnessRecord struct {
 }
 
 type FreshnessReport struct {
-	JobID                   string    `json:"job_id"`
-	WindowFrom              time.Time `json:"window_from"`
-	WindowTo                time.Time `json:"window_to"`
-	APIRecords              int       `json:"api_records"`
-	WebhookRecords          int       `json:"webhook_records"`
-	MatchedRecords          int       `json:"matched_records"`
-	APIOnlyMissingWebhook   int       `json:"api_only_missing_webhook"`
-	WebhookOnlyMissingAPI   int       `json:"webhook_only_missing_api"`
-	PayloadConflicts        int       `json:"payload_conflicts"`
-	FreshnessTimestamp      time.Time `json:"freshness_timestamp"`
-	Records                 []FreshnessRecord `json:"records,omitempty"`
+	JobID                 string            `json:"job_id"`
+	WindowFrom            time.Time         `json:"window_from"`
+	WindowTo              time.Time         `json:"window_to"`
+	APIRecords            int               `json:"api_records"`
+	WebhookRecords        int               `json:"webhook_records"`
+	MatchedRecords        int               `json:"matched_records"`
+	APIOnlyMissingWebhook int               `json:"api_only_missing_webhook"`
+	WebhookOnlyMissingAPI int               `json:"webhook_only_missing_api"`
+	PayloadConflicts      int               `json:"payload_conflicts"`
+	FreshnessTimestamp    time.Time         `json:"freshness_timestamp"`
+	Records               []FreshnessRecord `json:"records,omitempty"`
 }
 
 type FreshnessService struct {
