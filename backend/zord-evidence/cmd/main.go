@@ -12,6 +12,7 @@ import (
 	"zord-evidence/config"
 	"zord-evidence/db"
 	"zord-evidence/handlers"
+	"zord-evidence/internal/finance"
 	"zord-evidence/internal/health"
 	"zord-evidence/kafka"
 	"zord-evidence/repositories"
@@ -119,6 +120,7 @@ func main() {
 	outboxHandler := handlers.NewOutboxHandler(outboxPullRepo)
 	// FIX-05e: Pass AdminToken from config — handler validates token value, not just presence.
 	proofHandler := handlers.NewProofHandler(evidenceSvc, enrichRepo, verificationRepo, database)
+	finSvc := finance.NewService(finance.NewSQLStore(database))
 
 	// FIX-05f: Worker count from config, not hardcoded.
 	evidenceSvc.StartWorkers(cfg.WorkerCount)
@@ -166,6 +168,17 @@ func main() {
 		} else {
 			consumerHandles = append(consumerHandles, handle)
 		}
+
+		financeGroup := cfg.OutcomeKafkaGroup + "-finance-recon"
+		financeHandler := func(hctx context.Context, key string, payload []byte) error {
+			return finance.ConsumeBytes(hctx, finSvc, payload)
+		}
+		if handle, err := kafka.StartConsumerForTopics(consumerCtx, cfg.KafkaBrokers, financeGroup, outcomeTopics, financeHandler); err != nil {
+			log.Printf("warn: finance recon consumer init failed: %v", err)
+		} else {
+			consumerHandles = append(consumerHandles, handle)
+			log.Printf("evidence.main.kafka_finance_recon started group=%s topics=%v", financeGroup, outcomeTopics)
+		}
 	} else {
 		log.Printf("evidence.main.kafka_disabled — consumers not started")
 	}
@@ -176,6 +189,7 @@ func main() {
 	r.Use(otelgin.Middleware("zord-evidence"))
 	routes.Register(r, h, outboxHandler, cfg.InternalServiceKey, cfg.JWTSigningSecret)
 	routes.RegisterProofRoutes(r, proofHandler, cfg.JWTSigningSecret)
+	finance.RegisterRoutes(r, &finance.Handler{Service: finSvc}, cfg.JWTSigningSecret, cfg.InternalServiceKey)
 
 	// Readiness endpoint — checks DB connectivity
 	readinessHandler := health.NewReadinessHandler([]health.DependencyCheck{
