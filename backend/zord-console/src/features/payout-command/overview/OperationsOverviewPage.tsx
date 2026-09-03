@@ -43,7 +43,7 @@ export function OperationsOverviewPage() {
             onDockChange={onDockChange}
             onActivateClick={() => setActivateOpen(true)}
           >
-            <section className="relative flex-1 p-4 sm:p-5 lg:p-6">
+            <section className="relative flex-1 p-0">
               <PayoutPageActionsProvider>
                 <OperationsOverviewSurface />
               </PayoutPageActionsProvider>

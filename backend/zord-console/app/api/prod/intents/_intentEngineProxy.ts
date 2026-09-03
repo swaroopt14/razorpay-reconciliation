@@ -45,13 +45,13 @@ export function intentEngineForwardHeaders(
   authorization: string,
   batchId?: string,
 ): HeadersInit {
+  // Send a single tenant header only. Duplicate X-Tenant-ID / x-tenant-id values are
+  // joined by Node/Fetch into "uuid, uuid", which breaks smoke upload-readiness lookup.
   return {
     'content-type': 'application/json',
     Authorization: authorization,
-    'X-Tenant-ID': tenantId,
     'x-tenant-id': tenantId,
     'tenant-id': tenantId,
-    tenant_id: tenantId,
     ...(batchId ? { batch_id: batchId } : {}),
   }
 }

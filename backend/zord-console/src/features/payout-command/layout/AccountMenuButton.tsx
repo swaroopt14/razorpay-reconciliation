@@ -139,13 +139,13 @@ export function AccountMenuButton({
                 Support
               </Link>
               <Link
-                href="/developer?demo=sandbox&tab=keys"
+                href="/connections?demo=sandbox"
                 role="menuitem"
                 onClick={() => setOpen(false)}
                 className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-[14px] font-medium text-neutral-800 transition hover:bg-neutral-50"
               >
-                <Glyph name="key" className="h-4 w-4 text-neutral-500" />
-                Developer
+                <Glyph name="link" className="h-4 w-4 text-neutral-500" />
+                Connections
               </Link>
             </div>
 

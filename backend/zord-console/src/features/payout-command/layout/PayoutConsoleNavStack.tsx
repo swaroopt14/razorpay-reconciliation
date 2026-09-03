@@ -13,7 +13,7 @@ type PayoutConsoleNavStackProps = {
   onActivateClick: () => void
   /** @deprecated Imperial sandbox strip removed - guided demo banner used instead when demo=sandbox. */
   showSandboxStrip?: boolean
-  /** Hide Prev/Next flow bar (marketing preview). */
+  /** Demo Prev/Next flow bar — off by default for finance console. */
   showDemoFlow?: boolean
   alerts?: readonly OpsInsightAlert[]
   children: ReactNode
@@ -29,7 +29,7 @@ export function PayoutConsoleNavStack({
   onDockChange,
   onActivateClick,
   alerts,
-  showDemoFlow = true,
+  showDemoFlow = false,
   children,
 }: PayoutConsoleNavStackProps) {
   return (

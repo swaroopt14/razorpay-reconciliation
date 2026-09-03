@@ -24,6 +24,12 @@ export type JournalBatchRecord = {
   aggregateConfidenceScore?: number
   mismatchCount: number
   unresolvedCount: number
+  /** Major currency units — needs-review / open exposure when intelligence provides minors. */
+  reviewAmount?: number
+  /** Major currency units — failed / terminal-negative estimate when intelligence provides counts. */
+  failedAmount?: number
+  /** Major currency units — confirmed / success value when intelligence provides minors. */
+  confirmedAmount?: number
   intelligenceCounts?: Pick<IntelligenceBatchRow, 'success_count' | 'failed_count' | 'pending_count' | 'finality_status'>
   engineSidebar?: boolean
 }
@@ -208,22 +214,44 @@ export function mapSidebarItemToBatchRecord(it: IntentEngineBatchSidebarItem): J
   }
 }
 
+function minorToMajor(value: string | number | undefined | null): number {
+  if (value === undefined || value === null) return 0
+  const n = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(n)) return 0
+  return n / 100
+}
+
 export function mapIntelligenceRowToBatchRecord(b: IntelligenceBatchRow): JournalBatchRecord {
+  const intended = minorToMajor(b.total_intended_amount_minor)
+  const confirmedAmount = minorToMajor(b.total_confirmed_amount_minor)
+  const reviewAmount =
+    minorToMajor(b.unresolved_intended_amount_minor) +
+    minorToMajor(b.ambiguous_amount_minor) +
+    minorToMajor(b.unmatched_amount_minor)
+  const totalCount = b.total_count ?? 0
+  const failedCount = b.failed_count ?? 0
+  const pendingCount = b.pending_count ?? 0
+  const avg = totalCount > 0 && intended > 0 ? intended / totalCount : 0
+  const failedAmount = failedCount > 0 ? failedCount * avg : 0
+
   return {
     batchId: b.batch_id,
     type: 'Disbursement',
     apiType: '-',
     source: inferBatchSource(b.batch_id, b.finality_status),
-    totalValue: 0,
-    transactions: b.total_count ?? 0,
+    totalValue: intended,
+    transactions: totalCount,
     confirmedCount: b.success_count ?? 0,
     highConfidenceCount: 0,
     mismatchCount: 0,
-    unresolvedCount: 0,
+    unresolvedCount: pendingCount,
+    reviewAmount,
+    failedAmount,
+    confirmedAmount,
     intelligenceCounts: {
       success_count: b.success_count ?? 0,
-      failed_count: b.failed_count ?? 0,
-      pending_count: b.pending_count ?? 0,
+      failed_count: failedCount,
+      pending_count: pendingCount,
       finality_status: b.finality_status,
     },
   }

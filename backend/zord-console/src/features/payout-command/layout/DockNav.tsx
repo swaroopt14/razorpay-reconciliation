@@ -252,9 +252,10 @@ export function DockNav({
   const onCrossBorderLifecycle = pathname.includes('/actions/') && pathname.endsWith('/lifecycle')
   const onCrossBorderAuthority = pathname.includes('/actions/') && pathname.endsWith('/authority')
   const onActionDesk = pathname === '/actions/new' || pathname.startsWith('/actions/new')
-  const onDispatchRelay = pathname.startsWith('/execution')
+  const onDispatchRelay = pathname === '/payouts' || pathname.startsWith('/execution')
   const onPaymentTrace = pathname.startsWith('/payments')
   const onSettlementJournal = pathname.startsWith('/settlement/journal')
+  const onSettlementsPage = pathname.startsWith('/settlements')
   const onOutcomeReview = pathname.startsWith('/settlement/review')
   const onPaymentGaps = pathname.startsWith('/settlement/gaps')
   const onExceptions = pathname.startsWith('/exceptions')
@@ -263,7 +264,7 @@ export function DockNav({
   const onInvestigations = pathname.startsWith('/investigations')
   const onEvaluation = pathname.startsWith('/evaluation')
   const onProofCenter = pathname.startsWith('/proof')
-  const onDeveloper = pathname.startsWith('/developer')
+  const onDeveloper = pathname.startsWith('/developer') || pathname.startsWith('/connections')
   const onAskZord = pathname.startsWith('/ask') || (pathname.startsWith('/sandbox') && activeDock === 'workspace')
   const onWorkspaceAdmin = pathname === '/admin' || pathname === '/admin/'
   const onAdminTeam =
@@ -333,8 +334,8 @@ export function DockNav({
   )
   const uploadHref = scopeHref(`${batchCenterHref.split('?')[0]}?upload=1`)
   /** Journal list only — never deep-link a batch from the rail (that opens batch details). */
-  const intentHref = '/transactions'
-  const indiaDispatchHref = scopeHref('/execution/dispatches')
+  const intentHref = '/transactions?demo=sandbox'
+  const indiaDispatchHref = scopeHref('/payouts')
   const topProductLinks = useMemo(
     () =>
       scenario === SCENARIO_CROSS_BORDER
@@ -612,16 +613,16 @@ export function DockNav({
     onExceptions,
   ])
 
-  /** Spec secondary rail (bottom): Developer · Team & Access · Audit Log · Support. */
+  /** Spec secondary rail (bottom): Connections · Team & Access · Audit Log · Support. */
   const secondaryNav: NavLinkItem[] = useMemo(
     () => [
       {
         id: 'developer',
-        label: 'Developer',
-        icon: 'key',
-        href: scopeHref('/developer?tab=keys'),
-        match: onDeveloper,
-        ariaLabel: 'Developer & Integrations. API keys, webhooks, schemas, and quickstart.',
+        label: 'Connections',
+        icon: 'link',
+        href: scopeHref('/connections'),
+        match: onDeveloper || onConnections,
+        ariaLabel: 'Connections. Razorpay, bank APIs, webhooks, and source freshness.',
       },
       {
         id: 'team-access',
@@ -648,7 +649,7 @@ export function DockNav({
         ariaLabel: 'Support. Raise tickets with contract, batch, trace, or proof context.',
       },
     ],
-    [scopeHref, onDeveloper, onAdminTeam, onAdminAudit, onAdminSupport],
+    [scopeHref, onDeveloper, onConnections, onAdminTeam, onAdminAudit, onAdminSupport],
   )
 
   const indiaTransactionsNav: NavLinkItem[] = useMemo(
@@ -681,9 +682,9 @@ export function DockNav({
         id: 'settlements',
         label: 'Settlements',
         icon: 'settlement',
-        href: scopeHref('/settlement/journal'),
-        match: onSettlementJournal,
-        ariaLabel: 'Settlements. Expected vs observed settlement records.',
+        href: scopeHref('/settlements'),
+        match: onSettlementsPage || onSettlementJournal,
+        ariaLabel: 'Settlements. Razorpay settlement cycles and UTR evidence.',
       },
       {
         id: 'payouts',
@@ -703,6 +704,7 @@ export function DockNav({
       onExceptions,
       onPaymentGaps,
       onSettlementJournal,
+      onSettlementsPage,
       onDispatchRelay,
     ],
   )
@@ -755,16 +757,8 @@ export function DockNav({
         match: onNewPayout,
         ariaLabel: 'Uploads. Settlement, bank, and obligation files.',
       },
-      {
-        id: 'connections',
-        label: 'Connections',
-        icon: 'link',
-        href: scopeHref('/connections'),
-        match: onConnections,
-        ariaLabel: 'Connections. Razorpay API, webhooks, and bank feeds.',
-      },
     ],
-    [uploadHref, scopeHref, onNewPayout, onConnections],
+    [uploadHref, onNewPayout],
   )
 
   const indiaControlNav: NavLinkItem[] = useMemo(

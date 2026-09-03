@@ -78,10 +78,34 @@ function buildZordId(requestId: string, batchId: string, index: number): string 
 }
 
 function syntheticRequestId(batchId: string, index: number, item: IntentJournalPaymentIntentItem): string {
+  if (apiTrimmedString(item.payout_id)) return apiTrimmedString(item.payout_id)!
   if (apiTrimmedString(item.intent_id)) return apiTrimmedString(item.intent_id)!
+  if (apiTrimmedString(item.client_payout_ref)?.startsWith('pout_')) {
+    return apiTrimmedString(item.client_payout_ref)!
+  }
   const sourceRowNum = parseSourceRowNum(item.source_row_num)
   if (sourceRowNum != null) return `${batchId}-src-${sourceRowNum}`
   return `${batchId}-row-${index + 1}`
+}
+
+function journalStatusFromUpstream(rawStatus: string | null | undefined): JournalIntentStatus {
+  const st = (rawStatus || '').trim().toLowerCase()
+  if (!st) return 'Ready to Process'
+  if (st === 'processed' || st === 'confirmed' || st === 'success' || st === 'succeeded') return 'Confirmed'
+  if (st === 'processing' || st === 'in_progress' || st === 'in progress') return 'In Progress'
+  if (
+    st === 'failed' ||
+    st === 'reversed' ||
+    st === 'cancelled' ||
+    st === 'canceled' ||
+    st === 'rejected' ||
+    st === 'needs_review' ||
+    st === 'needs review'
+  ) {
+    return 'Needs Review'
+  }
+  if (st === 'pending' || st === 'scheduled' || st === 'queued') return 'Pending'
+  return 'Ready to Process'
 }
 
 /** Map thin payment-intents list item → journal table row. */
@@ -94,14 +118,24 @@ export function mapPaymentIntentListItemToRow(
   const amount = parseAmount(item.amount)
   const sourceRowNum = parseSourceRowNum(item.source_row_num)
   const qualityScore = readIntentQualityScore(item)
-  const status: JournalIntentStatus = 'Ready to Process'
+  const upstreamStatus = apiTrimmedString(item.status)
+  const status = journalStatusFromUpstream(upstreamStatus)
   const provider = resolveProviderHint(item)
-  const rail = resolveRailHint(item)
+  const paymentProvider =
+    apiTrimmedString(item.payment_provider) || apiTrimmedString(item.provider_hint) || provider
+  const modeHint = apiTrimmedString(item.mode)
+  const rail = modeHint || resolveRailHint(item)
   const requestId = syntheticRequestId(batchId, index, item)
   const zordId = buildZordId(requestId, batchId, index)
-  const paymentRef = apiTrimmedString(item.client_payout_ref)
+  const payoutId = apiTrimmedString(item.payout_id) || (requestId.startsWith('pout_') ? requestId : null)
+  const paymentRef = payoutId || apiTrimmedString(item.client_payout_ref)
   const clientBatchRef = apiTrimmedString(item.client_batch_ref) || apiTrimmedString(item.batch_id) || batchId
   const referenceFallback = sourceRowNum != null ? `SRC-${sourceRowNum}` : requestId
+  const businessState = apiTrimmedString(item.business_state)
+  const governanceState = apiTrimmedString(item.governance_state)
+  const engineStatus = [upstreamStatus, governanceState, businessState].filter(Boolean).join(' · ') || undefined
+  const infoSummary =
+    [upstreamStatus, governanceState, businessState, paymentRef].filter(Boolean).join(' · ') || 'Ready for dispatch'
 
   const base: JournalIntentRow = {
     batchId,
@@ -111,23 +145,49 @@ export function mapPaymentIntentListItemToRow(
     amount,
     method: methodFromRail(rail),
     status,
-    match: 'Awaiting',
+    match: status === 'Confirmed' ? 'Matched' : status === 'Needs Review' ? 'Not Found' : 'Awaiting',
     lastUpdated: formatJournalExecutionAt(item.intended_execution_at),
-    paymentPartner: provider,
-    bank: provider,
-    paymentMethodDetail: rail !== '-' ? rail : provider,
-    engineStatus: undefined,
+    paymentPartner: paymentProvider,
+    bank: paymentProvider,
+    paymentMethodDetail: rail !== '-' ? rail : paymentProvider,
+    engineStatus,
     currency: apiTrimmedString(item.currency ?? 'INR') || 'INR',
     tenantId: apiTrimmedString(item.tenant_id) || apiTrimmedString(sessionTenantId) || '-',
     intendedExecutionAt: formatJournalExecutionAt(item.intended_execution_at),
-    provider,
+    provider: paymentProvider,
     confidenceScore: qualityScore,
     confidenceLabel: formatConfidenceLabel(qualityScore ?? undefined),
-    infoSummary: 'Ready for dispatch',
+    infoSummary,
     rail,
     sourceRowNum,
     clientBatchRef,
     beneficiaryName: beneficiaryNameHint(item),
+    rawIntent: {
+      intent_id: requestId,
+      status: upstreamStatus || undefined,
+      business_state: businessState || undefined,
+      governance_state: governanceState || undefined,
+      client_payout_ref: paymentRef || undefined,
+      beneficiary_type: apiTrimmedString(item.beneficiary_type) || undefined,
+      amount,
+      currency: apiTrimmedString(item.currency ?? 'INR') || 'INR',
+      // Razorpay payout extras (consumed by PayoutDetailDrawer)
+      payout_id: payoutId || undefined,
+      id: payoutId || undefined,
+      fund_account_id: apiTrimmedString(item.fund_account_id) || undefined,
+      utr: apiTrimmedString(item.utr) || undefined,
+      mode: modeHint || undefined,
+      fees: typeof item.fees === 'number' ? item.fees : undefined,
+      tax: typeof item.tax === 'number' ? item.tax : undefined,
+      fee_type: item.fee_type ?? undefined,
+      purpose: apiTrimmedString(item.purpose) || undefined,
+      created_at: typeof item.created_at === 'number' ? item.created_at : undefined,
+      amount_paise: typeof item.amount_paise === 'number' ? item.amount_paise : undefined,
+      notes: item.notes ?? undefined,
+      status_details: item.status_details ?? undefined,
+      payment_provider: paymentProvider || undefined,
+      provider_hint: paymentProvider || undefined,
+    } as JournalIntentRow['rawIntent'],
   }
   return withSpec76Fields(base, index)
 }

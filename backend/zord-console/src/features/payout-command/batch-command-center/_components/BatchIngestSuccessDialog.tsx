@@ -7,8 +7,8 @@ type BatchIngestSuccessDialogProps = {
   kind: 'intent' | 'settlement'
   batchId: string
   fileName?: string | null
-  intentJournalHref?: string
-  settlementJournalHref?: string | null
+  /** Primary CTA — Payouts (AI route) or Settlements */
+  primaryHref?: string
   onClose: () => void
 }
 
@@ -16,8 +16,7 @@ export function BatchIngestSuccessDialog({
   kind,
   batchId,
   fileName,
-  intentJournalHref,
-  settlementJournalHref,
+  primaryHref,
   onClose,
 }: BatchIngestSuccessDialogProps) {
   const title =
@@ -26,6 +25,13 @@ export function BatchIngestSuccessDialog({
     kind === 'intent'
       ? BATCH_REVIEW_COPY.dialogs.intentBody(batchId)
       : BATCH_REVIEW_COPY.dialogs.settlementBody(batchId)
+  const ctaLabel =
+    kind === 'intent'
+      ? BATCH_REVIEW_COPY.dialogs.openPaymentJournal
+      : BATCH_REVIEW_COPY.dialogs.openSettlementJournal
+  const href =
+    primaryHref ||
+    (kind === 'intent' ? '/payouts?demo=sandbox&upload=1' : '/settlements?demo=sandbox')
 
   return (
     <div
@@ -53,6 +59,13 @@ export function BatchIngestSuccessDialog({
           </p>
         ) : null}
         <p className="mt-3 font-mono text-[13px] font-semibold text-[#1e40af]">{batchId}</p>
+        {kind === 'intent' ? (
+          <p className="mt-3 rounded-lg border border-[#DBEAFE] bg-[#F8FBFF] px-3 py-2 text-[12px] leading-relaxed text-[#334155]">
+            Next: open <span className="font-semibold text-[#0B1324]">Payouts</span> — bulk rows appear as{' '}
+            <span className="font-semibold">pending</span>, then AI recommends HDFC · NEFT. Approve before
+            dispatch. Provider status is never rewritten to ROUTED.
+          </p>
+        ) : null}
         <div className="mt-5 flex flex-wrap gap-2">
           <button
             type="button"
@@ -61,22 +74,12 @@ export function BatchIngestSuccessDialog({
           >
             {BATCH_REVIEW_COPY.dialogs.close}
           </button>
-          {kind === 'intent' && intentJournalHref ? (
-            <Link
-              href={intentJournalHref}
-              className="inline-flex h-9 items-center rounded-lg border border-[#e2e8f0] px-4 text-[13px] font-medium text-[#0f172a] hover:bg-slate-50"
-            >
-              {BATCH_REVIEW_COPY.dialogs.openPaymentJournal}
-            </Link>
-          ) : null}
-          {kind === 'settlement' && settlementJournalHref ? (
-            <Link
-              href={settlementJournalHref}
-              className="inline-flex h-9 items-center rounded-lg border border-[#e2e8f0] px-4 text-[13px] font-medium text-[#0f172a] hover:bg-slate-50"
-            >
-              {BATCH_REVIEW_COPY.dialogs.openSettlementJournal}
-            </Link>
-          ) : null}
+          <Link
+            href={href}
+            className="inline-flex h-9 items-center rounded-lg border border-[#e2e8f0] px-4 text-[13px] font-medium text-[#0f172a] hover:bg-slate-50"
+          >
+            {ctaLabel}
+          </Link>
         </div>
       </div>
     </div>

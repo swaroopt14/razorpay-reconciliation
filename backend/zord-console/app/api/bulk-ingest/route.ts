@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
   applyRefreshedSessionCookies,
+  getSessionTenantIdFromRequest,
   resolveBulkIngestForwardAuthorization,
 } from '@/services/auth/resolvePayoutTenant.server'
 
@@ -10,8 +11,11 @@ export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
 function candidateEdgeBases(): string[] {
-  if (process.env.ZORD_EDGE_URL?.trim()) return [process.env.ZORD_EDGE_URL.trim()]
-  return ['http://localhost:8080', 'http://zord-edge:8080']
+  const bases: string[] = []
+  if (process.env.ZORD_EDGE_URL?.trim()) bases.push(process.env.ZORD_EDGE_URL.trim())
+  if (process.env.SMOKE_SIMULATOR_URL?.trim()) bases.push(process.env.SMOKE_SIMULATOR_URL.trim())
+  bases.push('http://localhost:8080', 'http://zord-edge:8080', 'http://localhost:8099')
+  return [...new Set(bases)]
 }
 
 export async function POST(req: NextRequest) {
@@ -22,6 +26,8 @@ export async function POST(req: NextRequest) {
 
   const authResolution = await resolveBulkIngestForwardAuthorization(req, process.env.ZORD_BULK_INGEST_API_KEY)
   if (!authResolution.ok) return authResolution.response
+
+  const { tenantId: sessionTenant } = await getSessionTenantIdFromRequest(req)
 
   const bodyBuffer = Buffer.from(await req.arrayBuffer())
   const sourceType =
@@ -45,6 +51,10 @@ export async function POST(req: NextRequest) {
     'x-session-token': req.cookies.get('zord_access_token')?.value ?? '',
   }
   if (tenantType) headers['x-zord-tenant-type'] = tenantType
+  if (sessionTenant?.trim()) {
+    headers['x-tenant-id'] = sessionTenant.trim()
+    headers['tenant-id'] = sessionTenant.trim()
+  }
 
   const batchId =
     req.headers.get('batch-id') ||

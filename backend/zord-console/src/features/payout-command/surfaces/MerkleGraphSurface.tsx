@@ -54,6 +54,7 @@ import type {
   LeafStatus,
   RootNode,
 } from './evidenceGraphTypes'
+import { leafProvenance } from './evidenceLeafProvenance'
 
 export type {
   BatchMeta,
@@ -1790,6 +1791,7 @@ function SidePanel({
   if (selected.kind === 'leaf') {
     const inter = intermediateForLeaf.get(selected.node.id)
     const status = statusMeta(selected.node.status)
+    const provenance = leafProvenance(selected.node, pack.packId, pack.root.hashShort)
     return (
       <InspectorShell
         eyebrow={evidenceCopy.nodeDrawer.proofItem}
@@ -1816,6 +1818,18 @@ function SidePanel({
               {evidenceCopy.nodeDrawer.missingHint}
             </p>
           ) : null}
+        </InspectorSection>
+
+        <InspectorSection title="Source">
+          <MetaGrid rows={provenance.source} />
+        </InspectorSection>
+
+        <InspectorSection title="Provenance">
+          <MetaGrid rows={provenance.provenance} />
+        </InspectorSection>
+
+        <InspectorSection title={provenance.sourceSpecificTitle}>
+          <MetaGrid rows={provenance.sourceSpecific} />
         </InspectorSection>
 
         <InspectorSection title="Identity">
@@ -1854,7 +1868,18 @@ function SidePanel({
           </p>
         </InspectorSection>
 
-        <InspectorSection title="Lineage path">
+        <InspectorSection title="Lineage">
+          <ol className="space-y-2 rounded-[10px] border border-[#E5E5E5] bg-[#fafafa] p-3">
+            {provenance.lineage.map((step, i) => (
+              <li key={`${step}-${i}`} className={`flex items-center gap-2 text-[13px] ${i > 0 ? 'border-t border-[#E5E5E5] pt-2' : ''}`}>
+                {i > 0 ? <span className="text-[#a1a1aa]">↳</span> : <span className={`h-2 w-2 rounded-full ${status.dot}`} aria-hidden />}
+                <span className="font-semibold text-[#111111]">{step}</span>
+              </li>
+            ))}
+          </ol>
+        </InspectorSection>
+
+        <InspectorSection title="Proof path">
           <ol className="space-y-2 rounded-[10px] border border-[#E5E5E5] bg-[#fafafa] p-3">
             <li className="flex items-center gap-2 text-[13px]">
               <span className={`h-2 w-2 rounded-full ${status.dot}`} aria-hidden />

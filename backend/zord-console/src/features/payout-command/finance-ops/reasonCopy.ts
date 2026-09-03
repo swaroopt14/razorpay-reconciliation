@@ -48,6 +48,8 @@ export function reasonTitle(reason: string): string {
       return 'Optimizer settlement unobserved'
     case 'ambiguous_bank_candidates':
       return 'Ambiguous bank candidates'
+    case 'payout_missing_bank':
+      return 'Processed, bank credit missing'
     case 'orphan_bank_credit':
       return 'Orphan bank credit'
     case 'open_status_no_downstream':

@@ -8,8 +8,7 @@ import {
   markDemoIntentUploaded,
   markDemoSettlementUploaded,
 } from '@/services/payout-command/demo/demoBatchReadiness'
-import { markSandboxSetupStep, openSandboxSetupPanel } from '@/services/payout-command/sandbox-setup-guide'
-import { PostUploadStepsCard } from './PostUploadStepsCard'
+import { markSandboxSetupStep } from '@/services/payout-command/sandbox-setup-guide'
 import { COMMAND_CENTER_LABEL_GREEN, HOME_BODY_IMPERIAL_SM } from '../../command-center/homeCommandCenterTokens'
 import { parseUploadedSheet, type BatchRow, type ZordPipelineIntake } from '@/services/payout-command/batch-model'
 import { postIntentBulkIngest } from '@/services/payout-command/batch-intake/postIntentBulkIngest'
@@ -276,8 +275,6 @@ export function BatchIntakePanel({
       setIntentIngestOk(true)
       void refreshTenant()
       markSandboxSetupStep('intent-ingest')
-      markDemoIntentUploaded(effectiveBatch)
-      openSandboxSetupPanel()
       reportUploadStatus('synced', `Payment file accepted. Batch reference: ${effectiveBatch}.`)
       setUploadState('ready')
       setUploadedFileName(file.name)
@@ -356,7 +353,6 @@ export function BatchIntakePanel({
       markSandboxSetupStep('settlement')
       markSandboxSetupStep('settlement-journal')
       markDemoSettlementUploaded(bid)
-      openSandboxSetupPanel()
       setIntakeStep('closed')
       onSettlementIngestSuccess({ batchId: bid, fileName: file.name, parsedRows: parsed })
     } catch (error) {
@@ -539,7 +535,7 @@ export function BatchIntakePanel({
             ) : null}
             {settlementIngestOk && settlementBatchIdResolved ? (
               <Link
-                href={`/settlement/journal?demo=sandbox&client_batch_id=${encodeURIComponent(settlementBatchIdResolved)}`}
+                href="/settlements?demo=sandbox"
                 className="mt-3 inline-flex text-[12px] font-semibold text-[#2563eb] underline"
               >
                 {c.dialogs.openSettlementJournal}
@@ -548,7 +544,21 @@ export function BatchIntakePanel({
           </div>
         </div>
 
-        <PostUploadStepsCard visible={intentIngestOk || settlementIngestOk} batchId={settlementBatchIdResolved} />
+        {intentIngestOk || settlementIngestOk ? (
+          <section className="mt-5 rounded-xl border border-[#DBEAFE] bg-[#F8FBFF] p-4">
+            <p className="text-[13px] font-semibold text-[#0B1324]">Bulk payout ready</p>
+            <p className="mt-1 text-[12px] leading-relaxed text-[#475569]">
+              Open <span className="font-semibold">Payouts</span> to see rows immediately. AI Controller
+              recommends HDFC · NEFT — approve before dispatch. Provider status stays pending until you approve.
+            </p>
+            <Link
+              href="/payouts?demo=sandbox&upload=1"
+              className="mt-3 inline-flex h-9 items-center rounded-lg bg-[#0B1324] px-3.5 text-[12px] font-semibold text-white"
+            >
+              Open Payouts →
+            </Link>
+          </section>
+        ) : null}
       </Card>
 
       {/* Processing overlay during upload */}

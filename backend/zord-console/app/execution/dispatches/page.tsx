@@ -1,38 +1,33 @@
 'use client'
 
-import { Suspense, useEffect, type ReactNode } from 'react'
-import { useSearchParams } from 'next/navigation'
-import { persistEnvMode } from '@/services/auth/persistEnvMode'
-import { enterDemoSession, isDemoQuery } from '@/services/payout-command/demo/ycDemoConstants'
-import { DispatchRelayPage } from '@/features/payout-command/dispatch-relay/DispatchRelayPage'
+import { Suspense, useEffect } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 
-/**
- * Spec 7.9 - Dispatch & Relay (`/execution/dispatches`).
- */
-function DispatchBootstrap({ children }: { children: ReactNode }) {
+function RedirectInner() {
+  const router = useRouter()
   const params = useSearchParams()
-  const demo = isDemoQuery(params.get('demo'))
-
   useEffect(() => {
-    persistEnvMode('sandbox')
-    if (demo) enterDemoSession()
-  }, [demo])
-
-  return <>{children}</>
+    const q = params.toString()
+    router.replace(q ? `/payouts?${q}` : '/payouts?demo=sandbox')
+  }, [router, params])
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-[#F8FAFC] text-[13px] text-[#64748B]">
+      Opening Payouts…
+    </div>
+  )
 }
 
+/** Legacy Dispatch & Relay URL — canonical Payouts list. */
 export default function DispatchRelayRoutePage() {
   return (
     <Suspense
       fallback={
-        <div className="flex min-h-screen items-center justify-center bg-black text-[13px] text-[#A1A1AA]">
-          Loading Dispatch & Relay…
+        <div className="flex min-h-screen items-center justify-center bg-[#F8FAFC] text-[13px] text-[#64748B]">
+          Opening Payouts…
         </div>
       }
     >
-      <DispatchBootstrap>
-        <DispatchRelayPage />
-      </DispatchBootstrap>
+      <RedirectInner />
     </Suspense>
   )
 }

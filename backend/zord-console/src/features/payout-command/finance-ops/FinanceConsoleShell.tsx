@@ -12,6 +12,7 @@ import { PayoutConsoleNavStack } from '../layout/PayoutConsoleNavStack'
 import { PayoutPageActionsProvider } from '../layout/PayoutPageActionsContext'
 import { ActivateLiveWizard } from '../sandbox/ActivateLiveWizard'
 import { financeDockHref } from './financeDockHref'
+import { FloatingAskZordChat } from '../layout/FloatingAskZordChat'
 
 export function FinanceConsoleShell({
   activeDock,
@@ -48,6 +49,7 @@ export function FinanceConsoleShell({
         </div>
       </main>
       {activateOpen ? <ActivateLiveWizard onClose={() => setActivateOpen(false)} /> : null}
+      <FloatingAskZordChat />
     </EnvironmentProvider>
   )
 }

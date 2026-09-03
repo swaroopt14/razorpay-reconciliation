@@ -12,9 +12,13 @@ export const dynamic = 'force-dynamic'
 type PaymentIntentLiteUpstream = {
   tenant_id?: string
   amount?: string | number
+  amount_paise?: number | null
   currency?: string
   intended_execution_at?: string | null
   provider_hint?: string | null
+  status?: string | null
+  business_state?: string | null
+  governance_state?: string | null
   intent_quality_score?: number | string | null
   aggregate_confidence_score?: number | string | null
   intent_id?: string | null
@@ -25,6 +29,23 @@ type PaymentIntentLiteUpstream = {
   source_row_num?: number | string | null
   beneficiary_type?: string | null
   beneficiary?: Record<string, unknown> | null
+  payout_id?: string | null
+  entity?: string | null
+  fund_account_id?: string | null
+  utr?: string | null
+  mode?: string | null
+  fees?: number | null
+  tax?: number | null
+  fee_type?: string | null
+  purpose?: string | null
+  created_at?: number | null
+  notes?: Record<string, string> | null
+  status_details?: {
+    description?: string
+    source?: string
+    reason?: string
+  } | null
+  payment_provider?: string | null
 }
 
 function coerceScore(value: unknown): number | null {
@@ -119,6 +140,15 @@ export async function GET(request: NextRequest) {
         currency: item.currency ?? 'INR',
         intended_execution_at: item.intended_execution_at ?? null,
         provider_hint: item.provider_hint ?? null,
+        status: typeof item.status === 'string' && item.status.trim() ? item.status.trim() : null,
+        business_state:
+          typeof item.business_state === 'string' && item.business_state.trim()
+            ? item.business_state.trim()
+            : null,
+        governance_state:
+          typeof item.governance_state === 'string' && item.governance_state.trim()
+            ? item.governance_state.trim()
+            : null,
         intent_quality_score: readIntentQualityScore(item),
         aggregate_confidence_score: coerceScore(item.aggregate_confidence_score),
         intent_id: item.intent_id ?? null,
@@ -134,6 +164,26 @@ export async function GET(request: NextRequest) {
         beneficiary_type: item.beneficiary_type ?? null,
         beneficiary: item.beneficiary ?? null,
         rail_hint: inferRailHint(item) ?? null,
+        payout_id: typeof item.payout_id === 'string' ? item.payout_id : null,
+        entity: typeof item.entity === 'string' ? item.entity : null,
+        fund_account_id: typeof item.fund_account_id === 'string' ? item.fund_account_id : null,
+        utr: typeof item.utr === 'string' ? item.utr : null,
+        mode: typeof item.mode === 'string' ? item.mode : null,
+        fees: typeof item.fees === 'number' ? item.fees : null,
+        tax: typeof item.tax === 'number' ? item.tax : null,
+        fee_type: item.fee_type ?? null,
+        purpose: typeof item.purpose === 'string' ? item.purpose : null,
+        created_at: typeof item.created_at === 'number' ? item.created_at : null,
+        amount_paise: typeof item.amount_paise === 'number' ? item.amount_paise : null,
+        notes: item.notes && typeof item.notes === 'object' ? item.notes : null,
+        status_details:
+          item.status_details && typeof item.status_details === 'object' ? item.status_details : null,
+        payment_provider:
+          typeof item.payment_provider === 'string' && item.payment_provider.trim()
+            ? item.payment_provider.trim()
+            : typeof item.provider_hint === 'string' && item.provider_hint.trim()
+              ? item.provider_hint.trim()
+              : null,
       }
     })
 

@@ -64,28 +64,89 @@ export async function fetchJournalSidebarBatches(tenantId: string): Promise<Jour
             source: existing.source || row.source,
             intelligenceCounts: row.intelligenceCounts ?? existing.intelligenceCounts,
             transactions: existing.transactions > 0 ? existing.transactions : (row.transactions || existing.transactions),
+            totalValue: existing.totalValue > 0 ? existing.totalValue : (row.totalValue || existing.totalValue),
+            confirmedCount:
+              existing.confirmedCount > 0 ? existing.confirmedCount : (row.confirmedCount || existing.confirmedCount),
+            unresolvedCount: Math.max(existing.unresolvedCount || 0, row.unresolvedCount || 0),
+            reviewAmount: Math.max(existing.reviewAmount || 0, row.reviewAmount || 0),
+            failedAmount: Math.max(existing.failedAmount || 0, row.failedAmount || 0),
+            confirmedAmount: Math.max(existing.confirmedAmount || 0, row.confirmedAmount || 0),
           })
         }
       } catch {
         /* optional enrichment */
       }
 
-      // Fetch aggregate_confidence_score (0-1) from payment-intents for every batch in parallel
+      // Enrich totals + status counts from payment-intents (authoritative for Transactions KPIs)
       try {
         const batchIds = Array.from(merged.keys())
-        const scoreResults = await Promise.allSettled(
-          batchIds.map((bid) => fetchJournalPaymentIntents(bid)),
-        )
+        const intentResults = await Promise.allSettled(batchIds.map((bid) => fetchJournalPaymentIntents(bid)))
         for (let i = 0; i < batchIds.length; i++) {
-          const result = scoreResults[i]
+          const result = intentResults[i]
           if (result?.status !== 'fulfilled' || !result.value) continue
-          const raw = result.value.items?.find((item) => item.aggregate_confidence_score != null)?.aggregate_confidence_score
-          if (raw == null) continue
-          const score = typeof raw === 'string' ? Number.parseFloat(raw) : raw
-          if (!Number.isFinite(score)) continue
+          const items = result.value.items ?? []
+          if (items.length === 0) continue
           const bid = batchIds[i]!
           const existing = merged.get(bid)
-          if (existing) merged.set(bid, { ...existing, aggregateConfidenceScore: score })
+          if (!existing) continue
+
+          let amount = 0
+          let confirmed = 0
+          let confirmedAmount = 0
+          let failed = 0
+          let failedAmount = 0
+          let review = 0
+          let reviewAmount = 0
+          let confidence: number | null = null
+
+          for (const item of items) {
+            const rawAmt = item.amount
+            const amt =
+              typeof rawAmt === 'number' ? rawAmt : Number.parseFloat(String(rawAmt ?? '').replace(/,/g, ''))
+            const safe = Number.isFinite(amt) ? amt : 0
+            amount += safe
+            const st = String(item.status ?? '').toLowerCase()
+            if (st === 'processed' || st === 'confirmed' || st.includes('success') || st === 'settled') {
+              confirmed += 1
+              confirmedAmount += safe
+            } else if (
+              st === 'failed' ||
+              st === 'reversed' ||
+              st === 'rejected' ||
+              st === 'cancelled' ||
+              st.includes('fail')
+            ) {
+              failed += 1
+              failedAmount += safe
+            } else {
+              review += 1
+              reviewAmount += safe
+            }
+            if (confidence == null && item.aggregate_confidence_score != null) {
+              const raw = item.aggregate_confidence_score
+              const score = typeof raw === 'string' ? Number.parseFloat(raw) : raw
+              if (typeof score === 'number' && Number.isFinite(score)) confidence = score
+            }
+          }
+
+          merged.set(bid, {
+            ...existing,
+            transactions: Math.max(existing.transactions || 0, items.length, result.value.pagination?.total ?? 0),
+            totalValue: amount > 0 ? amount : existing.totalValue,
+            confirmedCount: confirmed > 0 ? confirmed : existing.confirmedCount,
+            confirmedAmount: confirmedAmount > 0 ? confirmedAmount : existing.confirmedAmount,
+            failedAmount: failedAmount > 0 ? failedAmount : existing.failedAmount,
+            reviewAmount: reviewAmount > 0 ? reviewAmount : existing.reviewAmount,
+            unresolvedCount: Math.max(existing.unresolvedCount || 0, review),
+            mismatchCount: Math.max(existing.mismatchCount || 0, 0),
+            intelligenceCounts: {
+              success_count: confirmed,
+              failed_count: failed,
+              pending_count: review,
+              finality_status: existing.intelligenceCounts?.finality_status ?? 'OPEN',
+            },
+            aggregateConfidenceScore: confidence ?? existing.aggregateConfidenceScore,
+          })
         }
       } catch {
         /* optional enrichment */
@@ -120,8 +181,7 @@ export async function fetchJournalSidebarBatches(tenantId: string): Promise<Jour
           }
           merged.set(bid, {
             ...existing,
-            transactions: Math.max(existing.transactions, count),
-            unresolvedCount: Math.max(existing.unresolvedCount, count),
+            // Keep payout-intent counts authoritative — do not inflate with DLQ row counts.
           })
         }
       } catch {

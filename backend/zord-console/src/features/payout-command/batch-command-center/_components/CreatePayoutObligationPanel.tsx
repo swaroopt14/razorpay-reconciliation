@@ -1,7 +1,6 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { postIntentBulkIngest } from '@/services/payout-command/batch-intake/postIntentBulkIngest'
 import {
@@ -177,8 +176,6 @@ export function CreatePayoutObligationPanel({
   onSettlementUploaded,
   uploadAnchorId = 'batch-intake-step-1',
 }: CreatePayoutObligationPanelProps) {
-  const pathname = usePathname()
-  const isSandboxRoute = pathname?.startsWith('/sandbox') ?? false
   const [tab, setTab] = useState<CreateObligationTabId>('upload')
   const [intakeMode, setIntakeMode] = useState<IntakeSourceMode>('file')
   const [erpConnection, setErpConnection] = useState<string>(ERP_POLL_CONNECTIONS[0].id)
@@ -226,16 +223,9 @@ export function CreatePayoutObligationPanel({
     resetKey: `${intakeMode}:${erpConnection}`,
   })
 
-  const intentJournalHref = useMemo(
-    () => (isSandboxRoute ? '/sandbox?dock=grid' : '/payout-command-view/today?dock=grid'),
-    [isSandboxRoute],
-  )
+  const payoutsHref = useMemo(() => '/payouts?demo=sandbox&upload=1', [])
 
-  const settlementJournalHref = useMemo(() => {
-    const base = '/settlement/journal?demo=sandbox'
-    if (!effectiveBatchId) return base
-    return `${base}&client_batch_id=${encodeURIComponent(effectiveBatchId)}`
-  }, [effectiveBatchId])
+  const settlementHref = useMemo(() => '/settlements?demo=sandbox', [])
 
   const onFileChosen = useCallback(async (f: File) => {
     setFile(f)
@@ -305,7 +295,7 @@ export function CreatePayoutObligationPanel({
       markDemoIntentUploaded(createdBatchId)
       setNotice({
         tone: 'ok',
-        text: `Draft intents created · batch ${createdBatchId} · Intent Journal unlocked`,
+        text: `Draft payouts created · batch ${createdBatchId} · open Payouts for AI route`,
       })
       onDraftIntentsCreated?.({
         batchId: createdBatchId,
@@ -356,7 +346,7 @@ export function CreatePayoutObligationPanel({
       markDemoIntentUploaded(createdBatchId)
       setNotice({
         tone: 'ok',
-        text: `Draft intents created from ERP poll · batch ${createdBatchId} · ${rows.length} obligations · Intent Journal unlocked`,
+        text: `Draft payouts from ERP poll · batch ${createdBatchId} · ${rows.length} rows · open Payouts`,
       })
       onDraftIntentsCreated?.({
         batchId: createdBatchId,
@@ -407,7 +397,7 @@ export function CreatePayoutObligationPanel({
       setSettlementIngestOk(true)
       setNotice({
         tone: 'ok',
-        text: `Settlement confirmation accepted for batch ${bid} · Settlement Journal unlocked`,
+        text: `Settlement confirmation accepted for batch ${bid} · open Settlements`,
       })
       onSettlementUploaded?.({ batchId: bid, fileName: settlementFile.name, parsedRows: parsed })
     } catch (e) {
@@ -680,10 +670,10 @@ export function CreatePayoutObligationPanel({
 
               {intentIngestOk && effectiveBatchId ? (
                 <Link
-                  href={intentJournalHref}
+                  href={payoutsHref}
                   className="mt-3 inline-flex text-[12px] font-semibold text-[#2563EB] underline"
                 >
-                  Open Intent Journal
+                  Open Payouts · AI route
                 </Link>
               ) : null}
             </div>
@@ -734,10 +724,10 @@ export function CreatePayoutObligationPanel({
               ) : null}
               {settlementIngestOk && effectiveBatchId ? (
                 <Link
-                  href={settlementJournalHref}
+                  href={settlementHref}
                   className="mt-3 inline-flex text-[12px] font-semibold text-[#2563EB] underline"
                 >
-                  Open Settlement Journal
+                  Open Settlements
                 </Link>
               ) : null}
             </div>

@@ -11,6 +11,7 @@ import {
 } from '../command-center/homeCommandCenterTokens'
 import { PayoutConsoleNavStack } from '../layout/PayoutConsoleNavStack'
 import { PayoutPageActionsProvider } from '../layout/PayoutPageActionsContext'
+import { FloatingAskZordChat } from '../layout/FloatingAskZordChat'
 import { ActivateLiveWizard } from '../sandbox/ActivateLiveWizard'
 import { SandboxSetupGuidePanel } from '../sandbox/SandboxSetupGuidePanel'
 import { ConnectionsSurface } from './ConnectionsSurface'
@@ -53,6 +54,7 @@ export function ConnectionsPage() {
       </main>
       {activateOpen ? <ActivateLiveWizard onClose={() => setActivateOpen(false)} /> : null}
       <SandboxSetupGuidePanel />
+      <FloatingAskZordChat />
     </EnvironmentProvider>
   )
 }

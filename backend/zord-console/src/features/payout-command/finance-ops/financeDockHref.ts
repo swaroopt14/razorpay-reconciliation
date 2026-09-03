@@ -7,14 +7,14 @@ export function financeDockHref(id: DockId): string {
     case 'home':
       return '/overview'
     case 'grid':
-      return '/transactions'
+      return '/transactions?demo=sandbox'
     case 'exceptions':
     case 'leakage':
       return '/exceptions?demo=sandbox'
     case 'ambiguity':
       return '/reconciliation?demo=sandbox'
     case 'settlement':
-      return '/settlement/journal?demo=sandbox'
+      return '/settlements?demo=sandbox'
     case 'proof':
       return '/proof?demo=sandbox'
     case 'workspace':

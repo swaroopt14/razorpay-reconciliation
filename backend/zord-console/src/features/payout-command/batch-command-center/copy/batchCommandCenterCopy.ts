@@ -30,8 +30,8 @@ export const BATCH_REVIEW_COPY = {
     uploadPaymentFile: 'Upload Payment File',
     uploadSettlementFile: 'Upload Bank / Settlement File',
     createPaymentManually: 'Create Payment Manually',
-    intentJournal: 'Payment journal',
-    settlementJournal: 'Settlement journal',
+    intentJournal: 'Open Payouts',
+    settlementJournal: 'Open Settlements',
     refresh: 'Refresh',
     share: 'Share',
     liveSource: 'Payment processing',
@@ -81,15 +81,15 @@ export const BATCH_REVIEW_COPY = {
   },
 
   dialogs: {
-    intentTitle: 'Payment file uploaded',
+    intentTitle: 'Bulk payout file uploaded',
     intentBody: (batchId: string) =>
-      `Batch ${batchId} has been uploaded · Intent Journal is unlocked.`,
+      `Batch ${batchId} is ready · AI Controller will recommend route & rail on Payouts.`,
     settlementTitle: 'Confirmation file uploaded',
     settlementBody: (batchId: string) =>
-      `Settlement confirmation for batch ${batchId} has been accepted · Settlement Journal is unlocked.`,
+      `Settlement confirmation for batch ${batchId} accepted · open Settlements to reconcile.`,
     close: 'Close',
-    openPaymentJournal: 'Open payment journal',
-    openSettlementJournal: 'Open settlement journal',
+    openPaymentJournal: 'Open Payouts',
+    openSettlementJournal: 'Open Settlements',
   },
 
   fileProcessing: {

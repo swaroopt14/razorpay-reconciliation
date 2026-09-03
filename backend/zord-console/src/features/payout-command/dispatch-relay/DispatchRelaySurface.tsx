@@ -324,13 +324,14 @@ export function DispatchRelaySurface() {
           <div className="mx-auto max-w-[560px] border border-[#E5E5E5] bg-white px-6 py-10 text-center">
             <p className="text-[15px] font-semibold text-[#0B1324]">Nothing dispatched yet</p>
             <p className="mx-auto mt-1.5 max-w-sm text-[13px] leading-relaxed text-[#64748B]">
-              Sealed instructions appear here after you dispatch a batch from the Intent Journal.
+              Upload a bulk file on Payouts, let AI recommend the rail, then Approve &amp; Dispatch.
+              Provider status stays pending until you approve.
             </p>
             <Link
-              href={withDemoBatchScope('/payouts/intents')}
+              href={withDemoBatchScope('/payouts')}
               className="mt-4 inline-flex h-9 items-center bg-[#2E5BFF] px-4 text-[13px] font-semibold text-white hover:bg-[#2448D4]"
             >
-              Go to Intent Journal
+              Open Payouts
             </Link>
           </div>
         </div>

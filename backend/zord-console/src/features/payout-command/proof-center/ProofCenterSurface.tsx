@@ -325,14 +325,14 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
                     <div className="mx-auto max-w-[560px] border border-[#E5E7EB] bg-white px-6 py-10 text-center">
                         <p className="text-[15px] font-semibold text-[#0B1324]">No evidence packs yet</p>
                         <p className="mx-auto mt-1.5 max-w-sm text-[13px] leading-relaxed text-[#6B6B6B]">
-                            Evidence packs are assembled after dispatch, once outcome signals arrive.
-                            Dispatch the batch from the Intent Journal to complete the flow.
+                            Evidence packs assemble after you approve &amp; dispatch from Payouts (AI route → provider
+                            processing → bank outcomes).
                         </p>
                         <Link
-                            href={withDemoBatchScope('/payouts/intents')}
+                            href={withDemoBatchScope('/payouts')}
                             className="mt-4 inline-flex h-9 items-center bg-[#2E5BFF] px-4 text-[13px] font-semibold text-white hover:bg-[#2448D4]"
                         >
-                            Go to Intent Journal
+                            Open Payouts
                         </Link>
                     </div>
                 </div>

@@ -9,6 +9,8 @@ import type {
   FinanceRefund,
   FinanceSettlementLine,
   FinanceSummary,
+  RazorpaySettlementListResponse,
+  RazorpaySettlementReconResponse,
 } from './financeTypes'
 
 const BASE = '/api/prod/finance'
@@ -79,6 +81,18 @@ export async function getFinanceRefunds(paymentId: string) {
 export async function getFinanceSettlements(paymentId: string) {
   return fetchProdJsonGetWithMeta<{ settlements: FinanceSettlementLine[] }>(
     `${BASE}/settlements?payment_id=${encodeURIComponent(paymentId)}`,
+  )
+}
+
+export async function getRazorpaySettlements(status?: string) {
+  const q = status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : ''
+  return fetchProdJsonGetWithMeta<RazorpaySettlementListResponse>(`/api/prod/settlements${q}`)
+}
+
+export async function getSettlementReconCombined(settlementId: string) {
+  const q = new URLSearchParams({ settlement_id: settlementId.trim() })
+  return fetchProdJsonGetWithMeta<RazorpaySettlementReconResponse>(
+    `/api/prod/settlements/recon/combined?${q.toString()}`,
   )
 }
 

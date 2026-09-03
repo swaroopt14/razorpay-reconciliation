@@ -20,6 +20,10 @@ export type IntentJournalPaymentIntentItem = {
   intended_execution_at?: string
   provider_hint?: string
   rail_hint?: string
+  /** Razorpay payout / intent status from upstream (e.g. processed, failed). */
+  status?: string | null
+  business_state?: string | null
+  governance_state?: string | null
   intent_quality_score?: number | null
   confidence_score?: number | null
   mapping_confidence_score?: number | null
@@ -32,6 +36,25 @@ export type IntentJournalPaymentIntentItem = {
   source_row_num?: number
   beneficiary_type?: string | null
   beneficiary?: Record<string, unknown> | null
+  /** RazorpayX payout fields (when upstream returns a pout_ entity). */
+  payout_id?: string | null
+  entity?: string | null
+  fund_account_id?: string | null
+  utr?: string | null
+  mode?: string | null
+  fees?: number | null
+  tax?: number | null
+  fee_type?: string | null
+  purpose?: string | null
+  created_at?: number | null
+  amount_paise?: number | null
+  payment_provider?: string | null
+  notes?: Record<string, string> | null
+  status_details?: {
+    description?: string
+    source?: string
+    reason?: string
+  } | null
 }
 
 export type IntentJournalPaymentIntentsResponse = {

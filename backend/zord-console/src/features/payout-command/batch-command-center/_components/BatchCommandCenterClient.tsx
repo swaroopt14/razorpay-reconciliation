@@ -29,6 +29,12 @@ import { PaymentStatusBreakdown } from './PaymentStatusBreakdown'
 import { ReviewItemsTable } from './ReviewItemsTable'
 import type { BatchRow } from '@/services/payout-command/batch-model'
 import { mapPaymentStatusBreakdown } from '../mappers/mapBatchReviewKpis'
+import { AiRouteRecommendationModal } from '../../finance-ops/AiRouteRecommendationModal'
+import {
+  buildBulkBatchSummary,
+  mockBulkPayoutRows,
+  type RoutingPhase,
+} from '../../finance-ops/bulkRouteDemo'
 
 function summaryFromEngineRows(
   intentCount: number,
@@ -58,7 +64,6 @@ export default function BatchCommandCenterClient() {
   const pathname = usePathname()
   const router = useRouter()
   const searchParams = useSearchParams()
-  const isSandboxRoute = pathname?.startsWith('/sandbox') ?? false
   const { tenantId, tenantReady } = useSessionTenant()
 
   const initialBatchFromUrl = searchParams.get('batch_id')?.trim() ?? ''
@@ -74,6 +79,9 @@ export default function BatchCommandCenterClient() {
     settlementBatchId: null,
   })
   const [ingestDialog, setIngestDialog] = useState<IngestDialogState>(null)
+  const [aiRouteOpen, setAiRouteOpen] = useState(false)
+  const [aiRoutePhase, setAiRoutePhase] = useState<RoutingPhase>('idle')
+  const [aiRouteFileName, setAiRouteFileName] = useState('bulk_payout_batch.csv')
   const [intentFilePreviewRows, setIntentFilePreviewRows] = useState<BatchRow[]>([])
   const [settlementFilePreviewRows, setSettlementFilePreviewRows] = useState<BatchRow[]>([])
   const [uploadStatus, setUploadStatus] = useState<BatchUploadStatus>({ state: 'idle', message: null })
@@ -140,8 +148,12 @@ export default function BatchCommandCenterClient() {
     (payload: IntentIngestSuccessPayload) => {
       const batchId = payload.effectiveBatch ?? payload.batchId
       setIntentFilePreviewRows(payload.parsedRows)
-      setIngestDialog({ kind: 'intent', batchId, fileName: payload.fileName })
+      setIngestDialog(null)
+      setAiRouteFileName(payload.fileName || 'bulk_payout_batch.csv')
+      setAiRoutePhase('analyzing')
+      setAiRouteOpen(true)
       void feed.refreshBatchFeed()
+      setToolbarNotice(`Batch ${batchId} uploaded · AI is recommending route`)
     },
     [feed],
   )
@@ -188,16 +200,53 @@ export default function BatchCommandCenterClient() {
   }, [feed.intentRows, feed.failureRows])
 
   const statCardsSummary = feed.intelligenceSummary ?? engineSummary
-  const intentJournalHref = useMemo(
-    () => (isSandboxRoute ? '/sandbox?dock=grid' : '/payout-command-view/today?dock=grid'),
-    [isSandboxRoute],
-  )
+  const payoutsHref = useMemo(() => '/payouts?demo=sandbox&upload=1', [])
+  const failuresTabHref = useMemo(() => '/exceptions?demo=sandbox', [])
 
-  const failuresTabHref = useMemo(() => `${intentJournalHref}&tab=failures`, [intentJournalHref])
+  const aiRouteSummary = useMemo(() => {
+    const mock = mockBulkPayoutRows(24, aiRouteFileName)
+    const base = buildBulkBatchSummary({
+      fileName: aiRouteFileName,
+      rows: mock,
+      uploadedAt: new Date().toLocaleString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+    })
+    return {
+      ...base,
+      batchId: activeBatchId || 'batch-001',
+      totalRecords: Math.max(base.totalRecords, 2450),
+      totalAmountMinor: Math.max(base.totalAmountMinor, 1_723_477_600),
+      uniqueBeneficiaries: Math.max(base.uniqueBeneficiaries, 2318),
+      requestedBy: 'finance.ops@merchant.in',
+    }
+  }, [aiRouteFileName, activeBatchId])
+
+  const onAiAnalyzeComplete = useCallback(() => {
+    setAiRoutePhase('ready')
+  }, [])
+
+  const onAiApprove = useCallback(() => {
+    setAiRoutePhase('approved')
+    setToolbarNotice('Route approved · opening Payouts for dispatch')
+    window.setTimeout(() => {
+      router.push(
+        `/payouts?demo=sandbox&upload=1&approved=1&file=${encodeURIComponent(aiRouteFileName)}`,
+      )
+    }, 600)
+  }, [router, aiRouteFileName])
+
+  const onAiCancel = useCallback(() => {
+    setAiRouteOpen(false)
+    setAiRoutePhase('idle')
+  }, [])
 
   const settlementJournalHref = useMemo(() => {
-    if (!activeBatchId) return null
-    return `/settlement/journal?demo=sandbox&client_batch_id=${encodeURIComponent(activeBatchId)}`
+    if (!activeBatchId) return '/settlements?demo=sandbox'
+    return `/settlements?demo=sandbox&settlement_id=${encodeURIComponent(activeBatchId)}`
   }, [activeBatchId])
 
   const pieSlices = useMemo(() => mapPaymentStatusBreakdown(statCardsSummary), [statCardsSummary])
@@ -314,7 +363,7 @@ export default function BatchCommandCenterClient() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Link
-              href={intentJournalHref}
+              href={payoutsHref}
               className="inline-flex h-9 items-center border border-[#CBD5E1] bg-white px-3 text-[13px] font-semibold text-[#0B1324] hover:bg-[#F8FAFC]"
             >
               {BATCH_REVIEW_COPY.toolbar.intentJournal}
@@ -418,11 +467,20 @@ export default function BatchCommandCenterClient() {
           kind={ingestDialog.kind}
           batchId={ingestDialog.batchId}
           fileName={ingestDialog.fileName}
-          intentJournalHref={intentJournalHref}
-          settlementJournalHref={settlementJournalHref}
+          primaryHref={ingestDialog.kind === 'intent' ? payoutsHref : settlementJournalHref || '/settlements?demo=sandbox'}
           onClose={() => setIngestDialog(null)}
         />
       ) : null}
+
+      <AiRouteRecommendationModal
+        open={aiRouteOpen}
+        phase={aiRoutePhase}
+        summary={aiRouteSummary}
+        onAnalyzeComplete={onAiAnalyzeComplete}
+        onApprove={onAiApprove}
+        onCancel={onAiCancel}
+        onAskZord={() => router.push('/ask?demo=sandbox')}
+      />
     </div>
   )
 }

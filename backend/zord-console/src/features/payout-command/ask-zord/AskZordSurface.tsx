@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useCallback, useMemo, useState } from 'react'
 import {
   ASK_MODES,
+  ASK_ZORD_EXAMPLE_QUESTIONS,
   ASK_ZORD_HEADER,
   DEMO_AGENT_ACTIVITY,
   resolveAskZordDemo,
@@ -14,7 +15,6 @@ import {
 } from '@/services/payout-command/demo/askZordDemo'
 import { useDemoBatchReady } from '@/services/payout-command/demo/demoBatchReadiness'
 import { DEMO_SMOKE_BATCH_ID, DEMO_WORKSPACE_NAME } from '@/services/payout-command/demo/ycDemoConstants'
-import { AwaitingUploadsEmptyState } from '../demo/AwaitingUploadsEmptyState'
 import { PageExplainerBanner } from '../demo/PageExplainerBanner'
 import { AskZordOrb } from '../workspace/AskZordOrb'
 
@@ -29,7 +29,7 @@ type ChatTurn = {
   * Spec 7.16 - Ask Zord (Razorpay-clean shell + Siri hologram while thinking).
   */
 export function AskZordSurface() {
-  const { ready, readiness, require } = useDemoBatchReady(undefined, { require: 'intent' })
+  const { ready } = useDemoBatchReady(undefined, { require: 'intent' })
   const [mode, setMode] = useState<AskMode>('ask')
   const [input, setInput] = useState('')
   const [turns, setTurns] = useState<ChatTurn[]>([])
@@ -175,29 +175,7 @@ export function AskZordSurface() {
 
   const empty = turns.length === 0 && !thinking
 
-  if (!ready) {
-    return (
-      <div className="relative min-h-0 flex-1 overflow-y-auto bg-[#F7F8FB]">
-        <div className="relative mx-auto flex w-full max-w-[1280px] flex-col space-y-5">
-          <PageExplainerBanner page="ask" />
-          <div>
-            <h1 className="text-[28px] font-semibold tracking-[-0.03em] text-[#0B1324]">
-              {ASK_ZORD_HEADER.title}
-            </h1>
-            <p className="mt-1 max-w-xl text-[14px] leading-relaxed text-[#64748B]">
-              {ASK_ZORD_HEADER.subtitle}
-            </p>
-          </div>
-          <AwaitingUploadsEmptyState
-            title="Ask Zord needs an ingested batch"
-            readiness={readiness}
-            require={require}
-          />
-        </div>
-      </div>
-    )
-  }
-
+  // Finance Controller demo answers are self-contained mocks — don't block Ask Zord on intake.
   return (
     <div className="relative min-h-0 flex-1 overflow-y-auto bg-[#F7F8FB]">
       {/* Soft page atmosphere - Razorpay-clean, not loud */}
@@ -317,6 +295,27 @@ export function AskZordSurface() {
                 </button>
               ))}
             </div>
+            {empty ? (
+              <div className="rounded-2xl border border-[#E8ECF4] bg-white px-4 py-4 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+                <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[#94A3B8]">
+                  Example questions
+                </p>
+                <ul className="mt-2 grid gap-1.5 sm:grid-cols-2">
+                  {ASK_ZORD_EXAMPLE_QUESTIONS.map((q) => (
+                    <li key={q}>
+                      <button
+                        type="button"
+                        disabled={thinking}
+                        onClick={() => runPrompt(q)}
+                        className="w-full rounded-lg border border-transparent px-2.5 py-2 text-left text-[13px] text-[#334155] transition hover:border-[#DBEAFE] hover:bg-[#F8FBFF] disabled:opacity-50"
+                      >
+                        “{q}”
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
 
             {/* Thread */}
             {turns.length > 0 ? (
@@ -335,13 +334,28 @@ export function AskZordSurface() {
                           Scope
                         </p>
                         <p className="mt-1 text-[12px] text-[#64748B]">{t.reply.scope}</p>
-                        <p className="mt-3 text-[14px] leading-relaxed text-[#0B1324]">
+                        <p className="mt-3 whitespace-pre-wrap text-[14px] leading-relaxed text-[#0B1324]">
                           {t.reply.finding}
                         </p>
                         {t.reply.caveat ? (
                           <p className="mt-2 text-[12px] text-[#0B1324]">{t.reply.caveat}</p>
                         ) : null}
                       </div>
+
+                      {t.reply.activity && t.reply.activity.length > 0 ? (
+                        <div className="rounded-xl border border-[#E8ECF4] bg-[#FAFBFC] px-3.5 py-2.5">
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#94A3B8]">
+                            Agent activity
+                          </p>
+                          <ul className="mt-1.5 space-y-1">
+                            {t.reply.activity.map((a) => (
+                              <li key={a} className="text-[12px] text-[#475569]">
+                                ✓ {a}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
 
                       <div>
                         <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#94A3B8]">

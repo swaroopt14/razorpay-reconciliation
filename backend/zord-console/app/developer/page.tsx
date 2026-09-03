@@ -1,25 +1,21 @@
 'use client'
 
-import { Suspense, useEffect, type ReactNode } from 'react'
-import { useSearchParams } from 'next/navigation'
-import { persistEnvMode } from '@/services/auth/persistEnvMode'
-import { enterDemoSession, isDemoQuery } from '@/services/payout-command/demo/ycDemoConstants'
-import { DeveloperPage } from '@/features/payout-command/developer/DeveloperPage'
+import { Suspense, useEffect } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 
-/**
- * Spec 7.17 - Developer & Integrations (`/developer`).
- * Credentials relocation (P0) + full developer tabs (P1).
- */
-function DeveloperBootstrap({ children }: { children: ReactNode }) {
+/** Developer is renamed to Connections — keep this route as a soft redirect. */
+function DeveloperRedirect() {
+  const router = useRouter()
   const params = useSearchParams()
-  const demo = isDemoQuery(params.get('demo'))
-
   useEffect(() => {
-    persistEnvMode('sandbox')
-    if (demo) enterDemoSession()
-  }, [demo])
-
-  return <>{children}</>
+    const demo = params.get('demo')
+    router.replace(demo ? `/connections?demo=${encodeURIComponent(demo)}` : '/connections')
+  }, [router, params])
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-[#F8FAFC] text-[13px] text-[#64748B]">
+      Opening Connections…
+    </div>
+  )
 }
 
 export default function DeveloperRoutePage() {
@@ -27,13 +23,11 @@ export default function DeveloperRoutePage() {
     <Suspense
       fallback={
         <div className="flex min-h-screen items-center justify-center bg-[#F8FAFC] text-[13px] text-[#64748B]">
-          Loading developer…
+          Opening Connections…
         </div>
       }
     >
-      <DeveloperBootstrap>
-        <DeveloperPage />
-      </DeveloperBootstrap>
+      <DeveloperRedirect />
     </Suspense>
   )
 }

@@ -13,6 +13,8 @@ export type FinanceException = {
   entity_type: string
   entity_id: string
   status?: string
+  /** Razorpay / provider truth. Never set this to UNRESOLVED. */
+  provider_status?: string
   reconciliation_result: FinanceReconResult
   reason: string
   expected_amount: number
@@ -23,6 +25,17 @@ export type FinanceException = {
   created_at?: string
 }
 
+export type FinancePayoutKpis = {
+  scored_count: number
+  processed_count: number
+  processed_amount_minor: number
+  review_count: number
+  review_amount_minor: number
+  failed_count: number
+  failed_amount_minor: number
+  total_amount_minor: number
+}
+
 export type FinanceSummary = {
   entity_counts?: Record<string, number>
   result_counts?: Record<string, number>
@@ -31,6 +44,7 @@ export type FinanceSummary = {
   currency?: string
   scored_count: number
   matched_count: number
+  payout_kpis?: FinancePayoutKpis
 }
 
 export type FinanceCashPosition = {
@@ -104,6 +118,93 @@ export type FinanceSettlementLine = {
   utr?: string
 }
 
+/** Razorpay settlement header (list view). Amounts in paise. */
+export type RazorpaySettlement = {
+  id: string
+  entity?: string
+  amount: number
+  amount_gross?: number
+  fees?: number
+  tax?: number
+  status: 'created' | 'processed' | 'failed' | 'initiated' | string
+  utr?: string | null
+  created_at: number
+  currency?: string
+  settlement_schedule?: string
+  items_count?: number
+  batch_label?: string
+  matched_count?: number
+  unresolved_count?: number
+  failed_count?: number
+}
+
+export type RazorpaySettlementOverview = {
+  previous_settlement?: Partial<RazorpaySettlement> | null
+  today_settlement?: Partial<RazorpaySettlement> | null
+  next_settlement?: Partial<RazorpaySettlement> | null
+  available_balance?: number
+  schedule?: string
+  schedule_active?: boolean
+  payout_kpis?: {
+    processed_count: number
+    processed_amount_minor: number
+    review_count: number
+    review_amount_minor: number
+    failed_count: number
+    failed_amount_minor: number
+    total_amount_minor: number
+  }
+}
+
+export type RazorpaySettlementListResponse = {
+  entity?: string
+  count: number
+  items: RazorpaySettlement[]
+  overview?: RazorpaySettlementOverview
+}
+
+/** Line from GET /v1/settlements/recon/combined */
+export type RazorpaySettlementReconLine = {
+  entity_id: string
+  type: 'payment' | 'refund' | 'transfer' | 'adjustment' | string
+  debit?: number
+  credit?: number
+  amount: number
+  fee?: number
+  tax?: number
+  on_hold?: boolean
+  settled?: boolean
+  created_at?: number
+  settled_at?: number | null
+  settlement_id?: string
+  settlement_utr?: string | null
+  payment_id?: string
+  order_id?: string
+  method?: string
+  card_network?: string | null
+  card_issuer?: string | null
+  card_type?: string | null
+  dispute_id?: string | null
+  description?: string
+  notes?: Record<string, string>
+  currency?: string
+  /** Smoke / finance overlay — not Razorpay settlement status. */
+  provider_status?: string
+  reconciliation_result?: string
+  reason?: string | null
+  variance_amount?: number
+  utr?: string | null
+  finance_bucket?: 'matched' | 'unresolved' | 'failed' | string
+}
+
+export type RazorpaySettlementReconResponse = {
+  entity?: string
+  count: number
+  settlement_id?: string
+  items: RazorpaySettlementReconLine[]
+  error?: string
+}
+
 export type FinanceInvestigation = {
   id: string
   exception_id?: string
@@ -121,11 +222,46 @@ export type FinanceInvestigation = {
 
 export type FinanceReconRow = {
   payment_id: string
+  /** Prefer when entity is a RazorpayX payout (`pout_...`). Falls back to payment_id in UI. */
+  payout_id?: string
   settlement: boolean | null
   bank: boolean | null
   result: FinanceReconResult
   variance_amount: number
   reason?: string
+  /** Razorpay payout lifecycle status when known. */
+  status?: string
+  utr?: string | null
+  error_code?: string
+  error_description?: string
+  signal_source?: string
+  evidence?: string
+  next_steps?: string
+  contact?: string
+  amount_minor?: number
+  /** Razorpay payout API fields. */
+  entity?: string
+  fund_account_id?: string
+  currency?: string
+  fees?: number
+  tax?: number
+  mode?: string
+  purpose?: string
+  reference_id?: string
+  narration?: string
+  batch_id?: string | null
+  created_at?: number
+  notes?: Record<string, string>
+  /** Razorpay payout status_details object. */
+  status_details?: {
+    description: string
+    source: string
+    reason: string
+  }
+  /** Payment processor / provider (razorpay, paytm, …). */
+  payment_provider?: string
+  /** Finance-control exception class. Not a Razorpay payout status. */
+  exception_type?: string | null
 }
 
 export type FinanceEvaluation = {

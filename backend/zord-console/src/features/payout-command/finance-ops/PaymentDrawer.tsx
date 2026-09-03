@@ -19,6 +19,11 @@ import {
   settlementPill,
 } from './reasonCopy'
 import { PaymentLifecycleStrip, buildLifecycleSteps } from './PaymentLifecycleStrip'
+import { ErrorInvestigationPanel } from './ErrorInvestigationPanel'
+import { buildRazorpayXError } from './razorpayXErrors'
+import { PayoutLifecycleView } from './PayoutLifecycleView'
+import { buildPayoutLifecycle } from './payoutLifecycleModel'
+import type { PayoutReconDisplayRow } from './payoutReconCopy'
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -151,22 +156,46 @@ export function PaymentDrawer({
     if (rec.ok && rec.data) setInvestigation(rec.data)
   }
 
+  const reconRow: PayoutReconDisplayRow | null = payment
+    ? {
+        payoutId: payment.payment_id,
+        status: payment.provider_status,
+        amountMinor: payment.amount_minor,
+        utr: '—',
+        errorCode: recon?.reason || payment.provider_status,
+        errorDescription: recon?.reason || '',
+        signalSource: 'business',
+        evidence: '',
+        nextSteps: '—',
+        result: recon?.result || 'UNRESOLVED',
+        reason: recon?.reason || payment.provider_status,
+        contact: payment.order_id || '—',
+        varianceMinor: recon?.variance_amount || 0,
+        settlement: hasSettlement,
+        bank: hasBank,
+        mode: payment.method,
+        paymentProvider: payment.provider,
+        currency: payment.currency,
+      }
+    : null
+  const life = reconRow ? buildPayoutLifecycle(reconRow) : null
+
   const processedBy =
     payment?.notes?.processed_by ||
     (payment?.method?.includes('optimizer') ? payment.method : null)
 
   return (
     <aside
-      className="flex h-full min-h-[calc(100dvh-7rem)] w-full flex-col border-l border-[#E2E8F0] bg-white xl:max-w-[420px]"
-      aria-label="Payment details"
+      className="flex h-full min-h-[calc(100dvh-7rem)] w-full flex-col border-l border-[#E2E8F0] bg-white xl:max-w-[560px]"
+      aria-label="Transaction lifecycle"
     >
       <div className="flex items-start justify-between gap-3 border-b border-[#E2E8F0] px-5 py-4">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#94A3B8]">Payment details</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#94A3B8]">Transaction lifecycle</p>
           <h2 className="mt-1 font-mono text-[15px] font-semibold text-[#0F172A]">{entityId}</h2>
           {payment ? (
-            <p className="mt-1 text-[22px] font-semibold tabular-nums tracking-tight text-[#0F172A]">
-              {formatPaise(payment.amount_minor)} {payment.currency}
+            <p className="mt-1 text-[26px] font-semibold tabular-nums tracking-tight text-[#0F172A]">
+              {formatPaise(payment.amount_minor, 2)} {payment.currency}
             </p>
           ) : null}
         </div>
@@ -190,32 +219,19 @@ export function PaymentDrawer({
               This exception is not a Razorpay payment record. Investigate from the settlement or bank entity
               without inventing a payment status.
             </p>
-            <section className="mt-6 border-t border-[#E2E8F0] pt-5">
-              <div className="flex items-center justify-between gap-3">
-                <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#94A3B8]">
-                  AI investigation
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => void runInvestigate()}
-                  disabled={investigating}
-                  className="inline-flex h-8 items-center bg-[#0B1324] px-3 text-[12px] font-semibold text-white hover:bg-[#1E293B] disabled:opacity-60"
-                >
-                  {investigating ? 'Investigating…' : investigation ? 'Re-run' : 'Investigate'}
-                </button>
-              </div>
-              {investigation ? (
-                <div className="mt-3 space-y-3">
-                  <p className="text-[13px] leading-relaxed text-[#334155]">{investigation.root_cause}</p>
-                  <p className="text-[13px] font-semibold tabular-nums text-[#0F172A]">
-                    Exposure {formatPaise(investigation.financial_impact)}
-                  </p>
-                  {investigation.recommendation ? (
-                    <p className="text-[13px] leading-relaxed text-[#64748B]">{investigation.recommendation}</p>
-                  ) : null}
-                </div>
-              ) : null}
-            </section>
+            <ErrorInvestigationPanel
+              errorView={buildRazorpayXError({
+                reason: investigation?.root_cause || exceptionId || 'open_status_no_downstream',
+                description: investigation?.root_cause,
+                nextSteps: investigation?.recommendation,
+                payoutId: entityId,
+              })}
+              financialImpactMinor={investigation?.financial_impact}
+              confidence={investigation?.confidence}
+              investigating={investigating}
+              hasRun={Boolean(investigation)}
+              onInvestigate={() => void runInvestigate()}
+            />
           </>
         ) : payment ? (
           <>
@@ -229,8 +245,19 @@ export function PaymentDrawer({
             </div>
 
             <section className="mt-6">
-              <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#94A3B8]">Lifecycle</h3>
-              <PaymentLifecycleStrip steps={steps} />
+              {life ? (
+                <PayoutLifecycleView
+                  life={life}
+                  variant="drawer"
+                  initialTab="events"
+                  traceHref={`/reconciliation/${encodeURIComponent(payment.payment_id)}?demo=sandbox`}
+                />
+              ) : (
+                <>
+                  <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#94A3B8]">Lifecycle</h3>
+                  <PaymentLifecycleStrip steps={steps} />
+                </>
+              )}
             </section>
 
             <section className="mt-2">
@@ -293,67 +320,20 @@ export function PaymentDrawer({
               ) : null}
             </section>
 
-            <section className="mt-6 border-t border-[#E2E8F0] pt-5">
-              <div className="flex items-center justify-between gap-3">
-                <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#94A3B8]">
-                  AI investigation
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => void runInvestigate()}
-                  disabled={investigating}
-                  className="inline-flex h-8 items-center bg-[#0B1324] px-3 text-[12px] font-semibold text-white hover:bg-[#1E293B] disabled:opacity-60"
-                >
-                  {investigating ? 'Investigating…' : investigation ? 'Re-run' : 'Investigate'}
-                </button>
-              </div>
-              {investigation ? (
-                <div className="mt-3 space-y-3">
-                  <p className="text-[13px] leading-relaxed text-[#334155]">{investigation.root_cause}</p>
-                  <dl className="grid grid-cols-2 gap-3">
-                    <div className="border border-[#E2E8F0] bg-[#F8FAFC] p-3">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#94A3B8]">Root cause</p>
-                      <p className="mt-1 text-[13px] font-semibold uppercase text-[#0F172A]">
-                        {investigation.status === 'completed' ? investigation.id : investigation.status}
-                      </p>
-                    </div>
-                    <div className="border border-[#E2E8F0] bg-[#F8FAFC] p-3">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#94A3B8]">
-                        Financial exposure
-                      </p>
-                      <p className="mt-1 text-[13px] font-semibold tabular-nums text-[#0F172A]">
-                        {formatPaise(investigation.financial_impact)}
-                      </p>
-                    </div>
-                    <div className="border border-[#E2E8F0] bg-[#F8FAFC] p-3">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#94A3B8]">Confidence</p>
-                      <p className="mt-1 text-[13px] font-semibold tabular-nums text-[#0F172A]">
-                        {Math.round(investigation.confidence * 100)}%
-                      </p>
-                    </div>
-                  </dl>
-                  {investigation.hypotheses?.length ? (
-                    <ul className="space-y-2">
-                      {investigation.hypotheses.map((h) => (
-                        <li key={h.claim} className="flex items-start justify-between gap-3 text-[13px]">
-                          <span className="text-[#334155]">{h.claim}</span>
-                          <span className="shrink-0 font-semibold uppercase tracking-[0.04em] text-[#64748B]">
-                            {h.verdict}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                  {investigation.recommendation ? (
-                    <p className="text-[13px] leading-relaxed text-[#64748B]">{investigation.recommendation}</p>
-                  ) : null}
-                </div>
-              ) : (
-                <p className="mt-2 text-[13px] text-[#64748B]">
-                  Run investigation to see root cause, exposure, and evidence without renaming Razorpay status.
-                </p>
-              )}
-            </section>
+            <ErrorInvestigationPanel
+              errorView={buildRazorpayXError({
+                reason: recon?.reason || payment.provider_status,
+                status: payment.provider_status,
+                description: investigation?.root_cause || recon?.reason,
+                nextSteps: investigation?.recommendation,
+                payoutId: payment.payment_id,
+              })}
+              financialImpactMinor={investigation?.financial_impact ?? recon?.variance_amount ?? payment.amount_minor}
+              confidence={investigation?.confidence ?? recon?.confidence}
+              investigating={investigating}
+              hasRun={Boolean(investigation)}
+              onInvestigate={() => void runInvestigate()}
+            />
           </>
         ) : null}
       </div>

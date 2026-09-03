@@ -24,7 +24,7 @@ const checks = [
   },
   {
     file: 'app/api/prod/intents/_intentEngineProxy.ts',
-    mustInclude: ['requireIntentEngineProxyGate', 'X-Tenant-ID', 'Authorization'],
+    mustInclude: ['requireIntentEngineProxyGate', 'x-tenant-id', 'Authorization'],
     label: 'intent-engine proxy injects tenant + bearer headers',
   },
   {
