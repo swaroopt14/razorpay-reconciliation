@@ -42,7 +42,24 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000/payout-command-view/today and sign in with **any** email/password.
+Open http://localhost:3000/signin and sign in with an **allowed** email and password (`ZORD_LOGIN_USERS`). Random accounts are rejected.
+
+## Upload-first mode (default)
+
+After **password login** (`POST /v1/auth/login`), the simulator clears readiness. Stages unlock independently for the **same** batch id:
+
+1. `POST /v1/bulk-ingest` — obligation / intent file → Intent Journal + pre-settlement APIs  
+2. `POST /v1/settlement/upload` — settlement file → Settlement Journal  
+3. Both → match / outcome / proof / leakage KPIs  
+
+Every new login resets this again.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `SMOKE_UPLOAD_FIRST` | `1` | Stage-gated until the relevant upload(s) |
+| `SMOKE_PRESEED_DATA` | unset | Set `1` to restore always-populated catalogue (old demo behaviour) |
+
+Debug: `GET /healthz` → `upload_readiness`, or `POST /v1/smoke/reset-uploads`.
 
 ## Default batch catalogue
 
@@ -86,11 +103,29 @@ SMOKE_BATCH_COUNT=10 docker compose up -d --build
 | `SMOKE_DEMO_DAY_COUNT` | `366` | Days for home/leakage trend charts |
 | `SMOKE_BATCH_COUNT` | `10` | Journal/evidence list batch count |
 | `SMOKE_LATENCY_MS` | `0` | Artificial delay on heavy list routes |
+| `SMOKE_UPLOAD_FIRST` | `1` | Gate data until obligation + settlement uploads |
+| `SMOKE_PRESEED_DATA` | unset | `1` = always show full catalogue (skip upload gate) |
+| Postgres (compose) | hardcoded | user `smoke` / db `smoke_audit` / password in root `docker-compose.yml` |
+
+## Login audit (Postgres)
+
+Every `POST /v1/auth/login` records **email, time, IP, user-agent, latency** — **never passwords**.
+
+```bash
+# After compose is up and someone signs in via the console:
+curl -sS -H "Authorization: Bearer zord-local-dev-api-key" \
+  "http://localhost:8099/v1/smoke/login-audit?limit=20"
+```
+
+AWS / DevOps handoff: [`docs/SMOKE_LOGIN_AUDIT_AWS.md`](../docs/SMOKE_LOGIN_AUDIT_AWS.md).
 
 ## Health check
 
 ```bash
 curl -s http://localhost:8099/healthz
+# Expect login_audit.backend = "postgres" when DATABASE_URL is set
+curl -s http://localhost:8099/healthz | jq .login_audit
+# Before uploads (upload-first default): length should be 0
 curl -s "http://localhost:8099/api/prod/intents/batch-ids?tenant_id=00000000-0000-0000-0000-000000000001" | jq '.items | length'
 curl -s "http://localhost:8099/v1/settlement/observations/batches?tenant_id=00000000-0000-0000-0000-000000000001&client_batch_id=batch-2026-06-12-payroll&page=1&page_size=100" | jq '.pagination'
 ```

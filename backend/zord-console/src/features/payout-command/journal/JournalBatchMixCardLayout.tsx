@@ -14,7 +14,7 @@ type JournalBatchMixCardBodyProps = {
   legend: JournalMixLegendItem[]
   colors: string[]
   fillHeight?: boolean
-  /** Beside gross value in black hero — horizontal chart + full legend. */
+  /** Beside gross value in black hero - horizontal chart + full legend. */
   embeddedInHero?: boolean
   formatValue?: (v: number) => string
 }

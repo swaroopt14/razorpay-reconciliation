@@ -27,11 +27,7 @@ export function useOperationsSummary({
       const res = await getOperationsSummary(dateQuery, batchId)
       setData(res)
     } catch {
-      setData({
-        availability: 'UNAVAILABLE',
-        data_available: false,
-        reason: 'Operations intelligence is temporarily unavailable.',
-      })
+      setData({ data_available: false, reason: 'Failed to load operations summary.' })
     } finally {
       setLoading(false)
     }

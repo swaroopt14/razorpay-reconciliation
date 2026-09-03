@@ -8,7 +8,7 @@ export function LandingSignalStageSection() {
     // The header re-applies its own padded shell inside LandingBranchCardStage.
     <section
       className="overflow-hidden pb-24 pt-8 sm:pb-28 lg:pb-32"
-      aria-label="Payout signal intelligence preview"
+      aria-label="Payment health preview"
     >
       <LandingBranchCardStage />
     </section>

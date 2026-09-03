@@ -1,8 +1,10 @@
-FROM public.ecr.aws/docker/library/node:20-alpine
+FROM node:20-alpine
 
 WORKDIR /app
 
-COPY package.json ./
+COPY package.json package-lock.json* ./
+RUN npm install --production
+
 COPY src ./src
 
 ENV PORT=8099

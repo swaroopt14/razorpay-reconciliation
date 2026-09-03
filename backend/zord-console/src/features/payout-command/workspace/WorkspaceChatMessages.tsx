@@ -104,8 +104,8 @@ export function ConnectionPill({ state }: { state: 'idle' | 'connected' | 'error
   }
   if (state === 'error') {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-medium text-red-800">
-        <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-[#0B1324]/20 bg-[#F1F5F9] px-2.5 py-1 text-[11px] font-medium text-[#0B1324]">
+        <span className="h-1.5 w-1.5 rounded-full bg-[#0B1324]" />
         Unavailable
       </span>
     )
@@ -144,7 +144,7 @@ function CitationBlock({ message }: { message: WorkspaceConversationMessage }) {
                   {[c.source_type, c.record_id].filter(Boolean).join(' · ')}
                 </p>
               )}
-              {c.snippet?.trim() || '—'}
+              {c.snippet?.trim() || '-'}
             </div>
           ))}
         </div>
@@ -179,7 +179,7 @@ export function MessageBubble({ message }: { message: WorkspaceConversationMessa
         </div>
         <div
           className={`mt-1 text-[15px] leading-relaxed ${
-            isError ? 'text-red-800' : isLoading ? 'text-slate-500' : 'text-slate-700'
+            isError ? 'text-[#0B1324]' : isLoading ? 'text-slate-500' : 'text-slate-700'
           }`}
         >
           {isLoading ? <AssistantLoadingIndicator phase={message.loadingPhase} /> : <MarkdownMessage body={message.body} />}

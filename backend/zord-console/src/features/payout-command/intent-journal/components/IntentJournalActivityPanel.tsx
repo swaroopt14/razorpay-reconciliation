@@ -5,7 +5,6 @@ import { Fragment, useState, type Dispatch, type SetStateAction } from 'react'
 import { EntityLogo } from '../../entity-logo'
 import { BankingInformationTokensBlock } from '../IntentDrawerSections'
 import { formatJournalMoney } from '../formatJournalMoney'
-import { CURRENCY_NEUTRAL_AMOUNT_RANGES, type CurrencyNeutralAmountRange } from '@/services/payout-command/money/money'
 import { downloadFailuresCsv } from '../journalExport'
 import { IntentEngineDetailPanel } from '../IntentEngineDetailPanel'
 import type { IntentDetail } from '@/services/payout-command/intent-journal-types'
@@ -29,13 +28,7 @@ const JOURNAL_FILTER_LABEL =
   'mb-1 block text-[11px] font-semibold uppercase tracking-[0.08em] text-[#888888]'
 
 type TabKey = 'transactions' | 'failures'
-type IntentStatus =
-  | 'Ready to Process'
-  | 'Confirmed'
-  | 'Pending'
-  | 'Needs Review'
-  | 'In Progress'
-  | 'Decision unavailable'
+type IntentStatus = 'Ready to Process' | 'Confirmed' | 'Pending' | 'Needs Review' | 'In Progress'
 type DateRangePreset = 'all' | '7d' | '30d' | '90d' | 'ytd'
 
 const DATE_RANGE_OPTIONS: { value: DateRangePreset; label: string }[] = [
@@ -49,33 +42,29 @@ const DATE_RANGE_OPTIONS: { value: DateRangePreset; label: string }[] = [
 const CONNECTOR_OPTIONS: Array<'All' | string> = ['All', 'Razorpay', 'Cashfree', 'PayU']
 const DISPATCH_OPTIONS = ['All', 'Bank Transfer', 'LSM', 'NACH'] as const
 
-const AMOUNT_RANGE_OPTIONS = CURRENCY_NEUTRAL_AMOUNT_RANGES
-type AmountRangeFilter = CurrencyNeutralAmountRange
+const AMOUNT_RANGE_OPTIONS = [
+  'All',
+  'Under ₹10,000',
+  '₹10,000 - ₹1,00,000',
+  'Over ₹1,00,000',
+] as const
+type AmountRangeFilter = (typeof AMOUNT_RANGE_OPTIONS)[number]
 
 type FailureRow = JournalFailureRow
 type StateSetter<T> = Dispatch<SetStateAction<T>>
 
 const filterSelectClass =
-  'h-9 w-full min-w-[7.5rem] rounded-xl border border-slate-200/90 bg-slate-50 px-2.5 text-[14px] text-slate-900 outline-none transition focus:border-sky-400/55 focus:bg-white focus:ring-2 focus:ring-sky-400/15'
+  'h-9 w-full min-w-[7.5rem] rounded-xl border border-slate-200/90 bg-slate-50 px-2.5 text-[14px] text-slate-900 outline-none transition focus:border-[#0B1324]/20/55 focus:bg-white focus:ring-2 focus:ring-[#0B1324]/20'
 
 const filterInputClass =
-  'h-9 w-full rounded-xl border border-slate-200/90 bg-slate-50 px-3 text-[14px] text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-400/55 focus:bg-white focus:ring-2 focus:ring-sky-400/15'
+  'h-9 w-full rounded-xl border border-slate-200/90 bg-slate-50 px-3 text-[14px] text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#0B1324]/20/55 focus:bg-white focus:ring-2 focus:ring-[#0B1324]/20'
 
-function intentStatusClass(status: IntentStatus) {
-  if (status === 'Ready to Process') return 'text-sky-700'
-  if (status === 'Confirmed') return 'text-black'
-  if (status === 'Pending') return 'text-amber-600'
-  if (status === 'Needs Review') return 'text-orange-600'
-  if (status === 'In Progress') return 'text-sky-700'
-  if (status === 'Decision unavailable') return 'text-slate-500'
-  return 'text-slate-700'
+function lifecycleClass(_lifecycle: string | undefined, _status: IntentStatus) {
+  return 'text-[#0B1324]'
 }
 
-function intentStatusLabel(status: IntentStatus) {
-  if (status === 'Pending') return intentJournalCopy.status.awaitingBankConfirmation
-  if (status === 'Ready to Process') return intentJournalCopy.status.readyForDispatch
-  if (status === 'Decision unavailable') return intentJournalCopy.status.decisionUnavailable
-  return intentRowCustomerStatus(status)
+function lifecycleLabel(row: JournalIntentRow) {
+  return row.lifecycleStage || intentRowCustomerStatus(row.status)
 }
 
 const TAB_ITEMS: { key: TabKey; label: string }[] = [
@@ -83,18 +72,21 @@ const TAB_ITEMS: { key: TabKey; label: string }[] = [
   { key: 'failures', label: intentJournalCopy.tabs.reviewItems },
 ]
 
-const ROW_SIZE_OPTIONS = [25, 50, 100, 200] as const
+const ROW_SIZE_OPTIONS = [20, 50, 100, 200] as const
 
-const INTENT_TABLE_COL_COUNT = 7
+const INTENT_TABLE_COL_COUNT = 10
 
 const INTENT_TABLE_HEADERS: { key: string; label: string }[] = [
-  { key: 'intentId', label: intentJournalCopy.table.headers.zordId },
-  { key: 'reference', label: intentJournalCopy.table.headers.paymentRef },
+  { key: 'intentId', label: intentJournalCopy.table.headers.intentId },
+  { key: 'batchRef', label: 'Batch ref' },
+  { key: 'reference', label: intentJournalCopy.table.headers.obligationRef },
+  { key: 'recipient', label: intentJournalCopy.table.headers.recipient },
   { key: 'amount', label: intentJournalCopy.table.headers.amount },
-  { key: 'status', label: intentJournalCopy.table.headers.status },
-  { key: 'execution', label: intentJournalCopy.table.headers.plannedDate },
-  { key: 'rail', label: intentJournalCopy.table.headers.paymentMode },
-  { key: 'score', label: intentJournalCopy.table.headers.readiness },
+  { key: 'policy', label: intentJournalCopy.table.headers.policyStatus },
+  { key: 'source', label: intentJournalCopy.table.headers.sourceIntegrity },
+  { key: 'risk', label: intentJournalCopy.table.headers.riskState },
+  { key: 'contract', label: intentJournalCopy.table.headers.actionContract },
+  { key: 'lifecycle', label: intentJournalCopy.table.headers.lifecycle },
 ]
 
 
@@ -247,7 +239,7 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                       placeholder={
                         activeTab === 'transactions'
                           ? intentJournalCopy.table.searchPlaceholder
-                          : 'Search review items — reason, stage, envelope…'
+                          : 'Search review items - reason, stage, envelope…'
                       }
                       className={`${filterInputClass} pl-9`}
                     />
@@ -310,11 +302,6 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                     <select value={intentStatusFilter} onChange={(e) => setIntentStatusFilter(e.target.value as 'All' | IntentStatus)} className={filterSelectClass}>
                       <option value="All">All statuses</option>
                       <option value="Ready to Process">Ready to process</option>
-                      <option value="Needs Review">Needs review</option>
-                      <option value="Decision unavailable">Decision unavailable</option>
-                      <option value="Confirmed">Confirmed</option>
-                      <option value="Pending">Pending</option>
-                      <option value="In Progress">In progress</option>
                     </select>
                   ) : (
                     <select
@@ -376,21 +363,15 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
 
             {activeTab === 'transactions' ? (
               <section className={`overflow-hidden ${COMMAND_CENTER_KPI_CARD}`}>
-                <div className="border-b border-slate-100 bg-slate-50 px-4 py-3">
-                  <p className={`text-[14px] font-semibold ${HOME_TITLE_BLACK}`}>Intent table — selected batch</p>
-                  <p className={`mt-1 ${HOME_BODY_IMPERIAL_SM}`}>
-                    {tableFiltersActive && apiIntentTotal != null ? (
-                      <>
-                        <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[12px] font-semibold text-slate-700">
-                          {apiIntentTotal.toLocaleString('en-US')} total
-                        </span>{' '}
-                        ·{' '}
-                      </>
-                    ) : null}
-                    <span className="rounded-full border border-black/30 bg-black px-2 py-0.5 text-[12px] font-semibold text-white">
-                      {intentTotal.toLocaleString('en-US')} rows
-                    </span>{' '}
-                    match filters
+                <div className="border-b border-[#E5E5E5] bg-white px-4 py-3">
+                  <p className={`text-[13px] font-semibold ${HOME_TITLE_BLACK}`}>
+                    {intentTotal.toLocaleString('en-IN')} intent{intentTotal === 1 ? '' : 's'}
+                    {tableFiltersActive && apiIntentTotal != null
+                      ? ` · filtered from ${apiIntentTotal.toLocaleString('en-IN')}`
+                      : ''}
+                  </p>
+                  <p className={`mt-0.5 text-[12px] text-[#64748B]`}>
+                    Click a row for details · policy · source · risk · Action Contract
                   </p>
                 </div>
                 <div className="min-w-0 overflow-x-auto">
@@ -416,52 +397,62 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                           </tr>
                         ) : (
                           pageRows.map((row, rowIndex) => (
-                          <Fragment key={row.rowKey}>
+                          <Fragment key={row.requestId}>
                             <tr
                               onClick={() => {
-                                if (!row.requestId) {
-                                  setSelectedIntentId(null)
-                                  setExpandedId((current) => (current === row.rowKey ? null : row.rowKey))
-                                  return
-                                }
                                 setSelectedIntentId(row.requestId)
-                                setExpandedId((current) => (current === row.rowKey ? null : row.rowKey))
+                                setExpandedId((current) => (current === row.requestId ? null : row.requestId))
                               }}
-                              className={`${row.requestId ? 'cursor-pointer' : 'cursor-default'} border-t border-[#f3f4f6] ${selectedIntentId === row.requestId ? 'bg-[#f8fafc]' : rowIndex % 2 === 1 ? 'bg-slate-50/40 hover:bg-[#f9fafb]' : 'hover:bg-[#f9fafb]'}`}
+                              className={`cursor-pointer border-t border-[#f3f4f6] ${selectedIntentId === row.requestId ? 'bg-[#f8fafc]' : rowIndex % 2 === 1 ? 'bg-slate-50/40 hover:bg-[#f9fafb]' : 'hover:bg-[#f9fafb]'}`}
                             >
-                              <td className="truncate px-3 py-2.5 font-mono text-[12px] text-[#334155]" title={row.zordId}>
-                                {row.zordId}
+                              <td className="truncate px-3 py-2.5 font-mono text-[12px] text-[#334155]" title={row.zordId ?? row.requestId}>
+                                {row.zordId ?? row.requestId}
+                              </td>
+                              <td className="truncate px-3 py-2.5 font-mono text-[12px] text-[#334155]" title={row.clientBatchRef || row.batchId}>
+                                {row.clientBatchRef || row.batchId || '-'}
                               </td>
                               <td className="truncate px-3 py-2.5 text-[13px] text-[#334155]" title={row.reference}>
                                 {row.reference}
                               </td>
+                              <td className="truncate px-3 py-2.5 text-[13px] text-[#334155]" title={row.beneficiaryName || '-'}>
+                                {row.beneficiaryName || '-'}
+                              </td>
                               <td className="px-3 py-2.5 tabular-nums whitespace-nowrap">
-                                {formatJournalMoney(row.amount, row.currency)}
+                                {formatJournalMoney(
+                                  row.amount,
+                                  row.currency ?? (journalUsesBackendFeed ? 'INR' : 'USD'),
+                                )}
+                              </td>
+                              <td className="px-3 py-2.5 text-[13px] font-medium text-[#334155]">
+                                {row.policyStatus || '-'}
+                              </td>
+                              <td className="px-3 py-2.5 text-[13px] text-[#334155]">
+                                {row.sourceIntegrity || '-'}
+                              </td>
+                              <td className="px-3 py-2.5 text-[13px] text-[#334155]" title={row.changeSignal}>
+                                {row.riskState || '-'}
+                              </td>
+                              <td className="px-3 py-2.5 text-[13px] font-medium text-[#0B1324]">
+                                {row.actionContract || '-'}
                               </td>
                               <td className="px-3 py-2.5">
-                                <span className={`text-[13px] font-medium ${intentStatusClass(row.status)}`}>
-                                  {intentStatusLabel(row.status)}
+                                <span className={`text-[13px] font-medium ${lifecycleClass(row.lifecycleStage, row.status)}`}>
+                                  {lifecycleLabel(row)}
                                 </span>
                               </td>
-                              <td className="truncate px-3 py-2.5 text-[13px] text-[#334155]" title={row.intendedExecutionAt}>
-                                {row.intendedExecutionAt}
-                              </td>
-                              <td className="truncate px-3 py-2.5 text-[13px] font-medium text-[#334155]" title={row.rail && row.rail !== '—' ? row.rail : row.method}>
-                                {row.rail && row.rail !== '—' ? row.rail : row.method}
-                              </td>
-                              <td className="px-3 py-2.5 tabular-nums font-semibold text-[#0f172a]">{row.confidenceLabel}</td>
                             </tr>
-                            {expandedId === row.rowKey ? (
+                            {expandedId === row.requestId ? (
                               <tr className="bg-slate-50">
                                 <td colSpan={INTENT_TABLE_COL_COUNT} className="px-3 pb-4 pt-3">
-                                  {!row.requestId ? (
-                                    <p className="text-[14px] text-[#64748b]">
-                                      Intent ID unavailable{row.sourceRowNum != null ? ` · Source row ${row.sourceRowNum}` : ''}.
-                                      Detail and deep-link actions are disabled until an authoritative intent id exists.
-                                    </p>
-                                  ) : row.rawIntent ? (
+                                  {row.rawIntent ? (
                                     <div className="space-y-3">
                                       <p className="text-[14px] font-semibold text-[#0f172a]">Intent details</p>
+                                      <p className="text-[13px] text-[#475569]">
+                                        {row.readinessReason || row.infoSummary}
+                                      </p>
+                                      <p className="text-[12px] text-[#64748B]">
+                                        Change signal · {row.changeSignal || 'No material change'}
+                                      </p>
                                       <IntentEngineDetailPanel intent={row.rawIntent} />
                                     </div>
                                   ) : (
@@ -481,7 +472,7 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                                           bank: row.bank,
                                           uiStatus: row.status,
                                         },
-                                        journalUsesBackendFeed && expandedId === row.rowKey && row.requestId ? liveIntentDrawerApi : null,
+                                        journalUsesBackendFeed && expandedId === row.requestId ? liveIntentDrawerApi : null,
                                       )
                                       return (
                                         <div className="space-y-3">
@@ -490,12 +481,26 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                                             <p className="mt-0.5 font-mono text-[13px] text-[#64748b]">
                                               {detail.intentId} · {detail.beneficiaryToken}
                                             </p>
+                                            <p className="mt-2 text-[13px] text-[#475569]">
+                                              {row.readinessReason || 'See policy and source integrity for seal readiness.'}
+                                            </p>
+                                            <p className="mt-1 text-[12px] text-[#64748B]">
+                                              Change signal · {row.changeSignal || 'No material change'}
+                                              {row.actionContract === 'Ready' || row.actionContract === 'Sealed' ? (
+                                                <>
+                                                  {' · '}
+                                                  <span className="font-semibold text-[#0B1324]">
+                                                    {intentJournalCopy.actions.openContract}
+                                                  </span>
+                                                </>
+                                              ) : null}
+                                            </p>
                                           </div>
                                           <BankingInformationTokensBlock detail={detail} />
                                           {(row.clientBatchRef || row.batchId) ? (
                                             <Link
-                                              href={`/payout-command-view/today?dock=settlement&client_batch_id=${encodeURIComponent(row.clientBatchRef || row.batchId)}`}
-                                              className="inline-flex text-[13px] font-semibold text-sky-800 underline decoration-sky-300 underline-offset-4"
+                                              href={`/settlement/journal?demo=sandbox&client_batch_id=${encodeURIComponent(row.clientBatchRef || row.batchId)}`}
+                                              className="inline-flex text-[13px] font-semibold text-[#0B1324] underline decoration-[#0B1324]/30 underline-offset-4"
                                             >
                                               Open settlement journal for this batch →
                                             </Link>
@@ -593,7 +598,7 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                           ·{' '}
                         </>
                       ) : null}
-                      <span className="rounded-full border border-red-200/80 bg-red-50 px-2 py-0.5 text-[12px] font-semibold text-red-800">
+                      <span className="rounded-full border border-[#0B1324]/20/80 bg-[#F1F5F9] px-2 py-0.5 text-[12px] font-semibold text-[#0B1324]">
                         {failureTotal.toLocaleString('en-US')} rows
                       </span>{' '}
                       match filters
@@ -601,7 +606,7 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                     <p className={`mt-1 max-w-3xl ${HOME_BODY_IMPERIAL_SM}`}>
                       This table is only{' '}
                       <span className="font-medium text-[#475569]">intent-engine DLQ</span> (dead-lettered envelopes /
-                      ingress failures). One bulk upload can create both payment intents and DLQ rows in the DB — accepted
+                      ingress failures). One bulk upload can create both payment intents and DLQ rows in the DB - accepted
                       rows appear under <span className="font-medium text-[#475569]">Intents</span>; dead-lettered rows
                       appear here.
                     </p>
@@ -628,7 +633,7 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                     <thead className="bg-[#f8fafc]">
                       <tr>
                           {[
-                          { key: 'zordId', label: intentJournalCopy.table.headers.zordId, icon: 'reference' as const },
+                          { key: 'zordId', label: intentJournalCopy.table.headers.intentId, icon: 'reference' as const },
                             { key: 'rownum', label: 'Row #', icon: 'reference' as const },
                           { key: 'amount', label: 'Amount', icon: 'amount' as const },
                           { key: 'connector', label: 'Connector', icon: 'payment' as const },
@@ -665,21 +670,21 @@ export function IntentJournalActivityPanel({ vm, isSandboxRoute = false }: Inten
                             {row.zordId ?? row.requestId}
                           </td>
                           <td className="px-3 py-2.5 text-[15px] text-[#475569] tabular-nums">
-                            {row.sourceRowNum ?? '—'}
+                            {row.sourceRowNum ?? '-'}
                           </td>
                           <td className="px-3 py-2.5 tabular-nums">
                             {Number.isFinite(row.amount)
-                              ? formatJournalMoney(row.amount, row.currency)
-                              : '—'}
+                              ? formatJournalMoney(row.amount, row.currency ?? 'INR')
+                              : '-'}
                           </td>
                           <td className="px-3 py-2.5">
-                            {row.paymentPartner && row.paymentPartner !== '—' ? (
+                            {row.paymentPartner && row.paymentPartner !== '-' ? (
                               <EntityLogo name={row.paymentPartner} kind="psp" size={18} />
                             ) : (
-                              '—'
+                              '-'
                             )}
                           </td>
-                          <td className="px-3 py-2.5 text-rose-700">{row.failureReason}</td>
+                          <td className="px-3 py-2.5 text-[#0B1324]">{row.failureReason}</td>
                           <td className="px-3 py-2.5 min-w-[9.5rem]">
                             <button
                               type="button"

@@ -3,10 +3,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { SANDBOX_DOCS_LINKS } from '@/services/payout-command/sandbox-data'
-import {
-  clearLegacyTenantApiSecrets,
-  formatSecretKeyPrefix,
-} from '@/services/auth/readStoredTenantApiKey'
 import { CompactKeyRow } from '../layout/ApiKeysPopoverButton'
 import { Glyph } from '../shared'
 
@@ -21,14 +17,15 @@ type WorkspaceKeysPayload = {
 const DISMISS_KEY = 'zord_sandbox_home_credentials_card'
 
 /**
- * Dismissible sidebar card: tenant id + secret key prefix from session
- * (`/api/sandbox/workspace-api-keys`). Full secrets are never stored in the browser.
- */
+  * Dismissible sidebar card: tenant id / API key from session (`/api/sandbox/workspace-api-keys`)
+  * and localStorage for the one-time signup secret.
+  */
 export function SandboxHomeCredentialsCard() {
   const [dismissed, setDismissed] = useState(false)
   const [keys, setKeys] = useState<WorkspaceKeysPayload | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [storedSecret, setStoredSecret] = useState<string | null>(null)
 
   useEffect(() => {
     try {
@@ -50,8 +47,13 @@ export function SandboxHomeCredentialsCard() {
         return
       }
       const body = (await res.json()) as WorkspaceKeysPayload
-      clearLegacyTenantApiSecrets(body.tenant_id)
       setKeys(body)
+      try {
+        const stored = window.localStorage.getItem(`zord_tenant_api_key:${body.tenant_id}`)
+        setStoredSecret(stored?.trim() || null)
+      } catch {
+        setStoredSecret(null)
+      }
     } catch {
       setLoadError('Network error loading credentials.')
       setKeys(null)
@@ -83,7 +85,9 @@ export function SandboxHomeCredentialsCard() {
     setDismissed(false)
   }
 
-  const secretDisplay = formatSecretKeyPrefix(keys?.secret_key_prefix ?? keys?.workspace_code)
+  const secretFull = storedSecret
+  const secretDisplay =
+    secretFull ?? (keys?.secret_key_prefix ? `${keys.secret_key_prefix.slice(0, 16)}…` : '-')
 
   const docsBase =
     typeof process.env.NEXT_PUBLIC_ZORD_DOCS_URL === 'string' && process.env.NEXT_PUBLIC_ZORD_DOCS_URL.trim()
@@ -153,22 +157,27 @@ export function SandboxHomeCredentialsCard() {
           <p className="mt-4 text-[13px] text-[#b45309]">{loadError}</p>
         ) : (
           <>
-            <CompactKeyRow label="Tenant id" value={keys?.tenant_id ?? '—'} tone="sky" />
+            <CompactKeyRow label="Tenant id" value={keys?.tenant_id ?? '-'} tone="sky" />
             <CompactKeyRow
-              label="Secret key prefix"
-              value={secretDisplay}
-              masked
+              label="API key"
+              value={secretFull ?? secretDisplay}
+              masked={!secretFull}
+              copyValue={secretFull ?? undefined}
               tone="sky"
-              helper="Full secret is shown once at signup and is never stored in this browser."
+              helper={
+                !secretFull
+                  ? 'Full secret is only returned once at signup; it appears here if this browser saved it when you copied it then.'
+                  : undefined
+              }
             />
           </>
         )}
 
         <Link
-          href="/payout-command-view/settings/api-keys"
+          href="/developer?demo=sandbox&tab=keys"
           className="mt-4 flex w-full items-center justify-center gap-1.5 rounded-lg border border-[#c5d5f0] bg-white py-2.5 text-[13px] font-medium text-[#30313d] shadow-[0_1px_3px_rgba(59,130,246,0.08)] transition hover:bg-[#eef3fc]"
         >
-          Manage keys
+          Manage in Developer
           <Glyph name="arrow-up-right" className="h-3 w-3" />
         </Link>
       </div>

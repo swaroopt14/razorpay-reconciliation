@@ -1,4 +1,3 @@
-import { csrfMutationHeaders } from '@/services/auth/csrfBrowser'
 import { apiTrimmedString } from './coerceApiField'
 import type { EvidencePackVerifyResponse } from './evidenceTypes'
 
@@ -11,7 +10,7 @@ export type EvidencePackVerifyResult = {
   error?: string
 }
 
-/** Cryptographic Merkle verify — BFF injects session tenant. */
+/** Cryptographic Merkle verify - BFF injects session tenant. */
 export async function postEvidencePackVerify(packId: string): Promise<EvidencePackVerifyResult> {
   const pid = apiTrimmedString(packId)
   if (!pid) {
@@ -23,7 +22,7 @@ export async function postEvidencePackVerify(packId: string): Promise<EvidencePa
     const response = await fetch(path, {
       method: 'POST',
       credentials: 'include',
-      headers: csrfMutationHeaders({ 'content-type': 'application/json' }),
+      headers: { 'content-type': 'application/json' },
       body: '{}',
       cache: 'no-store',
     })

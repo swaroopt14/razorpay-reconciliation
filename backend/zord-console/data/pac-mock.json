@@ -1,0 +1,1144 @@
+{
+  "proposal": {
+    "agent": {
+      "agent_id": "agt_treasury_eu_04",
+      "purpose": "Treasury Action Agent",
+      "max_amount_per_action": {
+        "amount_minor": 50000000
+      }
+    },
+    "proposal_id": "ap_novacell_inv10482",
+    "rationale_summary": "Supplier payout proposal generated from Batch 001 approved vendor payment instructions.",
+    "attached_structure": {
+      "structure_id": "abs_trc_001_v1",
+      "policy_label": "Enterprise Supplier Payout",
+      "policy_draft": {
+        "label": "Enterprise Supplier Payout",
+        "note": "Domestic supplier payout with dual approval above ₹50,000."
+      },
+      "business_note": "Cross-border incomplete-order net settlement for Apex Components (PAY-0001), Northwind Supplies (PAY-0002), and Summit Components (PAY-0004). Authorised withholding tax and commercial margin seal on the PAC; matching credits are Exact. Only unexplained remainder versus sealed net is Short.",
+      "control_labels": [
+        "Payee change protection",
+        "Dual approval threshold",
+        "Domestic rails only",
+        "Incomplete-order net settlement (Apex, Northwind, Summit)",
+        "Withhold tax line from invoice (10%)",
+        "Cut commercial margin from invoice (4%)"
+      ],
+      "approved_rails": [
+        "NEFT",
+        "RTGS",
+        "IMPS"
+      ],
+      "settlement_currency": "INR",
+      "status": "ATTACHED",
+      "digest": "sha256:01db1d3cb1c9e8f2a4b7"
+    },
+    "batch": {
+      "batch_id": "batch-001",
+      "label": "Batch 001",
+      "intent_count": 100,
+      "intended_rupees": 12377867.56,
+      "intended_display": "₹1,23,77,867.56"
+    },
+    "invoices": [],
+    "source": {
+      "instruction": "Batch 001 contains 100 supplier payment instructions for domestic vendor settlement.",
+      "envelope_id": "env_novacell_001"
+    },
+    "payment_instructions": [
+      {
+        "human_ref": "PAY-0001",
+        "beneficiary": "Apex Components Pvt Ltd",
+        "amount_rupees": 172347.78,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_001"
+      },
+      {
+        "human_ref": "PAY-0002",
+        "beneficiary": "Northwind Supplies",
+        "amount_rupees": 62711.14,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_002"
+      },
+      {
+        "human_ref": "PAY-0003",
+        "beneficiary": "Brightline Media",
+        "amount_rupees": 44790.38,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_003"
+      },
+      {
+        "human_ref": "PAY-0004",
+        "beneficiary": "Summit Components",
+        "amount_rupees": 193549.44,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_004"
+      },
+      {
+        "human_ref": "PAY-0005",
+        "beneficiary": "Meridian Services",
+        "amount_rupees": 96696.12,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_005"
+      },
+      {
+        "human_ref": "PAY-0006",
+        "beneficiary": "Local Tools Co",
+        "amount_rupees": 90439.34,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_006"
+      },
+      {
+        "human_ref": "PAY-0007",
+        "beneficiary": "Horizon Logistics",
+        "amount_rupees": 85938.14,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_007"
+      },
+      {
+        "human_ref": "PAY-0008",
+        "beneficiary": "Cedar Softwares",
+        "amount_rupees": 68567.09,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_008"
+      },
+      {
+        "human_ref": "PAY-0009",
+        "beneficiary": "Pacific Packaging",
+        "amount_rupees": 192494.95,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_009"
+      },
+      {
+        "human_ref": "PAY-0010",
+        "beneficiary": "Vertex Alloys",
+        "amount_rupees": 60876.67,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_010"
+      },
+      {
+        "human_ref": "PAY-0011",
+        "beneficiary": "Indigo Textiles",
+        "amount_rupees": 180085.83,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_011"
+      },
+      {
+        "human_ref": "PAY-0012",
+        "beneficiary": "Orion Chemicals",
+        "amount_rupees": 193366.1,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_012"
+      },
+      {
+        "human_ref": "PAY-0013",
+        "beneficiary": "Maple Print House",
+        "amount_rupees": 152820.13,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_013"
+      },
+      {
+        "human_ref": "PAY-0014",
+        "beneficiary": "Nova Electrics",
+        "amount_rupees": 57647.05,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_014"
+      },
+      {
+        "human_ref": "PAY-0015",
+        "beneficiary": "Silverline Foods",
+        "amount_rupees": 162188.62,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_015"
+      },
+      {
+        "human_ref": "PAY-0016",
+        "beneficiary": "Atlas Couriers",
+        "amount_rupees": 127192.12,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_016"
+      },
+      {
+        "human_ref": "PAY-0017",
+        "beneficiary": "Prime Bearing Co",
+        "amount_rupees": 46196.3,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_017"
+      },
+      {
+        "human_ref": "PAY-0018",
+        "beneficiary": "Eastgate Plastics",
+        "amount_rupees": 45784.09,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_018"
+      },
+      {
+        "human_ref": "PAY-0019",
+        "beneficiary": "BluePeak Marketing",
+        "amount_rupees": 59049.81,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_019"
+      },
+      {
+        "human_ref": "PAY-0020",
+        "beneficiary": "Harbor Spare Parts",
+        "amount_rupees": 84988.87,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_020"
+      },
+      {
+        "human_ref": "PAY-0021",
+        "beneficiary": "Redwood Trading",
+        "amount_rupees": 87900.12,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_021"
+      },
+      {
+        "human_ref": "PAY-0022",
+        "beneficiary": "Titan Steelworks",
+        "amount_rupees": 144513.47,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_022"
+      },
+      {
+        "human_ref": "PAY-0023",
+        "beneficiary": "Greenfield Agro",
+        "amount_rupees": 164581.53,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_023"
+      },
+      {
+        "human_ref": "PAY-0024",
+        "beneficiary": "Sunrise Pharma",
+        "amount_rupees": 45106.96,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_024"
+      },
+      {
+        "human_ref": "PAY-0025",
+        "beneficiary": "Quantum IT Services",
+        "amount_rupees": 156116.67,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_025"
+      },
+      {
+        "human_ref": "PAY-0026",
+        "beneficiary": "Pinnacle Engineering",
+        "amount_rupees": 80878.11,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_026"
+      },
+      {
+        "human_ref": "PAY-0027",
+        "beneficiary": "Nimbus Cloud Tech",
+        "amount_rupees": 188248.95,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_027"
+      },
+      {
+        "human_ref": "PAY-0028",
+        "beneficiary": "Cobalt Energy",
+        "amount_rupees": 174518.84,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_028"
+      },
+      {
+        "human_ref": "PAY-0029",
+        "beneficiary": "Falcon Air Cargo",
+        "amount_rupees": 185198.32,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_029"
+      },
+      {
+        "human_ref": "PAY-0030",
+        "beneficiary": "Sterling Jewellers",
+        "amount_rupees": 152731.93,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_030"
+      },
+      {
+        "human_ref": "PAY-0031",
+        "beneficiary": "Vanguard Consulting",
+        "amount_rupees": 126693.38,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_031"
+      },
+      {
+        "human_ref": "PAY-0032",
+        "beneficiary": "Sapphire Hospitality",
+        "amount_rupees": 85363.07,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_032"
+      },
+      {
+        "human_ref": "PAY-0033",
+        "beneficiary": "Crystal Analytics",
+        "amount_rupees": 132857.1,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_033"
+      },
+      {
+        "human_ref": "PAY-0034",
+        "beneficiary": "Ironclad Manufacturing",
+        "amount_rupees": 161933.91,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_034"
+      },
+      {
+        "human_ref": "PAY-0035",
+        "beneficiary": "Golden Gate Exports",
+        "amount_rupees": 97352.45,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_035"
+      },
+      {
+        "human_ref": "PAY-0036",
+        "beneficiary": "Silver Fern Foods",
+        "amount_rupees": 207641.77,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_036"
+      },
+      {
+        "human_ref": "PAY-0037",
+        "beneficiary": "Emerald Textiles",
+        "amount_rupees": 40947.1,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_037"
+      },
+      {
+        "human_ref": "PAY-0038",
+        "beneficiary": "Ruby Mining Corp",
+        "amount_rupees": 197132.07,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_038"
+      },
+      {
+        "human_ref": "PAY-0039",
+        "beneficiary": "Platinum Solutions",
+        "amount_rupees": 206892.08,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_039"
+      },
+      {
+        "human_ref": "PAY-0040",
+        "beneficiary": "Diamond Precision",
+        "amount_rupees": 72744.38,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_040"
+      },
+      {
+        "human_ref": "PAY-0041",
+        "beneficiary": "Ruby Software Labs",
+        "amount_rupees": 184536.94,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_041"
+      },
+      {
+        "human_ref": "PAY-0042",
+        "beneficiary": "Amber Health Sciences",
+        "amount_rupees": 127335.86,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_042"
+      },
+      {
+        "human_ref": "PAY-0043",
+        "beneficiary": "Jade Garden Supplies",
+        "amount_rupees": 110236.55,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_043"
+      },
+      {
+        "human_ref": "PAY-0044",
+        "beneficiary": "Coral Reef Shipping",
+        "amount_rupees": 97286.13,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_044"
+      },
+      {
+        "human_ref": "PAY-0045",
+        "beneficiary": "Pearl Academy Services",
+        "amount_rupees": 71876.69,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_045"
+      },
+      {
+        "human_ref": "PAY-0046",
+        "beneficiary": "Opal Digital Media",
+        "amount_rupees": 84298.68,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_046"
+      },
+      {
+        "human_ref": "PAY-0047",
+        "beneficiary": "Onyx Infrastructure",
+        "amount_rupees": 198105.09,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_047"
+      },
+      {
+        "human_ref": "PAY-0048",
+        "beneficiary": "Sapphire Power Systems",
+        "amount_rupees": 109477.46,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_048"
+      },
+      {
+        "human_ref": "PAY-0049",
+        "beneficiary": "Topaz Chemicals",
+        "amount_rupees": 60817.57,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_049"
+      },
+      {
+        "human_ref": "PAY-0050",
+        "beneficiary": "Amethyst Biosciences",
+        "amount_rupees": 58852.71,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_050"
+      },
+      {
+        "human_ref": "PAY-0051",
+        "beneficiary": "Garnet Agriculture",
+        "amount_rupees": 118473.73,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_051"
+      },
+      {
+        "human_ref": "PAY-0052",
+        "beneficiary": "Zircon Aerospace",
+        "amount_rupees": 59676.95,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_052"
+      },
+      {
+        "human_ref": "PAY-0053",
+        "beneficiary": "Aquamarine Marine",
+        "amount_rupees": 114124.78,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_053"
+      },
+      {
+        "human_ref": "PAY-0054",
+        "beneficiary": "Turquoise Wellness",
+        "amount_rupees": 215544.14,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_054"
+      },
+      {
+        "human_ref": "PAY-0055",
+        "beneficiary": "Lapis Education",
+        "amount_rupees": 111005.74,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_055"
+      },
+      {
+        "human_ref": "PAY-0056",
+        "beneficiary": "Citrine Retail",
+        "amount_rupees": 164936.03,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_056"
+      },
+      {
+        "human_ref": "PAY-0057",
+        "beneficiary": "Peridot Finance",
+        "amount_rupees": 94514.47,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_057"
+      },
+      {
+        "human_ref": "PAY-0058",
+        "beneficiary": "Spinel Construction",
+        "amount_rupees": 207163.82,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_058"
+      },
+      {
+        "human_ref": "PAY-0059",
+        "beneficiary": "Almandine Networks",
+        "amount_rupees": 48618.61,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_059"
+      },
+      {
+        "human_ref": "PAY-0060",
+        "beneficiary": "Rhodolite Telecom",
+        "amount_rupees": 191095.75,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_060"
+      },
+      {
+        "human_ref": "PAY-0061",
+        "beneficiary": "Charoite Semiconductors",
+        "amount_rupees": 134977.97,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_061"
+      },
+      {
+        "human_ref": "PAY-0062",
+        "beneficiary": "Sphene Robotics",
+        "amount_rupees": 150922.9,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_062"
+      },
+      {
+        "human_ref": "PAY-0063",
+        "beneficiary": "Kunzite Biotech",
+        "amount_rupees": 65512.8,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_063"
+      },
+      {
+        "human_ref": "PAY-0064",
+        "beneficiary": "Taaffeite Optics",
+        "amount_rupees": 118184.56,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_064"
+      },
+      {
+        "human_ref": "PAY-0065",
+        "beneficiary": "Musgravite Research",
+        "amount_rupees": 55957.41,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_065"
+      },
+      {
+        "human_ref": "PAY-0066",
+        "beneficiary": "Hsanite Geology",
+        "amount_rupees": 154205.77,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_066"
+      },
+      {
+        "human_ref": "PAY-0067",
+        "beneficiary": "Grandidierite Mining",
+        "amount_rupees": 100463.97,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_067"
+      },
+      {
+        "human_ref": "PAY-0068",
+        "beneficiary": "Painite Rare Metals",
+        "amount_rupees": 211788.57,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_068"
+      },
+      {
+        "human_ref": "PAY-0069",
+        "beneficiary": "Jeremejevite Labs",
+        "amount_rupees": 170108.32,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_069"
+      },
+      {
+        "human_ref": "PAY-0070",
+        "beneficiary": "Australite Space",
+        "amount_rupees": 168007.25,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_070"
+      },
+      {
+        "human_ref": "PAY-0071",
+        "beneficiary": "Roaldite Fuel Cells",
+        "amount_rupees": 114676.08,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_071"
+      },
+      {
+        "human_ref": "PAY-0072",
+        "beneficiary": "Baksanite Materials",
+        "amount_rupees": 159460.62,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_072"
+      },
+      {
+        "human_ref": "PAY-0073",
+        "beneficiary": "Carlsbergite Alloys",
+        "amount_rupees": 79518.51,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_073"
+      },
+      {
+        "human_ref": "PAY-0074",
+        "beneficiary": "Chaoite Nanotech",
+        "amount_rupees": 185872.38,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_074"
+      },
+      {
+        "human_ref": "PAY-0075",
+        "beneficiary": "Eakisite Sensors",
+        "amount_rupees": 54038.09,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_075"
+      },
+      {
+        "human_ref": "PAY-0076",
+        "beneficiary": "Kornerupine Precision",
+        "amount_rupees": 49111.41,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_076"
+      },
+      {
+        "human_ref": "PAY-0077",
+        "beneficiary": "Linarite Ceramics",
+        "amount_rupees": 176881.16,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_077"
+      },
+      {
+        "human_ref": "PAY-0078",
+        "beneficiary": "Zunyite Glassworks",
+        "amount_rupees": 86911.36,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_078"
+      },
+      {
+        "human_ref": "PAY-0079",
+        "beneficiary": "Edingtonite Plastics",
+        "amount_rupees": 200092.71,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_079"
+      },
+      {
+        "human_ref": "PAY-0080",
+        "beneficiary": "Gerhardtite Polymers",
+        "amount_rupees": 99677.05,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_080"
+      },
+      {
+        "human_ref": "PAY-0081",
+        "beneficiary": "Holdenite Fibers",
+        "amount_rupees": 56163.32,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_081"
+      },
+      {
+        "human_ref": "PAY-0082",
+        "beneficiary": "Euchroite Solar",
+        "amount_rupees": 217168.36,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_082"
+      },
+      {
+        "human_ref": "PAY-0083",
+        "beneficiary": "Lazulite Wind Power",
+        "amount_rupees": 87927.04,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_083"
+      },
+      {
+        "human_ref": "PAY-0084",
+        "beneficiary": "Vesuvianite Hydro",
+        "amount_rupees": 60566.61,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_084"
+      },
+      {
+        "human_ref": "PAY-0085",
+        "beneficiary": "Chlorargyrite Batteries",
+        "amount_rupees": 118515.01,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_085"
+      },
+      {
+        "human_ref": "PAY-0086",
+        "beneficiary": "Adamite Clean Energy",
+        "amount_rupees": 97307.31,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_086"
+      },
+      {
+        "human_ref": "PAY-0087",
+        "beneficiary": "Willemite Recycling",
+        "amount_rupees": 133729.35,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_087"
+      },
+      {
+        "human_ref": "PAY-0088",
+        "beneficiary": "Awaruite Green Steel",
+        "amount_rupees": 171570.77,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_088"
+      },
+      {
+        "human_ref": "PAY-0089",
+        "beneficiary": "Orpiment Pigments",
+        "amount_rupees": 212765.55,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_089"
+      },
+      {
+        "human_ref": "PAY-0090",
+        "beneficiary": "Realgar Paints",
+        "amount_rupees": 115339.84,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_090"
+      },
+      {
+        "human_ref": "PAY-0091",
+        "beneficiary": "Stibnite Coatings",
+        "amount_rupees": 73366.17,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_091"
+      },
+      {
+        "human_ref": "PAY-0092",
+        "beneficiary": "Cinnabar Inks",
+        "amount_rupees": 116450.27,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_092"
+      },
+      {
+        "human_ref": "PAY-0093",
+        "beneficiary": "Galena Batteries",
+        "amount_rupees": 113354.8,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_093"
+      },
+      {
+        "human_ref": "PAY-0094",
+        "beneficiary": "Anglesite Wiring",
+        "amount_rupees": 83093.22,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_094"
+      },
+      {
+        "human_ref": "PAY-0095",
+        "beneficiary": "Wulfenite Panels",
+        "amount_rupees": 178731.38,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_095"
+      },
+      {
+        "human_ref": "PAY-0096",
+        "beneficiary": "Covellite Wiring",
+        "amount_rupees": 95024.59,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_096"
+      },
+      {
+        "human_ref": "PAY-0097",
+        "beneficiary": "Enargite Electronics",
+        "amount_rupees": 185301.08,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_097"
+      },
+      {
+        "human_ref": "PAY-0098",
+        "beneficiary": "Bournonite Switches",
+        "amount_rupees": 181507.59,
+        "currency": "INR",
+        "rail": "RTGS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_098"
+      },
+      {
+        "human_ref": "PAY-0099",
+        "beneficiary": "Jamesonite Fuses",
+        "amount_rupees": 174134.94,
+        "currency": "INR",
+        "rail": "IMPS",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_099"
+      },
+      {
+        "human_ref": "PAY-0100",
+        "beneficiary": "Boulangerite Circuits",
+        "amount_rupees": 54421.59,
+        "currency": "INR",
+        "rail": "NEFT",
+        "trace_id": "trc_novacell_inv10482",
+        "intent_id": "int_100"
+      }
+    ]
+  },
+  "authority": {
+    "trace_id": "trc_novacell_inv10482",
+    "nodes": [
+      {
+        "id": "org",
+        "label": "Zordnet Operations",
+        "kind": "enterprise_root",
+        "credential": {
+          "credential_id": "cred_org_001",
+          "kind": "enterprise_root",
+          "scope": "treasury.payout.execute",
+          "key_thumbprint": "tp_org_001",
+          "revocation_status": "active",
+          "issued_at": "2026-01-01T00:00:00Z"
+        }
+      },
+      {
+        "id": "controller",
+        "label": "Treasury Controller",
+        "kind": "human",
+        "credential": {
+          "credential_id": "cred_ctrl_001",
+          "kind": "human",
+          "scope": "approve.payout.domestic",
+          "key_thumbprint": "tp_ctrl_001",
+          "revocation_status": "active",
+          "issued_at": "2026-06-01T00:00:00Z",
+          "subject": {
+            "name": "A. Keller",
+            "type": "human"
+          }
+        }
+      },
+      {
+        "id": "cfo",
+        "label": "CFO",
+        "kind": "human",
+        "credential": {
+          "credential_id": "cred_cfo_001",
+          "kind": "human",
+          "scope": "approve.payout.domestic.step_up",
+          "key_thumbprint": "tp_cfo_001",
+          "revocation_status": "active",
+          "issued_at": "2026-06-01T00:00:00Z",
+          "subject": {
+            "name": "M. Duarte",
+            "type": "human"
+          }
+        }
+      },
+      {
+        "id": "agent",
+        "label": "Treasury Action Agent",
+        "kind": "agent",
+        "credential": {
+          "credential_id": "cred_agent_001",
+          "kind": "agent",
+          "scope": "propose_supplier_payout",
+          "key_thumbprint": "tp_agent_001",
+          "revocation_status": "active",
+          "issued_at": "2026-08-01T00:00:00Z",
+          "subject": {
+            "name": "Treasury Action Agent",
+            "type": "agent",
+            "id": "agt_treasury_eu_04"
+          }
+        }
+      },
+      {
+        "id": "proposal",
+        "label": "PAY-0001",
+        "kind": "proposal",
+        "object": {
+          "proposal_id": "ap_novacell_inv10482",
+          "action_proposal_id": "ap_novacell_inv10482",
+          "amount_minor": 17897000
+        }
+      },
+      {
+        "id": "policy",
+        "label": "Policy Decision",
+        "kind": "policy",
+        "object": {
+          "decision": "ALLOW",
+          "policy_id": "pol_treasury_domestic_v14",
+          "policy_version": "v14",
+          "obligations": [
+            "source_check",
+            "currency_check",
+            "rail_check"
+          ]
+        }
+      },
+      {
+        "id": "pac",
+        "label": "Payment Action Contract",
+        "kind": "pac",
+        "object": {
+          "pac_id": "pac_novacell_eu_10482",
+          "trace_id": "trc_novacell_inv10482",
+          "environment": "SANDBOX"
+        }
+      }
+    ],
+    "edges": [
+      [
+        "org",
+        "controller"
+      ],
+      [
+        "controller",
+        "cfo"
+      ],
+      [
+        "controller",
+        "agent"
+      ],
+      [
+        "agent",
+        "proposal"
+      ],
+      [
+        "proposal",
+        "policy"
+      ],
+      [
+        "policy",
+        "pac"
+      ]
+    ],
+    "demo": {
+      "trace_id": "trc_novacell_inv10482",
+      "pac_id": "pac_novacell_eu_10482",
+      "human_ref": "PAY-0001",
+      "beneficiary": "Apex Components Pvt Ltd",
+      "debtor": "Zordnet Operations",
+      "amount_minor": 17897000,
+      "amount_display": "₹1,78,970.00",
+      "currency": "INR",
+      "rail": "NEFT",
+      "current_state": "DISPATCH_READY"
+    },
+    "batch_totals": {
+      "intent_count": 100,
+      "intended_rupees": 12377867.56,
+      "intended_display": "₹1,23,77,867.56"
+    }
+  },
+  "contract": {
+    "pac_id": "pac_novacell_eu_10482",
+    "trace_id": "trc_novacell_inv10482",
+    "spec_version": "zord.action.v1",
+    "digest": "sha256:01db1d3cb1c9e8f2a4b7c3d5e6f8a9b0",
+    "signature": {
+      "kid": "zord-demo-es256-2026",
+      "alg": "ES256"
+    },
+    "actor": {
+      "agent_id": "agt_treasury_eu_04"
+    },
+    "authority": {
+      "policy_id": "pol_treasury_domestic_v14",
+      "policy_version": "v14",
+      "policy_decision_id": "pdr_001"
+    },
+    "action": {
+      "beneficiary_ref": "Apex Components Pvt Ltd",
+      "amount_minor": 17897000,
+      "currency": "INR"
+    },
+    "execution_constraints": {
+      "notes": "Domestic supplier payout with dual approval above ₹50,000. Rails restricted to NEFT, RTGS, IMPS."
+    },
+    "business_context": {
+      "policy_studio_note": "Release policy for approved domestic supplier payouts."
+    },
+    "demo": {
+      "trace_id": "trc_novacell_inv10482",
+      "pac_id": "pac_novacell_eu_10482",
+      "human_ref": "PAY-0001",
+      "beneficiary": "Apex Components Pvt Ltd",
+      "debtor": "Zordnet Operations",
+      "amount_minor": 17897000,
+      "amount_display": "₹1,78,970.00",
+      "currency": "INR",
+      "rail": "NEFT"
+    },
+    "batch_totals": {
+      "intent_count": 20,
+      "intended_display": "₹1,23,77,867.56.00"
+    }
+  }
+}

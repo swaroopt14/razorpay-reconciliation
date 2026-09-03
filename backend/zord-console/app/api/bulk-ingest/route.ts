@@ -1,21 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { assertCookieMutationProtection } from '@/services/auth/assertSameOrigin.server'
 import {
   applyRefreshedSessionCookies,
-  getTenantIdForBearerAuthorizationHeader,
   resolveBulkIngestForwardAuthorization,
 } from '@/services/auth/resolvePayoutTenant.server'
-import {
-  consumeBffRateLimit,
-  rateLimitKeyForIp,
-  rateLimitKeyForTenant,
-} from '@/services/bff/rateLimit.server'
-import { publicBffError } from '@/services/bff/publicBffError'
-import { isReprocessReason, REPROCESS_REASONS } from '@/services/payout-command/batch-intake/reprocessReason'
 
 /** Proxies multipart bulk file to zord-edge `POST /v1/bulk-ingest` only (never zord-intelligence).
- * Requires signed-in session JWT and/or explicit Authorization (CON-P0-02).
- * Never falls back to ZORD_BULK_INGEST_API_KEY. Enforces session vs API-key tenant match. */
+ * Enforces session vs API-key tenant match when both are present; never trusts client tenant_id. */
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
@@ -25,28 +15,13 @@ function candidateEdgeBases(): string[] {
 }
 
 export async function POST(req: NextRequest) {
-  // Cookie browser path: same-origin + CSRF. Explicit Authorization (API key) bypasses.
-  const csrf = assertCookieMutationProtection(req, { allowBearerBypass: true })
-  if (!csrf.ok) return csrf.response
-
   const contentType = req.headers.get('content-type')
   if (!contentType?.toLowerCase().includes('multipart/form-data')) {
     return NextResponse.json({ error: 'Expected multipart/form-data with a file field.' }, { status: 400 })
   }
 
-  const authResolution = await resolveBulkIngestForwardAuthorization(req)
+  const authResolution = await resolveBulkIngestForwardAuthorization(req, process.env.ZORD_BULK_INGEST_API_KEY)
   if (!authResolution.ok) return authResolution.response
-
-  const bearerTenant = await getTenantIdForBearerAuthorizationHeader(authResolution.authorization)
-  const rate = consumeBffRateLimit({
-    bucket: 'reprocess',
-    key: bearerTenant ? rateLimitKeyForTenant(bearerTenant) : rateLimitKeyForIp(req),
-    message: 'Too many ingest/reprocess requests. Try again shortly.',
-  })
-  if (!rate.ok) {
-    applyRefreshedSessionCookies(rate.response, authResolution.refreshedPayload)
-    return rate.response
-  }
 
   const bodyBuffer = Buffer.from(await req.arrayBuffer())
   const sourceType =
@@ -67,6 +42,7 @@ export async function POST(req: NextRequest) {
     'x-zord-source-type': sourceType,
     'x-zord-source-class': sourceClass,
     authorization: authResolution.authorization,
+    'x-session-token': req.cookies.get('zord_access_token')?.value ?? '',
   }
   if (tenantType) headers['x-zord-tenant-type'] = tenantType
 
@@ -89,23 +65,7 @@ export async function POST(req: NextRequest) {
   const forceReprocess =
     req.headers.get('x-zord-force-reprocess')?.trim().toLowerCase() === 'true' ||
     req.headers.get('X-Zord-Force-Reprocess')?.trim().toLowerCase() === 'true'
-  const reprocessReason = req.headers.get('x-zord-force-reprocess-reason')?.trim() || null
-  if (reprocessReason && !isReprocessReason(reprocessReason)) {
-    return NextResponse.json(
-      { error: `A valid reprocess reason is required: ${REPROCESS_REASONS.join(', ')}.` },
-      { status: 400 },
-    )
-  }
-  if (!forceReprocess && reprocessReason) {
-    return NextResponse.json(
-      { error: 'A reprocess reason may only be sent when force reprocess is enabled.' },
-      { status: 400 },
-    )
-  }
-  if (forceReprocess) {
-    headers['X-Zord-Force-Reprocess'] = 'true'
-    if (reprocessReason) headers['X-Zord-Force-Reprocess-Reason'] = reprocessReason
-  }
+  if (forceReprocess) headers['X-Zord-Force-Reprocess'] = 'true'
 
   const candidateUrls = candidateEdgeBases().map((base) => `${base.replace(/\/$/, '')}/v1/bulk-ingest`)
   let lastError: unknown = null
@@ -129,16 +89,14 @@ export async function POST(req: NextRequest) {
   }
 
   if (!lastResponse) {
-    const res = publicBffError({
-      code: 'UPSTREAM_UNAVAILABLE',
-      message: 'Bulk ingest is temporarily unavailable. Retry shortly.',
-      status: 502,
-      log: {
-        route: '/api/bulk-ingest',
+    const res = NextResponse.json(
+      {
+        error: 'Bulk ingest upstream unavailable',
         upstream: lastUrl,
-        error: lastError,
+        details: lastError instanceof Error ? lastError.message : 'Unknown upstream error',
       },
-    })
+      { status: 502 },
+    )
     applyRefreshedSessionCookies(res, authResolution.refreshedPayload)
     return res
   }

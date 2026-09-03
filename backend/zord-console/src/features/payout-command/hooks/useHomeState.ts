@@ -7,7 +7,6 @@ import {
   defaultHomeCommandFilters,
   homeCommandFilterMultiplier,
   homeSimulationScenarios,
-  HOME_YEAR_OPTIONS,
   resolveHomeQuarterFromPrompt,
   resolveHomeTimeframeFromPrompt,
   resolveHomeYearFromPrompt,
@@ -22,12 +21,11 @@ export type HomeState = {
   scenario: HomeSimulation
   snapshot: HomeOverviewSnapshot
   timeframe: HomeTimeframe
-  year: number
-  yearOptions: readonly number[]
+  year: 2026 | 2027 | 2028
   quarterIndex: number
   activeChartPoint: number
   setTimeframe: (timeframe: HomeTimeframe) => void
-  setYear: (year: number) => void
+  setYear: (year: 2026 | 2027 | 2028) => void
   setQuarterIndex: (index: number) => void
   setActiveChartPoint: (point: number) => void
   applyScopeFromPrompt: (prompt: string) => void
@@ -38,7 +36,7 @@ export type HomeState = {
 export function useHomeState(_isActive: boolean): HomeState {
   const [scenario, setScenario] = useState<HomeSimulation>(homeSimulationScenarios[0])
   const [timeframe, setTimeframeRaw] = useState<HomeTimeframe>('Month')
-  const [year, setYearRaw] = useState<number>(2026)
+  const [year, setYearRaw] = useState<2026 | 2027 | 2028>(2026)
   const [quarterIndex, setQuarterIndexRaw] = useState(0)
   const [activeChartPoint, setActiveChartPoint] = useState(0)
   const [commandFilters, setCommandFilters] = useState<HomeCommandFilters>(defaultHomeCommandFilters)
@@ -54,7 +52,7 @@ export function useHomeState(_isActive: boolean): HomeState {
     setTimeframeRaw(tf)
   }, [])
 
-  const setYear = useCallback((y: number) => {
+  const setYear = useCallback((y: 2026 | 2027 | 2028) => {
     setYearRaw(y)
   }, [])
 
@@ -86,7 +84,6 @@ export function useHomeState(_isActive: boolean): HomeState {
     snapshot,
     timeframe,
     year,
-    yearOptions: HOME_YEAR_OPTIONS,
     quarterIndex,
     activeChartPoint,
     setTimeframe,

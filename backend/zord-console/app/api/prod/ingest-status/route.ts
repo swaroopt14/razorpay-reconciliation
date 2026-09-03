@@ -3,13 +3,11 @@ import { BACKEND_SERVICES } from '@/config/api.endpoints'
 import {
   applyRefreshedSessionCookies,
   requireSessionTenantForProdProxy,
-  sessionUpstreamHeaders,
 } from '@/services/auth/resolvePayoutTenant.server'
-import { evidenceReadinessFromPacks } from '@/services/payout-command/prod-api/layeredVerification'
 
 export const dynamic = 'force-dynamic'
 
-type SourceStatus = 'received' | 'missing' | 'partial' | 'processing' | 'ready'
+type SourceStatus = 'received' | 'missing' | 'partial' | 'processing'
 
 type IngestSource = {
   id: 'intent_file' | 'settlement_file' | 'bank_statement' | 'evidence'
@@ -18,10 +16,10 @@ type IngestSource = {
   detail?: string
 }
 
-async function probeJson<T>(url: string, tenantId: string, accessToken: string): Promise<T | null> {
+async function probeJson<T>(url: string, tenantId: string): Promise<T | null> {
   try {
     const res = await fetch(url, {
-      headers: sessionUpstreamHeaders(tenantId, accessToken),
+      headers: { 'content-type': 'application/json', 'x-tenant-id': tenantId },
       cache: 'no-store',
     })
     if (!res.ok) return null
@@ -35,32 +33,31 @@ export async function GET(request: NextRequest) {
   const gate = await requireSessionTenantForProdProxy(request)
   if (!gate.ok) return gate.response
   const tenantId = gate.tenantId
-  const accessToken = gate.accessToken
 
   const intentBase = BACKEND_SERVICES.INTENT_ENGINE.BASE_URL
   const intelBase = BACKEND_SERVICES.INTELLIGENCE.BASE_URL
   const evidenceBase = BACKEND_SERVICES.EVIDENCE.BASE_URL
 
-  const [intentProbe, settlement, evidencePacks, patterns] = await Promise.all([
+  const [intentProbe, settlement, evidencePacks, defensibility, patterns] = await Promise.all([
     probeJson<{ pagination?: { total?: number }; items?: unknown[] }>(
       `${intentBase}/v1/intents?page=1&page_size=1&tenant_id=${encodeURIComponent(tenantId)}`,
       tenantId,
-      accessToken,
     ),
     probeJson<{ items?: unknown[]; observations?: unknown[] }>(
-      `${(process.env.ZORD_SETTLEMENT_URL || 'http://localhost:8081').replace(/\/$/, '')}/v1/settlement/observations/batches?tenant_id=${encodeURIComponent(tenantId)}`,
+      `${(process.env.ZORD_SETTLEMENT_URL || process.env.SMOKE_SIMULATOR_URL || 'http://localhost:8081').replace(/\/$/, '')}/v1/settlement/observations/batches?tenant_id=${encodeURIComponent(tenantId)}`,
       tenantId,
-      accessToken,
     ),
-    probeJson<{ packs?: Array<{ verification_status?: string }> }>(
-      `${evidenceBase}${BACKEND_SERVICES.EVIDENCE.ENDPOINTS.PACKS}?tenant_id=${encodeURIComponent(tenantId)}&limit=50`,
+    probeJson<{ packs?: unknown[] }>(
+      `${evidenceBase}${BACKEND_SERVICES.EVIDENCE.ENDPOINTS.PACKS}?tenant_id=${encodeURIComponent(tenantId)}&limit=1`,
       tenantId,
-      accessToken,
+    ),
+    probeJson<{ data_available?: boolean; bank_confirmed_rate?: number }>(
+      `${intelBase}${BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.DEFENSIBILITY}?tenant_id=${encodeURIComponent(tenantId)}`,
+      tenantId,
     ),
     probeJson<{ data_available?: boolean; total_count?: number }>(
       `${intelBase}${BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.PATTERNS}?tenant_id=${encodeURIComponent(tenantId)}`,
       tenantId,
-      accessToken,
     ),
   ])
 
@@ -69,9 +66,9 @@ export async function GET(request: NextRequest) {
     intentProbe?.items?.length ??
     (patterns?.data_available === true ? (patterns.total_count ?? 0) : 0)
   const settlementCount = settlement?.items?.length ?? settlement?.observations?.length ?? 0
-  const packs = evidencePacks?.packs ?? []
-  const packCount = packs.length
-  const evidenceReadiness = evidenceReadinessFromPacks(packs)
+  const packCount = evidencePacks?.packs?.length ?? 0
+  const bankHint =
+    defensibility?.data_available === true && (defensibility.bank_confirmed_rate ?? 0) > 0
 
   const sources: IngestSource[] = [
     {
@@ -89,21 +86,14 @@ export async function GET(request: NextRequest) {
     {
       id: 'bank_statement',
       label: 'Bank statement',
-      // CON production scope: do not treat intelligence defensibility as bank-statement receipt.
-      status: 'missing',
-      detail:
-        'Not connected — bank-statement status comes from the artifact/source registry, not intelligence confirmation coverage.',
+      status: bankHint ? 'partial' : 'missing',
+      detail: bankHint ? 'Inferred from defensibility' : 'Awaiting bank-confirmed signal',
     },
     {
       id: 'evidence',
       label: 'Evidence',
-      status: evidenceReadiness,
-      detail:
-        evidenceReadiness === 'ready'
-          ? 'Service 6 verified pack available'
-          : evidenceReadiness === 'partial'
-            ? `${packCount} pack(s) present — not verified`
-            : undefined,
+      status: packCount > 0 ? 'received' : 'missing',
+      detail: packCount > 0 ? `${packCount}+ pack(s)` : undefined,
     },
   ]
 

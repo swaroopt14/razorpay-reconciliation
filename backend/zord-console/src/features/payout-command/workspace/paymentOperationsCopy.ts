@@ -20,7 +20,7 @@ export const PAYMENT_OPERATIONS = {
     'Zord checks whether payment instructions can be linked to bank, PSP, settlement, or statement records. Items with missing references, weak matches, or settlement gaps are moved to review.',
   itemsNeedingReviewTitle: 'Operational Review Queues',
   itemsNeedingReviewMeta:
-    'Separate counts for ingest failures, match review, financial exceptions, and open recommendations — no combined fallback.',
+    'Separate counts for ingest failures, match review, financial exceptions, and open recommendations - no combined fallback.',
   askPanelTitle: 'Ask Zord About This Payment Data',
   askPanelSubtitle:
     'Ask questions about payment gaps, missing references, proof readiness, and review items.',

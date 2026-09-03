@@ -29,17 +29,17 @@ function BentoCard({
   )
 }
 
-function RailOverviewMock() {
+function BatchOverviewMock() {
   const rows = [
-    { label: 'Payout obligations', metric: 'Received', detail: 'Source captured' },
-    { label: 'Outcome signals', metric: 'Exact outcome', detail: 'Expected vs observed' },
-    { label: 'Payment exceptions', metric: 'Queued', detail: 'Human review required' },
-    { label: 'Evidence packs', metric: 'Proof-ready', detail: 'Evidence complete' },
+    { label: 'Payment instructions', metric: 'In batch', detail: 'Shared record' },
+    { label: 'Bank confirmations', metric: 'Matched', detail: 'Intended vs confirmed' },
+    { label: 'Gaps & review', metric: 'Queued', detail: 'Needs a decision' },
+    { label: 'Proof packs', metric: 'Exportable', detail: 'Finance-ready' },
   ]
 
   return (
     <div className="mt-6 rounded-[1.25rem] border border-black/[0.05] bg-white p-4 shadow-[0_8px_24px_rgba(0,0,0,0.04)] sm:p-5">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#9CA3AF]">PAYOUT LIFECYCLE OVERVIEW</p>
+      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#9CA3AF]">Batch health overview</p>
       <ul className="mt-4 space-y-3">
         {rows.map((row) => (
           <li
@@ -58,7 +58,7 @@ function RailOverviewMock() {
       </ul>
       <div className="mt-5 flex items-end justify-between gap-4">
         <p className="max-w-[10rem] text-[11px] leading-relaxed text-[#9CA3AF]">
-          Rail posture your ops team can act on, not a static integration map.
+          Status your ops team can act on - not a static integration map.
         </p>
         <div className="relative h-20 w-20 shrink-0">
           <svg viewBox="0 0 80 80" className="h-full w-full -rotate-90" aria-hidden="true">
@@ -99,10 +99,10 @@ function ProofNetworkMock() {
         <circle cx="335" cy="90" r="10" fill="#34D399" stroke="#059669" strokeWidth="2" />
       </svg>
       <span className="absolute left-4 top-4 rounded-full bg-[#34D399]/15 px-2.5 py-1 text-[10px] font-semibold text-[#059669]">
-        Continuous proof
+        Evidence trail
       </span>
       <span className="absolute bottom-4 right-4 rounded-full bg-[#34D399]/15 px-2.5 py-1 text-[10px] font-semibold text-[#059669]">
-        Real-time adaptation
+        Finance-ready
       </span>
     </div>
   )
@@ -125,7 +125,7 @@ export function SolutionsInstitutionalSection() {
             <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[#34D399]/15 text-[#059669]">
               <GitBranch className="h-3.5 w-3.5" strokeWidth={2.25} />
             </span>
-            <span>Institutional deployment at scale</span>
+            <span>Built for regulated payout teams</span>
           </motion.div>
 
           <motion.h2
@@ -148,8 +148,7 @@ export function SolutionsInstitutionalSection() {
             transition={{ duration: 0.5, delay: 0.1 }}
             className="mt-4 text-base leading-relaxed text-[#6B7280] sm:text-lg"
           >
-            A payout intelligence layer designed to simplify movement, surface truth, and meet the bar regulated
-            partners expect.
+            Help teams see payout status clearly, resolve gaps, and keep proof ready for the bar finance and audit expect.
           </motion.p>
         </div>
 
@@ -159,26 +158,26 @@ export function SolutionsInstitutionalSection() {
               <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-[#34D399]/15 text-[#059669]">
                 <Shield className="h-4 w-4" strokeWidth={2.25} />
               </span>
-              <h3 className="mt-5 text-xl font-semibold tracking-[-0.03em] text-[#111111]">Regulatory compliance</h3>
+              <h3 className="mt-5 text-xl font-semibold tracking-[-0.03em] text-[#111111]">Ready for review</h3>
               <p className="mt-3 max-w-sm text-[14px] leading-relaxed text-[#6B7280]">
-                Governed access, audit trails, and role-based controls for regulated partners and internal review teams.
+                Role-based access, proof packs, and a clear trail for regulated partners and internal auditors.
               </p>
             </BentoCard>
 
             <BentoCard delay={0.15} className="flex-1">
-              <h3 className="text-xl font-semibold tracking-[-0.03em] text-[#111111]">Scalability &amp; reliability</h3>
+              <h3 className="text-xl font-semibold tracking-[-0.03em] text-[#111111]">Status that stays clear as volume grows</h3>
               <p className="mt-3 max-w-md text-[14px] leading-relaxed text-[#6B7280]">
-                Multi-rail payout operations with connector posture you can act on, built for 24/7 money movement.
+                Follow large batches and day-to-day payouts with confirmation status your team can act on.
               </p>
-              <RailOverviewMock />
+              <BatchOverviewMock />
             </BentoCard>
           </div>
 
           <div className="flex flex-col gap-4">
             <BentoCard delay={0.1}>
-              <h3 className="text-xl font-semibold tracking-[-0.03em] text-[#111111]">Performance &amp; transparency</h3>
+              <h3 className="text-xl font-semibold tracking-[-0.03em] text-[#111111]">Clarity &amp; transparency</h3>
               <p className="mt-3 max-w-md text-[14px] leading-relaxed text-[#6B7280]">
-                Real-time movement truth with Evidence Packs finance can export when the question is &ldquo;what
+                Money meant to pay vs bank-confirmed amounts, with proof packs finance can export when the question is &ldquo;what
                 actually happened?&rdquo;
               </p>
               <ProofNetworkMock />
@@ -188,10 +187,9 @@ export function SolutionsInstitutionalSection() {
               <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-[#34D399] text-white">
                 <BadgeCheck className="h-4 w-4" strokeWidth={2.25} />
               </span>
-              <h3 className="mt-5 text-xl font-semibold tracking-[-0.03em] text-[#111111]">Institutional-grade precision</h3>
+              <h3 className="mt-5 text-xl font-semibold tracking-[-0.03em] text-[#111111]">Proof teams can share</h3>
               <p className="mt-3 max-w-sm text-[14px] leading-relaxed text-[#6B7280]">
-                Layers of risk management, proof paths, and compliance controls, so ops, finance, and audit share one
-                defensible truth.
+                Clear mismatches, check confirmations, and export a proof pack - so ops, finance, and audit defend the same payout story.
               </p>
               <div className="mt-5 inline-flex items-center gap-2 rounded-full border border-[#34D399]/25 bg-[#E8F8F5] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#059669]">
                 <LineChart className="h-3.5 w-3.5" />
@@ -209,7 +207,7 @@ export function SolutionsInstitutionalSection() {
           className="mt-14 flex flex-col items-center text-center"
         >
           <p className="max-w-xl text-[15px] leading-relaxed text-[#6B7280]">
-            Deploy ZORD with your team. Book a demo for rollout depth, or keep exploring the catalog above.
+            Start with ZORD in your team. Book a demo when you want a guided walkthrough - or keep exploring the catalog above.
           </p>
           <Link
             href="/"

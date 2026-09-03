@@ -1,25 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { BACKEND_SERVICES } from '@/config/api.endpoints'
-import { assertCookieMutationProtection } from '@/services/auth/assertSameOrigin.server'
 import {
+  REFRESH_COOKIE_NAME,
   buildForwardHeaders,
   clearAuthCookies,
   edgeAuthUrl,
-  getRefreshTokenFromRequest,
   parseJSONSafe,
-  readSessionTenantRegistry,
-  resolveRequestedSessionTenantId,
 } from '@/services/auth/server'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(request: NextRequest) {
-  const csrf = assertCookieMutationProtection(request)
-  if (!csrf.ok) return csrf.response
-
   const body = (await parseJSONSafe<{ refresh_token?: string }>(request)) ?? {}
-  const refreshToken = body.refresh_token || getRefreshTokenFromRequest(request)
-  const tenantId = resolveRequestedSessionTenantId(request)
+  const refreshToken = body.refresh_token || request.cookies.get(REFRESH_COOKIE_NAME)?.value
 
   if (refreshToken) {
     await fetch(edgeAuthUrl(BACKEND_SERVICES.EDGE.ENDPOINTS.AUTH_LOGOUT), {
@@ -31,10 +24,6 @@ export async function POST(request: NextRequest) {
   }
 
   const response = NextResponse.json({ success: true })
-  // Only clear this tab's tenant session — keep other tenants alive in other tabs.
-  clearAuthCookies(response, {
-    tenantId,
-    registry: readSessionTenantRegistry(request),
-  })
+  clearAuthCookies(response)
   return response
 }

@@ -62,7 +62,7 @@ function mapLeakageToBucket(spec: LeakageTrendBucketSpec, body: LeakageKpiResolv
   }
 }
 
-/** Rolling bucket windows aligned to the home chart — each maps to leakage dashboard date filters. */
+/** Rolling bucket windows aligned to the home chart - each maps to leakage dashboard date filters. */
 export function buildLeakageTrendBucketSpecs(range: DisbursementTrendRange): LeakageTrendBucketSpec[] {
   const { from, to } = trendWindowBounds(range)
   const fromDay = startOfUtcDay(from)
@@ -83,7 +83,6 @@ export function buildLeakageTrendBucketSpecs(range: DisbursementTrendRange): Lea
 
 async function fetchLeakageWindow(
   tenantId: string,
-  accessToken: string,
   spec: LeakageTrendBucketSpec,
 ): Promise<DisbursementTrendBucket> {
   const base = `${BACKEND_SERVICES.INTELLIGENCE.BASE_URL}${BACKEND_SERVICES.INTELLIGENCE.ENDPOINTS.LEAKAGE}`
@@ -99,7 +98,6 @@ async function fetchLeakageWindow(
       headers: {
         'content-type': 'application/json',
         'x-tenant-id': tenantId,
-        Authorization: `Bearer ${accessToken}`,
       },
       cache: 'no-store',
     })
@@ -120,9 +118,8 @@ async function fetchLeakageWindow(
 export async function fetchLeakageTrendFromIntelligence(
   tenantId: string,
   range: DisbursementTrendRange,
-  accessToken: string,
 ): Promise<DisbursementTrendBucket[]> {
   const specs = buildLeakageTrendBucketSpecs(range)
   if (!specs.length) return []
-  return Promise.all(specs.map((spec) => fetchLeakageWindow(tenantId, accessToken, spec)))
+  return Promise.all(specs.map((spec) => fetchLeakageWindow(tenantId, spec)))
 }

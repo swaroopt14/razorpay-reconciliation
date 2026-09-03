@@ -72,14 +72,11 @@ export type EvidenceTimelineEntry = {
   timestamp: string
   event: string
   node_id: string
-  provenance?: 'AUTHORITATIVE' | 'DERIVED'
-  source_field?: string
 }
 
 export type EvidencePackTimelineResponse = {
   evidence_pack_id: string
   intent_id: string
-  data_available?: boolean
   timeline: EvidenceTimelineEntry[]
 }
 
@@ -110,21 +107,10 @@ export type EvidencePackLineageGraphResponse = {
 export type EvidencePackVerifyResponse = {
   status: string
   evidence_pack_id: string
-  verification_run_id?: string
   checked_at: string
   stored_root: string
   computed_root?: string
   explanation: string
-  /** Service 6 layer statuses — optional for older payloads. */
-  db_merkle_status?: string
-  archive_status?: string
-  archive_explanation?: string
-  signature_status?: string
-  signature_explanation?: string
-  replay_status?: string
-  replay_explanation?: string
-  source_replay_status?: string
-  pack_status?: string
 }
 
 export type EvidencePackFull = {

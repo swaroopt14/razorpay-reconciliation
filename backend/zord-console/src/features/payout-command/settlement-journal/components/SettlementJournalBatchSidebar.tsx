@@ -81,7 +81,7 @@ export function SettlementJournalBatchSidebar({
                 ? 'Loading observations…'
                 : cached
                   ? cached.label
-                  : '—'
+                  : '-'
 
           return (
             <button
@@ -101,26 +101,22 @@ export function SettlementJournalBatchSidebar({
                     {batchId}
                   </span>
                 </div>
-                {liveOutcome && (liveOutcome.progressPct > 0 || liveOutcome.finalityStatus) ? (
+                {liveOutcome && liveOutcome.progressPct > 0 ? (
                   <span className={`shrink-0 text-[14px] font-semibold tabular-nums ${liveOutcome.toneText}`}>
-                    {liveOutcome.progressPct > 0 ? `${liveOutcome.progressPct}%` : liveOutcome.label}
+                    {liveOutcome.progressPct}%
                   </span>
                 ) : null}
               </div>
               <p className="mt-0.5 pl-4 text-[13px] text-[#64748b]">{observationCountLine}</p>
-              {selected && liveOutcome ? (
+              {selected && liveOutcome && liveOutcome.progressPct > 0 ? (
                 <div className="mt-2 space-y-1.5 pl-4">
-                  {liveOutcome.progressPct > 0 ? (
-                    <div className="h-1 w-full overflow-hidden rounded-full bg-[#E5E5E5]">
-                      <div
-                        className={`h-full rounded-full ${liveOutcome.barClass}`}
-                        style={{ width: `${liveOutcome.progressPct}%` }}
-                      />
-                    </div>
-                  ) : null}
-                  <p className={`text-[13px] font-semibold ${liveOutcome.toneText}`}>
-                    {liveOutcome.label}
-                  </p>
+                  <div className="h-1 w-full overflow-hidden rounded-full bg-[#E5E5E5]">
+                    <div
+                      className={`h-full rounded-full ${liveOutcome.barClass}`}
+                      style={{ width: `${liveOutcome.progressPct}%` }}
+                    />
+                  </div>
+                  <p className={`text-[13px] font-semibold ${liveOutcome.toneText}`}>{liveOutcome.label}</p>
                 </div>
               ) : null}
             </button>

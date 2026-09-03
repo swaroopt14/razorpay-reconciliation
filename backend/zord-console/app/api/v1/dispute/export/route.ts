@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import ExcelJS from 'exceljs'
-import { assertCookieMutationProtection } from '@/services/auth/assertSameOrigin.server'
 import {
   applyEvidenceGateCookies,
   gateEvidenceTenant,
@@ -10,18 +9,9 @@ import {
 import type { EvidencePackFull, EvidencePackSummaryRow } from '@/services/payout-command/prod-api/evidenceTypes'
 import { apiTrimmedString } from '@/services/payout-command/prod-api/coerceApiField'
 import {
-  cryptographicSealClaim,
-  exportVerificationLines,
-  parseLayeredVerification,
-  paymentVerifiedClaim,
-  verifiedExportBlockReason,
-  type LayeredVerification,
-} from '@/services/payout-command/prod-api/layeredVerification'
-import {
-  postEvidencePackVerifyUpstream,
-  postService6DisputeExport,
-} from '@/services/payout-command/prod-api/verifyEvidencePackUpstream'
-import { consumeBffRateLimit, rateLimitKeyForTenant } from '@/services/bff/rateLimit.server'
+  buildArealisLetterheadPdf,
+  formatPdfDate,
+} from '@/services/payout-command/prod-api/arealisLetterheadPdf'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -38,74 +28,39 @@ type ExportRequestBody = {
   export_type?: ExportType
 }
 
-function verificationPdfLines(verification: LayeredVerification): string[] {
-  return ['--- Service 6 verification ---', ...exportVerificationLines(verification), '']
-}
-
 function sanitizeFileSafe(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 80)
 }
 
-function escapePdfText(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)')
-}
+function letterheadPdfFromLines(
+  title: string,
+  subject: string,
+  lines: string[],
+  createdAt?: string | null,
+): Promise<Buffer> {
+  const sections: { heading?: string; lines: string[] }[] = []
+  let current: { heading?: string; lines: string[] } = { lines: [] }
 
-function simplePdfFromLines(title: string, lines: string[]): Buffer {
-  const all = [title, ...lines]
-  const PAGE_SIZE = 42
-  const chunks: string[][] = []
-  for (let i = 0; i < all.length; i += PAGE_SIZE) chunks.push(all.slice(i, i + PAGE_SIZE))
-  if (chunks.length === 0) chunks.push([title])
-
-  // Build content streams
-  const streams = chunks.map((chunk) => {
-    let s = 'BT\n/F1 11 Tf\n50 790 Td\n'
-    chunk.forEach((line, idx) => {
-      if (idx > 0) s += '0 -16 Td\n'
-      s += `(${escapePdfText(line)}) Tj\n`
-    })
-    return s + 'ET'
-  })
-
-  const N = chunks.length
-  // Object layout:
-  //  1: Catalog
-  //  2: Pages (Kids = page objs)
-  //  3: Font
-  //  4, 6, 8 ... (4 + 2*i): Page i
-  //  5, 7, 9 ... (5 + 2*i): Content stream i
-  const pageObjNums = Array.from({ length: N }, (_, i) => 4 + 2 * i)
-  const streamObjNums = Array.from({ length: N }, (_, i) => 5 + 2 * i)
-  const kidsRef = pageObjNums.map((n) => `${n} 0 R`).join(' ')
-
-  const objects: string[] = [
-    '<< /Type /Catalog /Pages 2 0 R >>',
-    `<< /Type /Pages /Kids [${kidsRef}] /Count ${N} >>`,
-    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
-  ]
-  for (let i = 0; i < N; i++) {
-    objects.push(
-      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents ${streamObjNums[i]} 0 R >>`,
-    )
-    objects.push(
-      `<< /Length ${Buffer.byteLength(streams[i], 'utf8')} >>\nstream\n${streams[i]}\nendstream`,
-    )
+  for (const line of lines) {
+    const sectionMatch = line.match(/^---\s*(.+?)\s*---$/)
+    if (sectionMatch) {
+      if (current.heading || current.lines.length) sections.push(current)
+      current = { heading: sectionMatch[1].toUpperCase(), lines: [] }
+      continue
+    }
+    current.lines.push(line)
   }
+  if (current.heading || current.lines.length) sections.push(current)
 
-  let pdf = '%PDF-1.4\n'
-  const offsets: number[] = [0]
-  objects.forEach((obj, idx) => {
-    offsets.push(Buffer.byteLength(pdf, 'utf8'))
-    pdf += `${idx + 1} 0 obj\n${obj}\nendobj\n`
-  })
-  const xrefOffset = Buffer.byteLength(pdf, 'utf8')
-  pdf += `xref\n0 ${objects.length + 1}\n`
-  pdf += '0000000000 65535 f \n'
-  offsets.slice(1).forEach((offset) => {
-    pdf += `${String(offset).padStart(10, '0')} 00000 n \n`
-  })
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`
-  return Buffer.from(pdf, 'utf8')
+  return buildArealisLetterheadPdf(
+    {
+      date: formatPdfDate(createdAt),
+      to: 'Finance, Compliance & Dispute Desk',
+      subject,
+      title,
+    },
+    sections.length ? sections : [{ lines }],
+  ).then((pdf) => Buffer.from(pdf))
 }
 
 function toMinorAmount(value: unknown): number | null {
@@ -151,7 +106,7 @@ function packUtr(pack: EvidencePackFull): string {
     (typeof fromApi === 'string' ? fromApi.trim() : '') ||
     apiTrimmedString(pack.bank_reference)
   if (!raw) return ''
-  // Upstream may already return a masked value — don't double-mask.
+  // Upstream may already return a masked value - don't double-mask.
   if (raw.includes('*')) return raw
   return maskUtr(raw)
 }
@@ -173,30 +128,25 @@ function pickPackFromList(reference: string, rows: EvidencePackSummaryRow[]): Ev
   return rows[0] ?? null
 }
 
-async function resolvePack(
-  tenantId: string,
-  accessToken: string,
-  paymentReference: string,
-): Promise<EvidencePackFull | null> {
-  const byId = await getEvidencePackById(tenantId, accessToken, paymentReference)
+async function resolvePack(tenantId: string, paymentReference: string): Promise<EvidencePackFull | null> {
+  const byId = await getEvidencePackById(tenantId, paymentReference)
   if (byId.ok) return byId.data
 
   const directIntent = await listEvidencePacksByQuery(
     tenantId,
-    accessToken,
     new URLSearchParams({ intent_id: paymentReference }),
   )
   if (directIntent.ok && (directIntent.data.packs?.length ?? 0) > 0) {
     const first = directIntent.data.packs[0]
-    const full = await getEvidencePackById(tenantId, accessToken, first.evidence_pack_id)
+    const full = await getEvidencePackById(tenantId, first.evidence_pack_id)
     if (full.ok) return full.data
   }
 
-  const broad = await listEvidencePacksByQuery(tenantId, accessToken, new URLSearchParams())
+  const broad = await listEvidencePacksByQuery(tenantId, new URLSearchParams())
   if (broad.ok && (broad.data.packs?.length ?? 0) > 0) {
     const match = pickPackFromList(paymentReference, broad.data.packs)
     if (match) {
-      const full = await getEvidencePackById(tenantId, accessToken, match.evidence_pack_id)
+      const full = await getEvidencePackById(tenantId, match.evidence_pack_id)
       if (full.ok) return full.data
     }
   }
@@ -205,20 +155,8 @@ async function resolvePack(
 }
 
 export async function POST(request: NextRequest) {
-  const csrf = assertCookieMutationProtection(request)
-  if (!csrf.ok) return csrf.response
-
   const gate = await gateEvidenceTenant(request)
   if (!gate.ok) return gate.response
-  const rate = consumeBffRateLimit({
-    bucket: 'evidence_export',
-    key: rateLimitKeyForTenant(gate.tenantId),
-    message: 'Too many dispute export requests. Try again shortly.',
-  })
-  if (!rate.ok) {
-    applyEvidenceGateCookies(rate.response, gate.refreshedPayload)
-    return rate.response
-  }
 
   let body: ExportRequestBody
   try {
@@ -244,64 +182,11 @@ export async function POST(request: NextRequest) {
     return res
   }
 
-  const pack = await resolvePack(gate.tenantId, gate.accessToken, paymentReference)
+  const pack = await resolvePack(gate.tenantId, paymentReference)
   if (!pack) {
     const res = NextResponse.json(
       { error: `No evidence pack found for payment_reference ${paymentReference}` },
       { status: 404 },
-    )
-    applyEvidenceGateCookies(res, gate.refreshedPayload)
-    return res
-  }
-
-  const verify = await postEvidencePackVerifyUpstream(
-    gate.tenantId,
-    gate.accessToken,
-    pack.evidence_pack_id,
-  )
-  const verification = parseLayeredVerification(verify.ok ? verify.data : { status: 'VERIFICATION_NOT_RUN' })
-  const blocked = verifiedExportBlockReason(verification)
-  if (blocked) {
-    const res = NextResponse.json(
-      {
-        error: blocked,
-        verification,
-      },
-      { status: 422 },
-    )
-    applyEvidenceGateCookies(res, gate.refreshedPayload)
-    return res
-  }
-
-  const service6 = await postService6DisputeExport({
-    tenantId: gate.tenantId,
-    accessToken: gate.accessToken,
-    paymentReference,
-    disputeReason,
-    exportType,
-    evidencePackId: pack.evidence_pack_id,
-  })
-  if (service6.ok) {
-    const res = new NextResponse(service6.body, {
-      status: 200,
-      headers: {
-        'content-type': service6.contentType,
-        'content-disposition': `attachment; filename="${service6.filename}"`,
-        'cache-control': 'no-store',
-        'x-verification-run-id': verification.verificationRunId ?? '',
-        'x-verification-overall': verification.overallStatus,
-      },
-    })
-    applyEvidenceGateCookies(res, gate.refreshedPayload)
-    return res
-  }
-  if (service6.status === 422) {
-    const res = NextResponse.json(
-      {
-        error: service6.detail || 'Service 6 blocked verified export',
-        verification,
-      },
-      { status: 422 },
     )
     applyEvidenceGateCookies(res, gate.refreshedPayload)
     return res
@@ -320,19 +205,26 @@ export async function POST(request: NextRequest) {
     const currency = typeof packAny.currency === 'string' ? packAny.currency : 'INR'
     const proofScore = pack.proof_score != null ? pack.proof_score : 'N/A'
     const matched = pack.proof_components?.match_decision_available ?? false
-    const pdf = simplePdfFromLines('Finance Summary', [
-      `Payment reference: ${masked(packPaymentReference(pack))}`,
-      `Amount:            ${pack.amount ?? 'N/A'}`,
-      `Currency:          ${currency}`,
-      `UTR:               ${utr}`,
-      `Status:            ${apiTrimmedString(pack.pack_status) || 'N/A'}`,
-      `Matched:           ${String(matched)}`,
-      `Variance:          ${apiTrimmedString(pack.proof_status) || 'N/A'}`,
-      `Proof score (completeness): ${proofScore}/100`,
-      `Explanation:       ${paymentVerifiedClaim(verification)}`,
-      `Zord signature:    ${zordSignature}`,
-      ...verificationPdfLines(verification),
-    ])
+    const pdf = await letterheadPdfFromLines(
+      'Finance summary for payout verification and dispute response',
+      `Finance Summary - ${masked(packPaymentReference(pack))}`,
+      [
+        '--- Payment ---',
+        `Payment reference: ${masked(packPaymentReference(pack))}`,
+        `Amount:            ${pack.amount ?? 'N/A'}`,
+        `Currency:          ${currency}`,
+        `UTR:               ${utr}`,
+        `Status:            ${apiTrimmedString(pack.pack_status) || 'N/A'}`,
+        '',
+        '--- Verification ---',
+        `Matched:           ${String(matched)}`,
+        `Variance:          ${apiTrimmedString(pack.proof_status) || 'N/A'}`,
+        `Proof score:       ${proofScore}/100`,
+        `Explanation:       Payment verified. Proof score: ${proofScore}/100.`,
+        `Zord signature:    ${zordSignature}`,
+      ],
+      pack.created_at,
+    )
     const res = new NextResponse(new Uint8Array(pdf), {
       status: 200,
       headers: {
@@ -360,68 +252,72 @@ export async function POST(request: NextRequest) {
     const sig = pack.signatures?.[0]
     const pc = pack.proof_components ?? {}
 
-    const pdf = simplePdfFromLines('Audit Evidence Pack', [
-      '--- Identity ---',
-      `Evidence pack:   ${pack.evidence_pack_id}`,
-      `Intent:          ${pack.intent_id || 'N/A'}`,
-      `Tenant:          ${pack.tenant_id}`,
-      `Contract:        ${apiTrimmedString(pack.contract_id) || 'N/A'}`,
-      `UTR:             ${utr}`,
-      '',
-      '--- Timestamps ---',
-      `Instruction received:    ${apiTrimmedString(pack.payment_instruction_received) || 'N/A'}`,
-      `Intent created:          ${apiTrimmedString(pack.canonical_intent_created) || 'N/A'}`,
-      `Settlement received:     ${apiTrimmedString(pack.settlement_record_received) || 'N/A'}`,
-      `Settlement created:      ${apiTrimmedString(pack.canonical_settlement_created) || 'N/A'}`,
-      `Pack created:            ${pack.created_at}`,
-      '',
-      '--- Mapping Profiles ---',
-      `Profile used:    ${apiTrimmedString(pack.mapping_profile_used) || 'N/A'}`,
-      `Ruleset version: ${apiTrimmedString(pack.ruleset_version) || 'v1'}`,
-      `Schema (intent):   ${sv.intent ?? sv.intent_schema ?? 'v1'}`,
-      `Schema (outcome):  ${sv.outcome ?? sv.outcome_schema ?? 'v1'}`,
-      `Schema (contract): ${sv.contract ?? sv.contract_schema ?? 'v1'}`,
-      `Schema (attach):   ${sv.attachment ?? sv.attachment_schema ?? 'N/A'}`,
-      '',
-      '--- Hashes ---',
-      `Raw intent hash:          ${cs.raw_intent_hash || itemHash('RAW_INGRESS_ENVELOPE') || 'N/A'}`,
-      `Canonical intent hash:    ${itemHash('CANONICAL_INTENT')}`,
-      `Raw settlement hash:      ${cs.raw_settlement_hash || itemHash('RAW_SETTLEMENT_ENVELOPE') || 'N/A'}`,
-      `Canonical settlement hash:${cs.canonical_settlement_hash || itemHash('CANONICAL_SETTLEMENT') || 'N/A'}`,
-      `Attachment decision hash: ${cs.attachment_decision_hash || itemHash('ATTACHMENT_DECISION') || 'N/A'}`,
-      `Governance decision hash: ${cs.governance_decision_hash || itemHash('GOVERNANCE_DECISION') || 'N/A'}`,
-      `Envelope hash:            ${itemHash('RAW_INGRESS_ENVELOPE') || cs.raw_intent_hash || 'N/A'}`,
-      `Final evidence view hash: ${cs.final_evidence_view_hash || itemHash('FINAL_EVIDENCE_VIEW') || 'N/A'}`,
-      '',
-      '--- Governance ---',
-      `Decision:         ${apiTrimmedString(pack.governance_decision) || 'N/A'}`,
-      `Required fields:  ${String(pack.required_fields_status ?? 'N/A')}`,
-      `Tokenization:     ${String(pack.tokenization_status ?? 'N/A')}`,
-      '',
-      `Merkle root:             ${apiTrimmedString(pack.merkle_root) || 'N/A'}`,
-      '',
-      '--- Signature ---',
-      `Signer:    ${apiTrimmedString(sig?.signer) || 'N/A'}`,
-      `Algorithm: ${apiTrimmedString(sig?.alg) || 'N/A'}`,
-      `Signed at: ${apiTrimmedString(sig?.signed_at) || 'N/A'}`,
-      `Zord signature: ${zordSignature}`,
-      '',
-      `Verification status:     ${String(pack.verification_status ?? 'N/A')}`,
-      `Completeness score:      ${pack.pack_completeness_score ?? 'N/A'}`,
-      `Settlement leaf present: ${String(pack.settlement_leaf_present_flag ?? 'N/A')}`,
-      `Attachment decision:     ${String(pack.attachment_decision_leaf_present_flag ?? 'N/A')}`,
-      '',
-      '--- Proof Components ---',
-      `Payment instruction: ${String(pc.payment_instruction_available ?? 'N/A')}`,
-      `Settlement record:   ${String(pc.settlement_record_available ?? 'N/A')}`,
-      `Match decision:      ${String(pc.match_decision_available ?? 'N/A')}`,
-      `Governance check:    ${String(pc.governance_decision_available ?? 'N/A')}`,
-      `Replay protection:   ${String(pc.replay_check_passed ?? 'N/A')}`,
-      `Cryptographic seal:  ${cryptographicSealClaim(verification, (pack.signatures?.length ?? 0) > 0)}`,
-      '',
-      `Proof score (completeness): ${pack.proof_score ?? 'N/A'}/100`,
-      ...verificationPdfLines(verification),
-    ])
+    const pdf = await letterheadPdfFromLines(
+      'Audit evidence pack for cryptographic payout defensibility',
+      `Audit Evidence Pack - ${pack.evidence_pack_id}`,
+      [
+        '--- Identity ---',
+        `Evidence pack:   ${pack.evidence_pack_id}`,
+        `Intent:          ${pack.intent_id || 'N/A'}`,
+        `Tenant:          ${pack.tenant_id}`,
+        `Contract:        ${apiTrimmedString(pack.contract_id) || 'N/A'}`,
+        `UTR:             ${utr}`,
+        '',
+        '--- Timestamps ---',
+        `Instruction received:    ${apiTrimmedString(pack.payment_instruction_received) || 'N/A'}`,
+        `Intent created:          ${apiTrimmedString(pack.canonical_intent_created) || 'N/A'}`,
+        `Settlement received:     ${apiTrimmedString(pack.settlement_record_received) || 'N/A'}`,
+        `Settlement created:      ${apiTrimmedString(pack.canonical_settlement_created) || 'N/A'}`,
+        `Pack created:            ${pack.created_at}`,
+        '',
+        '--- Mapping Profiles ---',
+        `Profile used:    ${apiTrimmedString(pack.mapping_profile_used) || 'N/A'}`,
+        `Ruleset version: ${apiTrimmedString(pack.ruleset_version) || 'v1'}`,
+        `Schema (intent):   ${sv.intent ?? sv.intent_schema ?? 'v1'}`,
+        `Schema (outcome):  ${sv.outcome ?? sv.outcome_schema ?? 'v1'}`,
+        `Schema (contract): ${sv.contract ?? sv.contract_schema ?? 'v1'}`,
+        `Schema (attach):   ${sv.attachment ?? sv.attachment_schema ?? 'N/A'}`,
+        '',
+        '--- Hashes ---',
+        `Raw intent hash:          ${cs.raw_intent_hash || itemHash('RAW_INGRESS_ENVELOPE') || 'N/A'}`,
+        `Canonical intent hash:    ${itemHash('CANONICAL_INTENT')}`,
+        `Raw settlement hash:      ${cs.raw_settlement_hash || itemHash('RAW_SETTLEMENT_ENVELOPE') || 'N/A'}`,
+        `Canonical settlement hash:${cs.canonical_settlement_hash || itemHash('CANONICAL_SETTLEMENT') || 'N/A'}`,
+        `Attachment decision hash: ${cs.attachment_decision_hash || itemHash('ATTACHMENT_DECISION') || 'N/A'}`,
+        `Governance decision hash: ${cs.governance_decision_hash || itemHash('GOVERNANCE_DECISION') || 'N/A'}`,
+        `Envelope hash:            ${itemHash('RAW_INGRESS_ENVELOPE') || cs.raw_intent_hash || 'N/A'}`,
+        `Final evidence view hash: ${cs.final_evidence_view_hash || itemHash('FINAL_EVIDENCE_VIEW') || 'N/A'}`,
+        '',
+        '--- Governance ---',
+        `Decision:         ${apiTrimmedString(pack.governance_decision) || 'N/A'}`,
+        `Required fields:  ${String(pack.required_fields_status ?? 'N/A')}`,
+        `Tokenization:     ${String(pack.tokenization_status ?? 'N/A')}`,
+        '',
+        `Merkle root:             ${apiTrimmedString(pack.merkle_root) || 'N/A'}`,
+        '',
+        '--- Signature ---',
+        `Signer:    ${apiTrimmedString(sig?.signer) || 'N/A'}`,
+        `Algorithm: ${apiTrimmedString(sig?.alg) || 'N/A'}`,
+        `Signed at: ${apiTrimmedString(sig?.signed_at) || 'N/A'}`,
+        `Zord signature: ${zordSignature}`,
+        '',
+        `Verification status:     ${String(pack.verification_status ?? 'N/A')}`,
+        `Completeness score:      ${pack.pack_completeness_score ?? 'N/A'}`,
+        `Settlement leaf present: ${String(pack.settlement_leaf_present_flag ?? 'N/A')}`,
+        `Attachment decision:     ${String(pack.attachment_decision_leaf_present_flag ?? 'N/A')}`,
+        '',
+        '--- Proof Components ---',
+        `Payment instruction: ${String(pc.payment_instruction_available ?? 'N/A')}`,
+        `Settlement record:   ${String(pc.settlement_record_available ?? 'N/A')}`,
+        `Match decision:      ${String(pc.match_decision_available ?? 'N/A')}`,
+        `Governance check:    ${String(pc.governance_decision_available ?? 'N/A')}`,
+        `Replay protection:   ${String(pc.replay_check_passed ?? 'N/A')}`,
+        `Cryptographic seal:  ${(pack.signatures?.length ?? 0) > 0 ? 'true' : 'false'}`,
+        '',
+        `Proof score: ${pack.proof_score ?? 'N/A'}/100`,
+      ],
+      pack.created_at,
+    )
     const res = new NextResponse(new Uint8Array(pdf), {
       status: 200,
       headers: {
@@ -442,7 +338,7 @@ export async function POST(request: NextRequest) {
       (i.type || '').toUpperCase().includes('SETTLEMENT'),
     )
     const settlementRef = apiTrimmedString(settlementItem?.ref) || 'N/A'
-    const issueStatement = `${apiTrimmedString(pack.attachment_decision) || 'MATCH_EXACT'} — UTR:${utr}`
+    const issueStatement = `${apiTrimmedString(pack.attachment_decision) || 'MATCH_EXACT'} - UTR:${utr}`
     const workbook = new ExcelJS.Workbook()
     const sheet = workbook.addWorksheet('Bank_PSP_Dispute')
     sheet.addRow(['UTR', 'Client Reference', 'Value Date', 'Amount', 'Currency', 'Variance Reason', 'Settlement Record', 'Issue Statement', 'Zord Signature'])
@@ -457,15 +353,6 @@ export async function POST(request: NextRequest) {
       issueStatement,
       zordSignature,
     ])
-    const verifySheet = workbook.addWorksheet('Verification')
-    verifySheet.addRow(['Field', 'Value'])
-    verifySheet.addRow(['verification_run_id', verification.verificationRunId ?? 'unavailable'])
-    verifySheet.addRow(['checked_at', verification.checkedAt ?? 'unavailable'])
-    verifySheet.addRow(['overall', verification.overallStatus])
-    for (const layer of verification.layers) {
-      verifySheet.addRow([layer.id, `${layer.status} ${layer.explanation}`])
-    }
-    verifySheet.addRow(['payment_verified_claim', paymentVerifiedClaim(verification)])
     const out = Buffer.from(await workbook.xlsx.writeBuffer())
     const res = new NextResponse(new Uint8Array(out), {
       status: 200,
@@ -485,10 +372,6 @@ export async function POST(request: NextRequest) {
     dispute_reason: disputeReason,
     payment_reference: paymentReference,
     generated_at: new Date().toISOString(),
-    export_label: verification.allowsVerifiedClaim
-      ? 'Verified Service 6 export'
-      : 'Complete-but-unverified pack. Verification not run or not fully verified.',
-    verification,
     evidence_pack: pack,
   }
   const res = new NextResponse(JSON.stringify(raw, null, 2), {

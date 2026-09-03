@@ -12,24 +12,24 @@ import {
 
 type ManualReviewEscalationModalProps = {
   row: JournalFailureRow
+  /** @deprecated Support now routes to `/admin?tab=support`. Kept for call-site compat. */
   isSandboxRoute?: boolean
   onClose: () => void
 }
 
 export function ManualReviewEscalationModal({
   row,
-  isSandboxRoute = false,
   onClose,
 }: ManualReviewEscalationModalProps) {
   const router = useRouter()
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const beneficiary = row.beneficiaryName?.trim() || row.paymentPartner?.trim() || '—'
+  const beneficiary = row.beneficiaryName?.trim() || row.paymentPartner?.trim() || '-'
   const amountLabel = Number.isFinite(row.amount)
-    ? formatJournalMoney(row.amount, row.currency)
-    : '—'
-  const errorDetail = row.failureReason?.trim() || '—'
+    ? formatJournalMoney(row.amount, row.currency ?? 'INR')
+    : '-'
+  const errorDetail = row.failureReason?.trim() || '-'
 
   const handleSendToSupport = () => {
     setSubmitting(true)
@@ -49,17 +49,14 @@ export function ManualReviewEscalationModal({
 
     void createSupportTicketRemote({
       category: 'Payment processing',
-      topic: `Manual review — batch ${row.batchId}`,
+      topic: `Manual review - batch ${row.batchId}`,
       description,
       priority: 'urgent',
       source: 'manual_review',
     })
       .then(() => {
         onClose()
-        const supportPath = isSandboxRoute
-          ? '/sandbox?dock=support&accountTab=Zord%20Support'
-          : '/payout-command-view/today?dock=support&accountTab=Zord%20Support'
-        router.push(supportPath)
+        router.push('/admin?demo=sandbox&tab=support')
       })
       .catch((e) => {
         setError(e instanceof Error ? e.message : 'Could not create support ticket.')
@@ -111,7 +108,7 @@ export function ManualReviewEscalationModal({
           </div>
           <div>
             <dt className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Error</dt>
-            <dd className="mt-0.5 text-[14px] font-medium text-rose-700">{errorDetail}</dd>
+            <dd className="mt-0.5 text-[14px] font-medium text-[#0B1324]">{errorDetail}</dd>
           </div>
           <div>
             <dt className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Batch / DLQ</dt>
@@ -121,7 +118,7 @@ export function ManualReviewEscalationModal({
           </div>
         </dl>
 
-        {error ? <p className="mt-3 text-[13px] font-medium text-red-600">{error}</p> : null}
+        {error ? <p className="mt-3 text-[13px] font-medium text-[#0B1324]">{error}</p> : null}
 
         <div className="mt-6 flex flex-wrap justify-end gap-2">
           <button

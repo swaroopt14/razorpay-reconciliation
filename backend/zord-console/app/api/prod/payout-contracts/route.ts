@@ -1,15 +1,20 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { requireSessionTenantForProdProxy } from '@/services/auth/resolvePayoutTenant.server'
-import { publicBffError } from '@/services/bff/publicBffError'
+import { NextResponse } from 'next/server'
+import { fetchPayoutContracts } from '@/services/backend/payout-contracts'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET(request: NextRequest) {
-  const gate = await requireSessionTenantForProdProxy(request)
-  if (!gate.ok) return gate.response
-  return publicBffError({
-    code: 'UNAVAILABLE',
-    message: 'Payout contracts are not part of live V1 BFF.',
-    status: 503,
-  })
+export async function GET() {
+  try {
+    const response = await fetchPayoutContracts()
+    return NextResponse.json(response)
+  } catch (error) {
+    return NextResponse.json(
+      {
+        items: [],
+        error: error instanceof Error ? error.message : 'Failed to fetch payout contracts',
+      },
+      { status: 502 }
+    )
+  }
 }
+

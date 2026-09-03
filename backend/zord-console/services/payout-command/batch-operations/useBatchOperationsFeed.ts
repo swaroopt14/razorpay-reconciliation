@@ -40,7 +40,6 @@ import { enrichSettlementRowsWithPaymentIntentMatches } from '@/services/payout-
 import { summaryFromIntelligenceBatchRow } from '@/services/payout-command/batch-model'
 import { apiTrimmedString } from '@/services/payout-command/prod-api/coerceApiField'
 import type { BatchSummary } from '@/services/payout-command/batch-model'
-import { isSettledObservationStatus } from '@/features/payout-command/settlement-journal/settlementObservationStatusMap'
 
 export const BATCH_OPERATIONS_POLL_MS = 8_000
 /** When no batch is selected, poll the sidebar list less aggressively. */
@@ -112,8 +111,8 @@ function summarizeSettlement(rows: SettlementObservationTableRow[]): SettlementB
     grossAmount += r.amount
     settledAmount += r.settledAmount
     feeAmount += r.feeAmount
-    // CON-P1-24: exact enum map — never substring (NOT_SETTLED_YET must not count as settled).
-    if (isSettledObservationStatus(r.statusRaw ?? r.status ?? '')) settledCount += 1
+    const st = (r.statusRaw ?? r.status ?? '').toUpperCase()
+    if (st.includes('SETTL') || st.includes('SUCCESS') || st === 'CONFIRMED') settledCount += 1
   }
   return {
     observationCount: rows.length,
@@ -139,9 +138,10 @@ export function buildAttentionPreview(
     lastUpdated: r.lastUpdated,
   }))
   const intentAttention = intents.filter(
-    (r): r is JournalIntentRow & { requestId: string } =>
-      Boolean(r.requestId) &&
-      (r.status === 'Needs Review' || r.status === 'Pending' || r.status === 'In Progress'),
+    (r) =>
+      r.status === 'Needs Review' ||
+      r.status === 'Pending' ||
+      r.status === 'In Progress',
   )
   const intentItems: AttentionPreviewRow[] = intentAttention.map((r) => ({
     id: r.requestId,
@@ -302,7 +302,7 @@ export function useBatchOperationsFeed(options: {
   }, [tenantReady, refreshRecentBatches, loadBatchScoped])
 
   const setBatchId = useCallback((_id: string) => {
-    /* controlled by parent — noop placeholder for API symmetry */
+    /* controlled by parent - noop placeholder for API symmetry */
   }, [])
 
   const effectivePollMs = batchId.trim() ? pollMs : BATCH_OPERATIONS_IDLE_POLL_MS

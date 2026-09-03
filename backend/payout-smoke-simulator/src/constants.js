@@ -3,6 +3,34 @@
 export const TENANT_ID =
   process.env.SMOKE_TENANT_ID?.trim() || '00000000-0000-0000-0000-000000000001'
 
+/**
+ * Per-email tenant mapping — each login gets a unique tenant so the console BFF
+ * resolves different tenant_ids and upload readiness is properly isolated.
+ */
+export const USER_TENANTS = {
+  'blank@company.com': {
+    tenant_id: '11111111-1111-1111-1111-111111111111',
+    tenant_name: 'Blank Corp',
+    workspace_code: 'BLANK',
+  },
+  'demo@test123': {
+    tenant_id: '22222222-2222-2222-2222-222222222222',
+    tenant_name: 'Demo Corp',
+    workspace_code: 'DEMO',
+  },
+  'demo@company.com': {
+    tenant_id: TENANT_ID,
+    tenant_name: 'Zordnet Ops',
+    workspace_code: 'ZORDNET',
+  },
+}
+
+/** Resolve tenant info for a given email. Falls back to the global TENANT_ID. */
+export function tenantForEmail(email) {
+  const key = String(email || '').trim().toLowerCase()
+  return USER_TENANTS[key] || { tenant_id: TENANT_ID, tenant_name: 'Zordnet Ops', workspace_code: 'ZORDNET' }
+}
+
 /** Bearer key accepted by the local payout simulator (set ZORD_*_API_KEY in zord-console). */
 export const SMOKE_API_KEY = process.env.SMOKE_API_KEY?.trim() || 'zord-local-dev-api-key'
 
@@ -12,7 +40,7 @@ export function parsePositiveInt(value, fallback) {
 }
 
 /** Rows per batch for intents + settlement observations. */
-export const SMOKE_ROWS_PER_DAY = 15
+export const SMOKE_ROWS_PER_DAY = 20
 
 /**
  * Days available for home/leakage trend charts (default: full calendar year, like master).
@@ -27,7 +55,7 @@ const SMOKE_DAY_PROFILES = [
     intentRupees: 55_000,
     settlementRupees: 44_000,
     dlqCount: 2,
-    settledRows: 11,
+    settledRows: 16,
     pendingRows: 3,
     failedRows: 1,
     matchConfidence: 0.72,
@@ -39,7 +67,7 @@ const SMOKE_DAY_PROFILES = [
     intentRupees: 68_000,
     settlementRupees: 61_000,
     dlqCount: 0,
-    settledRows: 14,
+    settledRows: 19,
     pendingRows: 1,
     failedRows: 0,
     matchConfidence: 0.88,
@@ -51,7 +79,7 @@ const SMOKE_DAY_PROFILES = [
     intentRupees: 48_000,
     settlementRupees: 51_000,
     dlqCount: 1,
-    settledRows: 12,
+    settledRows: 17,
     pendingRows: 2,
     failedRows: 1,
     matchConfidence: 0.68,
@@ -63,7 +91,7 @@ const SMOKE_DAY_PROFILES = [
     intentRupees: 71_000,
     settlementRupees: 52_000,
     dlqCount: 3,
-    settledRows: 10,
+    settledRows: 15,
     pendingRows: 4,
     failedRows: 1,
     matchConfidence: 0.61,
@@ -75,7 +103,7 @@ const SMOKE_DAY_PROFILES = [
     intentRupees: 53_000,
     settlementRupees: 49_000,
     dlqCount: 1,
-    settledRows: 13,
+    settledRows: 18,
     pendingRows: 1,
     failedRows: 1,
     matchConfidence: 0.79,
@@ -87,7 +115,7 @@ const SMOKE_DAY_PROFILES = [
     intentRupees: 88_000,
     settlementRupees: 72_000,
     dlqCount: 0,
-    settledRows: 15,
+    settledRows: 20,
     pendingRows: 0,
     failedRows: 0,
     matchConfidence: 0.91,
@@ -99,7 +127,7 @@ const SMOKE_DAY_PROFILES = [
     intentRupees: 41_000,
     settlementRupees: 35_000,
     dlqCount: 2,
-    settledRows: 9,
+    settledRows: 14,
     pendingRows: 5,
     failedRows: 1,
     matchConfidence: 0.58,
@@ -111,7 +139,7 @@ const SMOKE_DAY_PROFILES = [
     intentRupees: 67_000,
     settlementRupees: 61_000,
     dlqCount: 1,
-    settledRows: 14,
+    settledRows: 19,
     pendingRows: 1,
     failedRows: 0,
     matchConfidence: 0.85,
@@ -123,7 +151,7 @@ const SMOKE_DAY_PROFILES = [
     intentRupees: 59_000,
     settlementRupees: 45_000,
     dlqCount: 2,
-    settledRows: 11,
+    settledRows: 16,
     pendingRows: 3,
     failedRows: 1,
     matchConfidence: 0.7,
@@ -135,7 +163,7 @@ const SMOKE_DAY_PROFILES = [
     intentRupees: 76_000,
     settlementRupees: 68_000,
     dlqCount: 0,
-    settledRows: 15,
+    settledRows: 20,
     pendingRows: 0,
     failedRows: 0,
     matchConfidence: 0.89,
@@ -150,16 +178,16 @@ function isoDateUtc(d) {
 
 /** Pin fixed Jun 12–21 demo batches so journal/evidence URLs stay stable in smoke. */
 const PINNED_DEMO_DAYS = [
-  { date: '2026-06-12', labelSuffix: 'payroll', intentRupees: 55_000, settlementRupees: 44_000, dlqCount: 2, settledRows: 11, pendingRows: 3, failedRows: 1, matchConfidence: 0.72, partner: 'razorpay', finality: 'PARTIALLY_SETTLED' },
-  { date: '2026-06-13', labelSuffix: 'vendor run', intentRupees: 68_000, settlementRupees: 61_000, dlqCount: 0, settledRows: 14, pendingRows: 1, failedRows: 0, matchConfidence: 0.88, partner: 'cashfree', finality: 'FULLY_SETTLED' },
-  { date: '2026-06-14', labelSuffix: 'refunds', intentRupees: 48_000, settlementRupees: 51_000, dlqCount: 1, settledRows: 12, pendingRows: 2, failedRows: 1, matchConfidence: 0.68, partner: 'razorpay', finality: 'PARTIALLY_SETTLED' },
-  { date: '2026-06-15', labelSuffix: 'contractor', intentRupees: 71_000, settlementRupees: 52_000, dlqCount: 3, settledRows: 10, pendingRows: 4, failedRows: 1, matchConfidence: 0.61, partner: 'cashfree', finality: 'OPEN' },
-  { date: '2026-06-16', labelSuffix: 'incentives', intentRupees: 53_000, settlementRupees: 49_000, dlqCount: 1, settledRows: 13, pendingRows: 1, failedRows: 1, matchConfidence: 0.79, partner: 'razorpay', finality: 'PARTIALLY_SETTLED' },
-  { date: '2026-06-17', labelSuffix: 'peak run', intentRupees: 88_000, settlementRupees: 72_000, dlqCount: 0, settledRows: 15, pendingRows: 0, failedRows: 0, matchConfidence: 0.91, partner: 'cashfree', finality: 'FULLY_SETTLED' },
-  { date: '2026-06-18', labelSuffix: 'micro-batch', intentRupees: 41_000, settlementRupees: 35_000, dlqCount: 2, settledRows: 9, pendingRows: 5, failedRows: 1, matchConfidence: 0.58, partner: 'razorpay', finality: 'OPEN' },
-  { date: '2026-06-19', labelSuffix: 'partner payouts', intentRupees: 67_000, settlementRupees: 61_000, dlqCount: 1, settledRows: 14, pendingRows: 1, failedRows: 0, matchConfidence: 0.85, partner: 'cashfree', finality: 'FULLY_SETTLED' },
-  { date: '2026-06-20', labelSuffix: 'sweep', intentRupees: 59_000, settlementRupees: 45_000, dlqCount: 2, settledRows: 11, pendingRows: 3, failedRows: 1, matchConfidence: 0.7, partner: 'razorpay', finality: 'PARTIALLY_SETTLED' },
-  { date: '2026-06-21', labelSuffix: 'close-out', intentRupees: 76_000, settlementRupees: 68_000, dlqCount: 0, settledRows: 15, pendingRows: 0, failedRows: 0, matchConfidence: 0.89, partner: 'cashfree', finality: 'FULLY_SETTLED' },
+  { date: '2026-06-12', labelSuffix: 'payroll', intentRupees: 55_000, settlementRupees: 44_000, dlqCount: 2, settledRows: 16, pendingRows: 3, failedRows: 1, matchConfidence: 0.72, partner: 'razorpay', finality: 'PARTIALLY_SETTLED' },
+  { date: '2026-06-13', labelSuffix: 'vendor run', intentRupees: 68_000, settlementRupees: 61_000, dlqCount: 0, settledRows: 19, pendingRows: 1, failedRows: 0, matchConfidence: 0.88, partner: 'cashfree', finality: 'FULLY_SETTLED' },
+  { date: '2026-06-14', labelSuffix: 'refunds', intentRupees: 48_000, settlementRupees: 51_000, dlqCount: 1, settledRows: 17, pendingRows: 2, failedRows: 1, matchConfidence: 0.68, partner: 'razorpay', finality: 'PARTIALLY_SETTLED' },
+  { date: '2026-06-15', labelSuffix: 'contractor', intentRupees: 71_000, settlementRupees: 52_000, dlqCount: 3, settledRows: 15, pendingRows: 4, failedRows: 1, matchConfidence: 0.61, partner: 'cashfree', finality: 'OPEN' },
+  { date: '2026-06-16', labelSuffix: 'incentives', intentRupees: 53_000, settlementRupees: 49_000, dlqCount: 1, settledRows: 18, pendingRows: 1, failedRows: 1, matchConfidence: 0.79, partner: 'razorpay', finality: 'PARTIALLY_SETTLED' },
+  { date: '2026-06-17', labelSuffix: 'peak run', intentRupees: 88_000, settlementRupees: 72_000, dlqCount: 0, settledRows: 20, pendingRows: 0, failedRows: 0, matchConfidence: 0.91, partner: 'cashfree', finality: 'FULLY_SETTLED' },
+  { date: '2026-06-18', labelSuffix: 'micro-batch', intentRupees: 41_000, settlementRupees: 35_000, dlqCount: 2, settledRows: 14, pendingRows: 5, failedRows: 1, matchConfidence: 0.58, partner: 'razorpay', finality: 'OPEN' },
+  { date: '2026-06-19', labelSuffix: 'partner payouts', intentRupees: 67_000, settlementRupees: 61_000, dlqCount: 1, settledRows: 19, pendingRows: 1, failedRows: 0, matchConfidence: 0.85, partner: 'cashfree', finality: 'FULLY_SETTLED' },
+  { date: '2026-06-20', labelSuffix: 'sweep', intentRupees: 59_000, settlementRupees: 45_000, dlqCount: 2, settledRows: 16, pendingRows: 3, failedRows: 1, matchConfidence: 0.7, partner: 'razorpay', finality: 'PARTIALLY_SETTLED' },
+  { date: '2026-06-21', labelSuffix: 'close-out', intentRupees: 76_000, settlementRupees: 68_000, dlqCount: 0, settledRows: 20, pendingRows: 0, failedRows: 0, matchConfidence: 0.89, partner: 'cashfree', finality: 'FULLY_SETTLED' },
 ]
 
 function dayChartLabelFromIso(iso) {
@@ -294,17 +322,28 @@ function selectSmokeBatches(all, count) {
   return [...pinned, ...recent].sort((a, b) => a.date.localeCompare(b.date))
 }
 
+/** Stable demo batch for journal / evidence deep-links. */
+export const EVIDENCE_BATCH = 'batch-2026-06-12-payroll'
+/** Console Create Payout / upload unlock id (aliases evidence fixture data). */
+export const UPLOAD_DEMO_BATCH_ID = 'batch-001'
+
+function withUploadDemoBatch(batches) {
+  const evidence = ALL_BATCHES.find((b) => b.id === EVIDENCE_BATCH) ?? batches[0]
+  if (!evidence || batches.some((b) => b.id === UPLOAD_DEMO_BATCH_ID)) return batches
+  return [{ ...evidence, id: UPLOAD_DEMO_BATCH_ID, label: 'Batch 001', intentCount: 100, intentTotalRupees: 1237786756 }, ...batches]
+}
+
 /**
  * Journal / evidence list catalogue — capped for fast sidebar loads.
  * Trend KPIs use ALL_BATCHES so Month/Year charts still match master.
+ * `batch-001` is always first so console upload → journal unlock works.
  */
-export const BATCHES = selectSmokeBatches(ALL_BATCHES, BATCH_COUNT)
+export const BATCHES = withUploadDemoBatch(selectSmokeBatches(ALL_BATCHES, BATCH_COUNT))
 
 export const PRIMARY_BATCH =
-  BATCHES[BATCHES.length - 1]?.id ?? `batch-${isoDateUtc(new Date())}-run`
-
-/** Stable demo batch for journal / evidence deep-links. */
-export const EVIDENCE_BATCH = 'batch-2026-06-12-payroll'
+  BATCHES.find((b) => b.id === UPLOAD_DEMO_BATCH_ID)?.id ??
+  BATCHES[BATCHES.length - 1]?.id ??
+  `batch-${isoDateUtc(new Date())}-run`
 export function batchPackId(batchId) {
   return `pack-${batchId}`
 }

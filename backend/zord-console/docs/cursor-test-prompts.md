@@ -1,4 +1,4 @@
-# Cursor test harness — 4 carryover tasks
+# Cursor test harness - 4 carryover tasks
 
 Self-contained prompts you can paste into Cursor (Opus 4.7) one at a time, then grade the
 output against the success criteria below.
@@ -9,21 +9,21 @@ are designed to be **abstract enough to test the model's planning intelligence**
 
 How to use:
 1. Open a fresh Cursor chat in this repo.
-2. Paste the **"Brief"** section verbatim — that's all the user-facing context the model gets.
+2. Paste the **"Brief"** section verbatim - that's all the user-facing context the model gets.
 3. Watch for the **Expected behavior** checklist. The model should hit most of those before
    writing code.
 4. After it's done, grade against **Success criteria**.
 
 ---
 
-## Task 1 — Ambiguity page split (Sprint A, frontend-only)
+## Task 1 - Ambiguity page split (Sprint A, frontend-only)
 
 ### Brief
 
 > Read `docs/product-north-star.md` and `docs/next-iteration-gaps.md §I.5`.
 >
 > Start Sprint A from the north-star plan: split the current `AmbiguityLeakageSurface` into
-> two separate surfaces — `AmbiguitySurface` (ops-focused) and `LeakageSurface` (CFO-focused).
+> two separate surfaces - `AmbiguitySurface` (ops-focused) and `LeakageSurface` (CFO-focused).
 > Frontend only. The Ambiguity page is partially backend-blocked (5 fields missing per §I.5);
 > wire what's available, leave the rest with the `LiveDataHint` "demo data" pill.
 >
@@ -36,7 +36,7 @@ How to use:
 - [ ] `app/payout-command-view/today/_components/surfaces/AmbiguityLeakageSurface.tsx` (current state)
 - [ ] `app/payout-command-view/today/_components/surfaces/index.ts` (export barrel)
 - [ ] `services/payout-command/prod-api/intelligenceTypes.ts` (which fields exist on the endpoint)
-- [ ] `services/payout-command/model.ts` — `dockItems` array (does it have separate entries for
+- [ ] `services/payout-command/model.ts` - `dockItems` array (does it have separate entries for
       ambiguity and leakage, or just one combined?)
 
 ### Expected behavior
@@ -47,7 +47,7 @@ Before writing code, the model should:
 - [ ] Ask a multi-choice question about navigation: keep one combined dock entry with internal
       tabs, OR add a second dock entry for the new surface.
 - [ ] Surface that 5 ambiguity KPIs are backend-blocked and the new `AmbiguitySurface` will
-      ship partial — confirm acceptable.
+      ship partial - confirm acceptable.
 - [ ] List which file moves / creates / deletes will happen, in order.
 
 Then execute:
@@ -63,7 +63,7 @@ Then execute:
 - ✅ Two surfaces render at separate dock IDs (or tabs) and don't share JSX
 - ✅ Leakage hero shows: leakage % + risk tier (KPI 6), Trapped capital (KPI 3),
      Dispute exposure (KPI 4 from ambiguity endpoint), Reversal exposure (KPI 8),
-     Orphan strip (KPI 6) — same as current state, just on the new file
+     Orphan strip (KPI 6) - same as current state, just on the new file
 - ✅ Ambiguity surface shows: `ambiguous_intent_count` (hero), `ambiguity_rate`,
      `avg_attachment_confidence`, `provider_ref_missing_rate` (these 4 ARE in the API today)
 - ✅ Ambiguity surface displays `LiveDataHint` amber pill for sections that need the 5
@@ -77,19 +77,19 @@ Then execute:
 Cursor's final message should look something like this:
 
 > **What changed**
-> - Renamed [AmbiguityLeakageSurface.tsx → LeakageSurface.tsx](backend/...) — CFO content kept as-is
-> - Created [AmbiguitySurface.tsx](backend/...) — 3 hero stats + triage queue placeholder
+> - Renamed [AmbiguityLeakageSurface.tsx → LeakageSurface.tsx](backend/...) - CFO content kept as-is
+> - Created [AmbiguitySurface.tsx](backend/...) - 3 hero stats + triage queue placeholder
 > - Updated [surfaces/index.ts](backend/...) + [dockItems in model.ts](backend/...)
 > - Wired the new surface into [PayoutCommandViewClient.tsx](backend/...)
 >
 > **Test plan**
 > 1. `npm run dev`, navigate to `/payout-command-view/today`
-> 2. Click the new "Ambiguity" dock item — confirm 3 live KPI stats render
-> 3. Click "Leakage" — confirm hero + 3 buckets + orphan strip render
+> 2. Click the new "Ambiguity" dock item - confirm 3 live KPI stats render
+> 3. Click "Leakage" - confirm hero + 3 buckets + orphan strip render
 > 4. With a tenant that has no events, both pages should fall back to canned text + amber pill
 >
 > **Skipped**
-> - 5 ambiguity KPIs blocked by backend (§I.5) — surfaced with `LiveDataHint`
+> - 5 ambiguity KPIs blocked by backend (§I.5) - surfaced with `LiveDataHint`
 
 ### Grading rubric (out of 10)
 
@@ -106,7 +106,7 @@ Cursor's final message should look something like this:
 
 ---
 
-## Task 2 — Ambiguity page: wire the 5 missing KPIs (backend + frontend)
+## Task 2 - Ambiguity page: wire the 5 missing KPIs (backend + frontend)
 
 ### Brief
 
@@ -117,7 +117,7 @@ Cursor's final message should look something like this:
 > in the current `/v1/intelligence/dashboard/ambiguity` response.
 >
 > I'm OK with backend changes for this one. Add the 5 fields to the backend response (use
-> placeholder values for now — e.g. compute from existing fields or hardcode reasonable
+> placeholder values for now - e.g. compute from existing fields or hardcode reasonable
 > stubs), update the frontend type, and wire them into `AmbiguitySurface` (or
 > `AmbiguityLeakageSurface` if Task 1 hasn't run yet).
 >
@@ -125,12 +125,12 @@ Cursor's final message should look something like this:
 
 ### Context Cursor should pull
 
-- [ ] `docs/next-iteration-gaps.md §I.5` — the 5 fields + their semantic meaning
-- [ ] Where the intelligence service lives — find the Go handler that returns the ambiguity
+- [ ] `docs/next-iteration-gaps.md §I.5` - the 5 fields + their semantic meaning
+- [ ] Where the intelligence service lives - find the Go handler that returns the ambiguity
       dashboard. It's likely under `backend/zord-intelligence/` or wherever the `:8089` service
       is implemented (Cursor will need to find this).
-- [ ] `services/payout-command/prod-api/intelligenceTypes.ts` — `AmbiguityKpiResolved` type
-- [ ] `app/api/prod/intelligence/ambiguity/route.ts` — proxy (no change needed unless type
+- [ ] `services/payout-command/prod-api/intelligenceTypes.ts` - `AmbiguityKpiResolved` type
+- [ ] `app/api/prod/intelligence/ambiguity/route.ts` - proxy (no change needed unless type
       passthrough matters)
 
 ### Expected behavior
@@ -171,7 +171,7 @@ Then execute:
 
 ---
 
-## Task 3 — Buttons audit: full remediation
+## Task 3 - Buttons audit: full remediation
 
 ### Brief
 
@@ -188,17 +188,17 @@ Then execute:
 
 ### Context Cursor should pull
 
-- [ ] `docs/buttons-audit.md` — the inventory and known dead patterns
+- [ ] `docs/buttons-audit.md` - the inventory and known dead patterns
 - [ ] Each surface file as you work through it (don't try to load all 34 at once)
 
 ### Expected behavior
 
 Before starting:
-- [ ] Estimate hours. Doc says ~4–6 hours. Confirm the user has time, or propose a
+- [ ] Estimate hours. Doc says ~4-6 hours. Confirm the user has time, or propose a
       time-boxed subset.
 - [ ] Propose ordering by **visibility / blast radius**, not just file size. ConnectorIntelligence
       and HomeSurface are most-seen; settings are least-seen.
-- [ ] Ask which to remove vs which to wire — different decisions for different buttons.
+- [ ] Ask which to remove vs which to wire - different decisions for different buttons.
 
 For each button (the inner loop):
 - [ ] Identify the button (line + label)
@@ -208,8 +208,8 @@ For each button (the inner loop):
 - [ ] No "marked disabled with title='coming soon'" placeholders. Either it works or it's gone.
 
 After each surface:
-- [ ] Update `buttons-audit.md` — move that surface from "❓ unverified" to a status list
-- [ ] Commit (or stage) — don't batch a 4-hour change into one commit.
+- [ ] Update `buttons-audit.md` - move that surface from "❓ unverified" to a status list
+- [ ] Commit (or stage) - don't batch a 4-hour change into one commit.
 
 ### Success criteria
 
@@ -222,7 +222,7 @@ After each surface:
 
 ### What to watch for
 
-- **The model wires every button to `console.info` and calls it done.** Push back — that's the
+- **The model wires every button to `console.info` and calls it done.** Push back - that's the
   same anti-pattern we just got rid of. A logged button is still a dead button to the user.
 - **The model removes a button without checking whether it was a critical entry point.** Each
   removal should be justified in the commit message / audit doc.
@@ -235,18 +235,18 @@ Different scope, separate session probably.
 
 ---
 
-## Task 4 — Fix the two preexisting type errors on main
+## Task 4 - Fix the two preexisting type errors on main
 
 ### Brief
 
 > There are two type errors on `main` that I've been ignoring as preexisting. Fix them.
 >
-> Error 1: `app/payout-command-view/today/_components/PayoutCommandViewClient.tsx` —
+> Error 1: `app/payout-command-view/today/_components/PayoutCommandViewClient.tsx` -
 > `'Quarter'` is compared to `HomeTimeframe` which has no `'Quarter'` variant. Also
 > `setTimeframe('Quarter')` is called. Something is out of sync between the union and the
 > usage.
 >
-> Error 2: `ProofSurface.tsx` — Recharts `Tooltip formatter` signature changed; our callbacks return
+> Error 2: `ProofSurface.tsx` - Recharts `Tooltip formatter` signature changed; our callbacks return
 > `[string, string]` or `[number, string]` but the new Formatter type expects something else.
 >
 > Both are real fixes (no `@ts-ignore`). End with both errors gone from the type-check output.
@@ -254,10 +254,10 @@ Different scope, separate session probably.
 ### Context Cursor should pull
 
 - [ ] `app/payout-command-view/today/_components/PayoutCommandViewClient.tsx` line ~87
-- [ ] `services/payout-command/model.ts` — find the `HomeTimeframe` type definition + see
+- [ ] `services/payout-command/model.ts` - find the `HomeTimeframe` type definition + see
       what variants exist
 - [ ] `app/payout-command-view/today/_components/surfaces/ProofSurface.tsx` lines ~142 and ~225
-- [ ] `node_modules/recharts/types/component/Tooltip.d.ts` — actual Formatter signature
+- [ ] `node_modules/recharts/types/component/Tooltip.d.ts` - actual Formatter signature
 
 ### Expected behavior
 
@@ -272,8 +272,8 @@ Before fixing:
 
 Then fix:
 - [ ] Edit the union OR the call site (per user's answer)
-- [ ] Update each Recharts formatter to match the type — likely `(value, name, item, index, payload) => ReactNode | [ReactNode, ReactNode]`
-- [ ] `npx tsc --noEmit` — confirm both errors gone, no new ones introduced
+- [ ] Update each Recharts formatter to match the type - likely `(value, name, item, index, payload) => ReactNode | [ReactNode, ReactNode]`
+- [ ] `npx tsc --noEmit` - confirm both errors gone, no new ones introduced
 
 ### Success criteria
 
@@ -299,7 +299,7 @@ After running 2+ of these tasks, score Cursor's behavior on these axes:
 | Axis | What good looks like |
 |---|---|
 | **Reads context first** | Pulls 5+ relevant files before writing code |
-| **Asks at the right time** | Asks 1–2 multi-choice questions on architectural decisions, nothing else |
+| **Asks at the right time** | Asks 1-2 multi-choice questions on architectural decisions, nothing else |
 | **Scope discipline** | Diff is tight, matches the task, doesn't refactor unrelated code |
 | **Type-check hygiene** | Runs `tsc --noEmit` after each file, baselines preexisting errors |
 | **Reuses existing patterns** | Uses `useSessionTenantId`, `useIntelligenceKpis`, `LiveDataHint` correctly |

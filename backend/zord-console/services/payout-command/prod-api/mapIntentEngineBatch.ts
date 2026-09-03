@@ -4,26 +4,9 @@ import type { IntelligenceBatchRow } from './intelligenceTypes'
 import { apiTrimmedString } from './coerceApiField'
 import { readIntentQualityScore } from '@/services/payout-command/prod-api/resolveIntentQualityScore'
 import { formatDlqStatusLabel, parseDlqIntentContext, normalizePspDisplayName } from './mapDlqContext'
-import {
-  DEFAULT_TENANT_BUSINESS_TIMEZONE,
-  formatInTenantBusinessTimezone,
-} from '@/services/payout-command/tenantBusinessTimezone'
-import {
-  JOURNAL_DEFAULT_CURRENCY,
-  majorAmountToMinor,
-  normalizeJournalCurrency,
-  parseMinorAmountField,
-} from './money/journalMoney'
-import { mapJournalIntentDecision } from '@/features/payout-command/intent-journal/mappers/mapJournalIntentDecision'
 
 export type JournalBatchType = 'Disbursement' | 'Settlement'
-export type JournalIntentStatus =
-  | 'Ready to Process'
-  | 'Confirmed'
-  | 'Pending'
-  | 'Needs Review'
-  | 'In Progress'
-  | 'Decision unavailable'
+export type JournalIntentStatus = 'Ready to Process' | 'Confirmed' | 'Pending' | 'Needs Review' | 'In Progress'
 export type JournalIntentMatch = 'Matched' | 'Likely Matched' | 'Awaiting' | 'Mismatch' | 'Not Found'
 
 export type JournalBatchRecord = {
@@ -32,14 +15,12 @@ export type JournalBatchRecord = {
   /** Raw `type` from intent-engine sidebar (e.g. PAYOUT, COLLECTION). */
   apiType: string
   source: string
-  /** Batch total in minor units (paise for INR). Never major INR. */
-  amountMinor: number
-  currency: string
+  totalValue: number
   transactions: number
   confirmedCount: number
-  /** Legacy field name — when from engine sidebar, stores rounded count fallback only. */
+  /** Legacy field name - when from engine sidebar, stores rounded count fallback only. */
   highConfidenceCount: number
-  /** Batch-level aggregate confidence 0ΓÇô1 from intent-engine `aggregate_confidence_score`. */
+  /** Batch-level aggregate confidence 0-1 from intent-engine `aggregate_confidence_score`. */
   aggregateConfidenceScore?: number
   mismatchCount: number
   unresolvedCount: number
@@ -49,21 +30,17 @@ export type JournalBatchRecord = {
 
 export type JournalIntentRow = {
   batchId: string
-  /** React key — never shown as a durable Zord identifier. */
-  rowKey: string
-  /** Display label: authoritative intent id, or `Intent ID unavailable · Source row N`. */
+  /** Intent-scoped display id for Zord ID column. */
   zordId: string
-  /** Authoritative intent id. Null when the source row has no intent_id. */
-  requestId: string | null
+  /** Intent id (or synthetic id) for drawer selection. */
+  requestId: string
   reference: string
   amount: number
-  method: 'Bank Transfer' | 'LSM' | 'NACH' | '—'
+  method: 'Bank Transfer' | 'LSM' | 'NACH' | '-'
   rail?: string
   status: JournalIntentStatus
   match: JournalIntentMatch
   lastUpdated: string
-  /** ISO instant for financial day filters (CON-P1-29). Display stays in lastUpdated. */
-  lastUpdatedIso?: string
   paymentPartner: string
   bank: string
   paymentMethodDetail: string
@@ -80,14 +57,33 @@ export type JournalIntentRow = {
   infoSummary: string
   /** Full engine row for expandable details (not fabricated). */
   rawIntent?: PaymentIntentRecord
+  /** Spec 7.6 - enriched on the journal surface */
+  lifecycleStage?: string
+  policyStatus?: string
+  sourceIntegrity?: string
+  riskState?: string
+  actionContract?: string
+  changeSignal?: string
+  sealEligible?: boolean
+  readinessReason?: string
 }
 
 function formatJournalExecutionAt(iso: string | undefined): string {
-  return formatInTenantBusinessTimezone(iso, DEFAULT_TENANT_BUSINESS_TIMEZONE)
+  const s = apiTrimmedString(iso)
+  if (!s) return '-'
+  const d = new Date(s)
+  if (Number.isNaN(d.getTime())) return s
+  return d.toLocaleString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 function formatConfidenceLabel(score: number | undefined): string {
-  if (score == null || !Number.isFinite(score)) return '—'
+  if (score == null || !Number.isFinite(score)) return '-'
   const pct = score <= 1 ? score * 100 : score
   return `${pct.toFixed(0)}%`
 }
@@ -95,7 +91,7 @@ function formatConfidenceLabel(score: number | undefined): string {
 function resolveProvider(intent: PaymentIntentRecord): string {
   const instrument = apiTrimmedString(intent.beneficiary?.instrument?.kind)
   const beneficiaryType = apiTrimmedString(intent.beneficiary_type)
-  return instrument || beneficiaryType || '—'
+  return instrument || beneficiaryType || '-'
 }
 
 function buildIntentInfoSummary(intent: PaymentIntentRecord): string {
@@ -107,28 +103,19 @@ function buildIntentInfoSummary(intent: PaymentIntentRecord): string {
   ].filter(Boolean)
   if (intent.duplicate_risk_flag) parts.push('duplicate-risk')
   if (intent.governance?.semantic_valid === false) parts.push('semantic-invalid')
-  return parts.length > 0 ? parts.join(' · ') : '—'
+  return parts.length > 0 ? parts.join(' · ') : '-'
 }
 
-export function formatIntentIdUnavailable(sourceRowNum: number | null, index: number): string {
-  const n = sourceRowNum != null && sourceRowNum > 0 ? sourceRowNum : index + 1
-  return `Intent ID unavailable · Source row ${n}`
-}
-
-export function journalIntentRowKey(
-  batchId: string,
-  index: number,
-  sourceRowNum: number | null,
-  intentId: string | null,
-): string {
-  if (intentId) return intentId
-  if (sourceRowNum != null && sourceRowNum > 0) return `${batchId}:src:${sourceRowNum}:${index}`
-  return `${batchId}:row:${index}`
+function buildZordId(requestId: string, batchId: string): string {
+  const source = apiTrimmedString(requestId) || batchId
+  const normalized = source.replace(/[^a-zA-Z0-9]/g, '')
+  if (!normalized) return 'ZRD-UNKNOWN'
+  return `ZRD-${normalized.slice(-8).toUpperCase()}`
 }
 
 function resolveDlqPaymentMethod(ctx: ReturnType<typeof parseDlqIntentContext>): JournalFailureRow['method'] {
   const raw = (ctx.paymentMethod ?? '').toUpperCase()
-  if (!raw) return '—'
+  if (!raw) return '-'
   if (raw.includes('NACH')) return 'NACH'
   if (raw.includes('IMPS') || raw.includes('UPI') || raw.includes('LSM')) return 'LSM'
   if (raw.includes('RTGS') || raw.includes('NEFT') || raw.includes('BANK')) return 'Bank Transfer'
@@ -136,25 +123,34 @@ function resolveDlqPaymentMethod(ctx: ReturnType<typeof parseDlqIntentContext>):
 }
 
 function formatDlqUpdatedAt(iso?: string): string {
-  return formatInTenantBusinessTimezone(iso, DEFAULT_TENANT_BUSINESS_TIMEZONE)
+  const s = apiTrimmedString(iso)
+  if (!s) return '-'
+  const d = new Date(s)
+  if (Number.isNaN(d.getTime())) return s
+  return d.toLocaleString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 export type JournalFailureRow = {
   batchId: string
-  /** DLQ-scoped display id for Zord ID column (authoritative dlq_id when present). */
+  /** DLQ-scoped display id for Zord ID column (same ZRD- format as intents). */
   zordId?: string
   requestId: string
   sourceRowNum?: number | null
   reference: string
   amount: number
-  method: 'Bank Transfer' | 'LSM' | 'NACH' | '—'
+  method: 'Bank Transfer' | 'LSM' | 'NACH' | '-'
   currency?: string
   paymentPartner: string
   connectorSubtitle: string
   failureReason: string
   failureStage: 'Validation' | 'Dispatch' | 'Processing' | 'Settlement'
   lastUpdated: string
-  lastUpdatedIso?: string
   action: 'Retry' | 'Fix Details' | 'Investigate' | 'Escalate' | 'Fix Mandate'
   dlqStatus?: string
   dlqStatusLabel?: string
@@ -170,7 +166,7 @@ function inferBatchSource(batchId: string, finality?: string): string {
   return 'Intelligence'
 }
 
-/** Engine in-flight only — used for Billing ΓÇ£processing in ZordΓÇ¥ count (GET, no POST). */
+/** Engine in-flight only - used for Billing “processing in Zord” count (GET, no POST). */
 export function isZordProcessingPaymentIntent(intent: PaymentIntentRecord): boolean {
   const st = String(intent.status ?? '').toUpperCase()
   const biz = String(intent.business_state ?? '').toUpperCase()
@@ -184,8 +180,8 @@ export function isZordProcessingPaymentIntent(intent: PaymentIntentRecord): bool
 export function mapSidebarItemToBatchRecord(it: IntentEngineBatchSidebarItem): JournalBatchRecord {
   const typeUpper = (it.type ?? '').toUpperCase()
   const batchType: JournalBatchType = typeUpper.includes('SETTLEMENT') ? 'Settlement' : 'Disbursement'
-  // Intent-engine sidebar `totalValue` is major INR (same contract as batch-ids `total_amount`).
-  const amountMinor = majorAmountToMinor(it.totalValue)
+  const tv = Number.parseFloat(String(it.totalValue ?? '').replace(/,/g, ''))
+  const totalValue = Number.isFinite(tv) ? tv : 0
   const hcRaw = it.highConfidenceCount
   const aggregateConfidenceScore =
     typeof hcRaw === 'number' && Number.isFinite(hcRaw) && hcRaw <= 1 ? hcRaw : undefined
@@ -197,12 +193,11 @@ export function mapSidebarItemToBatchRecord(it: IntentEngineBatchSidebarItem): J
         : 0
 
   return {
-    batchId: String(it.batchId ?? '').trim() || '—',
+    batchId: String(it.batchId ?? '').trim() || '-',
     type: batchType,
-    apiType: typeUpper || '—',
+    apiType: typeUpper || '-',
     source: 'Intent engine',
-    amountMinor,
-    currency: JOURNAL_DEFAULT_CURRENCY,
+    totalValue,
     transactions: it.transactions ?? 0,
     confirmedCount: it.confirmedCount ?? 0,
     highConfidenceCount,
@@ -213,29 +208,21 @@ export function mapSidebarItemToBatchRecord(it: IntentEngineBatchSidebarItem): J
   }
 }
 
-function readMatchConfidenceAsFraction(raw: number | undefined | null): number | undefined {
-  if (raw == null || !Number.isFinite(raw)) return undefined
-  return raw <= 1 ? raw : raw / 100
-}
-
 export function mapIntelligenceRowToBatchRecord(b: IntelligenceBatchRow): JournalBatchRecord {
-  const failed = b.failed_count ?? 0
   return {
     batchId: b.batch_id,
     type: 'Disbursement',
-    apiType: '—',
+    apiType: '-',
     source: inferBatchSource(b.batch_id, b.finality_status),
-    amountMinor: parseMinorAmountField(b.total_intended_amount_minor),
-    currency: normalizeJournalCurrency(JOURNAL_DEFAULT_CURRENCY),
+    totalValue: 0,
     transactions: b.total_count ?? 0,
     confirmedCount: b.success_count ?? 0,
     highConfidenceCount: 0,
-    aggregateConfidenceScore: readMatchConfidenceAsFraction(b.match_confidence),
-    mismatchCount: failed,
-    unresolvedCount: failed,
+    mismatchCount: 0,
+    unresolvedCount: 0,
     intelligenceCounts: {
       success_count: b.success_count ?? 0,
-      failed_count: failed,
+      failed_count: b.failed_count ?? 0,
       pending_count: b.pending_count ?? 0,
       finality_status: b.finality_status,
     },
@@ -251,19 +238,27 @@ export function mapPaymentIntentToIntentRow(
   const amount = typeof raw === 'string' ? parseFloat(raw) : Number(raw ?? 0)
   const safe = Number.isFinite(amount) ? amount : 0
   const stRaw = String(intent.status ?? '').trim()
-  const gov = String(intent.governance_state ?? '').trim()
-  const mapped = mapJournalIntentDecision({
-    status: intent.status,
-    governance_state: intent.governance_state,
-    governance_decision: intent.governance_decision,
-    intent_lifecycle_state: intent.intent_lifecycle_state,
-    business_state: intent.business_state,
-  })
-  const status = mapped.status
+  const gov = String(intent.governance_state ?? '').toUpperCase()
+  const biz = String(intent.business_state ?? '').toUpperCase()
+  const st = stRaw.toUpperCase()
+
+  let status: JournalIntentStatus = 'Ready to Process'
+  if (st.includes('FAIL') || st.includes('REJECT') || st.includes('ERROR') || gov === 'FLAGGED') {
+    status = 'Needs Review'
+  } else if (st.includes('CONFIRM') || st.includes('SUCCESS') || st === 'COMPLETED' || st === 'SETTLED') {
+    status = 'Confirmed'
+  } else if (st.includes('PROCESS') || st.includes('DISPAT') || st === 'IN_FLIGHT' || biz === 'PROCESSING') {
+    status = 'In Progress'
+  } else if (st.includes('PEND') || st.includes('CREAT')) {
+    status = 'Pending'
+  }
+
   const conf = intent.aggregate_confidence_score
-  let match: JournalIntentMatch = mapped.match
-  if (status === 'Ready to Process' && typeof conf === 'number' && conf >= 0.8) match = 'Likely Matched'
-  else if (status === 'Ready to Process' && typeof conf === 'number' && conf < 0.5) match = 'Mismatch'
+  let match: JournalIntentMatch = 'Awaiting'
+  if (status === 'Confirmed') match = 'Matched'
+  else if (status === 'Needs Review') match = 'Not Found'
+  else if (typeof conf === 'number' && conf >= 0.8) match = 'Likely Matched'
+  else if (typeof conf === 'number' && conf < 0.5) match = 'Mismatch'
 
   const created = intent.created_at ? new Date(intent.created_at) : new Date()
   const instrument =
@@ -278,41 +273,30 @@ export function mapPaymentIntentToIntentRow(
 
   const paymentMethodDetail = [instrument || null, intent.constraints?.execution_window || null]
     .filter(Boolean)
-    .join(' · ') || '—'
+    .join(' · ') || '-'
 
   const confidenceScore = readIntentQualityScore(intent)
-  const intentId = apiTrimmedString(intent.intent_id) || null
-  const sourceRowNum = intent.source_row_num ?? null
-  const rowIndex = Number.parseInt(String(intent.source_row_num ?? 0), 10)
-  const indexForKey = Number.isFinite(rowIndex) && rowIndex > 0 ? rowIndex - 1 : 0
 
   return {
     batchId,
-    rowKey: journalIntentRowKey(batchId, indexForKey, sourceRowNum, intentId),
-    zordId: intentId ?? formatIntentIdUnavailable(sourceRowNum, indexForKey),
-    requestId: intentId,
+    zordId: buildZordId(intent.intent_id, batchId),
+    requestId: intent.intent_id,
     reference:
       apiTrimmedString(intent.client_payout_ref) ||
       (intent.source_row_num != null ? `SRC-${intent.source_row_num}` : apiTrimmedString(intent.envelope_id)) ||
-      intentId ||
-      '—',
+      intent.intent_id,
     amount: safe,
     method,
-    rail: instrument || '—',
+    rail: instrument || '-',
     status,
     match,
-    lastUpdated: created.toLocaleTimeString('en-IN', {
-      hour: '2-digit',
-      minute: '2-digit',
-      timeZone: DEFAULT_TENANT_BUSINESS_TIMEZONE,
-    }),
-    lastUpdatedIso: apiTrimmedString(intent.created_at) || apiTrimmedString(intent.intended_execution_at),
-    paymentPartner: instrument || '—',
-    bank: instrument || '—',
+    lastUpdated: created.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+    paymentPartner: instrument || '-',
+    bank: instrument || '-',
     paymentMethodDetail,
-    engineStatus: mapped.engineStatus || [stRaw, gov].filter(Boolean).join(' · ') || undefined,
+    engineStatus: [stRaw, gov, biz].filter(Boolean).join(' · ') || undefined,
     currency: apiTrimmedString(intent.currency ?? 'INR') || 'INR',
-    tenantId: apiTrimmedString(intent.tenant_id) || apiTrimmedString(sessionTenantId) || '—',
+    tenantId: apiTrimmedString(intent.tenant_id) || apiTrimmedString(sessionTenantId) || '-',
     intendedExecutionAt: formatJournalExecutionAt(intent.intended_execution_at),
     clientBatchRef: apiTrimmedString(intent.client_batch_ref) || apiTrimmedString(intent.batchid) || batchId,
     sourceRowNum: intent.source_row_num ?? null,
@@ -320,27 +304,14 @@ export function mapPaymentIntentToIntentRow(
     provider: resolveProvider(intent),
     confidenceScore,
     confidenceLabel: formatConfidenceLabel(confidenceScore ?? undefined),
-    infoSummary:
-      status === 'Decision unavailable'
-        ? 'Decision unavailable'
-        : status === 'Ready to Process'
-          ? 'Ready for dispatch'
-          : status === 'Pending'
-            ? 'Awaiting Bank Confirmation'
-            : status === 'Needs Review'
-              ? buildIntentInfoSummary(intent)
-              : status === 'Confirmed'
-                ? 'Confirmed'
-                : status === 'In Progress'
-                  ? 'In Progress'
-                  : buildIntentInfoSummary(intent),
+    infoSummary: buildIntentInfoSummary(intent),
     rawIntent: intent,
   }
 }
 
 export function mapDlqToFailureRow(row: ApiDlqRow, opts?: { inManualReviewQueue?: boolean }): JournalFailureRow {
   const batchFromIngest = apiTrimmedString(row.client_batch_ref) || apiTrimmedString(row.batch_id)
-  const batchId = batchFromIngest || '—'
+  const batchId = batchFromIngest || '-'
   const stageRaw = (row.stage ?? '').toLowerCase()
   let failureStage: JournalFailureRow['failureStage'] = 'Processing'
   if (stageRaw.includes('valid')) failureStage = 'Validation'
@@ -354,8 +325,8 @@ export function mapDlqToFailureRow(row: ApiDlqRow, opts?: { inManualReviewQueue?
     apiTrimmedString(row.dlq_status) === 'NEEDS_MANUAL_REVIEW'
   return {
     batchId,
-    zordId: apiTrimmedString(row.dlq_id) || '—',
-    requestId: apiTrimmedString(row.dlq_id) || '—',
+    zordId: buildZordId(row.dlq_id, batchId),
+    requestId: row.dlq_id,
     sourceRowNum: typeof row.source_row_num === 'number' ? row.source_row_num : null,
     reference: row.dlq_id,
     amount: ctx.amount,
@@ -363,10 +334,9 @@ export function mapDlqToFailureRow(row: ApiDlqRow, opts?: { inManualReviewQueue?
     currency: ctx.currency ?? 'INR',
     paymentPartner: connector,
     connectorSubtitle,
-    failureReason: apiTrimmedString(row.error_detail) || apiTrimmedString(row.reason_code) || '—',
+    failureReason: apiTrimmedString(row.error_detail) || apiTrimmedString(row.reason_code) || '-',
     failureStage,
     lastUpdated: formatDlqUpdatedAt(row.created_at),
-    lastUpdatedIso: apiTrimmedString(row.created_at),
     action: row.replayable ? 'Retry' : 'Investigate',
     dlqStatus: row.dlq_status,
     dlqStatusLabel: formatDlqStatusLabel(row.dlq_status),
@@ -375,5 +345,3 @@ export function mapDlqToFailureRow(row: ApiDlqRow, opts?: { inManualReviewQueue?
     inManualReviewQueue: manualReview,
   }
 }
-
-

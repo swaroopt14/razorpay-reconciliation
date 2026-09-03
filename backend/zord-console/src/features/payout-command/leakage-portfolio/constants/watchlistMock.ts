@@ -7,7 +7,7 @@ export type WatchlistItem = {
   sparkPath: string
 }
 
-/** Illustrative processing exposure per rail (lakhs INR) — aligned with ~1–2L batch scale, not legacy 50L+ demo values. */
+/** Illustrative processing exposure per rail (lakhs INR) - aligned with ~1-2L batch scale, not legacy 50L+ demo values. */
 export const WATCHLIST_ITEMS: WatchlistItem[] = [
   {
     id: 'hdfc',

@@ -1,11 +1,5 @@
 import { fetchProdJsonGetWithMeta, type ProdJsonGetResult } from './fetchProdJsonGet'
 import { apiTrimmedString } from './coerceApiField'
-import {
-  DEFAULT_TENANT_BUSINESS_TIMEZONE,
-  formatInTenantBusinessTimezone,
-} from '@/services/payout-command/tenantBusinessTimezone'
-import { settlementStatusDisplayLabel } from '@/features/payout-command/settlement-journal/settlementObservationStatusMap'
-import { normalizeCurrency } from '@/services/payout-command/money/money'
 
 export type SettlementObservationBatchListItem = {
   client_batch_id: string
@@ -22,7 +16,7 @@ export type SettlementObservationBatchListResponse = {
   pagination?: SettlementPagination
 }
 
-/** Canonical settlement observation row (mode 2) — mirrors outcome-engine JSON. */
+/** Canonical settlement observation row (mode 2) - mirrors outcome-engine JSON. */
 export type CanonicalSettlementObservation = {
   settlement_observation_id: string
   tenant_id?: string
@@ -77,11 +71,6 @@ export type CanonicalSettlementObservation = {
   beneficiary_fingerprint?: string | null
   zord_signature_carrier?: string | null
   matched_intent_id?: string | null
-  /** Service 5 attachment decision (MATCH_EXACT / MATCH_HIGH_CONFIDENCE / MATCH_AMBIGUOUS / …). */
-  attachment_decision?: string | null
-  attachment_confidence?: number | string | null
-  candidate_count?: number | null
-  ambiguity_score?: number | null
   warnings_json?: unknown
   created_at?: string
   updated_at?: string
@@ -129,10 +118,6 @@ export type SettlementObservationBatchDetailItem = {
   mapping_confidence?: number | string
   attachment_readiness_score?: number
   matched_intent_id?: string | null
-  attachment_decision?: string | null
-  attachment_confidence?: number | string | null
-  candidate_count?: number | null
-  ambiguity_score?: number | null
   created_at?: string
   updated_at?: string
 }
@@ -289,8 +274,7 @@ export type SettlementObservationTableRow = {
   settlementBatchId: string
   ingestRunId: string
   clientBatchId: string
-  sourceRowRef: string | null
-  displayRowIndex: number | null
+  sourceRowRef: string
   sourceFileRef: string
   clientRef: string
   providerRef: string
@@ -307,10 +291,7 @@ export type SettlementObservationTableRow = {
   sourceType: string
   sourceStrength: string
   observationKind: string
-  /** Display timestamp in tenant business timezone. */
   observationTime: string
-  /** Raw ISO for financial day filters (CON-P1-29) — never browser-local grouping. */
-  observationAtIso: string
   valueDate: string
   createdAt: string
   updatedAt: string
@@ -342,11 +323,6 @@ export type SettlementObservationTableRow = {
   beneficiaryFingerprint: string
   zordSignatureCarrier: string
   matchedIntentId: string
-  /** Service 5 attachment decision — authoritative for Match Status (CON-P0-12). */
-  attachmentDecision: string | null
-  attachmentConfidence: number | null
-  candidateCount: number | null
-  ambiguityScore: number | null
 }
 
 function parseMoney(raw: string | number | null | undefined): number {
@@ -355,43 +331,56 @@ function parseMoney(raw: string | number | null | undefined): number {
   return Number.isFinite(n) ? n : 0
 }
 
-function formatObsTime(iso: string | undefined, timeZone = DEFAULT_TENANT_BUSINESS_TIMEZONE): string {
-  return formatInTenantBusinessTimezone(iso, timeZone)
+function formatObsTime(iso: string | undefined): string {
+  const safeIso = apiTrimmedString(iso)
+  if (!safeIso) return '-'
+  const d = new Date(safeIso)
+  if (Number.isNaN(d.getTime())) return safeIso
+  return d.toLocaleString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 function displayOrDash(value: string | null | undefined): string {
   const v = value?.trim()
-  return v ? v : '—'
+  return v ? v : '-'
 }
 
-/** Authoritative source_row_ref only. Never substitute array index. */
-export function resolveSourceRowRef(raw: string | null | undefined): string | null {
+/** Use 1-based row index only when API source_row_ref is missing or invalid. */
+function resolveSourceRowRef(
+  raw: string | null | undefined,
+  rowIndex: number | undefined,
+): string {
   const v = raw?.trim()
-  if (!v) return null
+  if (!v) {
+    return rowIndex != null ? String(rowIndex + 1) : '-'
+  }
   const signed = /^-?\d+$/.test(v) ? Number.parseInt(v, 10) : Number.NaN
-  if (Number.isFinite(signed) && signed <= 0) return null
+  if (Number.isFinite(signed)) {
+    if (signed <= 0 && rowIndex != null) return String(rowIndex + 1)
+    return String(signed)
+  }
   return v
 }
 
 export function mapObservationToTableRow(
   obs: CanonicalSettlementObservation | SettlementObservationBatchDetailItem,
-  opts?: { clientBatchId?: string; rowIndex?: number; timeZone?: string },
+  opts?: { clientBatchId?: string; rowIndex?: number },
 ): SettlementObservationTableRow {
   const full = obs as CanonicalSettlementObservation
   const slim = obs as SettlementObservationBatchDetailItem
-  const timeZone = opts?.timeZone || DEFAULT_TENANT_BUSINESS_TIMEZONE
   const statusRaw = apiTrimmedString(full.settlement_status ?? slim.settlement_status)
   const settlementBatchId = displayOrDash(full.settlement_batch_id ?? slim.settlement_batch_id)
-  const sourceRowRef = resolveSourceRowRef(full.source_row_ref ?? slim.source_row_ref)
-  const displayRowIndex = opts?.rowIndex != null ? opts.rowIndex + 1 : null
-  const observationAtIso = apiTrimmedString(
-    full.observation_timestamp ?? slim.observation_timestamp ?? full.created_at ?? slim.created_at,
-  )
-  const createdAt = formatObsTime(full.created_at ?? slim.created_at, timeZone)
+  const sourceRowRef = resolveSourceRowRef(full.source_row_ref ?? slim.source_row_ref, opts?.rowIndex)
+  const createdAt = formatObsTime(full.created_at ?? slim.created_at)
   const observationId =
     full.settlement_observation_id?.trim() ||
     slim.settlement_observation_id?.trim() ||
-    `${settlementBatchId}:${sourceRowRef ?? 'noref'}:${displayRowIndex ?? 0}:${createdAt}`
+    `${settlementBatchId}:${sourceRowRef}:${opts?.rowIndex ?? 0}:${createdAt}`
 
   return {
     observationId,
@@ -399,7 +388,6 @@ export function mapObservationToTableRow(
     ingestRunId: displayOrDash(full.ingest_run_id),
     clientBatchId: displayOrDash(full.client_batch_id ?? opts?.clientBatchId),
     sourceRowRef,
-    displayRowIndex,
     sourceFileRef: displayOrDash(full.source_file_ref),
     clientRef: displayOrDash(full.client_reference_candidate ?? slim.client_reference_candidate),
     providerRef: displayOrDash(full.provider_reference ?? slim.provider_reference),
@@ -408,20 +396,18 @@ export function mapObservationToTableRow(
     settledAmount: parseMoney(full.settled_amount ?? slim.settled_amount),
     feeAmount: parseMoney(full.fee_amount ?? slim.fee_amount),
     deductionAmount: parseMoney(full.deduction_amount ?? slim.deduction_amount),
-    currency: normalizeCurrency(full.currency_code ?? slim.currency_code),
+    currency: apiTrimmedString(full.currency_code ?? slim.currency_code ?? 'INR') || 'INR',
     statusRaw,
-    // CON-P1-24: unknown enums show Needs mapping (never auto-promoted to Settled).
-    status: settlementStatusDisplayLabel(statusRaw),
+    status: statusRaw ? statusRaw.replace(/_/g, ' ') : '-',
     sourceSystem: displayOrDash(full.source_system ?? slim.source_system),
     sourceSystemId: displayOrDash(full.source_system_id ?? slim.source_system_id),
     sourceType: displayOrDash(full.source_type),
     sourceStrength: displayOrDash(full.source_strength ?? full.source_strength_class),
     observationKind: displayOrDash(full.observation_kind?.replace(/_/g, ' ')),
-    observationTime: formatObsTime(observationAtIso || undefined, timeZone),
-    observationAtIso,
-    valueDate: formatObsTime(full.value_date ?? slim.value_date ?? undefined, timeZone),
+    observationTime: formatObsTime(full.observation_timestamp ?? slim.observation_timestamp ?? full.created_at ?? slim.created_at),
+    valueDate: formatObsTime(full.value_date ?? slim.value_date ?? undefined),
     createdAt,
-    updatedAt: formatObsTime(full.updated_at ?? slim.updated_at, timeZone),
+    updatedAt: formatObsTime(full.updated_at ?? slim.updated_at),
     providerStatusCode: displayOrDash(full.provider_status_code ?? slim.provider_status_code),
     failureReasonCode: displayOrDash(full.failure_reason_code ?? slim.failure_reason_code),
     retryFlag: Boolean(full.retry_flag ?? slim.retry_flag),
@@ -464,7 +450,7 @@ export function mapObservationToTableRow(
         ? 'Yes'
         : full.provider_ref_consistency_flag === false
           ? 'No'
-          : '—',
+          : '-',
     mappingProfileId: displayOrDash(full.mapping_profile_id),
     mappingProfileVersion: displayOrDash(full.mapping_profile_version),
     scoreVersion: displayOrDash(full.score_version),
@@ -473,29 +459,7 @@ export function mapObservationToTableRow(
     corridorId: displayOrDash(full.corridor_id),
     beneficiaryFingerprint: displayOrDash(full.beneficiary_fingerprint ?? undefined),
     zordSignatureCarrier: displayOrDash(full.zord_signature_carrier ?? undefined),
-    matchedIntentId: displayOrDash(full.matched_intent_id ?? slim.matched_intent_id ?? undefined),
-    attachmentDecision: (() => {
-      const raw = full.attachment_decision ?? slim.attachment_decision
-      const v = typeof raw === 'string' ? raw.trim() : ''
-      return v || null
-    })(),
-    attachmentConfidence: (() => {
-      const raw = full.attachment_confidence ?? slim.attachment_confidence
-      if (typeof raw === 'number' && Number.isFinite(raw)) return raw
-      if (typeof raw === 'string' && raw.trim()) {
-        const n = Number.parseFloat(raw)
-        return Number.isFinite(n) ? n : null
-      }
-      return null
-    })(),
-    candidateCount: (() => {
-      const raw = full.candidate_count ?? slim.candidate_count
-      return typeof raw === 'number' && Number.isFinite(raw) ? raw : null
-    })(),
-    ambiguityScore: (() => {
-      const raw = full.ambiguity_score ?? slim.ambiguity_score
-      return typeof raw === 'number' && Number.isFinite(raw) ? raw : null
-    })(),
+    matchedIntentId: displayOrDash(full.matched_intent_id ?? undefined),
   }
 }
 
@@ -505,8 +469,7 @@ export function observationSearchHaystack(row: SettlementObservationTableRow): s
     row.settlementBatchId,
     row.ingestRunId,
     row.clientBatchId,
-    row.sourceRowRef ?? '',
-    row.displayRowIndex != null ? String(row.displayRowIndex) : '',
+    row.sourceRowRef,
     row.sourceFileRef,
     row.clientRef,
     row.providerRef,

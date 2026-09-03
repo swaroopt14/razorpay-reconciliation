@@ -16,7 +16,7 @@ function buildEvidenceIndexTooltip(score: number, defensibility: DefensibilityKp
   const evidencePct = formatPercentLabel(defensibility.evidence_pack_rate)
   const govPct = formatPercentLabel(defensibility.governance_coverage_pct)
   const replayPct = formatPercentLabel(defensibility.replayability_pct)
-  return `${score.toFixed(1)} of ${EVIDENCE_INDEX_MAX_POINTS} points on the Evidence Completeness Index — composite score from evidence pack coverage (${evidencePct}), governance checks (${govPct}), replay readiness (${replayPct}), and artifact completeness (amount processing excluded).`
+  return `${score.toFixed(1)} of ${EVIDENCE_INDEX_MAX_POINTS} points on the Evidence Completeness Index - composite score from evidence pack coverage (${evidencePct}), governance checks (${govPct}), replay readiness (${replayPct}), and artifact completeness (amount processing excluded).`
 }
 
 export function deriveEvidenceKpis(input: {
@@ -40,14 +40,14 @@ export function deriveEvidenceKpis(input: {
   }
 
   const defScoreRaw = defensibility ? defensibility.defensibility_score : null
-  const defScore = defScoreRaw != null ? defScoreRaw.toFixed(1) : '—'
-  const evidencePct = defensibility ? formatPercentLabel(defensibility.evidence_pack_rate) : '—'
-  const govPct = defensibility ? formatPercentLabel(defensibility.governance_coverage_pct) : '—'
+  const defScore = defScoreRaw != null ? defScoreRaw.toFixed(1) : '-'
+  const evidencePct = defensibility ? formatPercentLabel(defensibility.evidence_pack_rate) : '-'
+  const govPct = defensibility ? formatPercentLabel(defensibility.governance_coverage_pct) : '-'
   const packCompletenessPct = defensibility
     ? formatPercentLabel(defensibility.avg_pack_completeness_score, { digits: 2 })
-    : '—'
-  const replayPct = defensibility ? formatPercentLabel(defensibility.replayability_pct) : '—'
-  const disputePct = defensibility ? formatPercentLabel(defensibility.dispute_ready_pct, { digits: 2 }) : '—'
+    : '-'
+  const replayPct = defensibility ? formatPercentLabel(defensibility.replayability_pct) : '-'
+  const disputePct = defensibility ? formatPercentLabel(defensibility.dispute_ready_pct, { digits: 2 }) : '-'
 
   const readinessSub = ''
 
@@ -73,7 +73,7 @@ export function deriveEvidenceKpis(input: {
   const disputeSub =
     packCount > 0
       ? `${readyCount} ready to export · ${incompleteCount} incomplete · ${reviewCount} need review`
-      : '—'
+      : '-'
 
   return [
     {
@@ -88,7 +88,7 @@ export function deriveEvidenceKpis(input: {
     {
       id: 'packs',
       label: evidenceCopy.kpi.evidencePacksGenerated,
-      value: packCount > 0 ? String(packCount) : '—',
+      value: packCount > 0 ? String(packCount) : '-',
       sub: packsSub,
     },
     {
@@ -97,7 +97,7 @@ export function deriveEvidenceKpis(input: {
       value: packCompletenessPct,
       sub: defensibility
         ? `Average completeness score across all evidence packs in this batch`
-        : '—',
+        : '-',
     },
     {
       id: 'dispute',
@@ -112,7 +112,7 @@ export function deriveEvidenceKpis(input: {
             : String(readyCount)
           : packCount > 0
             ? '0'
-            : '—',
+            : '-',
       sub: '',
     },
   ]

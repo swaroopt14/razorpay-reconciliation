@@ -15,7 +15,7 @@ export const ambiguityCopy = {
     paymentsNeedingReviewHelper: 'Payment decisions where match attachment is not fully resolved.',
     reviewRate: 'Review Rate',
     reviewRateHelper: 'Share of payment decisions with unresolved match uncertainty.',
-    reviewRateThresholds: 'Green below 3% · Amber 3–8% · Red above 8%',
+    reviewRateThresholds: 'Green below 3% · Amber 3-8% · Red above 8%',
     unclearValue: 'Unclear Payment Value',
     unclearValueHelper: 'Payment value sitting on unresolved match uncertainty in this window.',
     avgConfidence: 'Average Match Confidence',
@@ -27,7 +27,7 @@ export const ambiguityCopy = {
   },
   chart: {
     title: 'Why Payments Need Review',
-    subtitle: 'Four rates that slow clean matching — lower is better.',
+    subtitle: 'Four rates that slow clean matching - lower is better.',
     reviewRate: 'Review Rate',
     lowConfidence: 'Low Confidence Matches',
     missingRefs: 'Missing References',
@@ -36,17 +36,17 @@ export const ambiguityCopy = {
   },
   topReasons: {
     title: 'Top Reasons for Review',
-    empty: 'No major match-review drivers in this window — rates are within expected bounds.',
+    empty: 'No major match-review drivers in this window - rates are within expected bounds.',
     missingRef: 'Missing bank or PSP reference on a meaningful share of payments.',
-    lowConfidence: 'Low average match confidence — signals conflict or are incomplete.',
-    highReviewRate: 'Review rate is elevated — many payments need match confirmation.',
+    lowConfidence: 'Low average match confidence - signals conflict or are incomplete.',
+    highReviewRate: 'Review rate is elevated - many payments need match confirmation.',
     multipleMatches: 'Multiple possible matches detected for some payments.',
   },
   confidence: {
     title: 'Average Match Confidence',
-    low: 'Low confidence — signals are conflicting or missing.',
-    moderate: 'Moderate confidence — some signals resolved, some uncertain.',
-    high: 'High confidence — multi-signal attachment largely confirmed.',
+    low: 'Low confidence - signals are conflicting or missing.',
+    moderate: 'Moderate confidence - some signals resolved, some uncertain.',
+    high: 'High confidence - multi-signal attachment largely confirmed.',
     summaryPrefix: 'On average Zord has',
     summarySuffix: 'certainty that settlement signals align with the original payment intent in this window.',
   },
@@ -81,12 +81,24 @@ export const ambiguityCopy = {
     reviewUnclear: 'Review Unclear Payments',
     openMissingRefs: 'Open Missing References',
     exportList: 'Export Review List',
-    exportPending: 'Export API pending — open Intent Journal or export from Evidence when available.',
+    exportPending: 'Export API pending - open Intent Journal or export from Evidence when available.',
   },
 } as const
 
+function toRatio(value: number): number {
+  return value > 1 ? value / 100 : value
+}
+
 export function reviewRateColor(rate: number): { bar: string; text: string } {
-  if (rate < 0.03) return { bar: 'bg-black', text: 'text-white' }
-  if (rate <= 0.08) return { bar: 'bg-amber-500', text: 'text-amber-950' }
-  return { bar: 'bg-red-600', text: 'text-red-950' }
+  const ratio = toRatio(rate)
+  if (ratio < 0.03) return { bar: 'bg-[#138A63]', text: 'text-[#138A63]' }
+  if (ratio <= 0.08) return { bar: 'bg-[#B7791F]', text: 'text-[#B7791F]' }
+  return { bar: 'bg-[#C2413B]', text: 'text-[#C2413B]' }
+}
+
+export function confidenceZoneLabel(conf: number): string {
+  const ratio = toRatio(conf)
+  if (ratio < 0.5) return ambiguityCopy.confidence.low
+  if (ratio < 0.8) return ambiguityCopy.confidence.moderate
+  return ambiguityCopy.confidence.high
 }

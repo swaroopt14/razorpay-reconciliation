@@ -1,5 +1,5 @@
 /**
- * Step 1 — Intent batch file → Next proxy → zord-edge POST /v1/bulk-ingest (never intelligence)
+ * Step 1 - Intent batch file → Next proxy → zord-edge POST /v1/bulk-ingest (never intelligence)
  * Breakpoint-friendly: all request/response handling lives here.
  *
  * Product default (Arealis): failed **bulk rows** (validation / business rules after a row
@@ -8,24 +8,22 @@
  * Reserve **DLQ** for true ingest/engine **dead letters** that never became a proper intent
  * (or must not be mixed with normal intent lists).
  */
-import { csrfMutationHeaders } from '@/services/auth/csrfBrowser'
 import {
   errorMessageFromProxyResponse,
   extractBatchIdFromBulkIngestResponse,
   normalizeAuthorizationHeader,
 } from './intakeHttpShared'
-import type { ReprocessReason } from './reprocessReason'
 
 export const INTENT_BULK_INGEST_PROXY_PATH = '/api/bulk-ingest'
 
 export type PostIntentBulkIngestParams = {
   file: File
   /**
-   * Optional explicit Authorization (Bearer / ApiKey). When empty, `/api/bulk-ingest`
-   * uses the signed-in session cookie only — never a server env ingest key (CON-P0-02).
+   * Optional. When empty, `/api/bulk-ingest` uses `ZORD_BULK_INGEST_API_KEY` on the server (if set).
+   * Otherwise raw pasted key or full `Bearer …` / `ApiKey …` / `API-Key …` (normalized to `Bearer …` for zord-edge).
    */
   apiKeyRaw?: string
-  /** e.g. CSV, FILE_UPLOAD — must match zord-edge TransportValidation allowlist */
+  /** e.g. CSV, FILE_UPLOAD - must match zord-edge TransportValidation allowlist */
   sourceType: string
   /**
    * Optional static parser type (BANK / NBFC / MERCHANT / VENDOR / GATEWAY).
@@ -40,8 +38,6 @@ export type PostIntentBulkIngestParams = {
   sourceSystem?: string
   /** When true, forwards X-Zord-Force-Reprocess (Batch-Id required upstream). */
   forceReprocess?: boolean
-  /** Optional. Intent ingest does not require a reason; settlement does. */
-  reprocessReason?: ReprocessReason
   /** Override for tests or non-Next callers */
   endpointPath?: string
 }
@@ -62,11 +58,10 @@ export async function postIntentBulkIngest(params: PostIntentBulkIngestParams): 
   const formData = new FormData()
   formData.append('file', params.file, params.file.name)
 
-  // Cookie session path needs CSRF; explicit Authorization (API key) bypasses server-side.
-  const headers: Record<string, string> = csrfMutationHeaders({
+  const headers: Record<string, string> = {
     'x-zord-source-type': params.sourceType,
     'x-zord-source-class': 'INTENT',
-  })
+  }
   const tenantType = params.tenantType?.trim()
   if (tenantType) headers['x-zord-tenant-type'] = tenantType
   if (auth) headers.authorization = auth
@@ -76,10 +71,7 @@ export async function postIntentBulkIngest(params: PostIntentBulkIngestParams): 
   if (idempotencyKey) headers['X-Idempotency-Key'] = idempotencyKey
   const sourceSystem = params.sourceSystem?.trim()
   if (sourceSystem) headers['X-Zord-Source-System'] = sourceSystem
-  if (params.forceReprocess) {
-    headers['X-Zord-Force-Reprocess'] = 'true'
-    if (params.reprocessReason) headers['X-Zord-Force-Reprocess-Reason'] = params.reprocessReason
-  }
+  if (params.forceReprocess) headers['X-Zord-Force-Reprocess'] = 'true'
 
   let response: Response
   try {

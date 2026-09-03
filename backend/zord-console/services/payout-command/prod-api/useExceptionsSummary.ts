@@ -27,11 +27,7 @@ export function useExceptionsSummary({
       const res = await getExceptionsSummary(dateQuery, batchId)
       setData(res)
     } catch {
-      setData({
-        availability: 'UNAVAILABLE',
-        data_available: false,
-        reason: 'Exceptions intelligence is temporarily unavailable.',
-      })
+      setData({ data_available: false, reason: 'Failed to load exceptions summary.' })
     } finally {
       setLoading(false)
     }

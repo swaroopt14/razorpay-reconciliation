@@ -1,0 +1,1584 @@
+{
+  "batches": [
+    {
+      "batchId": "BCH-001",
+      "batchNumber": "Batch 001",
+      "status": "awaiting_authority",
+      "environment": "SANDBOX",
+      "summary": {
+        "totalAmount": 1237786756,
+        "currency": "INR",
+        "instructionCount": 100,
+        "approvalType": "dual",
+        "authorityStatus": "awaiting_authority",
+        "dispatchStatus": "blocked",
+        "lifecycleStatus": "not_started"
+      },
+      "policy": {
+        "policyId": "pol_treasury_domestic_v14",
+        "name": "Enterprise Supplier Payout",
+        "version": "v14",
+        "status": "draft",
+        "namespace": "treasury.domestic",
+        "approvedRails": [
+          "NEFT",
+          "RTGS",
+          "IMPS"
+        ],
+        "controls": [
+          {
+            "id": "CTRL-001",
+            "name": "Payee change protection",
+            "description": "Stop execution if beneficiary details change.",
+            "severity": "high"
+          },
+          {
+            "id": "CTRL-002",
+            "name": "Dual approval threshold",
+            "description": "Second approval required above ₹50,000.",
+            "severity": "high"
+          },
+          {
+            "id": "CTRL-003",
+            "name": "Domestic rails only",
+            "description": "Only NEFT, RTGS and IMPS are permitted.",
+            "severity": "medium"
+          },
+          {
+            "id": "CTRL-004",
+            "name": "Payroll source restriction",
+            "description": "Accept instructions only from approved payroll/AP sources.",
+            "severity": "medium"
+          }
+        ],
+        "approvalThreshold": {
+          "amount": 50000,
+          "currency": "INR",
+          "operator": ">"
+        }
+      },
+      "agent": {
+        "agentId": "agt_treasury_eu_04",
+        "name": "Treasury Action Agent",
+        "purpose": "Supplier payout proposals only",
+        "ownerRole": "role_treasury_controller",
+        "capabilities": [
+          "retrieve_invoice",
+          "retrieve_purchase_order",
+          "retrieve_vendor",
+          "propose_supplier_payout"
+        ],
+        "limits": {
+          "maximumAmount": 500000,
+          "currency": "INR"
+        }
+      },
+      "sourceProposal": {
+        "proposalId": "ap_novacell_bch001",
+        "sourceType": "Batch Payment Instructions",
+        "sourceReference": "PAY-0001 → PAY-0020",
+        "createdAt": "2026-09-01T10:02:00+05:30",
+        "createdBy": "agt_treasury_eu_04",
+        "businessReason": "Vendor settlement for approved supplier invoices."
+      },
+      "instructions": [
+        {
+          "ref": "PAY-0001",
+          "payee": "Apex Components Pvt Ltd",
+          "amount": 172347.78,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0002",
+          "payee": "Northwind Supplies",
+          "amount": 62711.14,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0003",
+          "payee": "Brightline Media",
+          "amount": 44790.38,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0004",
+          "payee": "Summit Components",
+          "amount": 193549.44,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0005",
+          "payee": "Meridian Services",
+          "amount": 96696.12,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0006",
+          "payee": "Local Tools Co",
+          "amount": 90439.34,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0007",
+          "payee": "Horizon Logistics",
+          "amount": 85938.14,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0008",
+          "payee": "Cedar Softwares",
+          "amount": 68567.09,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0009",
+          "payee": "Pacific Packaging",
+          "amount": 192494.95,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0010",
+          "payee": "Vertex Alloys",
+          "amount": 60876.67,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0011",
+          "payee": "Indigo Textiles",
+          "amount": 180085.83,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0012",
+          "payee": "Orion Chemicals",
+          "amount": 193366.1,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0013",
+          "payee": "Maple Print House",
+          "amount": 152820.13,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0014",
+          "payee": "Nova Electrics",
+          "amount": 57647.05,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0015",
+          "payee": "Silverline Foods",
+          "amount": 162188.62,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0016",
+          "payee": "Atlas Couriers",
+          "amount": 127192.12,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0017",
+          "payee": "Prime Bearing Co",
+          "amount": 46196.3,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0018",
+          "payee": "Eastgate Plastics",
+          "amount": 45784.09,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0019",
+          "payee": "BluePeak Marketing",
+          "amount": 59049.81,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0020",
+          "payee": "Harbor Spare Parts",
+          "amount": 84988.87,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0021",
+          "payee": "Redwood Trading",
+          "amount": 87900.12,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0022",
+          "payee": "Titan Steelworks",
+          "amount": 144513.47,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0023",
+          "payee": "Greenfield Agro",
+          "amount": 164581.53,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0024",
+          "payee": "Sunrise Pharma",
+          "amount": 45106.96,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0025",
+          "payee": "Quantum IT Services",
+          "amount": 156116.67,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0026",
+          "payee": "Pinnacle Engineering",
+          "amount": 80878.11,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0027",
+          "payee": "Nimbus Cloud Tech",
+          "amount": 188248.95,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0028",
+          "payee": "Cobalt Energy",
+          "amount": 174518.84,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0029",
+          "payee": "Falcon Air Cargo",
+          "amount": 185198.32,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0030",
+          "payee": "Sterling Jewellers",
+          "amount": 152731.93,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0031",
+          "payee": "Vanguard Consulting",
+          "amount": 126693.38,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0032",
+          "payee": "Sapphire Hospitality",
+          "amount": 85363.07,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0033",
+          "payee": "Crystal Analytics",
+          "amount": 132857.1,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0034",
+          "payee": "Ironclad Manufacturing",
+          "amount": 161933.91,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0035",
+          "payee": "Golden Gate Exports",
+          "amount": 97352.45,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0036",
+          "payee": "Silver Fern Foods",
+          "amount": 207641.77,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0037",
+          "payee": "Emerald Textiles",
+          "amount": 40947.1,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0038",
+          "payee": "Ruby Mining Corp",
+          "amount": 197132.07,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0039",
+          "payee": "Platinum Solutions",
+          "amount": 206892.08,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0040",
+          "payee": "Diamond Precision",
+          "amount": 72744.38,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0041",
+          "payee": "Ruby Software Labs",
+          "amount": 184536.94,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0042",
+          "payee": "Amber Health Sciences",
+          "amount": 127335.86,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0043",
+          "payee": "Jade Garden Supplies",
+          "amount": 110236.55,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0044",
+          "payee": "Coral Reef Shipping",
+          "amount": 97286.13,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0045",
+          "payee": "Pearl Academy Services",
+          "amount": 71876.69,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0046",
+          "payee": "Opal Digital Media",
+          "amount": 84298.68,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0047",
+          "payee": "Onyx Infrastructure",
+          "amount": 198105.09,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0048",
+          "payee": "Sapphire Power Systems",
+          "amount": 109477.46,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0049",
+          "payee": "Topaz Chemicals",
+          "amount": 60817.57,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0050",
+          "payee": "Amethyst Biosciences",
+          "amount": 58852.71,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0051",
+          "payee": "Garnet Agriculture",
+          "amount": 118473.73,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0052",
+          "payee": "Zircon Aerospace",
+          "amount": 59676.95,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0053",
+          "payee": "Aquamarine Marine",
+          "amount": 114124.78,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0054",
+          "payee": "Turquoise Wellness",
+          "amount": 215544.14,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0055",
+          "payee": "Lapis Education",
+          "amount": 111005.74,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0056",
+          "payee": "Citrine Retail",
+          "amount": 164936.03,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0057",
+          "payee": "Peridot Finance",
+          "amount": 94514.47,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0058",
+          "payee": "Spinel Construction",
+          "amount": 207163.82,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0059",
+          "payee": "Almandine Networks",
+          "amount": 48618.61,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0060",
+          "payee": "Rhodolite Telecom",
+          "amount": 191095.75,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0061",
+          "payee": "Charoite Semiconductors",
+          "amount": 134977.97,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0062",
+          "payee": "Sphene Robotics",
+          "amount": 150922.9,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0063",
+          "payee": "Kunzite Biotech",
+          "amount": 65512.8,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0064",
+          "payee": "Taaffeite Optics",
+          "amount": 118184.56,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0065",
+          "payee": "Musgravite Research",
+          "amount": 55957.41,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0066",
+          "payee": "Hsanite Geology",
+          "amount": 154205.77,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0067",
+          "payee": "Grandidierite Mining",
+          "amount": 100463.97,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0068",
+          "payee": "Painite Rare Metals",
+          "amount": 211788.57,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0069",
+          "payee": "Jeremejevite Labs",
+          "amount": 170108.32,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0070",
+          "payee": "Australite Space",
+          "amount": 168007.25,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0071",
+          "payee": "Roaldite Fuel Cells",
+          "amount": 114676.08,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0072",
+          "payee": "Baksanite Materials",
+          "amount": 159460.62,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0073",
+          "payee": "Carlsbergite Alloys",
+          "amount": 79518.51,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0074",
+          "payee": "Chaoite Nanotech",
+          "amount": 185872.38,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0075",
+          "payee": "Eakisite Sensors",
+          "amount": 54038.09,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0076",
+          "payee": "Kornerupine Precision",
+          "amount": 49111.41,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0077",
+          "payee": "Linarite Ceramics",
+          "amount": 176881.16,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0078",
+          "payee": "Zunyite Glassworks",
+          "amount": 86911.36,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0079",
+          "payee": "Edingtonite Plastics",
+          "amount": 200092.71,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0080",
+          "payee": "Gerhardtite Polymers",
+          "amount": 99677.05,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0081",
+          "payee": "Holdenite Fibers",
+          "amount": 56163.32,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0082",
+          "payee": "Euchroite Solar",
+          "amount": 217168.36,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0083",
+          "payee": "Lazulite Wind Power",
+          "amount": 87927.04,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0084",
+          "payee": "Vesuvianite Hydro",
+          "amount": 60566.61,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0085",
+          "payee": "Chlorargyrite Batteries",
+          "amount": 118515.01,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0086",
+          "payee": "Adamite Clean Energy",
+          "amount": 97307.31,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0087",
+          "payee": "Willemite Recycling",
+          "amount": 133729.35,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0088",
+          "payee": "Awaruite Green Steel",
+          "amount": 171570.77,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0089",
+          "payee": "Orpiment Pigments",
+          "amount": 212765.55,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0090",
+          "payee": "Realgar Paints",
+          "amount": 115339.84,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0091",
+          "payee": "Stibnite Coatings",
+          "amount": 73366.17,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0092",
+          "payee": "Cinnabar Inks",
+          "amount": 116450.27,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0093",
+          "payee": "Galena Batteries",
+          "amount": 113354.8,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0094",
+          "payee": "Anglesite Wiring",
+          "amount": 83093.22,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0095",
+          "payee": "Wulfenite Panels",
+          "amount": 178731.38,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0096",
+          "payee": "Covellite Wiring",
+          "amount": 95024.59,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0097",
+          "payee": "Enargite Electronics",
+          "amount": 185301.08,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0098",
+          "payee": "Bournonite Switches",
+          "amount": 181507.59,
+          "currency": "INR",
+          "rail": "RTGS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0099",
+          "payee": "Jamesonite Fuses",
+          "amount": 174134.94,
+          "currency": "INR",
+          "rail": "IMPS",
+          "status": "pending"
+        },
+        {
+          "ref": "PAY-0100",
+          "payee": "Boulangerite Circuits",
+          "amount": 54421.59,
+          "currency": "INR",
+          "rail": "NEFT",
+          "status": "pending"
+        }
+      ],
+      "authority": {
+        "status": "in_progress",
+        "enterpriseRoot": {
+          "id": "org_root_novacell",
+          "name": "Zordnet Operations",
+          "scope": "treasury.payout.execute",
+          "verification": "verified"
+        },
+        "delegatingRole": {
+          "id": "role_treasury_ctrl",
+          "name": "Treasury Controller",
+          "scope": "approve.payout.domestic",
+          "verification": "verified"
+        },
+        "agentCredential": {
+          "id": "ac_novacell_bch001",
+          "agentId": "agt_treasury_eu_04",
+          "verification": "verified"
+        },
+        "actionScope": {
+          "action": "supplier_payout",
+          "scope": "Batch 001",
+          "verification": "pending"
+        },
+        "checks": [
+          {
+            "name": "Enterprise root",
+            "status": "passed"
+          },
+          {
+            "name": "Delegation",
+            "status": "passed"
+          },
+          {
+            "name": "Agent credential",
+            "status": "passed"
+          },
+          {
+            "name": "Agent capability",
+            "status": "passed"
+          },
+          {
+            "name": "Action scope",
+            "status": "pending"
+          }
+        ]
+      },
+      "approvals": {
+        "required": 2,
+        "completed": 0,
+        "status": "pending",
+        "separationOfDuties": {
+          "required": true,
+          "status": "pending"
+        },
+        "authentication": "step-up / passkey",
+        "approvers": [
+          {
+            "id": "apr_treasury_001",
+            "role": "Treasury Controller",
+            "name": "A. Keller",
+            "permission": "approve.payout.domestic",
+            "status": "pending"
+          },
+          {
+            "id": "apr_cfo_001",
+            "role": "CFO",
+            "name": "M. Duarte",
+            "permission": "approve.payout.domestic.step_up",
+            "status": "pending"
+          }
+        ]
+      },
+      "pac": {
+        "status": "not_created",
+        "pacId": null
+      },
+      "protocol": {
+        "traceId": "trc_novacell_bch001",
+        "proposedAt": "2026-09-01T10:02:00+05:30",
+        "authorityGraph": {
+          "nodes": 7,
+          "edges": 6
+        },
+        "objects": {
+          "actionProposal": {
+            "id": "ap_novacell_bch001",
+            "status": "available"
+          },
+          "authorityCredential": {
+            "id": "ac_novacell_bch001",
+            "status": "available"
+          },
+          "policyDecisionReceipt": {
+            "id": "pdr_novacell_bch001",
+            "status": "pending"
+          },
+          "approvalEvidence": {
+            "id": "ae_novacell_bch001",
+            "status": "pending"
+          },
+          "paymentActionContract": {
+            "id": null,
+            "status": "locked"
+          }
+        }
+      }
+    },
+    {
+      "batchId": "BCH-002",
+      "batchNumber": "Batch 002",
+      "status": "awaiting_authority",
+      "environment": "SANDBOX",
+      "summary": {
+        "totalAmount": 75000,
+        "currency": "USD",
+        "instructionCount": 16,
+        "approvalType": "dual",
+        "authorityStatus": "awaiting_authority",
+        "dispatchStatus": "blocked",
+        "lifecycleStatus": "not_started"
+      },
+      "policy": {
+        "policyId": "pol_crossborder_vendor_v07",
+        "name": "Cross-border Vendor",
+        "version": "v07",
+        "status": "draft",
+        "namespace": "treasury.crossborder",
+        "approvedRails": [
+          "SWIFT",
+          "UPI Cross-Border"
+        ],
+        "controls": [
+          {
+            "id": "CTRL-X001",
+            "name": "Beneficiary freeze",
+            "description": "Stop if beneficiary banking details change after proposal.",
+            "severity": "critical"
+          },
+          {
+            "id": "CTRL-X002",
+            "name": "FX quote requirement",
+            "description": "A fresh FX quote must be attached before approval.",
+            "severity": "high"
+          },
+          {
+            "id": "CTRL-X003",
+            "name": "International rail restriction",
+            "description": "Only SWIFT and approved UPI Cross-Border routes are allowed.",
+            "severity": "high"
+          },
+          {
+            "id": "CTRL-X004",
+            "name": "Dual approval",
+            "description": "Treasury and CFO approval required above USD 50,000.",
+            "severity": "critical"
+          }
+        ],
+        "approvalThreshold": {
+          "amount": 50000,
+          "currency": "USD",
+          "operator": ">"
+        }
+      },
+      "agent": {
+        "agentId": "agt_fx_payout_01",
+        "name": "FX Payout Agent",
+        "purpose": "International vendor settlement proposals",
+        "ownerRole": "role_fx_controller",
+        "capabilities": [
+          "retrieve_vendor",
+          "retrieve_fx_quote",
+          "retrieve_invoice",
+          "propose_crossborder_payout"
+        ],
+        "limits": {
+          "maximumAmount": 250000,
+          "currency": "USD"
+        }
+      },
+      "sourceProposal": {
+        "proposalId": "ap_novacell_bch002",
+        "sourceType": "Cross-border Vendor Instructions",
+        "sourceReference": "FXPAY-0001 → FXPAY-0016",
+        "createdAt": "2026-09-01T10:15:00+05:30",
+        "createdBy": "agt_fx_payout_01",
+        "businessReason": "International supplier settlements for approved export/import vendors."
+      },
+      "instructions": [
+        {
+          "paymentId": "FXPAY-0001",
+          "beneficiary": "Nordic Industrial GmbH",
+          "amount": 8200,
+          "currency": "USD",
+          "rail": "SWIFT",
+          "invoice": "FX-INV-2001"
+        },
+        {
+          "paymentId": "FXPAY-0002",
+          "beneficiary": "Tokyo Precision Ltd",
+          "amount": 6700,
+          "currency": "USD",
+          "rail": "SWIFT",
+          "invoice": "FX-INV-2002"
+        },
+        {
+          "paymentId": "FXPAY-0003",
+          "beneficiary": "Singapore Components Pte",
+          "amount": 9100,
+          "currency": "USD",
+          "rail": "UPI Cross-Border",
+          "invoice": "FX-INV-2003"
+        },
+        {
+          "paymentId": "FXPAY-0004",
+          "beneficiary": "Berlin Automation AG",
+          "amount": 4300,
+          "currency": "USD",
+          "rail": "SWIFT",
+          "invoice": "FX-INV-2004"
+        },
+        {
+          "paymentId": "FXPAY-0005",
+          "beneficiary": "Seoul Robotics Co",
+          "amount": 5800,
+          "currency": "USD",
+          "rail": "SWIFT",
+          "invoice": "FX-INV-2005"
+        },
+        {
+          "paymentId": "FXPAY-0006",
+          "beneficiary": "Dubai Industrial Trading",
+          "amount": 3900,
+          "currency": "USD",
+          "rail": "SWIFT",
+          "invoice": "FX-INV-2006"
+        },
+        {
+          "paymentId": "FXPAY-0007",
+          "beneficiary": "London Materials PLC",
+          "amount": 6100,
+          "currency": "USD",
+          "rail": "SWIFT",
+          "invoice": "FX-INV-2007"
+        },
+        {
+          "paymentId": "FXPAY-0008",
+          "beneficiary": "Toronto Industrial Supply",
+          "amount": 4700,
+          "currency": "USD",
+          "rail": "SWIFT",
+          "invoice": "FX-INV-2008"
+        },
+        {
+          "paymentId": "FXPAY-0009",
+          "beneficiary": "Amsterdam Tech BV",
+          "amount": 3500,
+          "currency": "USD",
+          "rail": "UPI Cross-Border",
+          "invoice": "FX-INV-2009"
+        },
+        {
+          "paymentId": "FXPAY-0010",
+          "beneficiary": "Osaka Machine Works",
+          "amount": 5200,
+          "currency": "USD",
+          "rail": "SWIFT",
+          "invoice": "FX-INV-2010"
+        },
+        {
+          "paymentId": "FXPAY-0011",
+          "beneficiary": "Paris Industrial SAS",
+          "amount": 2800,
+          "currency": "USD",
+          "rail": "SWIFT",
+          "invoice": "FX-INV-2011"
+        },
+        {
+          "paymentId": "FXPAY-0012",
+          "beneficiary": "Seoul Electronics Ltd",
+          "amount": 3600,
+          "currency": "USD",
+          "rail": "SWIFT",
+          "invoice": "FX-INV-2012"
+        },
+        {
+          "paymentId": "FXPAY-0013",
+          "beneficiary": "Madrid Supply Group",
+          "amount": 4100,
+          "currency": "USD",
+          "rail": "UPI Cross-Border",
+          "invoice": "FX-INV-2013"
+        },
+        {
+          "paymentId": "FXPAY-0014",
+          "beneficiary": "Zurich Precision AG",
+          "amount": 3000,
+          "currency": "USD",
+          "rail": "SWIFT",
+          "invoice": "FX-INV-2014"
+        },
+        {
+          "paymentId": "FXPAY-0015",
+          "beneficiary": "Dubai Components LLC",
+          "amount": 4500,
+          "currency": "USD",
+          "rail": "SWIFT",
+          "invoice": "FX-INV-2015"
+        },
+        {
+          "paymentId": "FXPAY-0016",
+          "beneficiary": "Singapore Logistics Pte",
+          "amount": 4600,
+          "currency": "USD",
+          "rail": "UPI Cross-Border",
+          "invoice": "FX-INV-2016"
+        }
+      ],
+      "authority": {
+        "status": "in_progress",
+        "enterpriseRoot": {
+          "id": "org_root_novacell",
+          "name": "Zordnet Operations",
+          "scope": "treasury.crossborder.execute",
+          "verification": "verified"
+        },
+        "delegatingRole": {
+          "id": "role_fx_controller",
+          "name": "FX Controller",
+          "scope": "approve.payout.crossborder",
+          "verification": "verified"
+        },
+        "agentCredential": {
+          "id": "ac_novacell_bch002",
+          "agentId": "agt_fx_payout_01",
+          "verification": "verified"
+        },
+        "actionScope": {
+          "action": "crossborder_supplier_payout",
+          "scope": "Batch 002",
+          "verification": "pending"
+        },
+        "checks": [
+          {
+            "name": "Enterprise root",
+            "status": "passed"
+          },
+          {
+            "name": "Delegation",
+            "status": "passed"
+          },
+          {
+            "name": "Agent credential",
+            "status": "passed"
+          },
+          {
+            "name": "Agent capability",
+            "status": "passed"
+          },
+          {
+            "name": "FX quote validation",
+            "status": "pending"
+          },
+          {
+            "name": "Action scope",
+            "status": "pending"
+          }
+        ]
+      },
+      "approvals": {
+        "required": 2,
+        "completed": 0,
+        "status": "pending",
+        "separationOfDuties": {
+          "required": true,
+          "status": "pending"
+        },
+        "authentication": "step-up / passkey",
+        "approvers": [
+          {
+            "id": "apr_fx_001",
+            "role": "FX Controller",
+            "name": "R. Sharma",
+            "permission": "approve.payout.crossborder",
+            "status": "pending"
+          },
+          {
+            "id": "apr_cfo_002",
+            "role": "CFO",
+            "name": "M. Duarte",
+            "permission": "approve.payout.crossborder.step_up",
+            "status": "pending"
+          }
+        ]
+      },
+      "pac": {
+        "status": "not_created",
+        "pacId": null
+      },
+      "protocol": {
+        "traceId": "trc_novacell_bch002",
+        "proposedAt": "2026-09-01T10:15:00+05:30",
+        "authorityGraph": {
+          "nodes": 8,
+          "edges": 7
+        },
+        "objects": {
+          "actionProposal": {
+            "id": "ap_novacell_bch002",
+            "status": "available"
+          },
+          "authorityCredential": {
+            "id": "ac_novacell_bch002",
+            "status": "available"
+          },
+          "policyDecisionReceipt": {
+            "id": "pdr_novacell_bch002",
+            "status": "pending"
+          },
+          "approvalEvidence": {
+            "id": "ae_novacell_bch002",
+            "status": "pending"
+          },
+          "paymentActionContract": {
+            "id": null,
+            "status": "locked"
+          }
+        }
+      }
+    },
+    {
+      "batchId": "BCH-003",
+      "batchNumber": "Batch 003",
+      "status": "awaiting_authority",
+      "environment": "SANDBOX",
+      "summary": {
+        "totalAmount": 15000000,
+        "currency": "INR",
+        "instructionCount": 120,
+        "approvalType": "single",
+        "authorityStatus": "awaiting_authority",
+        "dispatchStatus": "blocked",
+        "lifecycleStatus": "not_started"
+      },
+      "policy": {
+        "policyId": "pol_payroll_disbursement_v09",
+        "name": "Payroll Disbursement",
+        "version": "v09",
+        "status": "draft",
+        "namespace": "payroll.disbursement",
+        "approvedRails": [
+          "NEFT",
+          "IMPS"
+        ],
+        "controls": [
+          {
+            "id": "CTRL-P001",
+            "name": "Payroll source restriction",
+            "description": "Only approved payroll files may create salary instructions.",
+            "severity": "critical"
+          },
+          {
+            "id": "CTRL-P002",
+            "name": "Employee account verification",
+            "description": "Employee bank details must match the approved payroll master.",
+            "severity": "critical"
+          },
+          {
+            "id": "CTRL-P003",
+            "name": "Payroll amount variance",
+            "description": "Large deviations from payroll baseline require review.",
+            "severity": "high"
+          },
+          {
+            "id": "CTRL-P004",
+            "name": "Release window",
+            "description": "Payroll batches may only be released during approved payroll windows.",
+            "severity": "medium"
+          }
+        ],
+        "approvalThreshold": {
+          "amount": 50000,
+          "currency": "INR",
+          "operator": ">"
+        }
+      },
+      "agent": {
+        "agentId": "agt_payroll_01",
+        "name": "Payroll Action Agent",
+        "purpose": "Employee payroll disbursement proposals",
+        "ownerRole": "role_payroll_controller",
+        "capabilities": [
+          "retrieve_payroll_file",
+          "retrieve_employee",
+          "validate_payroll_account",
+          "propose_payroll_disbursement"
+        ],
+        "limits": {
+          "maximumAmount": 20000000,
+          "currency": "INR"
+        }
+      },
+      "sourceProposal": {
+        "proposalId": "ap_novacell_bch003",
+        "sourceType": "Approved Payroll File",
+        "sourceReference": "PAYROLL-SEPT-2026",
+        "createdAt": "2026-09-01T10:31:00+05:30",
+        "createdBy": "agt_payroll_01",
+        "businessReason": "September employee salary disbursement."
+      },
+      "instructions": [
+        {
+          "paymentId": "SAL-0001",
+          "beneficiary": "Ananya Mehta",
+          "amount": 8200,
+          "currency": "INR",
+          "rail": "NEFT",
+          "invoice": "PAYROLL-SEPT-2026"
+        },
+        {
+          "paymentId": "SAL-0002",
+          "beneficiary": "Rohan Kulkarni",
+          "amount": 7600,
+          "currency": "INR",
+          "rail": "NEFT",
+          "invoice": "PAYROLL-SEPT-2026"
+        },
+        {
+          "paymentId": "SAL-0003",
+          "beneficiary": "Priya Shah",
+          "amount": 9100,
+          "currency": "INR",
+          "rail": "IMPS",
+          "invoice": "PAYROLL-SEPT-2026"
+        },
+        {
+          "paymentId": "SAL-0004",
+          "beneficiary": "Vikram Joshi",
+          "amount": 6900,
+          "currency": "INR",
+          "rail": "NEFT",
+          "invoice": "PAYROLL-SEPT-2026"
+        },
+        {
+          "paymentId": "SAL-0005",
+          "beneficiary": "Neha Patil",
+          "amount": 7200,
+          "currency": "INR",
+          "rail": "NEFT",
+          "invoice": "PAYROLL-SEPT-2026"
+        },
+        {
+          "paymentId": "SAL-0006",
+          "beneficiary": "Arjun Rao",
+          "amount": 8400,
+          "currency": "INR",
+          "rail": "IMPS",
+          "invoice": "PAYROLL-SEPT-2026"
+        },
+        {
+          "paymentId": "SAL-0007",
+          "beneficiary": "Sneha Desai",
+          "amount": 6500,
+          "currency": "INR",
+          "rail": "NEFT",
+          "invoice": "PAYROLL-SEPT-2026"
+        },
+        {
+          "paymentId": "SAL-0008",
+          "beneficiary": "Karan Singh",
+          "amount": 7800,
+          "currency": "INR",
+          "rail": "NEFT",
+          "invoice": "PAYROLL-SEPT-2026"
+        },
+        {
+          "paymentId": "SAL-0009",
+          "beneficiary": "Isha Nair",
+          "amount": 5900,
+          "currency": "INR",
+          "rail": "IMPS",
+          "invoice": "PAYROLL-SEPT-2026"
+        },
+        {
+          "paymentId": "SAL-0010",
+          "beneficiary": "Aditya Rao",
+          "amount": 8300,
+          "currency": "INR",
+          "rail": "NEFT",
+          "invoice": "PAYROLL-SEPT-2026"
+        }
+      ],
+      "authority": {
+        "status": "in_progress",
+        "enterpriseRoot": {
+          "id": "org_root_novacell",
+          "name": "Zordnet Operations",
+          "scope": "payroll.disbursement.execute",
+          "verification": "verified"
+        },
+        "delegatingRole": {
+          "id": "role_payroll_controller",
+          "name": "Payroll Controller",
+          "scope": "approve.payroll.disbursement",
+          "verification": "verified"
+        },
+        "agentCredential": {
+          "id": "ac_novacell_bch003",
+          "agentId": "agt_payroll_01",
+          "verification": "verified"
+        },
+        "actionScope": {
+          "action": "payroll_disbursement",
+          "scope": "Batch 003",
+          "verification": "pending"
+        },
+        "checks": [
+          {
+            "name": "Enterprise root",
+            "status": "passed"
+          },
+          {
+            "name": "Delegation",
+            "status": "passed"
+          },
+          {
+            "name": "Agent credential",
+            "status": "passed"
+          },
+          {
+            "name": "Payroll capability",
+            "status": "passed"
+          },
+          {
+            "name": "Payroll source",
+            "status": "passed"
+          },
+          {
+            "name": "Action scope",
+            "status": "pending"
+          }
+        ]
+      },
+      "approvals": {
+        "required": 1,
+        "completed": 0,
+        "status": "pending",
+        "separationOfDuties": {
+          "required": false,
+          "status": "not_required"
+        },
+        "authentication": "step-up / passkey",
+        "approvers": [
+          {
+            "id": "apr_payroll_001",
+            "role": "Payroll Controller",
+            "name": "S. Iyer",
+            "permission": "approve.payroll.disbursement",
+            "status": "pending"
+          }
+        ]
+      },
+      "pac": {
+        "status": "not_created",
+        "pacId": null
+      },
+      "protocol": {
+        "traceId": "trc_novacell_bch003",
+        "proposedAt": "2026-09-01T10:31:00+05:30",
+        "authorityGraph": {
+          "nodes": 6,
+          "edges": 5
+        },
+        "objects": {
+          "actionProposal": {
+            "id": "ap_novacell_bch003",
+            "status": "available"
+          },
+          "authorityCredential": {
+            "id": "ac_novacell_bch003",
+            "status": "available"
+          },
+          "policyDecisionReceipt": {
+            "id": "pdr_novacell_bch003",
+            "status": "pending"
+          },
+          "approvalEvidence": {
+            "id": "ae_novacell_bch003",
+            "status": "pending"
+          },
+          "paymentActionContract": {
+            "id": null,
+            "status": "locked"
+          }
+        }
+      }
+    }
+  ]
+}

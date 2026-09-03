@@ -3,78 +3,62 @@ import type { PortfolioLeakageViewModel } from '@/features/payout-command/leakag
 import { toPortfolioLeakageViewModel } from '@/features/payout-command/leakage-portfolio/normalizeLeakagePayload'
 import { coerceMinor } from '@/features/payout-command/leakage-portfolio/utils/formatMinorInr'
 
-/**
- * CON-P1-22 — batch_health projections must not invent live KPI stand-ins.
- * Missing authoritative fields ⇒ null / Unavailable at the UI layer.
- * Do not map ambiguity_score → rate, unresolved_count → provider-ref rate, or variance → unmatched.
- */
-
-function parseCount(raw: number | string | undefined | null): number | null {
+function parseCount(raw: number | string | undefined | null): number {
   if (typeof raw === 'number' && Number.isFinite(raw)) return raw
   if (typeof raw === 'string' && raw.trim()) {
     const n = Number(raw)
-    return Number.isFinite(n) ? n : null
+    return Number.isFinite(n) ? n : 0
   }
-  return null
+  return 0
 }
 
-export const BATCH_HEALTH_LIVE_KPI_SOURCES = {
-  ambiguityRate: 'batch_health.ambiguous_count / batch_health.total_count',
-  providerRefMissingRate: null as string | null, // no authoritative field on batch_health
-  unmatchedMinor: null as string | null, // do not use total_variance_minor
-  intendedMinor: 'batch_health.total_intended_amount_minor',
-  confirmedMinor: 'batch_health.total_confirmed_amount_minor',
-} as const
-
-/** Maps batch.health into ambiguity strip values when a batch is selected — no score stand-ins. */
+/** Maps batch.health projection into ambiguity KPI strip values when a batch is selected. */
 export function batchHealthToAmbiguityKpis(health: BatchHealth) {
   const totalCount = parseCount(health.total_count)
   const ambiguousCount = parseCount(health.ambiguous_count)
+  const unresolvedCount = parseCount(health.unresolved_count)
   const ambiguityRate =
-    totalCount != null && totalCount > 0 && ambiguousCount != null
+    totalCount > 0
       ? ambiguousCount / totalCount
-      : null
+      : typeof health.ambiguity_score === 'number'
+        ? health.ambiguity_score
+        : 0
+  const missingRefRate = totalCount > 0 ? unresolvedCount / totalCount : 0
 
   return {
     ambiguous_intent_count: ambiguousCount,
     ambiguity_rate: ambiguityRate,
-    /** No authoritative provider-ref-missing rate on batch_health — never substitute unresolved/total. */
-    provider_ref_missing_rate: null as number | null,
+    provider_ref_missing_rate: missingRefRate,
     value_at_risk_minor: '',
-    sources: {
-      ambiguity_rate: BATCH_HEALTH_LIVE_KPI_SOURCES.ambiguityRate,
-      provider_ref_missing_rate: BATCH_HEALTH_LIVE_KPI_SOURCES.providerRefMissingRate,
-    },
-    asOf: health.updated_at ?? null,
   }
 }
 
-/**
- * Batch-scoped money context from batch_health.
- * Variance is not unmatched / exposure — those stay null unless a true leakage KPI is merged.
- */
+/** Batch-scoped money context from batch_health (variance only - not orphan/short-settled/reversal). */
 export function batchHealthToLeakageViewModel(
   health: BatchHealth,
   batchId: string,
-  tenantId = '—',
+  tenantId = '-',
 ): PortfolioLeakageViewModel {
   const intendedMinor = coerceMinor(health.total_intended_amount_minor)
   const confirmedMinor = coerceMinor(health.total_confirmed_amount_minor)
+  const varianceMinor = Math.max(0, coerceMinor(health.total_variance_minor))
+  const ambiguousRiskMinor = parseCount(health.ambiguous_count) > 0 ? varianceMinor : 0
+  const paymentGapRate = intendedMinor > 0 ? varianceMinor / intendedMinor : 0
 
   return {
     totalSettledMinor: confirmedMinor,
     intendedMinor,
-    underSettlementMinor: null,
-    unmatchedMinor: null,
-    orphanMinor: null,
-    reversalMinor: null,
-    ambiguousRiskMinor: 0,
-    riskAdjustedMinor: 0,
+    underSettlementMinor: 0,
+    unmatchedMinor: varianceMinor,
+    orphanMinor: 0,
+    reversalMinor: 0,
+    ambiguousRiskMinor,
+    riskAdjustedMinor: varianceMinor,
     openFinancialExceptionValueMinor: null,
-    exposureAmountMinor: null,
-    valueNeedingReviewMinor: null,
-    paymentGapRate: null,
-    leakageFraction: null,
+    exposureAmountMinor: varianceMinor,
+    valueNeedingReviewMinor: varianceMinor,
+    paymentGapRate,
+    leakageFraction: paymentGapRate,
     riskTier: health.finality_status?.trim() ? String(health.finality_status).trim() : null,
     tenantId,
     snapshotId: `batch:${batchId}`,
@@ -84,12 +68,12 @@ export function batchHealthToLeakageViewModel(
   }
 }
 
-/** Merge tenant leakage breakdown when available — batch health never invents unmatched from variance. */
+/** Merge tenant leakage breakdown with batch variance when a batch is selected. */
 export function mergeBatchHealthWithTenantLeakage(
   health: BatchHealth,
   batchId: string,
   tenantLeakage: LeakageKpiResolved | null,
-  tenantId = '—',
+  tenantId = '-',
 ): PortfolioLeakageViewModel {
   const batchVm = batchHealthToLeakageViewModel(health, batchId, tenantId)
   if (!tenantLeakage) return batchVm
@@ -98,18 +82,14 @@ export function mergeBatchHealthWithTenantLeakage(
   return {
     ...batchVm,
     underSettlementMinor: tenantVm.underSettlementMinor,
-    unmatchedMinor: tenantVm.unmatchedMinor,
     orphanMinor: tenantVm.orphanMinor,
     reversalMinor: tenantVm.reversalMinor,
-    ambiguousRiskMinor: tenantVm.ambiguousRiskMinor,
-    riskAdjustedMinor: tenantVm.riskAdjustedMinor,
+    ambiguousRiskMinor: Math.max(tenantVm.ambiguousRiskMinor, batchVm.ambiguousRiskMinor),
+    riskAdjustedMinor: tenantVm.riskAdjustedMinor || batchVm.riskAdjustedMinor,
     openFinancialExceptionValueMinor: tenantVm.openFinancialExceptionValueMinor,
     exposureAmountMinor: tenantVm.exposureAmountMinor,
     valueNeedingReviewMinor: tenantVm.valueNeedingReviewMinor,
-    paymentGapRate: tenantVm.paymentGapRate,
-    leakageFraction: tenantVm.leakageFraction,
     riskTier: tenantVm.riskTier ?? batchVm.riskTier,
-    computedAt: tenantVm.computedAt || batchVm.computedAt,
-    snapshotId: tenantVm.snapshotId !== '—' ? tenantVm.snapshotId : batchVm.snapshotId,
   }
 }
+

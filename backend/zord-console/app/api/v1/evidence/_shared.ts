@@ -14,8 +14,6 @@ import type { BackendAuthEnvelope } from '@/services/auth/server'
 export type OperationalTimelineRow = {
   timestamp: string
   event: string
-  provenance?: 'AUTHORITATIVE' | 'DERIVED'
-  source_field?: string
 }
 
 export type EvidenceNodePayload = {
@@ -40,7 +38,6 @@ export type EvidenceTenantGate =
   | {
       ok: true
       tenantId: string
-      accessToken: string
       refreshedPayload?: BackendAuthEnvelope
     }
   | { ok: false; response: NextResponse }
@@ -51,7 +48,6 @@ export async function gateEvidenceTenant(request: NextRequest): Promise<Evidence
   return {
     ok: true,
     tenantId: gate.tenantId,
-    accessToken: gate.accessToken,
     refreshedPayload: gate.refreshedPayload,
   }
 }
@@ -62,7 +58,6 @@ type UpstreamResult<T> =
 
 async function evidenceGet<T>(
   tenantId: string,
-  accessToken: string,
   path: string,
   query?: URLSearchParams,
 ): Promise<UpstreamResult<T>> {
@@ -74,7 +69,6 @@ async function evidenceGet<T>(
       headers: {
         'content-type': 'application/json',
         'x-tenant-id': tenantId,
-        Authorization: `Bearer ${accessToken}`,
       },
       cache: 'no-store',
     })
@@ -92,29 +86,21 @@ async function evidenceGet<T>(
       return { ok: false, status: 502, detail: 'Invalid JSON from evidence service' }
     }
   } catch (error) {
-    // CON-P1-06: keep exception text server-side only.
-    console.error('[zord-bff]', {
-      route: '/api/v1/evidence',
-      upstream: url,
-      error: error instanceof Error ? error.message : 'unknown',
-    })
     return {
       ok: false,
       status: 502,
-      detail: 'Evidence service is temporarily unavailable.',
+      detail: error instanceof Error ? error.message : 'evidence service unreachable',
     }
   }
 }
 
 export async function getEvidencePackById(
   tenantId: string,
-  accessToken: string,
   evidencePackId: string,
 ): Promise<UpstreamResult<EvidencePackFull>> {
   const query = new URLSearchParams({ tenant_id: tenantId })
   return evidenceGet<EvidencePackFull>(
     tenantId,
-    accessToken,
     BACKEND_SERVICES.EVIDENCE.ENDPOINTS.PACK_BY_ID(evidencePackId),
     query,
   )
@@ -122,13 +108,11 @@ export async function getEvidencePackById(
 
 export async function listEvidencePacksByQuery(
   tenantId: string,
-  accessToken: string,
   query: URLSearchParams,
 ): Promise<UpstreamResult<{ packs: EvidencePackSummaryRow[]; total?: number }>> {
   query.set('tenant_id', tenantId)
   return evidenceGet<{ packs: EvidencePackSummaryRow[]; total?: number }>(
     tenantId,
-    accessToken,
     BACKEND_SERVICES.EVIDENCE.ENDPOINTS.PACKS,
     query,
   )
@@ -136,13 +120,11 @@ export async function listEvidencePacksByQuery(
 
 export async function getEvidenceTimelineById(
   tenantId: string,
-  accessToken: string,
   evidencePackId: string,
 ): Promise<UpstreamResult<EvidencePackTimelineResponse>> {
   const query = new URLSearchParams({ tenant_id: tenantId })
   return evidenceGet<EvidencePackTimelineResponse>(
     tenantId,
-    accessToken,
     BACKEND_SERVICES.EVIDENCE.ENDPOINTS.PACK_TIMELINE(evidencePackId),
     query,
   )
@@ -155,16 +137,38 @@ export function applyEvidenceGateCookies(
   applyRefreshedSessionCookies(response, refreshedPayload)
 }
 
+function eventFromRaw(value: string): string {
+  const text = value.trim().toLowerCase()
+  if (!text) return 'Evidence step recorded'
+  if (text.includes('payment instruction')) return 'Payment instruction received from ERP'
+  if (text.includes('payload') || text.includes('envelope') || text.includes('hash')) {
+    return 'File payload fingerprint securely recorded'
+  }
+  if (text.includes('structured') && text.includes('intent')) {
+    return 'Structured payment intent schema verified'
+  }
+  if (text.includes('settlement') && (text.includes('sftp') || text.includes('file'))) {
+    return 'Bank settlement file received via SFTP'
+  }
+  if (text.includes('utr') || text.includes('reconciliation') || text.includes('match')) {
+    return 'UTR reference auto-matched via reconciliation engine'
+  }
+  if (text.includes('compiled') || text.includes('sealed') || text.includes('evidence pack')) {
+    return 'Immutable evidence pack successfully compiled'
+  }
+  if (text.includes('proof root') || text.includes('merkle')) return 'Proof root committed to immutable log'
+  return value
+}
+
 export function mapTimelineRows(
   timeline: Array<{ timestamp?: string; event?: string; node_id?: string }>,
 ): OperationalTimelineRow[] {
   return timeline
     .map((entry) => ({
       timestamp: entry.timestamp || '',
-      event: (entry.event || entry.node_id || '').trim(),
-      provenance: 'AUTHORITATIVE' as const,
+      event: eventFromRaw(entry.event || entry.node_id || ''),
     }))
-    .filter((entry) => Boolean(entry.timestamp) && Boolean(entry.event))
+    .filter((entry) => Boolean(entry.timestamp))
     .sort((a, b) => {
       const ta = Date.parse(a.timestamp)
       const tb = Date.parse(b.timestamp)
@@ -172,9 +176,6 @@ export function mapTimelineRows(
       return a.timestamp.localeCompare(b.timestamp)
     })
 }
-
-export { postEvidencePackVerifyUpstream } from '@/services/payout-command/prod-api/verifyEvidencePackUpstream'
-
 
 export function mapLineageGraphFromPack(pack: EvidencePackFull): {
   evidence_pack_id: string

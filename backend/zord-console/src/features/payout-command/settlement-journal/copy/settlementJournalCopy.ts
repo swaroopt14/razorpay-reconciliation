@@ -11,11 +11,9 @@ export const settlementJournalCopy = {
     recordsReceived: 'Settlement records received',
     recordsReceivedSub: (count: string) => `${count} settlement records in this batch`,
     settlementValueMatched: 'Settlement value matched',
-    settlementValueMatchedSub: 'Bank-confirmed amount for this batch',
-    settlementValueMatchedUnavailable: 'Matched value is not available for this batch',
+    settlementValueMatchedSub: 'Bank-confirmed amount linked to payment instructions',
     amountVariance: 'Amount variance',
     amountVarianceSub: 'Linked via client ref or payment instruction',
-    amountVarianceUnavailable: 'Variance is not available for this batch',
     amountVarianceAwaiting: 'Variance appears once intelligence links settlement to instructions',
   },
   sidebar: {
@@ -38,9 +36,7 @@ export const settlementJournalCopy = {
     sourceStatus: 'Source Status',
     matchStatus: 'Match Status',
     matchedPayment: 'Matched Payment',
-    /** Data-quality metric only — not attachment Match Status (CON-P0-12). */
-    matchConfidence: 'Mapping confidence',
-    mappingConfidence: 'Mapping confidence',
+    matchConfidence: 'Match Confidence',
     observedAt: 'Observed At',
     missingClientRef: 'Missing Client Ref',
     missingBankRef: 'Missing Bank Ref',

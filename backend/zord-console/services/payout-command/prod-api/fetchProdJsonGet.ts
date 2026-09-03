@@ -32,19 +32,3 @@ export async function fetchProdJsonGet<T>(url: string): Promise<T | null> {
   const res = await fetchProdJsonGetWithMeta<T>(url)
   return res.data
 }
-
-/**
- * Intelligence 503 responses intentionally carry an availability envelope so
- * the UI can render UNAVAILABLE instead of treating the outage as EMPTY.
- */
-export async function fetchProdJsonGetWithAvailability<T>(url: string): Promise<T | null> {
-  const res = await fetchProdJsonGetWithMeta<T>(url)
-  if (res.data) return res.data
-  if (!res.errorText) return null
-  try {
-    const parsed = JSON.parse(res.errorText) as T & { availability?: unknown }
-    return parsed?.availability === 'UNAVAILABLE' ? parsed : null
-  } catch {
-    return null
-  }
-}

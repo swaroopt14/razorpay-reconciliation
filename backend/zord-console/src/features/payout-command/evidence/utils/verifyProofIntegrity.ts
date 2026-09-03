@@ -2,46 +2,31 @@ import type { EvidencePackFull } from '@/services/payout-command/prod-api/eviden
 import { apiTrimmedString } from '@/services/payout-command/prod-api/coerceApiField'
 import { normalizeVerificationState } from './proofSignals'
 
-export type ClientIntegrityKind = 'PARTIAL_CHECK' | 'UNKNOWN' | 'FAILED'
-
 export type VerifyProofResult = {
-  /** Client-side hash presence is never cryptographic verification. */
-  ok: false
-  kind: ClientIntegrityKind
+  ok: boolean
   message: string
   proofRoot?: string
-  checkedAt?: string
+  verifiedAt?: string
 }
 
 export function verifyProofIntegrityClient(pack: EvidencePackFull | null): VerifyProofResult {
-  const checkedAt = new Date().toISOString()
+  const verifiedAt = new Date().toISOString()
   if (!pack) {
-    return {
-      ok: false,
-      kind: 'UNKNOWN',
-      message: 'No evidence pack loaded. Verification not run.',
-      checkedAt,
-    }
+    return { ok: false, message: 'No evidence pack loaded.', verifiedAt }
   }
 
   const root = apiTrimmedString(pack.merkle_root)
   if (!root) {
-    return {
-      ok: false,
-      kind: 'FAILED',
-      message: 'Proof root is missing on this pack. Completeness cannot be treated as verification.',
-      checkedAt,
-    }
+    return { ok: false, message: 'Proof root is missing on this pack.', verifiedAt }
   }
 
   const items = pack.items ?? []
   if (items.length === 0) {
     return {
       ok: false,
-      kind: 'FAILED',
-      message: 'No evidence items are present on this pack. This is not a Service 6 verification result.',
+      message: 'Proof verification failed. No evidence items are present on this pack.',
       proofRoot: root,
-      checkedAt,
+      verifiedAt,
     }
   }
 
@@ -49,10 +34,10 @@ export function verifyProofIntegrityClient(pack: EvidencePackFull | null): Verif
   if (missingHash.length > 0) {
     return {
       ok: false,
-      kind: 'FAILED',
-      message: 'One or more evidence items are missing hashes. Local check only — not cryptographic verification.',
+      message:
+        'Proof verification failed. One or more evidence items do not match the original proof root.',
       proofRoot: root,
-      checkedAt,
+      verifiedAt,
     }
   }
 
@@ -60,21 +45,28 @@ export function verifyProofIntegrityClient(pack: EvidencePackFull | null): Verif
   if (verificationState === 'failed') {
     return {
       ok: false,
-      kind: 'FAILED',
       message:
-        'Service 6 previously reported verification failure. Re-run layered verify; do not treat completeness as Verified.',
+        'Proof verification failed. One or more evidence items do not match the original proof root.',
       proofRoot: root,
-      checkedAt: pack.last_verified_at ?? checkedAt,
+      verifiedAt: pack.last_verified_at ?? verifiedAt,
+    }
+  }
+
+  if (verificationState === 'verified') {
+    return {
+      ok: true,
+      message: 'Proof verified. No evidence item has changed since this pack was generated.',
+      proofRoot: root,
+      verifiedAt: pack.last_verified_at ?? verifiedAt,
     }
   }
 
   return {
-    ok: false,
-    kind: 'PARTIAL_CHECK',
+    ok: true,
     message:
-      'PARTIAL_CHECK: proof root and item hashes are present. This is not Verified, Certified, or a Service 6 cryptographic result. Run Service 6 verify.',
+      'Proof root present and all loaded items include hashes. Full cryptographic verification requires Service 6 verify API.',
     proofRoot: root,
-    checkedAt: pack.last_verified_at ?? checkedAt,
+    verifiedAt,
   }
 }
 

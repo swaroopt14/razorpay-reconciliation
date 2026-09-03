@@ -1,10 +1,12 @@
 'use client'
 
 import Link from 'next/link'
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { usePathname } from 'next/navigation'
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { usePathname, useSearchParams } from 'next/navigation'
 import { payoutBatchCommandCenterHref } from '@/services/payout-command/batchCommandCenterHref'
+import { isDemoQuery, isDemoSession } from '@/services/payout-command/demo/ycDemoConstants'
 import {
+  isSandboxSetupStepDone,
   readSandboxSetupProgress,
   SANDBOX_SETUP_GUIDE,
   SANDBOX_SETUP_PANEL_DISMISSED_KEY,
@@ -22,10 +24,17 @@ type TaskStatus = 'done' | 'active' | 'locked'
 
 function stepHref(step: SandboxSetupGuideStep, batchCenterHref: string): string | undefined {
   if (!step.href) return undefined
-  if (step.id === 'intent-ingest' || step.id === 'settlement') return batchCenterHref
+  if (step.id === 'create') {
+    const base = batchCenterHref.split('?')[0] || batchCenterHref
+    return `${base}?demo=sandbox&upload=1`
+  }
   return step.href
 }
 
+/**
+  * Spec Part 10: workspace is pre-populated - every step is clickable.
+  * First incomplete step is highlighted as the suggested next move.
+  */
 function resolveTaskStatus(
   stepId: string,
   progress: SandboxSetupProgress,
@@ -33,11 +42,9 @@ function resolveTaskStatus(
 ): TaskStatus {
   const idx = orderedIds.indexOf(stepId)
   if (idx < 0) return 'locked'
-  if (progress[stepId as keyof SandboxSetupProgress]) return 'done'
-  const priorDone = orderedIds.slice(0, idx).every((id) => progress[id as keyof SandboxSetupProgress])
-  if (!priorDone) return 'locked'
-  const firstOpen = orderedIds.find((id) => !progress[id as keyof SandboxSetupProgress])
-  return firstOpen === stepId ? 'active' : 'locked'
+  if (isSandboxSetupStepDone(stepId, progress)) return 'done'
+  const firstOpen = orderedIds.find((id) => !isSandboxSetupStepDone(id, progress))
+  return firstOpen === stepId ? 'active' : 'active'
 }
 
 function TaskIcon({ status }: { status: TaskStatus }) {
@@ -88,10 +95,13 @@ function Chevron({ up }: { up: boolean }) {
 }
 
 /**
- * Stripe-style floating setup guide — bottom-right on sandbox routes.
- */
-export function SandboxSetupGuidePanel() {
+  * Stripe-style floating setup guide - bottom-right on sandbox routes.
+  * When GuidedDemoBanner is visible, the dismissed FAB is hidden (same CTA lives in the banner).
+  */
+function SandboxSetupGuidePanelInner() {
   const pathname = usePathname()
+  const params = useSearchParams()
+  const demoChrome = isDemoQuery(params.get('demo')) || isDemoSession()
   const batchCenterHref = payoutBatchCommandCenterHref(true)
   const [dismissed, setDismissed] = useState(false)
   const [minimized, setMinimized] = useState(false)
@@ -141,7 +151,7 @@ export function SandboxSetupGuidePanel() {
     }
   }, [refreshProgress])
 
-  const completedCount = orderedStepIds.filter((id) => progress[id as keyof SandboxSetupProgress]).length
+  const completedCount = orderedStepIds.filter((id) => isSandboxSetupStepDone(id, progress)).length
   const progressPct = Math.round((completedCount / orderedStepIds.length) * 100)
 
   const dismiss = () => {
@@ -164,7 +174,17 @@ export function SandboxSetupGuidePanel() {
     }
   }
 
+  // Policy Studio / Ask Zord use the right edge - keep this chip off those pages.
+  const hideForRoute =
+    (pathname ?? '').startsWith('/controls') ||
+    (pathname ?? '').startsWith('/ask') ||
+    (pathname ?? '').includes('batch-command-center')
+
+  if (hideForRoute) return null
+
   if (dismissed) {
+    // Demo pages already expose “Guided demo path” in the top sandbox banner.
+    if (demoChrome) return null
     return (
       <button
         type="button"
@@ -176,7 +196,7 @@ export function SandboxSetupGuidePanel() {
           }
           setDismissed(false)
         }}
-        className="fixed bottom-5 right-5 z-[90] rounded-full border border-slate-200/90 bg-white px-4 py-2.5 text-[13px] font-semibold text-[#0f172a] shadow-[0_8px_30px_rgba(15,23,42,0.12)] transition hover:bg-slate-50"
+        className="fixed bottom-5 right-5 z-[60] rounded-full border border-slate-200/90 bg-white px-4 py-2.5 text-[13px] font-semibold text-[#0f172a] shadow-[0_8px_30px_rgba(15,23,42,0.12)] transition hover:bg-slate-50"
       >
         {SANDBOX_SETUP_GUIDE.panelTitle}
       </button>
@@ -190,7 +210,7 @@ export function SandboxSetupGuidePanel() {
 
   return (
     <aside
-      className={`fixed bottom-5 right-5 z-[90] flex w-[min(100vw-2rem,22rem)] flex-col overflow-hidden rounded-xl border border-slate-200/90 bg-white shadow-[0_12px_40px_rgba(15,23,42,0.14),0_0_0_1px_rgba(15,23,42,0.04)] transition-all ${
+      className={`fixed bottom-5 right-5 z-[60] flex w-[min(100vw-2rem,22rem)] flex-col overflow-hidden rounded-xl border border-slate-200/90 bg-white shadow-[0_12px_40px_rgba(15,23,42,0.14),0_0_0_1px_rgba(15,23,42,0.04)] transition-all ${
         minimized ? 'max-h-[3.25rem]' : expanded ? 'max-h-[min(70vh,32rem)]' : 'max-h-[14rem]'
       }`}
       aria-label={SANDBOX_SETUP_GUIDE.panelTitle}
@@ -257,6 +277,7 @@ export function SandboxSetupGuidePanel() {
       {!minimized ? (
         <>
           <div className="shrink-0 px-4 pt-2">
+            <p className="mb-2 text-[11px] leading-snug text-[#64748b]">{SANDBOX_SETUP_GUIDE.subtitle}</p>
             <div
               className="h-1 w-full overflow-hidden rounded-full bg-[#e8ecf4]"
               role="progressbar"
@@ -293,11 +314,14 @@ export function SandboxSetupGuidePanel() {
                         if (!step) return null
                         const status = resolveTaskStatus(stepId, progress, orderedStepIds)
                         const href = stepHref(step, batchCenterHref)
+                        const pathOnly = href?.split('?')[0] ?? ''
                         const isCurrentPath =
                           href != null &&
-                          (pathname === href.split('?')[0] ||
+                          (pathname === pathOnly ||
+                            (pathname?.startsWith(pathOnly) && pathOnly.length > 1) ||
                             (href.includes('batch-command-center') &&
-                              pathname?.includes('batch-command-center')))
+                              pathname?.includes('batch-command-center')) ||
+                            (href.includes('/ask') && pathname?.startsWith('/ask')))
 
                         const row = (
                           <span
@@ -311,12 +335,15 @@ export function SandboxSetupGuidePanel() {
                           >
                             <TaskIcon status={status} />
                             <span className="min-w-0 flex-1">
-                              {step.title}
-                              {status === 'active' && step.api ? (
-                                <span className="mt-0.5 block font-mono text-[10px] font-normal text-[#94a3b8]">
-                                  {step.api}
+                              {step.n != null ? (
+                                <span className="mr-1 text-[11px] font-semibold text-[#94a3b8]">
+                                  {step.n}.
                                 </span>
                               ) : null}
+                              {step.title}
+                              <span className="mt-0.5 block text-[11px] font-normal text-[#94a3b8]">
+                                {step.summary}
+                              </span>
                             </span>
                           </span>
                         )
@@ -343,9 +370,27 @@ export function SandboxSetupGuidePanel() {
                 </div>
               )
             })}
+            <div className="mt-2 space-y-1 border-t border-slate-100 px-2 pt-3">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.06em] text-[#94a3b8]">
+                Reviewer readiness
+              </p>
+              {SANDBOX_SETUP_GUIDE.notes.map((note) => (
+                <p key={note} className="text-[10px] leading-snug text-[#94a3b8]">
+                  {note}
+                </p>
+              ))}
+            </div>
           </div>
         </>
       ) : null}
     </aside>
+  )
+}
+
+export function SandboxSetupGuidePanel() {
+  return (
+    <Suspense fallback={null}>
+      <SandboxSetupGuidePanelInner />
+    </Suspense>
   )
 }

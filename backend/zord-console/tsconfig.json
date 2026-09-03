@@ -68,6 +68,9 @@
       ],
       "@/constants/*": [
         "./constants/*"
+      ],
+      "@/data/*": [
+        "./data/*"
       ]
     }
   },

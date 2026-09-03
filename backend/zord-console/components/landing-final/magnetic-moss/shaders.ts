@@ -1,4 +1,4 @@
-/** Full-screen quad, moss reveal with magnetic cursor falloff + organic noise. */
+/** Full-screen quad - moss reveal with magnetic cursor falloff + organic noise. */
 export const VERTEX_SHADER = /* glsl */ `
   attribute vec2 a_position;
   varying vec2 v_uv;

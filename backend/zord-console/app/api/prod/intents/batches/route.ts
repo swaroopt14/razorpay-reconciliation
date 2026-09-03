@@ -3,7 +3,6 @@ import { BACKEND_SERVICES } from '@/config/api.endpoints'
 import {
   applyRefreshedSessionCookies,
 } from '@/services/auth/resolvePayoutTenant.server'
-import { publicBffError } from '@/services/bff/publicBffError'
 import {
   intentEngineForwardHeaders,
   requireIntentEngineProxyGate,
@@ -133,16 +132,10 @@ export async function GET(request: NextRequest) {
     applyRefreshedSessionCookies(res, gate.refreshedPayload)
     return res
   } catch (error) {
-    const res = publicBffError({
-      code: 'UPSTREAM_UNAVAILABLE',
-      message: 'Intent batches are temporarily unavailable. Retry shortly.',
-      status: 502,
-      log: {
-        route: '/api/prod/intents/batches',
-        upstream: ENGINE,
-        error,
-      },
-    })
+    const res = NextResponse.json(
+      { error: 'intent-engine unreachable', details: error instanceof Error ? error.message : 'unknown' },
+      { status: 502 },
+    )
     applyRefreshedSessionCookies(res, gate.refreshedPayload)
     return res
   }

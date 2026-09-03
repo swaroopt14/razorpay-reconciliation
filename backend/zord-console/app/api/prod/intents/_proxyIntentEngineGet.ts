@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { BACKEND_SERVICES } from '@/config/api.endpoints'
 import { applyRefreshedSessionCookies } from '@/services/auth/resolvePayoutTenant.server'
-import { publicBffError } from '@/services/bff/publicBffError'
 import {
   intentEngineForwardHeaders,
   requireIntentEngineProxyGate,
@@ -11,7 +10,7 @@ export const dynamic = 'force-dynamic'
 
 type ProxyOptions = {
   upstreamPath: string
-  /** Extra query params forwarded upstream (tenant_id is never forwarded — headers only). */
+  /** Extra query params forwarded upstream (tenant_id is never forwarded - headers only). */
   query?: Record<string, string | undefined>
 }
 
@@ -55,16 +54,10 @@ export async function proxyIntentEngineGet(request: NextRequest, options: ProxyO
     applyRefreshedSessionCookies(res, gate.refreshedPayload)
     return res
   } catch (error) {
-    const res = publicBffError({
-      code: 'UPSTREAM_UNAVAILABLE',
-      message: 'Intent service is temporarily unavailable. Retry shortly.',
-      status: 502,
-      log: {
-        route: '/api/prod/intents',
-        upstream: url,
-        error,
-      },
-    })
+    const res = NextResponse.json(
+      { error: 'intent-engine unreachable', details: error instanceof Error ? error.message : 'unknown' },
+      { status: 502 },
+    )
     applyRefreshedSessionCookies(res, gate.refreshedPayload)
     return res
   }

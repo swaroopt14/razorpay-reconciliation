@@ -18,9 +18,8 @@ import { settlementObservationPageRange } from '../settlement-journal/settlement
 import { downloadCsv, observationsToCsv } from '../settlement-journal/settlementExport'
 import {
   observationInDateRange,
-  matchesAmountRangeForRow,
-  outcomeFromFinalityAndCoverage,
-  finalityCoverageFromBatchDetail,
+  matchesAmountRange,
+  outcomeFromMatchConfidence,
   type AmountRangeFilter,
   type DateRangePreset,
   type SettlementSidebarOutcome,
@@ -33,6 +32,7 @@ import {
   HOME_BODY_IMPERIAL_SM,
   HOME_TITLE_BLACK,
 } from '../command-center/homeCommandCenterTokens'
+import { PageExplainerBanner } from '../demo/PageExplainerBanner'
 import { JOURNAL_PAGE_BG, JournalPageHeader } from '../journal/JournalCommandCenterPrimitives'
 import { JOURNAL_DM_SANS } from '../journal/journalFonts'
 import { useEnvironment } from '@/services/auth/EnvironmentProvider'
@@ -44,17 +44,15 @@ import {
   type SettlementParseErrorRow,
 } from '@/services/payout-command/prod-api/settlementObservations'
 import { markSandboxSetupStep } from '@/services/payout-command/sandbox-setup-guide'
-import { getIntelligenceBatchDetail } from '@/services/payout-command/prod-api/getIntelligenceKpis'
+import { getBatchContractKpis } from '@/services/payout-command/prod-api/getIntelligenceKpis'
+import { parseMatchConfidence } from '../settlement-journal/selectors/resolveSettlementIntelligenceKpis'
 import { LiveDataHint } from '../shared'
 import { useRegisterPayoutPageActions } from '../layout/PayoutPageActionsContext'
-import { useTenantBusinessTimezone } from '@/services/payout-command/useTenantBusinessTimezone'
 
 type SettlementActivityTab = 'observations' | 'parseErrors'
 const SETTLEMENT_PAGE_SUMMARY = dockItems.find((d) => d.id === 'settlement')?.summary ?? ''
 
-const ROW_SIZE_OPTIONS = [25, 50, 100, 200] as const
-/** Cap sidebar status enrichment — avoids hundreds of batch_contract calls in smoke mode. */
-const BATCH_CONTRACT_PREFETCH_CAP = SETTLEMENT_SIDEBAR_PAGE_SIZE * 2
+const ROW_SIZE_OPTIONS = [20, 50, 100, 200] as const
 
 export function SettlementJournalSurface({
   initialClientBatchId,
@@ -138,8 +136,7 @@ function SettlementJournalSurfaceContent({
 }) {
   const { mode } = useEnvironment()
   const batchCommandCenterHref = payoutBatchCommandCenterHref(mode === 'sandbox')
-  const { batchDetail } = useSettlementBatchIntelligence(selectedClientBatchId, tenantReady)
-  const { timeZone: businessTimeZone } = useTenantBusinessTimezone()
+  const { kpis } = useSettlementBatchIntelligence(selectedClientBatchId, tenantReady)
 
   const [tableSearch, setTableSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<'All' | string>('All')
@@ -149,7 +146,7 @@ function SettlementJournalSurfaceContent({
   const [filterSettlementBatchId, setFilterSettlementBatchId] = useState('')
   const [sourceSystemFilter, setSourceSystemFilter] = useState<'All' | string>('All')
   const [amountRangeFilter, setAmountRangeFilter] = useState<AmountRangeFilter>('All')
-  const [rowsPerPage, setRowsPerPage] = useState<(typeof ROW_SIZE_OPTIONS)[number]>(50)
+  const [rowsPerPage, setRowsPerPage] = useState<(typeof ROW_SIZE_OPTIONS)[number]>(20)
   const [page, setPage] = useState(1)
   const [jumpPage, setJumpPage] = useState('1')
   const [sidebarPage, setSidebarPage] = useState(1)
@@ -199,22 +196,21 @@ function SettlementJournalSurfaceContent({
     }
   }, [mode, feedLoaded, observationTotal])
 
-  // Pre-populate sidebar outcome from Service 5 finality + coverage (not match confidence).
+  // Pre-populate sidebar status for all batches in parallel via batch contract KPI
   useEffect(() => {
     if (!feedLoaded || !tenantReady || clientBatches.length === 0) return
-    const idsToPrefetch = clientBatches.slice(0, BATCH_CONTRACT_PREFETCH_CAP)
     void (async () => {
       try {
         const results = await Promise.allSettled(
-          idsToPrefetch.map((bid) => getIntelligenceBatchDetail(bid)),
+          clientBatches.map((bid) => getBatchContractKpis(bid)),
         )
         const entries: Record<string, SettlementSidebarOutcome> = {}
-        for (let i = 0; i < idsToPrefetch.length; i++) {
+        for (let i = 0; i < clientBatches.length; i++) {
           const result = results[i]
           if (result?.status !== 'fulfilled' || !result.value) continue
-          entries[idsToPrefetch[i]!] = outcomeFromFinalityAndCoverage(
-            finalityCoverageFromBatchDetail(result.value),
-          )
+          const confidence = parseMatchConfidence(result.value.match_confidence)
+          if (confidence == null) continue
+          entries[clientBatches[i]!] = outcomeFromMatchConfidence(confidence)
         }
         if (Object.keys(entries).length > 0) {
           setBatchMatchOutcomeCache((prev) => ({ ...entries, ...prev }))
@@ -225,13 +221,13 @@ function SettlementJournalSurfaceContent({
 
   useEffect(() => {
     if (!selectedClientBatchId) return
-    const outcome = outcomeFromFinalityAndCoverage(finalityCoverageFromBatchDetail(batchDetail))
+    const outcome = outcomeFromMatchConfidence(kpis.matchConfidence)
     setBatchMatchOutcomeCache((prev) => ({ ...prev, [selectedClientBatchId]: outcome }))
-  }, [selectedClientBatchId, batchDetail])
+  }, [selectedClientBatchId, kpis.matchConfidence])
 
   const liveMatchOutcome = useMemo(
-    () => outcomeFromFinalityAndCoverage(finalityCoverageFromBatchDetail(batchDetail)),
-    [batchDetail],
+    () => outcomeFromMatchConfidence(kpis.matchConfidence),
+    [kpis.matchConfidence],
   )
 
   useEffect(() => {
@@ -282,7 +278,7 @@ function SettlementJournalSurfaceContent({
   }, [observationRows])
 
   const sourceSystemOptions = useMemo(() => {
-    const set = new Set(observationRows.map((r) => r.sourceSystem).filter((s) => s && s !== '—'))
+    const set = new Set(observationRows.map((r) => r.sourceSystem).filter((s) => s && s !== '-'))
     return ['All', ...Array.from(set).sort()]
   }, [observationRows])
 
@@ -294,18 +290,13 @@ function SettlementJournalSurfaceContent({
     const scopedRows = observationRows.filter((row) => {
       const bySearch = !q || observationSearchHaystack(row).includes(q)
       const byStatus = statusFilter === 'All' || row.status === statusFilter
-      const byDate = observationInDateRange(
-        row.observationTime,
-        dateRange,
-        businessTimeZone,
-        row.observationAtIso,
-      )
+      const byDate = observationInDateRange(row.observationTime, dateRange)
       const byBank = !bankQ || row.bankRef.toLowerCase().includes(bankQ)
       const byClient = !clientQ || row.clientRef.toLowerCase().includes(clientQ)
       const bySettlementBatch =
         !settlementBatchQ || row.settlementBatchId.toLowerCase().includes(settlementBatchQ)
       const bySource = sourceSystemFilter === 'All' || row.sourceSystem === sourceSystemFilter
-      const byAmount = matchesAmountRangeForRow(row.amount, row.currency, amountRangeFilter)
+      const byAmount = matchesAmountRange(row.amount, amountRangeFilter)
       return (
         bySearch &&
         byStatus &&
@@ -318,11 +309,13 @@ function SettlementJournalSurfaceContent({
       )
     })
     return scopedRows.sort((a, b) => {
-      const aNum = a.displayRowIndex
-      const bNum = b.displayRowIndex
-      if (aNum != null && bNum != null) return aNum - bNum
-      if (aNum != null) return -1
-      if (bNum != null) return 1
+      const aNum = Number.parseInt(a.sourceRowRef, 10)
+      const bNum = Number.parseInt(b.sourceRowRef, 10)
+      const aValid = Number.isFinite(aNum)
+      const bValid = Number.isFinite(bNum)
+      if (aValid && bValid) return aNum - bNum
+      if (aValid) return -1
+      if (bValid) return 1
       return 0
     })
   }, [
@@ -335,7 +328,6 @@ function SettlementJournalSurfaceContent({
     filterSettlementBatchId,
     sourceSystemFilter,
     amountRangeFilter,
-    businessTimeZone,
   ])
 
   const serverPagination = !filtersActive
@@ -465,9 +457,9 @@ function SettlementJournalSurfaceContent({
 
   return (
     <div
-      className={`h-[calc(100vh-8rem)] overflow-hidden ${JOURNAL_PAGE_BG} ${JOURNAL_DM_SANS} text-[13px] font-normal leading-relaxed text-slate-900 antialiased`}
+      className={`min-h-0 ${JOURNAL_PAGE_BG} ${JOURNAL_DM_SANS} pb-10 text-[13px] font-normal leading-relaxed text-slate-900 antialiased`}
     >
-      <div className="grid h-full grid-cols-[272px,minmax(0,1fr)]">
+      <div className="grid grid-cols-[272px,minmax(0,1fr)] items-start">
         <SettlementJournalBatchSidebar
           tenantReady={tenantReady}
           clientBatches={clientBatches}
@@ -485,8 +477,9 @@ function SettlementJournalSurfaceContent({
           batchCommandCenterHref={batchCommandCenterHref}
         />
 
-        <main className="flex h-full min-w-0 flex-col overflow-hidden">
-          <div className="flex-1 overflow-y-auto p-4 sm:p-5">
+        <main className="min-w-0">
+          <div className="p-4 sm:p-5">
+            <PageExplainerBanner page="settlement" />
             <JournalPageHeader label="Settlement journal" summary={SETTLEMENT_PAGE_SUMMARY}>
               <LiveDataHint isLive={Boolean(tenantReady && feedLoaded)} source="settlement" />
               <button
@@ -550,5 +543,3 @@ function SettlementJournalSurfaceContent({
     </div>
   )
 }
-
-

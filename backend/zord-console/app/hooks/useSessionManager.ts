@@ -10,13 +10,7 @@ export function useSessionManager() {
 
   const forceLogout = useCallback(async () => {
     try {
-      const { csrfMutationHeaders } = await import('@/services/auth/csrfBrowser')
-      await fetch('/api/auth/logout', {
-        method: 'POST',
-        credentials: 'include',
-        headers: csrfMutationHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({}),
-      })
+      await fetch('/api/auth/logout', { method: 'POST' })
     } finally {
       clearAuth()
       if (typeof window !== 'undefined') {
@@ -27,26 +21,18 @@ export function useSessionManager() {
 
   const extendSession = useCallback(async () => {
     try {
-      const { csrfMutationHeaders } = await import('@/services/auth/csrfBrowser')
-      const response = await fetch('/api/auth/session/refresh', {
-        method: 'POST',
-        credentials: 'include',
-        headers: csrfMutationHeaders(),
-      })
+      const response = await fetch('/api/auth/session/refresh', { method: 'POST' })
       if (response.ok) {
         lastActivityRef.current = Date.now()
         setShowWarning(false)
         broadcastChannelRef.current?.postMessage({ type: 'SESSION_EXTENDED' })
         // Poll status immediately to update local state
         await checkStatus()
-        return
-      }
-      // CON-P1-03: only definitive session rejection logs the operator out.
-      if (response.status === 401 || response.status === 403) {
+      } else {
         await forceLogout()
       }
     } catch {
-      // Transport failure — keep the session; idle timer will retry later.
+      await forceLogout()
     }
   }, [forceLogout])
 
@@ -73,8 +59,7 @@ export function useSessionManager() {
         } else {
           setShowWarning(false)
         }
-      } else if (response.status === 401 || response.status === 403) {
-        // CON-P1-03: definitive rejection only — not Edge outages (503).
+      } else {
         await forceLogout()
       }
     } catch {
@@ -83,7 +68,7 @@ export function useSessionManager() {
   }
 
   useEffect(() => {
-    // Use the session hint cookie as an eager signal — it is set server-side at
+    // Use the session hint cookie as an eager signal - it is set server-side at
     // login and is immediately readable, unlike localStorage which is written
     // asynchronously by hydrateSession(). This prevents timers from being skipped
     // when this hook mounts before AuthSessionBootstrap has finished hydrating.

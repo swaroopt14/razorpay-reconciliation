@@ -20,11 +20,24 @@ export const STORAGE_KEYS = {
 
 // Routes
 export const ROUTES = {
-  SIGNIN: '/signin',
-  SIGNUP: '/signup',
-  REGISTER: '/register',
-  PAYOUT_TODAY: '/payout-command-view/today',
-  SANDBOX: '/sandbox',
+  // Customer Console
+  CONSOLE_LOGIN: '/console/login',
+  CONSOLE_INGESTION: '/console/ingestion',
+  CONSOLE_INGESTION_CREATE: '/console/ingestion/create',
+  CONSOLE_INGESTION_UPLOAD: '/console/ingestion/upload',
+  CONSOLE_INGESTION_INBOX: '/console/ingestion/inbox',
+  CONSOLE_INGESTION_BATCH: (batchId: string) => `/console/ingestion/batch/${batchId}`,
+  CONSOLE_INGESTION_RECEIPT: (receiptId: string) => `/console/ingestion/receipt/${receiptId}`,
+  CONSOLE_INGESTION_EVIDENCE: (receiptId: string) => `/console/ingestion/evidence/${receiptId}`,
+  
+  // Ops Console
+  OPS_LOGIN: '/ops/login',
+  OPS_MONITOR: '/ops/ingestion/monitor',
+  OPS_DLQ: '/ops/ingestion/dlq',
+  
+  // Admin Console
+  ADMIN_LOGIN: '/admin/login',
+  ADMIN_TENANTS: '/admin/tenants',
 } as const
 
 // Error Messages

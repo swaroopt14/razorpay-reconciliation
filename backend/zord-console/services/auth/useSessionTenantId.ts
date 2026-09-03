@@ -1,11 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import {
-  fetchSessionTenantId,
-  type SessionTenantFetchResult,
-  type SessionTenantMode,
-} from './fetchSessionTenantId'
+import { fetchSessionTenantId, type SessionTenantFetchResult } from './fetchSessionTenantId'
 
 const TENANT_UPDATED_EVENT = 'zord-tenant-updated'
 
@@ -14,15 +10,15 @@ function broadcastTenantId(tenantId: string) {
   window.dispatchEvent(new CustomEvent(TENANT_UPDATED_EVENT, { detail: { tenantId } }))
 }
 
-/** Route-derived mode: sandbox paths may use sandbox-only tenant helpers. */
-function clientTenantMode(): SessionTenantMode {
-  if (typeof window === 'undefined') return 'live'
-  return window.location.pathname.startsWith('/sandbox') ? 'sandbox' : 'live'
+function readEnvTenant(): string {
+  if (typeof process === 'undefined') return ''
+  return process.env.NEXT_PUBLIC_ZORD_TENANT_ID?.trim() || ''
 }
 
 /**
- * Tenant id for UI / Ask Zord scope — CON-P0-09.
- * Live: verified `/api/auth/me` session only (never env / localStorage / batch inference).
+ * Tenant id for `/api/prod/*` reads - no mock fallback.
+ * Resolution: `NEXT_PUBLIC_ZORD_TENANT_ID` → `/api/auth/me` session → `localStorage.zord_tenant_id`.
+ * Returns empty string until a real tenant is resolved (sign in or set env).
  */
 export function useSessionTenantId(): string {
   const { tenantId } = useSessionTenant()
@@ -36,21 +32,22 @@ export type UseSessionTenantResult = {
   /** Last manual or automatic fetch status message. */
   tenantStatus: string
   tenantFetching: boolean
-  /** Re-run verified session resolution (sandbox may also try workspace keys). */
-  refreshTenant: () => Promise<SessionTenantFetchResult>
+  /** Re-run auth/me (+ optional intelligence batch lookup). */
+  refreshTenant: (options?: { batchId?: string }) => Promise<SessionTenantFetchResult>
 }
 
-/** Session tenant + settled flag after `/api/auth/me` (no live fallbacks). */
+/** Session tenant + settled flag after `/api/auth/me` (no mock fallback). */
 export function useSessionTenant(): UseSessionTenantResult {
-  const [tenantId, setTenantId] = useState('')
+  const envTenant = readEnvTenant()
+  const [tenantId, setTenantId] = useState(() => envTenant)
   const [tenantReady, setTenantReady] = useState(false)
   const [tenantStatus, setTenantStatus] = useState('')
   const [tenantFetching, setTenantFetching] = useState(false)
 
-  const refreshTenant = useCallback(async () => {
+  const refreshTenant = useCallback(async (options?: { batchId?: string }) => {
     setTenantFetching(true)
     try {
-      const result = await fetchSessionTenantId({ mode: clientTenantMode() })
+      const result = await fetchSessionTenantId(options)
       setTenantId(result.tenantId)
       setTenantStatus(result.message)
       setTenantReady(true)
@@ -73,7 +70,7 @@ export function useSessionTenant(): UseSessionTenantResult {
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      const result = await fetchSessionTenantId({ mode: clientTenantMode() })
+      const result = await fetchSessionTenantId()
       if (cancelled) return
       setTenantId(result.tenantId)
       setTenantStatus(result.message)
@@ -82,7 +79,7 @@ export function useSessionTenant(): UseSessionTenantResult {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [envTenant])
 
   return { tenantId, tenantReady, tenantStatus, tenantFetching, refreshTenant }
 }

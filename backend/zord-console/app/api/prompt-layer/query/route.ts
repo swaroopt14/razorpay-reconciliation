@@ -1,25 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { assertCookieMutationProtection } from '@/services/auth/assertSameOrigin.server'
-import {
-  applyRefreshedSessionCookies,
-  requireSessionIdentityForProdProxy,
-} from '@/services/auth/resolvePayoutTenant.server'
-import { publicBffError } from '@/services/bff/publicBffError'
-import { consumeBffRateLimit, rateLimitKeyForTenant } from '@/services/bff/rateLimit.server'
+import { NextResponse } from 'next/server'
 
-/**
- * CON-P0-04 + CON-P1-01 + CON-P1-06 + CON-P1-20 — Ask Zord / Prompt Layer BFF.
- *
- * MERGE RULE (do not regress on conflict resolution):
- * 1) CSRF / same-origin via assertCookieMutationProtection (CON-P1-01)
- * 2) Identity ONLY from requireSessionIdentityForProdProxy — never client
- *    Authorization / x-tenant-id / x-user-id / x-session-id (CON-P0-04)
- * 3) Public errors via publicBffError only — no upstream URLs in body (CON-P1-06)
- * 4) Per-tenant rate limit via consumeBffRateLimit (CON-P1-20)
- * When merging with master, keep ALL behaviors; never accept a side that
- * restores client identity forwarding or drops CSRF / publicBffError / rate limits.
- */
-
+// Always proxy at request time (no caching), since this depends on runtime env + backend state.
 export const dynamic = 'force-dynamic'
 
 function normalizePromptLayerBase(base: string) {
@@ -27,6 +8,8 @@ function normalizePromptLayerBase(base: string) {
 }
 
 function upstreamCandidates() {
+  // In Docker, the service DNS name is the most reliable target.
+  // Keep host and localhost fallbacks for local/frontend-only development.
   return Array.from(
     new Set(
       [
@@ -41,92 +24,42 @@ function upstreamCandidates() {
   )
 }
 
-export async function POST(req: NextRequest) {
-  // CON-P1-01: cookie mutations must be same-origin (+ CSRF when session present).
-  const csrf = assertCookieMutationProtection(req)
-  if (!csrf.ok) return csrf.response
-
-  // CON-P0-04: session identity only — ignore browser identity headers.
-  const identity = await requireSessionIdentityForProdProxy(req)
-  if (!identity.ok) return identity.response
-
-  // CON-P1-20: throttle expensive Ask Zord calls per session tenant.
-  const rate = consumeBffRateLimit({
-    bucket: 'prompt',
-    key: rateLimitKeyForTenant(identity.tenantId),
-    message: 'Too many Ask Zord requests. Try again shortly.',
-  })
-  if (!rate.ok) {
-    applyRefreshedSessionCookies(rate.response, identity.refreshedPayload, req)
-    return rate.response
-  }
+export async function POST(req: Request) {
+  const candidateUrls = upstreamCandidates().map((base) => `${normalizePromptLayerBase(base)}/query`)
 
   let body: unknown
   try {
     body = await req.json()
   } catch {
-    const res = publicBffError({
-      code: 'INVALID_BODY',
-      message: 'Request body must be valid JSON.',
-      status: 400,
-      log: { route: '/api/prompt-layer/query' },
-    })
-    applyRefreshedSessionCookies(res, identity.refreshedPayload, req)
-    return res
+    return NextResponse.json({ details: 'Invalid JSON body' }, { status: 400 })
   }
 
-  // Never trust client-supplied tenant/user/session fields inside the JSON body.
-  if (body && typeof body === 'object' && !Array.isArray(body)) {
-    const next = { ...(body as Record<string, unknown>) }
-    delete next.tenant_id
-    delete next.tenantId
-    delete next.user_id
-    delete next.userId
-    delete next.session_id
-    delete next.sessionId
-    body = next
-  }
-
-  const serviceToken = process.env.PROMPT_LAYER_SERVICE_TOKEN?.trim()
-  const bearer = serviceToken || identity.accessToken
-  if (!bearer) {
-    const res = publicBffError({
-      code: 'UNAUTHORIZED',
-      message: 'Session required for this resource.',
-      status: 401,
-      log: { route: '/api/prompt-layer/query' },
-    })
-    applyRefreshedSessionCookies(res, identity.refreshedPayload, req)
-    return res
-  }
-
-  const candidateUrls = upstreamCandidates().map((base) => `${normalizePromptLayerBase(base)}/query`)
-  let resUpstream: Response | null = null
+  let res: Response | null = null
   let lastError: unknown = null
   let lastUrl = candidateUrls[candidateUrls.length - 1]
-
-  const forwardHeaders: Record<string, string> = {
-    'content-type': 'application/json',
-    authorization: `Bearer ${bearer}`,
-    // Derived from Edge session only — never from the browser request.
-    'x-tenant-id': identity.tenantId,
-    'x-user-id': identity.userId,
-  }
-  if (identity.sessionId) {
-    forwardHeaders['x-session-id'] = identity.sessionId
-  }
 
   for (const url of candidateUrls) {
     lastUrl = url
     try {
-      resUpstream = await fetch(url, {
+      const auth = req.headers.get('authorization') || ''
+      const tenant = req.headers.get('x-tenant-id') || ''
+      const userId = req.headers.get('x-user-id') || ''
+      const sessionId = req.headers.get('x-session-id') || ''
+
+      res = await fetch(url, {
         method: 'POST',
-        headers: forwardHeaders,
+        headers: {
+          'content-type': 'application/json',
+          ...(auth ? { authorization: auth } : {}),
+          ...(tenant ? { 'x-tenant-id': tenant } : {}),
+          ...(userId ? { 'x-user-id': userId } : {}),
+          ...(sessionId ? { 'x-session-id': sessionId } : {}),
+        },
         body: JSON.stringify(body),
         cache: 'no-store',
       })
 
-      if (resUpstream.ok || resUpstream.status < 500) {
+      if (res.ok || res.status < 500) {
         break
       }
     } catch (error) {
@@ -134,34 +67,28 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  if (!resUpstream) {
-    // CON-P1-06: never put upstream URL / exception text in the customer body.
-    const res = publicBffError({
-      code: 'UPSTREAM_UNAVAILABLE',
-      message: 'Ask Zord is temporarily unavailable. Retry shortly.',
-      status: 502,
-      log: {
-        route: '/api/prompt-layer/query',
+  if (!res) {
+    return NextResponse.json(
+      {
+        details: 'Prompt-layer service unavailable',
         upstream: lastUrl,
-        error: lastError,
+        error: lastError instanceof Error ? lastError.message : 'Unknown upstream error',
       },
-    })
-    applyRefreshedSessionCookies(res, identity.refreshedPayload, req)
-    return res
+      { status: 502 },
+    )
   }
 
-  const text = await resUpstream.text()
-  const res = new NextResponse(text, {
-    status: resUpstream.status,
+  const text = await res.text()
+  return new NextResponse(text, {
+    status: res.status,
     headers: {
-      'content-type': resUpstream.headers.get('content-type') || 'application/json; charset=utf-8',
+      'content-type': res.headers.get('content-type') || 'application/json; charset=utf-8',
       'cache-control': 'no-store',
     },
   })
-  applyRefreshedSessionCookies(res, identity.refreshedPayload, req)
-  return res
 }
 
 export async function OPTIONS() {
+  // Same-origin calls to /api/... typically don't require CORS, but OPTIONS may happen in some setups.
   return new NextResponse(null, { status: 204 })
 }

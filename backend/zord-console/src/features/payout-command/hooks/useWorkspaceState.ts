@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth } from '@/app/hooks'
+import { safeRandomId } from '@/shared/lib/safeRandomId'
 import { workspacePromptCopy, type WorkspaceTab } from '@/services/payout-command/model'
 import {
   mapPromptLayerAnswer,
@@ -16,15 +17,9 @@ import type {
   WorkspaceLoadingPhase,
   WorkspaceLiveAnswer,
 } from '@/services/payout-command/types'
-import {
-  clearWorkspaceChatThreadsForTenant,
-  loadWorkspaceChatThreads,
-  purgeLegacyLocalWorkspaceChatThreads,
-  saveWorkspaceChatThreads,
-} from '../workspace/workspaceChatThreads'
-import { isAskZordPersistApproved } from '../workspace/payoutChatPersistence'
 
 const WORKSPACE_LIVE_ANSWER_TITLE = 'Zord'
+const THREADS_STORAGE_PREFIX = 'zord:workspace-threads:'
 
 const LOADING_PHASES: WorkspaceLoadingPhase[] = [
   'understanding',
@@ -54,12 +49,33 @@ function newThreadId() {
   return `thread-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 function newSessionId() {
-  return crypto.randomUUID()
+  return safeRandomId()
 }
 function threadTitleFromPrompt(prompt: string) {
   const t = prompt.trim()
   if (t.length <= 48) return t
   return `${t.slice(0, 45)}…`
+}
+
+function loadThreads(storageKey: string): WorkspaceChatThread[] {
+  if (typeof window === 'undefined') return []
+  try {
+    const raw = window.localStorage.getItem(storageKey)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as WorkspaceChatThread[]
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function saveThreads(storageKey: string, threads: WorkspaceChatThread[]) {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(threads.slice(0, 40)))
+  } catch {
+    /* quota */
+  }
 }
 
 function welcomeMessages(tab: WorkspaceTab): WorkspaceConversationMessage[] {
@@ -107,7 +123,6 @@ export type WorkspaceState = {
   startNewChat: () => void
   selectThread: (threadId: string) => void
   deleteThread: (threadId: string) => void
-  clearHistory: () => void
   submitPrompt: (prompt: string) => Promise<void>
   refreshStarterAnswer: () => void
   resetForTab: (tab: WorkspaceTab) => void
@@ -119,7 +134,7 @@ export function useWorkspaceState(
 ): WorkspaceState {
   const { tenantId, tenantReady } = useSessionTenant()
   const { user, isLoading: authLoading } = useAuth()
-  const scopedTenantId = tenantId.trim() || 'anonymous'
+  const storageKey = `${THREADS_STORAGE_PREFIX}${tenantId.trim() || 'anonymous'}`
 
   const [threads, setThreads] = useState<WorkspaceChatThread[]>([])
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null)
@@ -140,18 +155,15 @@ export function useWorkspaceState(
   conversationRef.current = conversation
 
   useEffect(() => {
-    if (!isAskZordPersistApproved()) {
-      purgeLegacyLocalWorkspaceChatThreads()
-    }
-    setThreads(loadWorkspaceChatThreads(scopedTenantId))
-  }, [scopedTenantId])
+    setThreads(loadThreads(storageKey))
+  }, [storageKey])
 
   const persistThreads = useCallback(
     (next: WorkspaceChatThread[]) => {
       setThreads(next)
-      saveWorkspaceChatThreads(scopedTenantId, next)
+      saveThreads(storageKey, next)
     },
-    [scopedTenantId],
+    [storageKey],
   )
 
   const upsertActiveThread = useCallback(
@@ -183,11 +195,11 @@ export function useWorkspaceState(
             },
             ...prev,
           ]
-        saveWorkspaceChatThreads(scopedTenantId, next)
+        saveThreads(storageKey, next)
         return next
       })
     },
-    [activeTab, scopedTenantId],
+    [activeTab, storageKey],
   )
 
   const startNewChat = useCallback(() => {
@@ -222,12 +234,6 @@ export function useWorkspaceState(
     },
     [activeThreadId, persistThreads, startNewChat, threads],
   )
-
-  const clearHistory = useCallback(() => {
-    clearWorkspaceChatThreadsForTenant(scopedTenantId)
-    setThreads([])
-    startNewChat()
-  }, [scopedTenantId, startNewChat])
 
   const resetForTab = useCallback(
     (tab: WorkspaceTab) => {
@@ -426,12 +432,56 @@ export function useWorkspaceState(
     }
   }, [])
 
-    useEffect(() => {
-    // Do not call prompt-layer automatically when the Ask page opens.
-    // Prompt-layer should run only when the user submits a message.
-    initialAnswerRequestRef.current += 1
-    setInitialAnswer({ body: '', status: 'idle' })
-  }, [activeTab, activeThreadId, initialAnswerNonce])
+  useEffect(() => {
+    const hasUserTurn = conversationRef.current.some((m) => m.role === 'user')
+    if (hasUserTurn || activeThreadId) return
+
+    const tenantGate = sessionTenantForPromptLayer(tenantId, tenantReady)
+    if (!tenantGate.ok || authLoading) return
+
+    const userId = user?.id?.trim()
+    if (!userId) return
+
+    const requestId = ++initialAnswerRequestRef.current
+    const tabQuestion = workspacePromptCopy[activeTab].question
+
+    setInitialAnswer({ body: '', status: 'loading' })
+
+    void (async () => {
+      try {
+        const result = await postPromptLayerQuery(
+          { query: tabQuestion, top_k: 6 },
+          {
+            tenantId: tenantGate.tenantId,
+            sessionId: initialSessionIdRef.current,
+            userId,
+          },
+        )
+
+        if (initialAnswerRequestRef.current !== requestId) return
+
+        if (!result.ok) {
+          setInitialAnswer({ body: '', status: 'error' })
+          return
+        }
+
+        const mapped = mapLiveAnswer(result.payload)
+        if (!mapped?.body.trim()) {
+          setInitialAnswer({ body: '', status: 'error' })
+          return
+        }
+
+        setInitialAnswer({ body: mapped.body, status: 'done' })
+      } catch {
+        if (initialAnswerRequestRef.current !== requestId) return
+        setInitialAnswer({ body: '', status: 'error' })
+      }
+    })()
+
+    return () => {
+      initialAnswerRequestRef.current += 1
+    }
+  }, [activeTab, activeThreadId, authLoading, initialAnswerNonce, tenantId, tenantReady, user?.id])
 
   const refreshStarterAnswer = useCallback(() => {
     const hasUserTurn = conversationRef.current.some((m) => m.role === 'user')
@@ -452,7 +502,6 @@ export function useWorkspaceState(
     startNewChat,
     selectThread,
     deleteThread,
-    clearHistory,
     submitPrompt,
     resetForTab,
     refreshStarterAnswer,

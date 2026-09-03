@@ -1,4 +1,3 @@
-import { csrfMutationHeaders } from '@/services/auth/csrfBrowser'
 import type {
   EmailMessageInput,
   NewSupportTicketInput,
@@ -17,11 +16,32 @@ function isSeedOnly(tickets: SupportTicket[]): boolean {
 }
 
 async function parseJson<T>(res: Response): Promise<T> {
-  const data = (await res.json()) as T & { message?: string }
+  const text = await res.text()
+  let data: (T & { message?: string }) | null = null
+  if (text.trim()) {
+    try {
+      data = JSON.parse(text) as T & { message?: string }
+    } catch {
+      throw new Error(
+        res.ok
+          ? 'Support API returned invalid JSON.'
+          : `Request failed (${res.status}): invalid JSON response.`,
+      )
+    }
+  }
+
   if (!res.ok) {
-    const msg = typeof data.message === 'string' ? data.message : `Request failed (${res.status})`
+    const msg =
+      typeof data?.message === 'string' && data.message.trim()
+        ? data.message
+        : text.trim() || `Request failed (${res.status})`
     throw new Error(msg)
   }
+
+  if (!data) {
+    throw new Error('Support API returned an empty response.')
+  }
+
   return data
 }
 
@@ -37,7 +57,7 @@ export async function fetchSupportTickets(tenantId: string): Promise<SupportTick
         const migrateRes = await fetch('/api/support/tickets', {
           method: 'POST',
           credentials: 'include',
-          headers: csrfMutationHeaders({ 'Content-Type': 'application/json' }),
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ migrate: local }),
         })
         const migrated = await parseJson<{ tickets: SupportTicket[] }>(migrateRes)
@@ -56,22 +76,22 @@ export async function fetchSupportTickets(tenantId: string): Promise<SupportTick
 
 export async function createSupportTicketRemote(
   input: NewSupportTicketInput & { source?: 'manual_review' },
-): Promise<SupportTicket> {
+): Promise<{ ticket: SupportTicket; slackDelivered: boolean }> {
   const res = await fetch('/api/support/tickets', {
     method: 'POST',
     credentials: 'include',
-    headers: csrfMutationHeaders({ 'Content-Type': 'application/json' }),
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
   })
-  const data = await parseJson<{ ticket: SupportTicket }>(res)
-  return data.ticket
+  const data = await parseJson<{ ticket: SupportTicket; slackDelivered?: boolean }>(res)
+  return { ticket: data.ticket, slackDelivered: data.slackDelivered === true }
 }
 
 export async function postSupportChatReply(ticketId: string, body: string): Promise<SupportTicket> {
   const res = await fetch(`/api/support/tickets/${encodeURIComponent(ticketId)}/messages`, {
     method: 'POST',
     credentials: 'include',
-    headers: csrfMutationHeaders({ 'Content-Type': 'application/json' }),
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ kind: 'chat', body }),
   })
   const data = await parseJson<{ ticket: SupportTicket }>(res)
@@ -85,8 +105,8 @@ export async function postSupportEmailMessage(
   const res = await fetch(`/api/support/tickets/${encodeURIComponent(ticketId)}/messages`, {
     method: 'POST',
     credentials: 'include',
-    headers: csrfMutationHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ kind: 'email_log', ...input }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind: 'email', ...input }),
   })
   const data = await parseJson<{ ticket: SupportTicket }>(res)
   return data.ticket
@@ -96,7 +116,7 @@ export async function markSupportTicketReadRemote(ticketId: string): Promise<Sup
   const res = await fetch(`/api/support/tickets/${encodeURIComponent(ticketId)}`, {
     method: 'PATCH',
     credentials: 'include',
-    headers: csrfMutationHeaders({ 'Content-Type': 'application/json' }),
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ markRead: true }),
   })
   const data = await parseJson<{ ticket: SupportTicket }>(res)

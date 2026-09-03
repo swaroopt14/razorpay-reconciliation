@@ -144,10 +144,10 @@ export function EvidencePackItemsTab({ pack, loading }: EvidencePackItemsTabProp
         className={`m-4 rounded-[10px] border px-4 py-3 ${
           fullyVerified
             ? 'border-slate-200 bg-slate-50'
-            : 'border-amber-200 bg-amber-50/60'
+            : 'border-[#0B1324]/20 bg-[#F1F5F9]/60'
         }`}
       >
-        <p className={`text-[14px] font-semibold ${fullyVerified ? 'text-slate-900' : 'text-amber-900'}`}>
+        <p className={`text-[14px] font-semibold ${fullyVerified ? 'text-slate-900' : 'text-[#0B1324]'}`}>
           {fullyVerified ? 'This payment is fully verified.' : 'This payment needs attention before final proof export.'}
         </p>
         {fullyVerified ? (
@@ -158,11 +158,11 @@ export function EvidencePackItemsTab({ pack, loading }: EvidencePackItemsTabProp
             <li>It passed all compliance checks.</li>
           </ul>
         ) : (
-          <p className="mt-2 text-[13px] text-amber-900">
+          <p className="mt-2 text-[13px] text-[#0B1324]">
             Missing or pending: {missingRows.join(', ')}.
           </p>
         )}
-        <p className={`mt-2 text-[13px] ${fullyVerified ? 'text-slate-700' : 'text-amber-900'}`}>
+        <p className={`mt-2 text-[13px] ${fullyVerified ? 'text-slate-700' : 'text-[#0B1324]'}`}>
           {fullyVerified
             ? 'You can safely use this for audits or disputes.'
             : 'Complete pending checks to make this payment fully dispute-ready.'}
@@ -195,7 +195,7 @@ export function EvidencePackItemsTab({ pack, loading }: EvidencePackItemsTabProp
                 </td>
                 <td className="px-4 py-3 text-[14px] text-[#475569]">{row.reason}</td>
                 <td className="px-4 py-3">
-                  <span className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[12px] font-semibold ${row.ok ? 'bg-slate-100 text-slate-900' : 'bg-amber-50 text-amber-900'}`}>
+                  <span className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[12px] font-semibold ${row.ok ? 'bg-slate-100 text-slate-900' : 'bg-[#F1F5F9] text-[#0B1324]'}`}>
                     {row.ok ? 'Verified' : row.status}
                   </span>
                 </td>
@@ -212,7 +212,7 @@ export function EvidencePackItemsTab({ pack, loading }: EvidencePackItemsTabProp
         <div className="mt-2 space-y-1">
           {(pack.items ?? []).map((it, idx) => {
             const typeLabel = displayItemLabel(it.type)
-            const hash = apiTrimmedString(it.hash) || apiTrimmedString(it.leaf_hash) || '—'
+            const hash = apiTrimmedString(it.hash) || apiTrimmedString(it.leaf_hash) || '-'
             return (
               <p key={`${typeLabel}-${idx}`} className="font-mono text-[11px] text-slate-600">
                 {typeLabel}: {hash}

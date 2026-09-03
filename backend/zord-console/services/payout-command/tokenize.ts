@@ -1,5 +1,5 @@
 /**
- * Beneficiary tokenization — Stripe-style masking.
+ * Beneficiary tokenization - Stripe-style masking.
  *
  * Two display modes:
  *   - Short (table cell):    'J••• D•• · HDFC ••••4242'
@@ -53,7 +53,7 @@ export function tokenizeBeneficiaryFull(
 /**
  * Deterministic token from a seed string (typically the intent ID).
  * Same input → same `ben_tok_*` every time. Not cryptographically meaningful
- * for the demo — backend would issue real tokens.
+ * for the demo - backend would issue real tokens.
  */
 export function generateBenToken(seed: string): string {
   let hash = 0

@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import { csrfMutationHeaders } from '@/services/auth/csrfBrowser'
 import { evidenceCopy } from '../../evidence/copy/evidenceCopy'
 import type { EvidencePackFull } from '@/services/payout-command/prod-api/evidenceTypes'
 
@@ -33,8 +32,7 @@ export function EvidencePackExportTab({ pack }: EvidencePackExportTabProps) {
     try {
       const res = await fetch('/api/v1/dispute/export', {
         method: 'POST',
-        credentials: 'include',
-        headers: csrfMutationHeaders({ 'content-type': 'application/json' }),
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           payment_reference: reference,
           dispute_reason: 'BENEFICIARY_SAYS_NOT_RECEIVED',
