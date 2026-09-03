@@ -30,11 +30,11 @@ export function ProofCenterPage({ packId }: { packId?: string }) {
         return
       }
       if (id === 'ambiguity') {
-        router.push(withDemoBatchScope('/settlement/review'))
+        router.push(withDemoBatchScope('/reconciliation'))
         return
       }
-      if (id === 'leakage') {
-        router.push(withDemoBatchScope('/settlement/gaps'))
+      if (id === 'leakage' || id === 'exceptions') {
+        router.push(withDemoBatchScope('/exceptions'))
         return
       }
       if (id === 'proof') {

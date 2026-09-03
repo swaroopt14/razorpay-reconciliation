@@ -22,6 +22,10 @@ export function OperationsOverviewPage() {
 
   const onDockChange = useCallback(
     (id: DockId) => {
+      if (id === 'exceptions' || id === 'leakage') {
+        router.push('/exceptions?demo=sandbox')
+        return
+      }
       router.push(sandboxDockHref(id))
     },
     [router],

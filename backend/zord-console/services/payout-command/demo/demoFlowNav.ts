@@ -106,9 +106,9 @@ export const CROSS_BORDER_DEMO_FLOW: DemoFlowStep[] = [
   },
   {
     id: 'gaps',
-    label: 'Payment Gaps',
-    match: (p) => p.startsWith('/settlement/gaps'),
-    href: batch('/settlement/gaps'),
+    label: 'Exceptions',
+    match: (p) => p.startsWith('/exceptions') || p.startsWith('/settlement/gaps'),
+    href: batch('/exceptions'),
   },
   {
     id: 'review',

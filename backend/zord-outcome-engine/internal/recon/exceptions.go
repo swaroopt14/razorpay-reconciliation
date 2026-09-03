@@ -3,24 +3,24 @@ package recon
 import "time"
 
 type ReconciliationException struct {
-	ID                   string
-	RunID                string
-	TenantID             string
-	ConnectorID          string
-	EntityType           string
-	EntityID             string
-	Status               string
-	ReconciliationResult string
-	Reason               string
-	ExpectedAmount       int64
-	ObservedAmount       int64
-	VarianceAmount       int64
-	CandidateIDs         []string
-	Confidence           float64
-	EvidenceIDs          []string
-	EvidenceRefs         EvidenceRefs
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+	ID                   string       `json:"id"`
+	RunID                string       `json:"run_id"`
+	TenantID             string       `json:"tenant_id"`
+	ConnectorID          string       `json:"connector_id"`
+	EntityType           string       `json:"entity_type"`
+	EntityID             string       `json:"entity_id"`
+	Status               string       `json:"status"`
+	ReconciliationResult string       `json:"reconciliation_result"`
+	Reason               string       `json:"reason"`
+	ExpectedAmount       int64        `json:"expected_amount"`
+	ObservedAmount       int64        `json:"observed_amount"`
+	VarianceAmount       int64        `json:"variance_amount"`
+	CandidateIDs         []string     `json:"candidate_ids"`
+	Confidence           float64      `json:"confidence"`
+	EvidenceIDs          []string     `json:"evidence_ids"`
+	EvidenceRefs         EvidenceRefs `json:"evidence_refs"`
+	CreatedAt            time.Time    `json:"created_at"`
+	UpdatedAt            time.Time    `json:"updated_at"`
 }
 
 type ReasonExposure struct {
@@ -54,20 +54,20 @@ type ReconciliationRun struct {
 }
 
 type InvestigationRecord struct {
-	ID              string
-	TenantID        string
-	ConnectorID     string
-	ExceptionID     string
-	EntityType      string
-	EntityID        string
-	Status          string
-	RootCause       string
-	Recommendation  string
-	Confidence      float64
-	FinancialImpact int64
-	EvidenceIDs     []string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID              string    `json:"id"`
+	TenantID        string    `json:"tenant_id"`
+	ConnectorID     string    `json:"connector_id"`
+	ExceptionID     string    `json:"exception_id"`
+	EntityType      string    `json:"entity_type"`
+	EntityID        string    `json:"entity_id"`
+	Status          string    `json:"status"`
+	RootCause       string    `json:"root_cause"`
+	Recommendation  string    `json:"recommendation"`
+	Confidence      float64   `json:"confidence"`
+	FinancialImpact int64     `json:"financial_impact"`
+	EvidenceIDs     []string  `json:"evidence_ids"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 func NeedsInvestigation(r FinancialResult) bool {

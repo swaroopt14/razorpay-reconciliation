@@ -34,7 +34,7 @@ export function PaymentGapsPage() {
         return
       }
       if (id === 'leakage') {
-        router.push('/settlement/gaps?demo=sandbox')
+        router.push('/exceptions?demo=sandbox')
         return
       }
       router.push(sandboxDockHref(id))

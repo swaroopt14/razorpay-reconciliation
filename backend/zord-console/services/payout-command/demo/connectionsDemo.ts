@@ -36,8 +36,8 @@ export type ConnectionRecord = {
 }
 
 export const CONNECTIONS_HEADER = {
-  title: 'Connect the systems that create, move, and confirm payouts.',
-  coreQuestion: 'Where does Zord obtain authoritative data, and how fresh and trustworthy is each connection?',
+  title: 'Razorpay, webhooks, and bank feeds that prove cash movement.',
+  coreQuestion: 'Where do payments, settlements, and credits enter Zord, and how fresh is each signal?',
 } as const
 
 export const CONNECTION_KIND_META: Record<
@@ -64,8 +64,51 @@ export const CONNECTION_KIND_META: Record<
   },
 }
 
-/** Prepared demo - at least one active source, execution mode, and outcome source. */
+/** Prepared demo - Razorpay ingest plus file-based fallbacks. */
 export const DEMO_CONNECTIONS: ConnectionRecord[] = [
+  {
+    id: 'ex-razorpay',
+    kind: 'execution',
+    name: 'Razorpay',
+    subtype: 'PSP',
+    transport: 'API',
+    mode: 'Sandbox',
+    authScope: 'Test Mode · key_id masked',
+    lastSignal: '03 Sep 2026, 17:40 IST',
+    freshness: '< 2 min',
+    schemaVersion: 'payments-v1',
+    mappingStatus: 'Healthy',
+    notes: 'Connected in Test Mode. Payments, refunds, settlements, and payouts ingest from this connector.',
+  },
+  {
+    id: 'out-razorpay-webhook',
+    kind: 'outcome',
+    name: 'Razorpay webhooks',
+    subtype: 'Webhook',
+    transport: 'Webhook',
+    mode: 'Live',
+    authScope: 'HMAC webhook secret · not displayed',
+    lastSignal: '03 Sep 2026, 17:41 IST',
+    freshness: 'Healthy',
+    schemaVersion: 'webhook-v2',
+    mappingStatus: 'Healthy',
+    notes: 'payment.captured, payment.failed, settlement.processed, payout.processed.',
+  },
+  {
+    id: 'out-hdfc-bank',
+    kind: 'outcome',
+    name: 'HDFC current account',
+    subtype: 'Bank',
+    transport: 'File upload',
+    mode: 'Sandbox',
+    authScope: 'Statement file · •••• 4821',
+    lastSignal: '03 Sep 2026, 11:18 IST',
+    freshness: 'Batch-scoped',
+    schemaVersion: 'bank-stmt-v1',
+    mappingStatus: 'Healthy',
+    acceptedFormats: 'CSV, XLSX',
+    notes: 'Bank credits used for settlement matching. Not a live CBS pull.',
+  },
   {
     id: 'src-payroll-file',
     kind: 'source',

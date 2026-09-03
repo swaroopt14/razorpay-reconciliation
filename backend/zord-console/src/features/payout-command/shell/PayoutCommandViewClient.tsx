@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   DASHBOARD_FONT_STACK,
@@ -33,6 +33,7 @@ import { SettlementJournalSurface as SettlementJournalV2Surface } from '../settl
 import { ActivateLiveWizard } from '../sandbox/ActivateLiveWizard'
 import { SandboxSetupGuidePanel } from '../sandbox/SandboxSetupGuidePanel'
 import { OperationsOverviewSurface } from '../overview/OperationsOverviewSurface'
+import { ExceptionsSurface } from '../finance-ops/ExceptionsSurface'
 import {
   PAYOUT_CONSOLE_CARD_CLASS,
   PAYOUT_PAGE_BG_CLASS,
@@ -109,6 +110,7 @@ export default function PayoutCommandViewClient({
       activeDock === 'home' || // Spec 7.2 Overview
       activeDock === 'grid' || // Spec 7.6 Intent Journal
       activeDock === 'settlement' || // Settlement Journal (JournalPageHeader)
+      activeDock === 'exceptions' ||
       activeDock === 'workspace' // Ask Zord (canonical /ask also owns header)
     if (ownsHeader) {
       return { pageEyebrow: undefined, pageTitle: undefined, pageSubtitle: undefined }
@@ -217,6 +219,13 @@ export default function PayoutCommandViewClient({
     }
 
     if (activeDock === 'leakage') return <LeakageSurface initialBatchId={sharedBatchId} />
+    if (activeDock === 'exceptions') {
+      return (
+        <Suspense fallback={<p className="p-6 text-[13px] text-[#64748B]">Loading exceptions…</p>}>
+          <ExceptionsSurface />
+        </Suspense>
+      )
+    }
     if (activeDock === 'ambiguity') return <AmbiguitySurface initialBatchId={sharedBatchId} />
     if (activeDock === 'verification') return <BorrowerVerificationSurface />
     if (activeDock === 'monitoring') return <PostDisbursalMonitoringSurface />
@@ -283,7 +292,13 @@ export default function PayoutCommandViewClient({
             
           >
             <section
-              className={`relative flex-1 ${activeDock === 'workspace' ? 'px-3 py-3 sm:px-4 sm:py-4 lg:px-5' : 'p-4 sm:p-5 lg:p-6'}`}
+              className={`relative flex-1 ${
+                activeDock === 'workspace'
+                  ? 'px-3 py-3 sm:px-4 sm:py-4 lg:px-5'
+                  : activeDock === 'exceptions'
+                    ? 'p-0'
+                    : 'p-4 sm:p-5 lg:p-6'
+              }`}
             >
               <PayoutPageActionsProvider>
                 <PageHeader

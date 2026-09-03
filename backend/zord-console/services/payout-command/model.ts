@@ -37,6 +37,7 @@ export type DockId =
   | 'home'
   | 'workspace'
   | 'leakage'
+  | 'exceptions'
   | 'ambiguity'
   | 'verification'
   | 'monitoring'
@@ -246,6 +247,16 @@ export const dockItems = [
     summary:
       'Compare intended payments with bank or settlement outcomes. Identify unmatched, short-settled, reversed, or unlinked value that needs review.',
     icon: 'zap',
+  },
+  {
+    id: 'exceptions',
+    label: 'Exceptions',
+    navLabel: 'Exceptions',
+    title: 'Exceptions',
+    breadcrumbLabel: 'Exceptions',
+    summary:
+      'Finance operations inbox. Open recon exceptions, investigate, and open the payment of record.',
+    icon: 'gaps',
   },
   {
     id: 'ambiguity',

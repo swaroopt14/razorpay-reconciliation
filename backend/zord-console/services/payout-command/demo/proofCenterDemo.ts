@@ -5,8 +5,8 @@ import { DEMO_BATCH_LABEL, DEMO_SMOKE_BATCH_ID } from './ycDemoConstants'
 /** Spec 7.14 - Proof Center demo fixtures. */
 
 export const PROOF_CENTER_HEADER = {
-  title: 'Proof Center',
-  subtitle: 'Portable, tamper-evident evidence for every payout.',
+  title: 'Evidence',
+  subtitle: 'Tamper-evident packs with Merkle root verification for every payout and recon decision.',
 } as const
 
 /** Coverage levels - exact Spec 7.14 labels. */

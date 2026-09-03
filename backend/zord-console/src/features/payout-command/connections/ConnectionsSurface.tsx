@@ -415,8 +415,8 @@ export function ConnectionsSurface() {
         </h1>
         <p className="mt-3 text-[14px] font-medium text-[#0B1324]">{CONNECTIONS_HEADER.coreQuestion}</p>
         <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-[#64748B]">
-          For this demo, file-based ingestion is the active path. API and webhook rows appear only where they
-          work - or as Sandbox / Planned. Stronger than a fake connector marketplace.
+          Razorpay Test Mode API plus HMAC webhooks are the live ingest path for this demo. Bank statements
+          and payroll files remain available as fallbacks. Planned rows are labelled — not a fake marketplace.
         </p>
 
         <div className="mt-4 flex flex-wrap gap-2">

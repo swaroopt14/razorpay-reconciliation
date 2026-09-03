@@ -1,9 +1,8 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { EnvironmentProvider } from '@/services/auth/EnvironmentProvider'
-import { sandboxDockHref } from '@/services/payout-command/demo/ycDemoConstants'
 import { DASHBOARD_FONT_STACK, type DockId } from '@/services/payout-command/model'
 import {
   PAYOUT_CONSOLE_CARD_CLASS,
@@ -12,32 +11,20 @@ import {
 import { PayoutConsoleNavStack } from '../layout/PayoutConsoleNavStack'
 import { PayoutPageActionsProvider } from '../layout/PayoutPageActionsContext'
 import { ActivateLiveWizard } from '../sandbox/ActivateLiveWizard'
-import { OutcomeReviewSurface } from './OutcomeReviewSurface'
+import { financeDockHref } from './financeDockHref'
 
-/** Spec 7.12 route shell - `/settlement/review`. */
-export function OutcomeReviewPage() {
+export function FinanceConsoleShell({
+  activeDock,
+  children,
+}: {
+  activeDock: DockId
+  children: ReactNode
+}) {
   const router = useRouter()
   const [activateOpen, setActivateOpen] = useState(false)
-
   const onDockChange = useCallback(
     (id: DockId) => {
-      if (id === 'home') {
-        router.push('/overview')
-        return
-      }
-      if (id === 'settlement') {
-        router.push('/settlement/journal?demo=sandbox')
-        return
-      }
-      if (id === 'ambiguity') {
-        router.push('/settlement/review?demo=sandbox')
-        return
-      }
-      if (id === 'leakage' || id === 'exceptions') {
-        router.push('/exceptions?demo=sandbox')
-        return
-      }
-      router.push(sandboxDockHref(id))
+      router.push(financeDockHref(id))
     },
     [router],
   )
@@ -50,14 +37,12 @@ export function OutcomeReviewPage() {
       >
         <div className={PAYOUT_CONSOLE_CARD_CLASS}>
           <PayoutConsoleNavStack
-            activeDock="ambiguity"
+            activeDock={activeDock}
             onDockChange={onDockChange}
             onActivateClick={() => setActivateOpen(true)}
           >
             <section className="relative flex-1 p-0">
-              <PayoutPageActionsProvider>
-                <OutcomeReviewSurface />
-              </PayoutPageActionsProvider>
+              <PayoutPageActionsProvider>{children}</PayoutPageActionsProvider>
             </section>
           </PayoutConsoleNavStack>
         </div>

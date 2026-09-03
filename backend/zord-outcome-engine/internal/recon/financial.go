@@ -64,13 +64,13 @@ type ObservationFact struct {
 }
 
 type RefundFact struct {
-	ID             string
-	RefundID       string
-	PaymentID      string
-	AmountMinor    int64
-	Currency       string
-	ProviderStatus string
-	Source         string
+	ID             string `json:"id"`
+	RefundID       string `json:"refund_id"`
+	PaymentID      string `json:"payment_id"`
+	AmountMinor    int64  `json:"amount_minor"`
+	Currency       string `json:"currency"`
+	ProviderStatus string `json:"provider_status"`
+	Source         string `json:"source"`
 }
 
 type PayoutFact struct {

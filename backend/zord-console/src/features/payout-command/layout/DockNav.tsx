@@ -30,7 +30,6 @@ import {
 
 const SIDEBAR_COLLAPSE_KEY = 'zord-console-sidebar-collapsed'
 const CROSS_BORDER_SETTINGS_KEY = 'zord-console-cb-settings-nav'
-const INDIA_SETTINGS_KEY = 'zord-console-in-settings-nav'
 
 /** Compact top bar - only demo-critical destinations (rest live in the left rail). */
 type TopProductLink = {
@@ -82,51 +81,43 @@ function intentTopLink(intentHref: string): TopProductLink {
   }
 }
 
-/** India top bar: Overview · Upload · Intent · Settlement · Dispatch · Proof · Payment Gaps · Outcome Review. */
+/** India top bar: compact Finance Controller destinations. */
 function buildIndiaTopProductLinks(
-  uploadHref: string,
   intentHref: string,
   batchScoped: (path: string) => string,
-  dispatchHref: string,
 ): TopProductLink[] {
   return [
     overviewTopLink(batchScoped),
-    uploadTopLink(uploadHref),
-    intentTopLink(intentHref),
+    {
+      id: 'intents',
+      label: 'Transactions',
+      icon: 'banknote',
+      href: intentHref,
+      match: (d, pathname) =>
+        pathname.startsWith('/transactions') ||
+        pathname.startsWith('/payouts/intents') ||
+        (pathname.startsWith('/sandbox') && d === 'grid'),
+    },
+    {
+      id: 'gaps',
+      label: 'Exceptions',
+      icon: 'gaps',
+      href: batchScoped('/exceptions'),
+      match: (_d, pathname) => pathname.startsWith('/exceptions'),
+    },
     {
       id: 'settlement',
-      label: 'Settlement',
+      label: 'Settlements',
       icon: 'settlement',
       href: batchScoped('/settlement/journal'),
       match: (_d, pathname) => pathname.startsWith('/settlement/journal'),
     },
     {
-      id: 'dispatch',
-      label: 'Dispatch',
-      icon: 'payout',
-      href: dispatchHref,
-      match: (_d, pathname) => pathname.startsWith('/execution'),
-    },
-    {
       id: 'proof',
-      label: 'Proof',
+      label: 'Evidence',
       icon: 'eye',
       href: batchScoped('/proof'),
       match: (_d, pathname) => pathname.startsWith('/proof'),
-    },
-    {
-      id: 'gaps',
-      label: 'Payment Gaps',
-      icon: 'gaps',
-      href: batchScoped('/settlement/gaps'),
-      match: (_d, pathname) => pathname.startsWith('/settlement/gaps'),
-    },
-    {
-      id: 'outcome',
-      label: 'Outcome Review',
-      icon: 'chart',
-      href: batchScoped('/settlement/review'),
-      match: (_d, pathname) => pathname.startsWith('/settlement/review'),
     },
   ]
 }
@@ -206,8 +197,6 @@ export function DockNav({
   const [scenario, setScenario] = useState<ConsoleScenario>('inr')
   /** Cross-border: More + Workspace stay under Settings until expanded. */
   const [crossBorderSettingsOpen, setCrossBorderSettingsOpen] = useState(false)
-  /** India: Settings group starts open, like Razorpay Payment Products. */
-  const [indiaSettingsOpen, setIndiaSettingsOpen] = useState(true)
   const stallNavTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
@@ -216,7 +205,6 @@ export function DockNav({
     setScenario(getStoredScenario())
     try {
       setCrossBorderSettingsOpen(sessionStorage.getItem(CROSS_BORDER_SETTINGS_KEY) === '1')
-      setIndiaSettingsOpen(sessionStorage.getItem(INDIA_SETTINGS_KEY) !== '0')
     } catch {
       /* ignore */
     }
@@ -269,6 +257,11 @@ export function DockNav({
   const onSettlementJournal = pathname.startsWith('/settlement/journal')
   const onOutcomeReview = pathname.startsWith('/settlement/review')
   const onPaymentGaps = pathname.startsWith('/settlement/gaps')
+  const onExceptions = pathname.startsWith('/exceptions')
+  const onReconciliation = pathname.startsWith('/reconciliation') || pathname.startsWith('/settlement/review')
+  const onCashPosition = pathname.startsWith('/cash-position')
+  const onInvestigations = pathname.startsWith('/investigations')
+  const onEvaluation = pathname.startsWith('/evaluation')
   const onProofCenter = pathname.startsWith('/proof')
   const onDeveloper = pathname.startsWith('/developer')
   const onAskZord = pathname.startsWith('/ask') || (pathname.startsWith('/sandbox') && activeDock === 'workspace')
@@ -306,6 +299,7 @@ export function DockNav({
   )
   const onControls = pathname.startsWith('/controls') || onActionContract
   const onIntents =
+    pathname.startsWith('/transactions') ||
     pathname.startsWith('/payouts/intents') ||
     (pathname.startsWith('/sandbox') && activeDock === 'grid') ||
     (activeDock === 'grid' &&
@@ -326,6 +320,12 @@ export function DockNav({
       pathname.startsWith('/execution') ||
       pathname.startsWith('/payments') ||
       pathname.startsWith('/settlement') ||
+      pathname.startsWith('/exceptions') ||
+      pathname.startsWith('/reconciliation') ||
+      pathname.startsWith('/cash-position') ||
+      pathname.startsWith('/investigations') ||
+      pathname.startsWith('/evaluation') ||
+      pathname.startsWith('/transactions') ||
       pathname.startsWith('/proof') ||
       pathname.startsWith('/payouts') ||
       pathname.startsWith('/developer') ||
@@ -333,14 +333,14 @@ export function DockNav({
   )
   const uploadHref = scopeHref(`${batchCenterHref.split('?')[0]}?upload=1`)
   /** Journal list only — never deep-link a batch from the rail (that opens batch details). */
-  const intentHref = '/sandbox?dock=grid'
+  const intentHref = '/transactions'
   const indiaDispatchHref = scopeHref('/execution/dispatches')
   const topProductLinks = useMemo(
     () =>
       scenario === SCENARIO_CROSS_BORDER
         ? buildTopProductLinks(uploadHref, intentHref, scopeHref)
-        : buildIndiaTopProductLinks(uploadHref, intentHref, scopeHref, indiaDispatchHref),
-    [scenario, uploadHref, intentHref, scopeHref, indiaDispatchHref],
+        : buildIndiaTopProductLinks(intentHref, scopeHref),
+    [scenario, uploadHref, intentHref, scopeHref],
   )
 
   const onDockSurface = (dock: DockId) =>
@@ -351,6 +351,11 @@ export function DockNav({
     !onSettlementJournal &&
     !onOutcomeReview &&
     !onPaymentGaps &&
+    !onExceptions &&
+    !onReconciliation &&
+    !onCashPosition &&
+    !onInvestigations &&
+    !onEvaluation &&
     !onProofCenter &&
     !onOverview &&
     !onNewPayout &&
@@ -502,38 +507,38 @@ export function DockNav({
     () => [
       {
         id: 'settlement',
-        label: 'Settlement',
+        label: 'Settlements',
         icon: 'settlement',
         href: scopeHref('/settlement/journal'),
         match: onSettlementJournal,
-        ariaLabel: 'Settlement Journal. Expected vs observed outcomes.',
+        ariaLabel: 'Settlements. Expected vs observed outcomes.',
       },
       {
         id: 'proof',
-        label: 'Proof',
+        label: 'Evidence',
         icon: 'eye',
         href: scopeHref('/proof'),
         match: onProofCenter,
-        ariaLabel: 'Proof Center. Evidence packs and verification.',
+        ariaLabel: 'Evidence. Proof packs and Merkle verification.',
       },
       {
         id: 'gaps',
-        label: 'Payment Gaps',
+        label: 'Exceptions',
         icon: 'gaps',
-        href: scopeHref('/settlement/gaps'),
-        match: onPaymentGaps,
-        ariaLabel: 'Payment Gaps. Value requiring review and potential exposure.',
+        href: scopeHref('/exceptions'),
+        match: onExceptions || onPaymentGaps,
+        ariaLabel: 'Exceptions. Finance operations inbox.',
       },
       {
         id: 'outcome',
-        label: 'Outcome Review',
+        label: 'Reconciliation',
         icon: 'chart',
-        href: scopeHref('/settlement/review'),
-        match: onOutcomeReview,
-        ariaLabel: 'Outcome Review. Exact, short, return, or unresolved.',
+        href: scopeHref('/reconciliation'),
+        match: onReconciliation,
+        ariaLabel: 'Reconciliation. Matched vs unresolved outcomes.',
       },
     ],
-    [scopeHref, onSettlementJournal, onProofCenter, onPaymentGaps, onOutcomeReview],
+    [scopeHref, onSettlementJournal, onProofCenter, onPaymentGaps, onExceptions, onReconciliation],
   )
 
   const protocolNav: NavLinkItem[] = useMemo(
@@ -603,6 +608,8 @@ export function DockNav({
     onPaymentTrace,
     onSettlementJournal,
     onProofCenter,
+    onPaymentGaps,
+    onExceptions,
   ])
 
   /** Spec secondary rail (bottom): Developer · Team & Access · Audit Log · Support. */
@@ -642,6 +649,144 @@ export function DockNav({
       },
     ],
     [scopeHref, onDeveloper, onAdminTeam, onAdminAudit, onAdminSupport],
+  )
+
+  const indiaTransactionsNav: NavLinkItem[] = useMemo(
+    () => [
+      {
+        id: 'transactions',
+        label: 'Transactions',
+        icon: 'banknote',
+        href: intentHref,
+        match: onIntents,
+        ariaLabel: 'Transactions. Payment instructions from the intent journal.',
+      },
+      {
+        id: 'reconciliation',
+        label: 'Reconciliation',
+        icon: 'chart',
+        href: scopeHref('/reconciliation'),
+        match: onReconciliation,
+        ariaLabel: 'Reconciliation. Matched, ambiguous, unresolved, and conflicted records.',
+      },
+      {
+        id: 'exceptions',
+        label: 'Exceptions',
+        icon: 'gaps',
+        href: scopeHref('/exceptions'),
+        match: onExceptions || onPaymentGaps,
+        ariaLabel: 'Exceptions. Finance operations inbox.',
+      },
+      {
+        id: 'settlements',
+        label: 'Settlements',
+        icon: 'settlement',
+        href: scopeHref('/settlement/journal'),
+        match: onSettlementJournal,
+        ariaLabel: 'Settlements. Expected vs observed settlement records.',
+      },
+      {
+        id: 'payouts',
+        label: 'Payouts',
+        icon: 'payout',
+        href: indiaDispatchHref,
+        match: onDispatchRelay,
+        ariaLabel: 'Payouts. Dispatched payouts and UTR outcomes.',
+      },
+    ],
+    [
+      intentHref,
+      scopeHref,
+      indiaDispatchHref,
+      onIntents,
+      onReconciliation,
+      onExceptions,
+      onPaymentGaps,
+      onSettlementJournal,
+      onDispatchRelay,
+    ],
+  )
+
+  const indiaFinanceNav: NavLinkItem[] = useMemo(
+    () => [
+      {
+        id: 'cash-position',
+        label: 'Cash Position',
+        icon: 'bank',
+        href: scopeHref('/cash-position'),
+        match: onCashPosition,
+        ariaLabel: 'Cash position. Expected vs bank credited vs unresolved exposure.',
+      },
+      {
+        id: 'investigations',
+        label: 'Investigations',
+        icon: 'search',
+        href: scopeHref('/investigations'),
+        match: onInvestigations,
+        ariaLabel: 'Investigations. Agent traces for recon exceptions.',
+      },
+      {
+        id: 'evidence',
+        label: 'Evidence',
+        icon: 'eye',
+        href: scopeHref('/proof'),
+        match: onProofCenter,
+        ariaLabel: 'Evidence. Proof packs with Merkle root verification.',
+      },
+      {
+        id: 'ask',
+        label: 'Ask Zord',
+        icon: 'terminal',
+        href: scopeHref('/ask'),
+        match: onAskZord,
+        ariaLabel: 'Ask Zord. Finance operations copilot.',
+      },
+    ],
+    [scopeHref, onCashPosition, onInvestigations, onProofCenter, onAskZord],
+  )
+
+  const indiaDataNav: NavLinkItem[] = useMemo(
+    () => [
+      {
+        id: 'uploads',
+        label: 'Uploads',
+        icon: 'folder',
+        href: uploadHref,
+        match: onNewPayout,
+        ariaLabel: 'Uploads. Settlement, bank, and obligation files.',
+      },
+      {
+        id: 'connections',
+        label: 'Connections',
+        icon: 'link',
+        href: scopeHref('/connections'),
+        match: onConnections,
+        ariaLabel: 'Connections. Razorpay API, webhooks, and bank feeds.',
+      },
+    ],
+    [uploadHref, scopeHref, onNewPayout, onConnections],
+  )
+
+  const indiaControlNav: NavLinkItem[] = useMemo(
+    () => [
+      {
+        id: 'control-review',
+        label: 'Control Review',
+        icon: 'check',
+        href: scopeHref('/controls/review'),
+        match: onControlReview,
+        ariaLabel: 'Control Review. Finance-control health.',
+      },
+      {
+        id: 'evaluation',
+        label: 'Evaluation',
+        icon: 'grid',
+        href: scopeHref('/evaluation'),
+        match: onEvaluation,
+        ariaLabel: 'Evaluation. Finance controller scoring.',
+      },
+    ],
+    [scopeHref, onControlReview, onEvaluation],
   )
 
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
@@ -820,21 +965,8 @@ export function DockNav({
       })
     }
 
-    const toggleIndiaSettings = () => {
-      setIndiaSettingsOpen((prev) => {
-        const next = !prev
-        try {
-          sessionStorage.setItem(INDIA_SETTINGS_KEY, next ? '1' : '0')
-        } catch {
-          /* ignore */
-        }
-        return next
-      })
-    }
-
     const isIndia = scenario !== SCENARIO_CROSS_BORDER
     const indiaSandboxOn = pathname.startsWith('/sandbox') || mode === 'sandbox'
-    const showIndiaSettings = indiaSettingsOpen || moreNav.some((item) => item.match)
 
     return (
       <nav
@@ -845,58 +977,15 @@ export function DockNav({
       >
         {isIndia ? (
           <>
-            {topProductLinks.map((link) =>
-              renderNavItem(
-                {
-                  id: link.id,
-                  label: link.label,
-                  icon: link.icon,
-                  href: link.href,
-                  dock: link.dock,
-                  match: link.match(activeDock, pathname),
-                  ariaLabel: link.label,
-                },
-                collapsed,
-              ),
-            )}
-
-            <p
-              className={`mb-1 mt-3 px-2.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#94A3B8] ${
-                collapsed ? 'sr-only' : ''
-              }`}
-            >
-              Settings
-            </p>
-            {showIndiaSettings ? moreNav.map((item) => renderNavItem(item, collapsed)) : null}
-            {collapsed ? null : (
-              <button
-                type="button"
-                onClick={toggleIndiaSettings}
-                className="mt-0.5 flex h-8 w-full items-center gap-2 px-2.5 text-left text-[12px] font-medium text-[#94A3B8] hover:text-[#64748B]"
-                aria-expanded={showIndiaSettings}
-              >
-                <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 16 16" fill="none" aria-hidden>
-                  {showIndiaSettings ? (
-                    <path
-                      d="M3.5 10 8 5.5 12.5 10"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  ) : (
-                    <path
-                      d="M3.5 6 8 10.5 12.5 6"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  )}
-                </svg>
-                {showIndiaSettings ? 'Show less' : 'Show more'}
-              </button>
-            )}
+            {overviewNav.map((item) => renderNavItem(item, collapsed))}
+            {sectionLabel('Transactions', collapsed)}
+            {indiaTransactionsNav.map((item) => renderNavItem(item, collapsed))}
+            {sectionLabel('Finance Control', collapsed)}
+            {indiaFinanceNav.map((item) => renderNavItem(item, collapsed))}
+            {sectionLabel('Data', collapsed)}
+            {indiaDataNav.map((item) => renderNavItem(item, collapsed))}
+            {sectionLabel('Control', collapsed)}
+            {indiaControlNav.map((item) => renderNavItem(item, collapsed))}
 
             <div className={`mt-2 ${collapsed ? 'mx-1' : 'mx-0'} border-t border-[#E2E8F0] pt-2`}>
               <button
@@ -933,12 +1022,10 @@ export function DockNav({
                   </>
                 )}
               </button>
-              {collapsed ? null : (
-                <p className="mb-1 mt-2 px-2.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#94A3B8]">
-                  Workspace
-                </p>
-              )}
-              {secondaryNav.map((item) => renderNavItem(item, collapsed))}
+              {sectionLabel('Workspace', collapsed)}
+              {secondaryNav
+                .filter((item) => item.id !== 'support')
+                .map((item) => renderNavItem(item, collapsed))}
             </div>
           </>
         ) : (

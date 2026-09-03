@@ -28,6 +28,11 @@ function isCustomerConsolePath(pathname: string) {
     pathname.startsWith('/actions') ||
     pathname.startsWith('/agents') ||
     pathname.startsWith('/exceptions') ||
+    pathname.startsWith('/reconciliation') ||
+    pathname.startsWith('/cash-position') ||
+    pathname.startsWith('/investigations') ||
+    pathname.startsWith('/evaluation') ||
+    pathname.startsWith('/transactions') ||
     pathname.startsWith('/build') ||
     isWorkspaceAdminPath(pathname)
   )
@@ -135,6 +140,16 @@ export const config = {
     '/agents/:path*',
     '/exceptions',
     '/exceptions/:path*',
+    '/reconciliation',
+    '/reconciliation/:path*',
+    '/cash-position',
+    '/cash-position/:path*',
+    '/investigations',
+    '/investigations/:path*',
+    '/evaluation',
+    '/evaluation/:path*',
+    '/transactions',
+    '/transactions/:path*',
     '/build',
     '/build/:path*',
   ],

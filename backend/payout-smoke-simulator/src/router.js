@@ -57,6 +57,7 @@ import {
   verifyLogin,
 } from './loginGate.js'
 import { handleProtocolRequest } from './protocol/routes.js'
+import { handleFinanceRequest } from './finance.js'
 
 const LATENCY_MS = Number.parseInt(process.env.SMOKE_LATENCY_MS ?? '120', 10) || 0
 
@@ -330,6 +331,20 @@ export async function handleRequest(request) {
   }
   if (method === 'GET' && pathname === '/v1/dlq/manual-review') {
     return jsonResponse(buildManualReviewDlq(request))
+  }
+
+  // ── zord-outcome-engine (finance recon) ──────────────────────────────────
+  if (pathname.startsWith('/v1/reconciliation/') || pathname === '/v1/reconciliation') {
+    let body = {}
+    if (method === 'POST' || method === 'PUT' || method === 'PATCH') {
+      try {
+        body = await request.json()
+      } catch {
+        body = {}
+      }
+    }
+    const result = handleFinanceRequest(method, pathname, url, body)
+    if (result) return jsonResponse(result.body, result.status)
   }
 
   // ── zord-outcome-engine (settlement) ─────────────────────────────────────
