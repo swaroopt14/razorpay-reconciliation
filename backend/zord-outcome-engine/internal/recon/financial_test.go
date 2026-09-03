@@ -2,6 +2,7 @@ package recon
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -220,6 +221,57 @@ func TestSETOrphanBankBecomesOrphanException(t *testing.T) {
 	}
 }
 
+func TestPAY009_PartialSettlementIsVariance(t *testing.T) {
+	amount := int64(10000)
+	partial := amount / 2
+	got := ReconcilePayment(FinancialInput{
+		Payment: PaymentFact{
+			PaymentID: "pay_009", CanonicalStatus: PaymentCaptured, Captured: true, AmountMinor: amount,
+		},
+		Lines: []SettlementLine{{
+			ID: "sl9", PaymentID: "pay_009", LineType: "payment", AmountMinor: amount, CreditMinor: partial, Currency: "INR",
+		}},
+		Decisions: []SettlementBankDecision{{
+			ID: "d9", SettlementLineID: "sl9", BankObservationID: "b9", State: BankMatchExact, Confidence: 0.99,
+			Evidence: map[string]any{"bank_credit_minor": partial},
+		}},
+		Banks: []BankTxn{{ID: "b9", UTR: "UTR9", CreditMinor: partial, CreditDebit: "CREDIT", Currency: "INR"}},
+	})
+	if got.Result != ResultVariance || got.Reason != "partial_settlement" {
+		t.Fatalf("result=%s reason=%s", got.Result, got.Reason)
+	}
+	if got.VarianceAmount != amount-partial {
+		t.Fatalf("variance=%d", got.VarianceAmount)
+	}
+	if !got.BankCreditProven {
+		t.Fatal("partial bank credit should remain proven")
+	}
+}
+
+func TestPAY010_DuplicateSettlementIsConflicted(t *testing.T) {
+	amount := int64(10000)
+	got := ReconcilePayment(FinancialInput{
+		Payment: PaymentFact{
+			PaymentID: "pay_010", CanonicalStatus: PaymentCaptured, Captured: true, AmountMinor: amount,
+		},
+		Lines: []SettlementLine{
+			{ID: "sl10a", PaymentID: "pay_010", LineType: "payment", AmountMinor: amount, CreditMinor: amount, Currency: "INR"},
+			{ID: "sl10b", PaymentID: "pay_010", LineType: "payment", AmountMinor: amount, CreditMinor: amount, Currency: "INR"},
+		},
+		Decisions: []SettlementBankDecision{{
+			ID: "d10", SettlementLineID: "sl10a", BankObservationID: "b10", State: BankMatchExact, Confidence: 0.99,
+			Evidence: map[string]any{"bank_credit_minor": amount},
+		}},
+		Banks: []BankTxn{{ID: "b10", UTR: "UTR10", CreditMinor: amount, CreditDebit: "CREDIT", Currency: "INR"}},
+	})
+	if got.Result != ResultConflicted || got.Reason != "duplicate_settlement" {
+		t.Fatalf("result=%s reason=%s", got.Result, got.Reason)
+	}
+	if got.Exception == nil {
+		t.Fatal("expected exception")
+	}
+}
+
 func TestFailedMatchedDoesNotEmitFullyReconciled(t *testing.T) {
 	got := ReconcilePayment(FinancialInput{
 		Payment: PaymentFact{PaymentID: "pay_x", CanonicalStatus: PaymentFailed},
@@ -262,6 +314,19 @@ func TestFinancialRunEmitsReconDecision(t *testing.T) {
 	if store.Outbox[0].EventType != models.EventTypeReconDecisionV1 {
 		t.Fatalf("event=%s", store.Outbox[0].EventType)
 	}
+	var payload map[string]any
+	if err := json.Unmarshal(store.Outbox[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["event_type"] != models.EventTypeReconDecisionV1 {
+		t.Fatalf("payload=%v", payload)
+	}
+	if _, ok := payload["candidate_ids"]; !ok {
+		t.Fatal("decision payload must include candidate_ids")
+	}
+	if payload["currency"] != "INR" {
+		t.Fatalf("currency=%v", payload["currency"])
+	}
 }
 
 func TestInvestigateCopiesStructuredImpact(t *testing.T) {
@@ -281,5 +346,46 @@ func TestInvestigateCopiesStructuredImpact(t *testing.T) {
 	}
 	if rec.EvidenceIDs[0] != "bdebit" {
 		t.Fatalf("evidence=%v", rec.EvidenceIDs)
+	}
+	if len(store.Outbox) != 1 || store.Outbox[0].EventType != models.EventTypeInvestigationCompletedV1 {
+		t.Fatalf("expected investigation.completed.v1 outbox, got %+v", store.Outbox)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(store.Outbox[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["root_cause"] != "UNKNOWN" || payload["finding_certainty"] != "UNKNOWN" {
+		t.Fatalf("failed+bank movement must stay UNKNOWN: %+v", payload)
+	}
+	if payload["investigation_id"] != rec.ID {
+		t.Fatalf("investigation_id=%v", payload["investigation_id"])
+	}
+}
+
+func TestFinanceSummaryCopiesExceptionExposure(t *testing.T) {
+	store := NewMemoryFinancialStore()
+	store.Results = []FinancialResult{
+		{EntityType: EntityPayment, EntityID: "pay_1", Result: ResultMatched},
+		{EntityType: EntityPayment, EntityID: "pay_2", Result: ResultUnresolved},
+		{EntityType: EntityPayout, EntityID: "pout_1", Result: ResultAmbiguous},
+	}
+	store.Exceptions = []ReconciliationException{
+		{Reason: "amount_mismatch", VarianceAmount: 25000},
+		{Reason: "failed_with_bank_movement", VarianceAmount: 10000},
+		{Reason: "amount_mismatch", VarianceAmount: 7500},
+	}
+	svc := NewFinancialService(store)
+	sum, err := svc.FinanceSummary(context.Background(), "t", "c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.ExposureMinor != 42500 {
+		t.Fatalf("exposure=%d", sum.ExposureMinor)
+	}
+	if sum.ResultCounts[ResultMatched] != 1 || sum.ScoredCount != 3 {
+		t.Fatalf("%+v", sum)
+	}
+	if len(sum.ExposureByReason) == 0 || sum.ExposureByReason[0].Reason != "amount_mismatch" || sum.ExposureByReason[0].ExposureMinor != 32500 {
+		t.Fatalf("reasons=%+v", sum.ExposureByReason)
 	}
 }

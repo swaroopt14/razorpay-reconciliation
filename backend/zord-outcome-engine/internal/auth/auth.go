@@ -65,7 +65,12 @@ func GinProtect() gin.HandlerFunc {
 	}
 }
 
-// EnsureBodyTenant rejects JSON body tenant_id that does not match the verified JWT.
+// WithPrincipalForTest attaches a tenant principal without verifying a JWT.
+// HTTP contract tests use this instead of GinProtect.
+func WithPrincipalForTest(ctx context.Context, tenantID string) context.Context {
+	return context.WithValue(ctx, principalKey, principal{tenantID: tenantID})
+}
+
 func EnsureBodyTenant(c *gin.Context, bodyTenantID string) bool {
 	p, ok := c.Request.Context().Value(principalKey).(principal)
 	if !ok {

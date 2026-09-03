@@ -32,7 +32,7 @@ A verifiable payment lifecycle platform. Ingestion, canonicalization, settlement
 - [Tech Stack](#tech-stack)
 - [Getting Started](#getting-started)
 - [Configuration](#configuration)
-- [Razorpay Reconciliation (Phases 1-6)](#razorpay-reconciliation-phases-1-6)
+- [Razorpay Reconciliation (Phases 1-7)](#razorpay-reconciliation-phases-1-7)
 - [API Documentation](#api-documentation)
 - [Database Design](#database-design)
 - [Workflow](#workflow)
@@ -294,7 +294,7 @@ Each service reads configuration from environment variables. Copy `.env.example`
 
 ---
 
-## Razorpay Reconciliation (Phases 1-6)
+## Razorpay Reconciliation (Phases 1-7)
 
 Work lives in this clone only. No new microservice. Edge never canonicalizes payments.
 
@@ -471,7 +471,7 @@ cd backend/zord-edge && go test ./handler ./services -count=1
 - Accounting ledger service
 - Refund list/fetch/create API and `refund.*` as money movement
 - New agent service, LangGraph, MCP
-- Phase 7 finance Evidence Packs (planned — [PHASE7_PLAN.md](./PHASE7_PLAN.md); intent Merkle packs already exist in `zord-evidence`)
+- Merkle / ed25519 finance packs (intent Merkle packs stay as they are)
 - Live React proof chips
 - Edge `POST /v1/connectors/razorpay/test` still returns a **mock** healthy result
 - Live Razorpay keys (`RAZORPAY_ALLOW_LIVE` is refused)
@@ -513,7 +513,66 @@ DATABASE_URL='postgres://postgres@127.0.0.1:5433/zord_outcome_phase3?sslmode=dis
 cd backend/zord-prompt-layer && go test ./tools/ ./agents/finance/ -count=1
 ```
 
-Tracked plan: [PHASE6_PLAN.md](./PHASE6_PLAN.md). Next: [PHASE7_PLAN.md](./PHASE7_PLAN.md) — prove the Phase 6 conclusion (evidence, provenance, decision/calculation traces, audit, SHA-256 pack). Does not rebuild intent Merkle packs.
+Tracked plan: [PHASE6_PLAN.md](./PHASE6_PLAN.md).
+
+### Phase 7 — Evidence, provenance, decision/calc traces, audit, SHA-256 pack
+
+Phase 6 finds the break. Phase 7 proves the break. Evidence lives in `zord-evidence/internal/finance/` beside existing intent Merkle packs (those 14-leaf packs are not reused). Each item is a **pointer + minimal immutable snapshot**, not a copy of the canonical row. Authority is AUTHORITATIVE → DERIVED → INFERRED. `UNKNOWN` is first-class; the agent cannot force UNKNOWN→PROVEN or AMBIGUOUS→MATCHED.
+
+Outcome-engine emits `reconciliation.decision.v1` (now with `candidate_ids`, exception, currency) and `investigation.completed.v1`. `zord-evidence` consumes both idempotently. Integrity v1 is SHA-256 snapshot hash only (`VALID` / `INVALID` / `UNKNOWN`). Rejected AMBIGUOUS candidates are retained. Ledger / refund evidence types are reserved, not faked.
+
+Prompt-layer tools (HTTP, not MCP): `get_evidence_pack`, `get_decision_trace`, `get_calculation_trace`, `get_audit_trail`, `verify_evidence`, `get_source_snapshot`. `get_ledger_entry` stays stubbed.
+
+| Method | Endpoint |
+|---|---|
+| `POST` | `/internal/finance-evidence/ingest` |
+| `GET` | `/v1/finance-evidence/entities/:entityType/:entityID` |
+| `GET` | `/v1/finance-evidence/entities/:entityType/:entityID/audit` |
+| `GET` | `/v1/finance-evidence/entities/:entityType/:entityID/decisions` |
+| `GET` | `/v1/finance-evidence/entities/:entityType/:entityID/calculations` |
+| `GET` | `/v1/finance-evidence/items/:evidenceID` |
+| `POST` | `/v1/finance-evidence/items/:evidenceID/verify` |
+| `GET` | `/v1/finance-evidence/packs/:investigationID` |
+
+```bash
+cd backend/zord-evidence && go test ./internal/finance/ -count=1
+cd backend/zord-outcome-engine && go test ./internal/recon/ -count=1
+cd backend/zord-prompt-layer && go test ./tools/ ./agents/finance/ -count=1
+```
+
+Tracked plan: [PHASE7_PLAN.md](./PHASE7_PLAN.md).
+
+### Phase 8 — Ask Zord / Finance RAG
+
+Ask Zord explains Phase 6/7 truth. It does **not** reconcile, re-score UTR, or invent amounts. `POST /v1/ask-zord/finance/query` (and finance questions on `POST /query`) use a Go router, HTTP tools, `GET /v1/reconciliation/summary`, Phase 7 evidence, and seeded glossary docs. Validators reject numeric / status / evidence hallucinations. `get_ledger_entry` stays stubbed. No MCP.
+
+```bash
+cd backend/zord-prompt-layer && go test ./agents/askzord/ ./tools/ ./agents/finance/ -count=1
+cd backend/zord-outcome-engine && go test ./internal/recon/ ./handlers/ -count=1
+```
+
+Tracked plan: [PHASE8_PLAN.md](./PHASE8_PLAN.md).
+
+### Phase 9 — Investigation Agent
+
+Autonomous hypothesis loop on Phase 6 exceptions: plan → HTTP tools → confirm/eliminate hypotheses → copy structured impact → evidence-backed report. Not a chatbot, not RAG, not a second matcher. Lives in `zord-prompt-layer/agents/investigate/` (no `zord-agent-service`, no LangGraph, no live MCP). Never force `MATCHED` or rename Razorpay status. `PROVEN` is owned by the evidence policy (never assigned for failed+bank).
+
+```bash
+cd backend/zord-prompt-layer && go test ./agents/investigate/ ./tools/ ./agents/askzord/ ./agents/finance/ -count=1
+```
+
+Tracked plan: [PHASE9_PLAN.md](./PHASE9_PLAN.md).
+
+### Phase 11 — Evaluation Harness
+
+Labeled 100+ synthetic records (payment / payout / orphan) run through Phase 6 `Reconcile*`. Reports real Precision, Recall, F1, match rate, false-match rate, exception capture, variance detection, amount-weighted accuracy, evidence completeness, and latency. ROC-AUC / PR-AUC are omitted — recon is not a scored binary classifier. Regression vs the engine oracle must stay 1.0. Quality vs controller truth can be lower on known gaps (`partial_settlement`, `duplicate_settlement`).
+
+```bash
+cd backend/zord-outcome-engine && go test ./internal/recon/eval/ -count=1
+go run ./cmd/phase11-eval
+```
+
+Tracked plan: [PHASE11_PLAN.md](./PHASE11_PLAN.md).
 
 ---
 
@@ -564,6 +623,7 @@ curl -X POST http://localhost:8080/v1/ingest \
 | `GET` | `/v1/reconciliation/payments/:payment_id` | Razorpay status + financial recon result (JWT) |
 | `POST` | `/v1/reconciliation/run` | Run payment-first financial recon (JWT) |
 | `GET` | `/v1/reconciliation/exceptions` | Unexplained money-movement exceptions |
+| `GET` | `/v1/reconciliation/summary` | Result counts + exception exposure (Ask Zord aggregates) |
 
 ### zord-evidence — Evidence Packaging
 
@@ -574,6 +634,11 @@ curl -X POST http://localhost:8080/v1/ingest \
 | `GET` | `/v1/evidence/packs/:packID` | Get enriched pack |
 | `POST` | `/v1/evidence/packs/:packID/verify` | Cryptographic verification |
 | `POST` | `/v1/dispute/export` | Dispute export |
+| `POST` | `/internal/finance-evidence/ingest` | Ingest Phase 6 decision / investigation (internal) |
+| `GET` | `/v1/finance-evidence/entities/:entityType/:entityID` | List finance evidence for an entity |
+| `GET` | `/v1/finance-evidence/items/:evidenceID` | Evidence pointer + snapshot |
+| `POST` | `/v1/finance-evidence/items/:evidenceID/verify` | Recompute SHA-256 (`VALID`/`INVALID`/`UNKNOWN`) |
+| `GET` | `/v1/finance-evidence/packs/:investigationID` | Sealed finance evidence pack |
 
 ### zord-intelligence — ZPI
 
@@ -589,7 +654,13 @@ curl -X POST http://localhost:8080/v1/ingest \
 | Method | Endpoint | Description |
 |---|---|---|
 | `GET` | `/health` | Health check |
-| `POST` | `/query` | LLM-assisted query |
+| `POST` | `/query` | LLM-assisted query (finance questions dispatch to Ask Zord) |
+| `POST` | `/v1/ask-zord/finance/query` | Structured finance answer (facts + evidence + limitations) |
+| `POST` | `/v1/investigations` | Start a Phase 9 investigation loop (JWT) |
+| `GET` | `/v1/investigations/:id` | Investigation report |
+| `POST` | `/v1/investigations/:id/run` | Resume a paused / limit-reached loop |
+| `GET` | `/v1/investigations/:id/trace` | Plan + tool calls + hypotheses |
+| `POST` | `/v1/investigations/batch` | Prioritize exceptions by impact and investigate top-N |
 
 ```bash
 curl -X POST http://localhost:8086/query \
@@ -780,9 +851,12 @@ npx playwright test
 - [x] Settlement line truth + bank ingress + Settlement↔Bank candidates — Phase 5
 - [x] Payment-first financial recon + prompt-layer HTTP investigator — Phase 6
 - [x] Canonical payouts + payout recon + prompt-layer finance graph — Phase 6B
+- [x] Ask Zord / Finance RAG — [PHASE8_PLAN.md](./PHASE8_PLAN.md)
+- [x] Investigation agent (hypothesis loop) — [PHASE9_PLAN.md](./PHASE9_PLAN.md)
+- [x] Evaluation harness (100+ labeled records, real metrics) — [PHASE11_PLAN.md](./PHASE11_PLAN.md)
 - [ ] Razorpay refunds and mutations (next)
 - [ ] Accounting ledger / `get_ledger_entry`
-- [ ] Phase 7 finance evidence / provenance / audit packs
+- [x] Phase 7 finance evidence / provenance / audit packs
 - [ ] Live console proof chips
 - [x] Batch settlement file scheduling via Airflow (DAGs already in tree)
 - [ ] Real-time streaming dashboard (WebSocket)

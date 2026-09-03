@@ -1,9 +1,9 @@
 # Razorpay reconciliation — what is implemented
 
-User-facing copy through Phase 6B is in [README.md](./README.md) (`Razorpay Reconciliation (Phases 1–6)`). Phase 7 is planned in [PHASE7_PLAN.md](./PHASE7_PLAN.md).
+User-facing copy through Phase 11 is in [README.md](./README.md) (`Razorpay Reconciliation`).
 
 **Repo:** `razorpay-reconciliation` (`feat/new-feature`)  
-**Date:** 2026-09-02  
+**Date:** 2026-09-03  
 **Scope:** this clone only. No new microservice. No Arealis-Zord edits.
 
 Hard rule that still holds: Razorpay `settled` is never `bank_credited`. Only a matched bank observation proves cash in the merchant account.
@@ -22,12 +22,16 @@ Hard rule that still holds: Razorpay `settled` is never `bank_credited`. Only a 
 | Phase 5A | Settlement line truth on `provider_settlement_line_observations` | **Done** |
 | Phase 5B | Bank statement ingress + Settlement↔Bank candidates | **Done** (candidates only; no `fully_reconciled`) |
 | Phase 6 | Payment-first financial recon + prompt-layer investigation | **Done** (`MATCHED` ≠ bank_credited) |
-| Phase 6B | Canonical payouts + payout recon + prompt-layer finance graph | **Done** (ledger still stubbed) |
-| Phase 7 | Finance evidence, provenance, decision/calc traces, audit, pack | **Planned** ([PHASE7_PLAN.md](./PHASE7_PLAN.md)) |
+| Phase 6B | Canonical payouts + payout recon + prompt-layer finance graph | **Done** (derived cash ledger in Phase 17) |
+| Phase 7 | Finance evidence, provenance, decision/calc traces, audit, pack | **Done** (SHA-256 pack; Merkle/ed25519 unused) |
+| Phase 8 | Ask Zord / Finance RAG (explain + cite; not a recon engine) | **Done** ([PHASE8_PLAN.md](./PHASE8_PLAN.md)) |
+| Phase 9 | Investigation agent (hypothesis loop; not a chatbot) | **Done** ([PHASE9_PLAN.md](./PHASE9_PLAN.md)) |
+| Phase 11 | Evaluation harness (100+ labeled records; real metrics) | **Done** ([PHASE11_PLAN.md](./PHASE11_PLAN.md)) |
+| Phase 17 | Refunds, derived ledger, 7-day schedule, tax breakdown, briefing, hybrid E2E | **Done** ([PHASE17_REPORT.md](./PHASE17_REPORT.md)) |
 | Bank / matcher / proof | Multi-source recon, not bank_credited from PSP settled | Done (already in tree) |
 | Ingestion (file import) | Validate-then-commit settlement/bank files | Done (already in tree) |
-| Refunds / mutations | Refund API + refund webhooks as money movement | **Not started** |
-| AI agents | Prompt-layer finance graph (HTTP tools; no LangGraph/MCP) | **Done** (Phase 6B; ledger tool not faked) |
+| Refunds / mutations | Refund API + refund webhooks as money movement | **Done** (Phase 17: observations + GET refunds; no API backfill job yet) |
+| AI agents | Prompt-layer finance graph + Phase 9 investigation loop (HTTP tools; no LangGraph/MCP) | **Done** (derived ledger + briefing agent) |
 | Live console proof UI | React chips; wireframes only | **Not started** |
 
 Edge still does **not** canonicalize. Outcome-engine `paymenttruth.Processor` is the single path for webhook ingest and payment API backfill.
@@ -293,6 +297,18 @@ Migration: `backend/zord-outcome-engine/db/migrations/20260903010000_phase6b_can
 
 ---
 
+## Phase 7 — Evidence, provenance, audit
+
+**Purpose:** prove the Phase 6 conclusion. Phase 6 finds the break; Phase 7 proves it.
+
+Reuse `backend/zord-evidence/internal/finance/` (new tables prefixed `finance_`). Do **not** copy full canonical rows; store pointer + minimal snapshot + SHA-256. Do **not** wire finance packs through `RequiredLeafTypes` / 14-leaf Merkle / ed25519.
+
+Consumes `reconciliation.decision.v1` and `investigation.completed.v1` (Kafka + `POST /internal/finance-evidence/ingest`). Rejected AMBIGUOUS candidates stay on the decision trace. Failed + bank movement cannot be sealed as `PROVEN`. Tenant isolation is enforced in the store. Prompt-layer tools: `get_evidence_pack`, `get_decision_trace`, `get_calculation_trace`, `get_audit_trail`, `verify_evidence`, `get_source_snapshot`. Ledger stays stubbed.
+
+Migration: `backend/zord-evidence/db/migrations/20260903020000_phase7_finance_evidence.sql`. Plan: [PHASE7_PLAN.md](./PHASE7_PLAN.md).
+
+---
+
 ## How to verify
 
 ```bash
@@ -311,13 +327,57 @@ DATABASE_URL='postgres://postgres@127.0.0.1:5433/zord_outcome_phase3?sslmode=dis
 
 # Prompt-layer investigation graph (no live Gemini)
 cd backend/zord-prompt-layer && go test ./tools/ ./agents/finance/ -count=1
+
+# Phase 7 finance evidence (in-memory; no Merkle)
+cd backend/zord-evidence && go test ./internal/finance/ -count=1
+
+# Phase 8 Ask Zord (no live Gemini)
+cd backend/zord-prompt-layer && go test ./agents/askzord/ ./tools/ ./agents/finance/ -count=1
+
+# Phase 9 investigation loop (fixture HTTP; no live Gemini)
+cd backend/zord-prompt-layer && go test ./agents/investigate/ -count=1
+
+# Phase 11 evaluation harness
+cd backend/zord-outcome-engine && go test ./internal/recon/eval/ -count=1
+```
+
+---
+
+## Phase 8 — Ask Zord / Finance RAG
+
+**Purpose:** explain Phase 6/7 truth. Not a second recon engine. Not Phase 9.
+
+Deterministic Go router (RECORD / AGGREGATE / EXPLANATION / KNOWLEDGE) in `agents/askzord`. Numbers come from HTTP tools and `GET /v1/reconciliation/summary`. Validators reject invented amounts, `settled`→bank credited, `MATCHED`→fully reconciled, `STUCK`, fake `ev_*`, and “we lost ₹X”. Knowledge is seeded glossary markdown. `POST /v1/ask-zord/finance/query` plus `/query` dispatch. Ledger stays stubbed.
+
+---
+
+## Phase 9 — Investigation Agent
+
+**Purpose:** autonomously investigate Phase 6 exceptions. Not Ask Zord, not a second recon engine.
+
+Go loop in `agents/investigate/`: plan → HTTP tools → hypotheses → stop. Evidence policy never assigns `PROVEN` for failed+bank. Stopping policy (max 12 / 20). Batch by `variance_amount`. `POST /v1/investigations` and `/batch`. Persist via existing outcome `Investigate()` + `investigation.completed.v1`. Ledger stays stubbed.
+
+---
+
+## Phase 11 — Evaluation Harness
+
+**Purpose:** measure Phase 6 recon against a labeled corpus. Not a live Razorpay E2E.
+
+`internal/recon/eval` builds 153 fixtures across the locked families. **Regression** vs the engine oracle is 1.0. **Quality** vs controller truth reports Precision / Recall / F1 / false-match / capture / variance / amount-weighted / evidence / latency. ROC-AUC is omitted. Known quality gaps: partial and duplicate settlement still MATCHED when an EXACT bank row exists.
+
+```bash
+cd backend/zord-outcome-engine && go run ./cmd/phase11-eval
 ```
 
 ---
 
 ## Suggested next coding work
 
-1. Phase 7 finance Evidence Packs — [PHASE7_PLAN.md](./PHASE7_PLAN.md). Reuse `zord-evidence`; do not rebuild Merkle/ed25519 intent packs.
-2. Refunds: Razorpay refund client + `refund.*` as a **separate** observation type — not inside the payment webhook handler.
-3. Accounting ledger / `get_ledger_entry` (still `source_not_in_this_phase`).
-4. Optional: point `POST /v1/connectors/razorpay/test` at the real client.
+See [PHASE17_REPORT.md](./PHASE17_REPORT.md) remaining list. Highest leverage:
+
+1. Close accuracy: hydrate `Exception` on listed results (Postgres recall 0.758 is a scorer bug, not 15 missed MATCHED).
+2. Unresolved exposure: missing settlement/bank currently copy variance 0.
+3. Frontend against the now-stable close / cash / ledger / tax JSON.
+4. Briefing should load `close_run_id`, not only summary.
+5. Pitch script + public repo — last.
+6. Optional: point `POST /v1/connectors/razorpay/test` at the real client.

@@ -1,5 +1,7 @@
 # Phase 7 — Evidence, Provenance & Auditability
 
+**Status:** implemented in `backend/zord-evidence/internal/finance/`, outcome-engine emit, and prompt-layer HTTP tools. Merkle/ed25519 intent packs were not reused.
+
 **Locked definition:** Build an immutable, provenance-aware evidence layer that captures the authoritative source records, financial links, deterministic calculations, reconciliation decisions, agent findings, and system actions behind every exception and investigation. Generate a reproducible **Evidence Pack** for each investigation, enforce evidence-backed agent conclusions, preserve `UNKNOWN` when the evidence is insufficient, and provide integrity and tenant-isolation verification.
 
 Phase 6 already answers **what happened to the money**. Phase 7 answers **can we prove why the system reached that conclusion?**

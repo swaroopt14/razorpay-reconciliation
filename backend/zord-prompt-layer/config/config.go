@@ -56,6 +56,8 @@ type AppConfig struct {
 	VectorIndexStateDSN         string
 	OutcomeEngineBaseURL        string
 	OutcomeEngineToken          string
+	EvidenceEngineBaseURL       string
+	EvidenceEngineInternalKey   string
 	DefaultConnectorID          string
 }
 
@@ -229,6 +231,8 @@ func Load() AppConfig {
 		VectorIndexStateDSN:         os.Getenv("VECTOR_INDEX_STATE_DSN"),
 		OutcomeEngineBaseURL:        get("OUTCOME_ENGINE_BASE_URL", "http://zord-outcome-engine:8081"),
 		OutcomeEngineToken:          os.Getenv("OUTCOME_ENGINE_TOKEN"),
+		EvidenceEngineBaseURL:       get("EVIDENCE_ENGINE_BASE_URL", "http://zord-evidence:8088"),
+		EvidenceEngineInternalKey:   getAny([]string{"EVIDENCE_ENGINE_INTERNAL_KEY", "EVIDENCE_INTERNAL_KEY"}, ""),
 		DefaultConnectorID:          get("RAZORPAY_CONNECTOR_ID", ""),
 	}
 }

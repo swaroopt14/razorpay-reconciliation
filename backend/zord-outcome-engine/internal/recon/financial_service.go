@@ -3,6 +3,7 @@ package recon
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,6 +22,8 @@ type FinancialStore interface {
 	ListSettlementLines(ctx context.Context, tenantID, connectorID string) ([]SettlementLine, error)
 	ListBankTxns(ctx context.Context, tenantID, connectorID, accountID string) ([]BankTxn, error)
 	ListSettlementBankDecisions(ctx context.Context, tenantID, connectorID string) ([]SettlementBankDecision, error)
+	ListRefunds(ctx context.Context, tenantID, connectorID, paymentID string) ([]RefundFact, error)
+	UpsertRefund(ctx context.Context, tenantID, connectorID string, r RefundFact) (RefundFact, error)
 	InsertReconciliationRun(ctx context.Context, run ReconciliationRun) (ReconciliationRun, error)
 	CompleteReconciliationRun(ctx context.Context, run ReconciliationRun) error
 	GetReconciliationRun(ctx context.Context, tenantID, runID string) (ReconciliationRun, error)
@@ -28,6 +31,7 @@ type FinancialStore interface {
 	GetReconciliationResult(ctx context.Context, tenantID, connectorID, entityType, entityID string) (FinancialResult, bool, error)
 	InsertReconciliationException(ctx context.Context, tenantID, connectorID, runID string, ex ReconciliationException) (ReconciliationException, error)
 	ListReconciliationExceptions(ctx context.Context, tenantID, connectorID string) ([]ReconciliationException, error)
+	ListReconciliationResults(ctx context.Context, tenantID, connectorID string) ([]FinancialResult, error)
 	GetReconciliationException(ctx context.Context, tenantID, connectorID, id string) (ReconciliationException, bool, error)
 	InsertInvestigation(ctx context.Context, rec InvestigationRecord) (InvestigationRecord, error)
 	GetInvestigation(ctx context.Context, tenantID, connectorID, id string) (InvestigationRecord, bool, error)
@@ -79,6 +83,10 @@ func (s *FinancialService) Run(ctx context.Context, req FinancialRunRequest) (Re
 	if err != nil {
 		return run, nil, err
 	}
+	allRefunds, err := s.Store.ListRefunds(ctx, req.TenantID, req.ConnectorID, "")
+	if err != nil {
+		return run, nil, err
+	}
 
 	linesByPay := indexSettlementByPayment(lines)
 	lineByID := map[string]SettlementLine{}
@@ -112,12 +120,14 @@ func (s *FinancialService) Run(ctx context.Context, req FinancialRunRequest) (Re
 			payDecisions = append(payDecisions, decisionsByLine[lineID(l)]...)
 		}
 		related := relatedBanks(pay, events, banks, payDecisions)
+		refunds := refundsFor(allRefunds, pay.PaymentID)
 		fr := ReconcilePayment(FinancialInput{
 			Payment:    pay,
 			Events:     events,
 			Lines:      payLines,
 			Decisions:  payDecisions,
 			Banks:      related,
+			Refunds:    refunds,
 			Now:        now,
 			StuckAfter: DefaultStuckAfter,
 		})
@@ -276,7 +286,157 @@ func (s *FinancialService) Investigate(ctx context.Context, tenantID, connectorI
 	rec.FinancialImpact = ex.VarianceAmount
 	rec.Confidence = ex.Confidence
 	rec.EvidenceIDs = append([]string{}, ex.EvidenceIDs...)
-	return s.Store.InsertInvestigation(ctx, rec)
+	saved, err := s.Store.InsertInvestigation(ctx, rec)
+	if err != nil {
+		return saved, err
+	}
+	if err := s.emitInvestigation(ctx, tenantID, connectorID, saved, ex); err != nil {
+		return saved, err
+	}
+	return saved, nil
+}
+
+func (s *FinancialService) FinanceSummary(ctx context.Context, tenantID, connectorID string) (FinanceSummary, error) {
+	out := FinanceSummary{
+		EntityCounts: map[string]int{},
+		ResultCounts: map[string]int{},
+		Currency:     "INR",
+	}
+	results, err := s.Store.ListReconciliationResults(ctx, tenantID, connectorID)
+	if err != nil {
+		return out, err
+	}
+	for _, r := range results {
+		if r.EntityType != "" {
+			out.EntityCounts[r.EntityType]++
+		}
+		if r.Result != "" {
+			out.ResultCounts[r.Result]++
+		}
+	}
+	out.MatchedCount = out.ResultCounts[ResultMatched]
+	for _, k := range []string{ResultMatched, ResultAmbiguous, ResultUnresolved, ResultConflicted, ResultVariance, ResultOrphan} {
+		out.ScoredCount += out.ResultCounts[k]
+	}
+	exceptions, err := s.Store.ListReconciliationExceptions(ctx, tenantID, connectorID)
+	if err != nil {
+		return out, err
+	}
+	byReason := map[string]*ReasonExposure{}
+	for _, ex := range exceptions {
+		out.ExposureMinor += ex.VarianceAmount
+		key := ex.Reason
+		if key == "" {
+			key = "unspecified"
+		}
+		if _, ok := byReason[key]; !ok {
+			byReason[key] = &ReasonExposure{Reason: key}
+		}
+		byReason[key].Count++
+		byReason[key].ExposureMinor += ex.VarianceAmount
+	}
+	for _, v := range byReason {
+		out.ExposureByReason = append(out.ExposureByReason, *v)
+	}
+	sort.Slice(out.ExposureByReason, func(i, j int) bool {
+		if out.ExposureByReason[i].ExposureMinor == out.ExposureByReason[j].ExposureMinor {
+			return out.ExposureByReason[i].Reason < out.ExposureByReason[j].Reason
+		}
+		return out.ExposureByReason[i].ExposureMinor > out.ExposureByReason[j].ExposureMinor
+	})
+	return out, nil
+}
+
+func (s *FinancialService) CashPosition(ctx context.Context, tenantID, connectorID string) (CashSnapshot, error) {
+	results, err := s.Store.ListReconciliationResults(ctx, tenantID, connectorID)
+	if err != nil {
+		return CashSnapshot{}, err
+	}
+	lines, err := s.Store.ListSettlementLines(ctx, tenantID, connectorID)
+	if err != nil {
+		return CashSnapshot{}, err
+	}
+	exceptions, err := s.Store.ListReconciliationExceptions(ctx, tenantID, connectorID)
+	if err != nil {
+		return CashSnapshot{}, err
+	}
+	return CashPosition(results, lines, exceptions), nil
+}
+
+func (s *FinancialService) TaxBreakdown(ctx context.Context, tenantID, connectorID, paymentID string) (TaxBreakdown, error) {
+	pay, fr, ok, err := s.GetPayment(ctx, tenantID, connectorID, paymentID)
+	if err != nil {
+		return TaxBreakdown{}, err
+	}
+	if !ok {
+		return TaxBreakdown{}, errNotFound
+	}
+	lines, err := s.Store.ListSettlementLines(ctx, tenantID, connectorID)
+	if err != nil {
+		return TaxBreakdown{}, err
+	}
+	var payLines []SettlementLine
+	for _, l := range lines {
+		if l.PaymentID == paymentID || l.EntityID == paymentID {
+			payLines = append(payLines, l)
+		}
+	}
+	return TaxBreakdownFor(pay, payLines, fr), nil
+}
+
+func (s *FinancialService) CashSchedule(ctx context.Context, tenantID, connectorID string, days int) (CashSchedule, error) {
+	results, err := s.Store.ListReconciliationResults(ctx, tenantID, connectorID)
+	if err != nil {
+		return CashSchedule{}, err
+	}
+	lines, err := s.Store.ListSettlementLines(ctx, tenantID, connectorID)
+	if err != nil {
+		return CashSchedule{}, err
+	}
+	payouts, err := s.Store.ListCanonicalPayouts(ctx, tenantID, connectorID)
+	if err != nil {
+		return CashSchedule{}, err
+	}
+	return BuildCashSchedule(results, lines, payouts, s.now(), days), nil
+}
+
+func (s *FinancialService) Ledger(ctx context.Context, tenantID, connectorID, paymentID string) (Ledger, error) {
+	pay, fr, ok, err := s.GetPayment(ctx, tenantID, connectorID, paymentID)
+	if err != nil {
+		return Ledger{}, err
+	}
+	if !ok {
+		return Ledger{}, errNotFound
+	}
+	lines, err := s.Store.ListSettlementLines(ctx, tenantID, connectorID)
+	if err != nil {
+		return Ledger{}, err
+	}
+	var payLines []SettlementLine
+	for _, l := range lines {
+		if l.PaymentID == paymentID || l.EntityID == paymentID {
+			payLines = append(payLines, l)
+		}
+	}
+	refunds, err := s.Store.ListRefunds(ctx, tenantID, connectorID, paymentID)
+	if err != nil {
+		return Ledger{}, err
+	}
+	return LedgerForPayment(pay, payLines, fr, refunds), nil
+}
+
+func (s *FinancialService) ListRefunds(ctx context.Context, tenantID, connectorID, paymentID string) ([]RefundFact, error) {
+	return s.Store.ListRefunds(ctx, tenantID, connectorID, paymentID)
+}
+
+func refundsFor(all []RefundFact, paymentID string) []RefundFact {
+	var out []RefundFact
+	for _, r := range all {
+		if r.PaymentID == paymentID {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 func (s *FinancialService) emitDecision(ctx context.Context, tenantID, connectorID, runID string, fr FinancialResult) error {
@@ -284,31 +444,36 @@ func (s *FinancialService) emitDecision(ctx context.Context, tenantID, connector
 	if err != nil {
 		tid = uuid.Nil
 	}
+	eventID := uuid.Must(uuid.NewV7())
 	payload, _ := json.Marshal(map[string]any{
-		"event_type":           models.EventTypeReconDecisionV1,
-		"event_version":        models.EventVersionV1,
-		"schema_version":       models.SchemaVersionV1,
-		"rule_version":         FinancialRuleVersion,
-		"tenant_id":            tenantID,
-		"connector_id":         connectorID,
-		"run_id":               runID,
-		"entity_type":          fr.EntityType,
-		"entity_id":            fr.EntityID,
-		"status":               fr.Status,
-		"result":               fr.Result,
-		"expected_amount":      fr.ExpectedAmount,
-		"observed_amount":      fr.ObservedAmount,
-		"variance_amount":      fr.VarianceAmount,
-		"bank_credit_proven":   fr.BankCreditProven,
-		"reason":               fr.Reason,
-		"evidence_refs":        fr.EvidenceRefs,
+		"event_type":         models.EventTypeReconDecisionV1,
+		"event_id":           eventID.String(),
+		"event_version":      models.EventVersionV1,
+		"schema_version":     models.SchemaVersionV1,
+		"rule_version":       FinancialRuleVersion,
+		"tenant_id":          tenantID,
+		"connector_id":       connectorID,
+		"run_id":             runID,
+		"entity_type":        fr.EntityType,
+		"entity_id":          fr.EntityID,
+		"status":             fr.Status,
+		"result":             fr.Result,
+		"expected_amount":    fr.ExpectedAmount,
+		"observed_amount":    fr.ObservedAmount,
+		"variance_amount":    fr.VarianceAmount,
+		"bank_credit_proven": fr.BankCreditProven,
+		"reason":             fr.Reason,
+		"currency":           "INR",
+		"candidate_ids":      fr.CandidateIDs,
+		"evidence_refs":      fr.EvidenceRefs,
+		"exception":          exceptionPayload(fr),
 	})
 	agg := uuid.Must(uuid.NewV7())
 	if parsed, err := uuid.Parse(fr.EvidenceRefs.CanonicalPaymentID); err == nil {
 		agg = parsed
 	}
 	return s.Store.InsertMatchOutbox(ctx, models.OutboxRow{
-		EventID:       uuid.Must(uuid.NewV7()),
+		EventID:       eventID,
 		TenantID:      tid,
 		AggregateType: "reconciliation_result",
 		AggregateID:   agg,
@@ -316,6 +481,68 @@ func (s *FinancialService) emitDecision(ctx context.Context, tenantID, connector
 		Payload:       payload,
 		CreatedAt:     s.now(),
 	})
+}
+
+func (s *FinancialService) emitInvestigation(ctx context.Context, tenantID, connectorID string, rec InvestigationRecord, ex ReconciliationException) error {
+	tid, err := uuid.Parse(tenantID)
+	if err != nil {
+		tid = uuid.Nil
+	}
+	root := rec.RootCause
+	certainty := "LIKELY"
+	if ex.Reason == "failed_with_bank_movement" || ex.Reason == "payout_failed_with_bank_movement" {
+		root = "UNKNOWN"
+		certainty = "UNKNOWN"
+	}
+	eventID := uuid.Must(uuid.NewV7())
+	payload, _ := json.Marshal(map[string]any{
+		"event_type":         models.EventTypeInvestigationCompletedV1,
+		"event_id":           eventID.String(),
+		"event_version":      models.EventVersionV1,
+		"schema_version":     models.SchemaVersionV1,
+		"tenant_id":          tenantID,
+		"connector_id":       connectorID,
+		"entity_type":        rec.EntityType,
+		"entity_id":          rec.EntityID,
+		"status":             ex.Status,
+		"result":             ex.ReconciliationResult,
+		"reason":             ex.Reason,
+		"expected_amount":    ex.ExpectedAmount,
+		"observed_amount":    ex.ObservedAmount,
+		"variance_amount":    rec.FinancialImpact,
+		"currency":           "INR",
+		"candidate_ids":      ex.CandidateIDs,
+		"evidence_refs":      ex.EvidenceRefs,
+		"investigation_id":   rec.ID,
+		"root_cause":         root,
+		"recommendation":     rec.Recommendation,
+		"finding_certainty":  certainty,
+		"cited_evidence_ids": rec.EvidenceIDs,
+	})
+	agg := uuid.Must(uuid.NewV7())
+	if parsed, err := uuid.Parse(rec.ID); err == nil {
+		agg = parsed
+	}
+	return s.Store.InsertMatchOutbox(ctx, models.OutboxRow{
+		EventID:       eventID,
+		TenantID:      tid,
+		AggregateType: "investigation",
+		AggregateID:   agg,
+		EventType:     models.EventTypeInvestigationCompletedV1,
+		Payload:       payload,
+		CreatedAt:     s.now(),
+	})
+}
+
+func exceptionPayload(fr FinancialResult) map[string]any {
+	if fr.Exception == nil {
+		return nil
+	}
+	return map[string]any{
+		"reason":          fr.Exception.Reason,
+		"variance_amount": fr.Exception.VarianceAmount,
+		"candidate_ids":   fr.Exception.CandidateIDs,
+	}
 }
 
 func relatedBanks(pay PaymentFact, events []ObservationFact, banks []BankTxn, decisions []SettlementBankDecision) []BankTxn {

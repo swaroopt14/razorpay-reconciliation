@@ -20,6 +20,8 @@ type FinanceInvestigationState struct {
 	SLA              map[string]any
 	Similar          map[string]any
 	EvidenceIDs      []string
+	InvestigationID  string
+	PackIntegrity    string
 	Findings         []string
 	Status           string
 	ReconResult      string

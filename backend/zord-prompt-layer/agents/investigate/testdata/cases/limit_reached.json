@@ -1,0 +1,11 @@
+{
+  "id": "limit_reached",
+  "entity_id": "pay_123",
+  "entity_type": "payment",
+  "fixture": "default",
+  "max_iterations": 1,
+  "status": "limit_reached",
+  "certainty": "UNKNOWN",
+  "must_contain": ["INVESTIGATION_LIMIT_REACHED"],
+  "must_not_contain": ["was lost"]
+}

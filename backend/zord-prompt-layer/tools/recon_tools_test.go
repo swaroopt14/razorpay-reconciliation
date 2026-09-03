@@ -17,6 +17,9 @@ func TestToolNames(t *testing.T) {
 		GetBankTransaction: true, SearchBankTxns: true, GetReconciliation: true, GetException: true,
 		GetRefund: true, GetEvidence: true, GetPayout: true, GetPayoutEvents: true,
 		GetSLAPolicy: true, GetSimilarCases: true, GetLedgerEntry: true,
+		GetEvidencePack: true, GetDecisionTrace: true, GetCalculationTrace: true,
+		GetAuditTrail: true, VerifyEvidenceTool: true, GetSourceSnapshot: true,
+		GetReconSummary: true, GetCashPosition: true, GetTaxBreakdown: true, GetCashSchedule: true,
 	}
 	if len(names) != len(want) {
 		t.Fatalf("%v", names)

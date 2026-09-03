@@ -38,6 +38,7 @@ type Envelope struct {
 	ReceivedAt         string     `json:"received_at"`
 	ProviderCreatedAt  *time.Time `json:"provider_created_at"`
 	TraceID            string     `json:"trace_id"`
+	PaymentID          string     `json:"payment_id"`
 }
 
 func ParseEnvelope(raw []byte) (Envelope, error) {

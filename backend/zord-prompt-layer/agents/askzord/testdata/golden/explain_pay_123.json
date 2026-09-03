@@ -1,0 +1,7 @@
+{
+  "question": "Why is pay_123 unresolved?",
+  "expected_intent": "EXPLANATION",
+  "required_facts": ["provider_status=failed", "reconciliation_result=UNRESOLVED"],
+  "forbidden_claims": ["fully reconciled", "lost", "STUCK", "ev_invented"],
+  "required_limitations": ["UNKNOWN"]
+}

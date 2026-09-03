@@ -1,0 +1,9 @@
+{
+  "id": "matched_refuse",
+  "entity_id": "pay_ok",
+  "entity_type": "payment",
+  "fixture": "matched",
+  "status": "refused",
+  "must_contain": ["MATCHED", "will not re-open"],
+  "must_not_contain": ["was lost", "STUCK"]
+}

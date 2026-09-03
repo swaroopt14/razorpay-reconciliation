@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"zord-outcome-engine/internal/poll"
+	"zord-outcome-engine/internal/recon"
 	"zord-outcome-engine/models"
 )
 
@@ -193,6 +194,47 @@ func TestApplySkipsRefundEvent(t *testing.T) {
 	}
 	if len(store.Payments) != 0 || len(store.Outbox) != 0 {
 		t.Fatal("refund should not persist payment observation")
+	}
+}
+
+func TestNormalizeRefund(t *testing.T) {
+	env := capturedEnvelope(t)
+	env.ProviderEventType = "refund.processed"
+	env.ProviderEntityType = "refund"
+	env.ProviderEntityID = "rfnd_1"
+	env.PaymentID = "pay_1"
+	env.Amount = 2000
+	env.Status = "processed"
+	item, ok, err := NormalizeRefund(env)
+	if err != nil || !ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	if item.RefundID != "rfnd_1" || item.PaymentID != "pay_1" || item.AmountMinor != 2000 {
+		t.Fatalf("%+v", item)
+	}
+}
+
+func TestApplyStoresRefundWhenSinkSet(t *testing.T) {
+	store := poll.NewMemoryStore()
+	sink := recon.NewMemoryFinancialStore()
+	p := NewProcessor(store)
+	p.Refunds = sink
+	env := capturedEnvelope(t)
+	env.ProviderEventType = "refund.created"
+	env.ProviderEntityType = "refund"
+	env.ProviderEntityID = "rfnd_9"
+	env.PaymentID = "pay_9"
+	env.Amount = 1500
+	res, err := p.Apply(context.Background(), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Kind != ResultInserted || res.RefundID != "rfnd_9" {
+		t.Fatalf("%+v", res)
+	}
+	got, err := sink.ListRefunds(context.Background(), env.TenantID, env.ConnectorID, "pay_9")
+	if err != nil || len(got) != 1 || got[0].AmountMinor != 1500 {
+		t.Fatalf("%+v err=%v", got, err)
 	}
 }
 

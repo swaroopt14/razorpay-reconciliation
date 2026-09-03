@@ -19,6 +19,9 @@ import (
 	_ "github.com/lib/pq"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
+	"zord-prompt-layer/agents/askzord"
+	"zord-prompt-layer/agents/briefing"
+	"zord-prompt-layer/agents/investigate"
 	"zord-prompt-layer/client"
 	"zord-prompt-layer/config"
 	"zord-prompt-layer/handler"
@@ -161,14 +164,19 @@ func main() {
 
 	retriever := services.NewHybridEvidenceRetriever(liveRetriever, vectorRetriever)
 	ragService := services.NewDefaultRAGService(cfg.GeminiModel, cfg.DefaultTopK, retriever, llmService, intelligenceClient, memoryStore)
-	ragService.SetReconClient(tools.NewOutcomeClient(cfg.OutcomeEngineBaseURL, cfg.OutcomeEngineToken), cfg.DefaultConnectorID)
+	reconClient := tools.NewOutcomeClient(cfg.OutcomeEngineBaseURL, cfg.OutcomeEngineToken).
+		WithEvidence(cfg.EvidenceEngineBaseURL, cfg.EvidenceEngineInternalKey)
+	ragService.SetReconClient(reconClient, cfg.DefaultConnectorID)
 	queryHandler := handler.NewQueryHandler(ragService)
+	askHandler := askzord.NewHandler(reconClient, cfg.DefaultConnectorID)
+	invHandler := investigate.NewHandler(reconClient, cfg.DefaultConnectorID)
+	briefHandler := briefing.NewHandler(reconClient, cfg.DefaultConnectorID, geminiClient.Generate)
 	authCfg := plmiddleware.AuthConfig{
 		SigningSecret: cfg.JWTSigningSecret,
 		Issuer:        cfg.JWTIssuer,
 		Audience:      cfg.JWTAudience,
 	}
-	routes.Register(router, healthHandler, queryHandler, authCfg)
+	routes.Register(router, healthHandler, queryHandler, askHandler, invHandler, briefHandler, authCfg)
 
 	// Readiness endpoint — checks read-only DB connectivity
 	var readinessChecks []health.DependencyCheck

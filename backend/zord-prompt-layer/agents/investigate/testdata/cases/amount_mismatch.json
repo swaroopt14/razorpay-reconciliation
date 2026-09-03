@@ -1,0 +1,9 @@
+{
+  "id": "amount_mismatch",
+  "entity_id": "pay_var",
+  "entity_type": "payment",
+  "fixture": "amount_mismatch",
+  "classification": "AMOUNT_VARIANCE",
+  "impact": 8000,
+  "must_not_contain": ["was lost", "force a match", "STUCK"]
+}

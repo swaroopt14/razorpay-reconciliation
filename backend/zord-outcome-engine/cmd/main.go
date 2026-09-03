@@ -14,6 +14,7 @@ import (
 	"zord-outcome-engine/handlers"
 	"zord-outcome-engine/internal/auth"
 	"zord-outcome-engine/internal/bankingest"
+	"zord-outcome-engine/internal/close"
 	"zord-outcome-engine/internal/health"
 	"zord-outcome-engine/internal/imports"
 	"zord-outcome-engine/internal/observe"
@@ -177,6 +178,7 @@ func main() {
 	log.Printf("Kafka bank statement consumer topic=%s", bankTopic)
 
 	reconStore := persistence.NewReconSQLStore(db.DB)
+	observationProc.Refunds = reconStore
 	reconSvc := recon.NewService(reconStore)
 	financialSvc := recon.NewFinancialService(reconStore)
 	importSvc := imports.NewService(persistence.NewImportSQLStore(db.DB))
@@ -189,13 +191,16 @@ func main() {
 	}
 	handlers.SetBankIngestService(bankIngest)
 	finHandler := &handlers.FinancialHandler{Service: financialSvc, Store: reconStore}
+	closeStore := &close.Store{DB: db.DB}
+	closeSvc := close.NewService(financialSvc, closeStore, reconStore)
+	closeHandler := &handlers.CloseHandler{Service: closeSvc}
 	routes.ReconRoutes(server, &handlers.ReconHandler{Service: reconSvc, Parser: services.BankStatementParser{}}, &handlers.ImportHandler{
 		Service: importSvc,
 		AfterBankCommit: func(ctx context.Context, tenantID, connectorID, accountID string) error {
 			_, err := bankIngest.Match(ctx, tenantID, connectorID, accountID)
 			return err
 		},
-	}, &handlers.BankIngestHandler{Service: bankIngest}, finHandler)
+	}, &handlers.BankIngestHandler{Service: bankIngest}, finHandler, closeHandler)
 
 	// Readiness endpoint — checks DB connectivity
 	readinessHandler := health.NewReadinessHandler([]health.DependencyCheck{

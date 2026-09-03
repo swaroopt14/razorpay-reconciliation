@@ -1,0 +1,7 @@
+{
+  "id": "fabricated_ev",
+  "entity_id": "pay_123",
+  "entity_type": "payment",
+  "fixture": "default",
+  "must_not_contain": ["ev_fake"]
+}

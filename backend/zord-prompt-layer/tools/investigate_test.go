@@ -21,8 +21,8 @@ func TestPayoutAndLedgerNotFaked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if l["error"] != "source_not_in_this_phase" {
-		t.Fatalf("%v", l)
+	if !LedgerEmpty(l) {
+		t.Fatalf("missing ledger must not invent lines: %v", l)
 	}
 }
 

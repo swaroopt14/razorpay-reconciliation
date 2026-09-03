@@ -24,6 +24,7 @@ type MemoryFinancialStore struct {
 	Exceptions  []ReconciliationException
 	Investigations []InvestigationRecord
 	Outbox      []models.OutboxRow
+	Refunds     []RefundFact
 }
 
 func NewMemoryFinancialStore() *MemoryFinancialStore {
@@ -167,6 +168,10 @@ func (m *MemoryFinancialStore) ListReconciliationExceptions(context.Context, str
 	return append([]ReconciliationException{}, m.Exceptions...), nil
 }
 
+func (m *MemoryFinancialStore) ListReconciliationResults(context.Context, string, string) ([]FinancialResult, error) {
+	return append([]FinancialResult{}, m.Results...), nil
+}
+
 func (m *MemoryFinancialStore) GetReconciliationException(_ context.Context, _, _, id string) (ReconciliationException, bool, error) {
 	for _, ex := range m.Exceptions {
 		if ex.ID == id {
@@ -196,6 +201,35 @@ func (m *MemoryFinancialStore) GetInvestigation(_ context.Context, _, _, id stri
 		}
 	}
 	return InvestigationRecord{}, false, nil
+}
+
+func (m *MemoryFinancialStore) ListRefunds(_ context.Context, _, _, paymentID string) ([]RefundFact, error) {
+	if paymentID == "" {
+		return append([]RefundFact{}, m.Refunds...), nil
+	}
+	var out []RefundFact
+	for _, r := range m.Refunds {
+		if r.PaymentID == paymentID {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+func (m *MemoryFinancialStore) UpsertRefund(_ context.Context, _, _ string, r RefundFact) (RefundFact, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if r.ID == "" {
+		r.ID = uuid.Must(uuid.NewV7()).String()
+	}
+	for i := range m.Refunds {
+		if m.Refunds[i].RefundID == r.RefundID && r.RefundID != "" {
+			m.Refunds[i] = r
+			return r, nil
+		}
+	}
+	m.Refunds = append(m.Refunds, r)
+	return r, nil
 }
 
 func (m *MemoryFinancialStore) InsertMatchOutbox(_ context.Context, row models.OutboxRow) error {

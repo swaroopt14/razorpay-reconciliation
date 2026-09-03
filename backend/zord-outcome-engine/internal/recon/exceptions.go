@@ -23,6 +23,22 @@ type ReconciliationException struct {
 	UpdatedAt            time.Time
 }
 
+type ReasonExposure struct {
+	Reason         string `json:"reason"`
+	Count          int    `json:"count"`
+	ExposureMinor  int64  `json:"exposure_minor"`
+}
+
+type FinanceSummary struct {
+	EntityCounts     map[string]int   `json:"entity_counts"`
+	ResultCounts     map[string]int   `json:"result_counts"`
+	ExposureMinor    int64            `json:"exposure_minor"`
+	ExposureByReason []ReasonExposure `json:"exposure_by_reason"`
+	Currency         string           `json:"currency"`
+	ScoredCount      int              `json:"scored_count"`
+	MatchedCount     int              `json:"matched_count"`
+}
+
 type ReconciliationRun struct {
 	ID             string
 	TenantID       string
@@ -91,6 +107,12 @@ func DeterministicInvestigation(ex ReconciliationException) InvestigationRecord 
 	case "amount_mismatch":
 		rec.RootCause = "A unique UTR matched a bank row whose amount differs from the settlement net."
 		rec.Recommendation = "Do not force a match. Review fee/tax/adjustment and the bank amount."
+	case "partial_settlement":
+		rec.RootCause = "Settlement net is less than the captured payment amount and the gap is not fully explained by fee/tax on the settlement line."
+		rec.Recommendation = "Review whether the payment was partially settled or a settlement line is missing."
+	case "duplicate_settlement":
+		rec.RootCause = "More than one payment-type settlement line exists for the same payment_id."
+		rec.Recommendation = "Do not force a match. Review duplicate settlement lines and provider settlement files."
 	case "ambiguous_bank_candidates", "shared_utr_or_bank_candidates":
 		rec.RootCause = "More than one plausible bank candidate exists. No match was forced."
 		rec.Recommendation = "Finance should pick from the candidate IDs using additional evidence."

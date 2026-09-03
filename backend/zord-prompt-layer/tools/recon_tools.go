@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,11 +12,11 @@ import (
 )
 
 const (
-	GetTransactionProof   = "get_transaction_proof"
+	GetTransactionProof    = "get_transaction_proof"
 	GetSettlementBreakdown = "get_settlement_breakdown"
-	GetBankMatch          = "get_bank_match"
-	GetPaymentGaps        = "get_payment_gaps"
-	GetFreshnessStatus    = "get_freshness_status"
+	GetBankMatch           = "get_bank_match"
+	GetPaymentGaps         = "get_payment_gaps"
+	GetFreshnessStatus     = "get_freshness_status"
 )
 
 func LegacyNames() []string {
@@ -23,13 +24,21 @@ func LegacyNames() []string {
 }
 
 type OutcomeClient struct {
-	BaseURL string
-	Token   string
-	HTTP    *http.Client
+	BaseURL             string
+	Token               string
+	EvidenceBaseURL     string
+	EvidenceInternalKey string
+	HTTP                *http.Client
 }
 
 func NewOutcomeClient(baseURL, token string) *OutcomeClient {
 	return &OutcomeClient{BaseURL: strings.TrimRight(baseURL, "/"), Token: token, HTTP: &http.Client{Timeout: 10 * time.Second}}
+}
+
+func (c *OutcomeClient) WithEvidence(baseURL, internalKey string) *OutcomeClient {
+	c.EvidenceBaseURL = strings.TrimRight(baseURL, "/")
+	c.EvidenceInternalKey = internalKey
+	return c
 }
 
 func (c *OutcomeClient) get(path string, q url.Values) (map[string]any, error) {
@@ -58,6 +67,49 @@ func (c *OutcomeClient) get(path string, q url.Values) (map[string]any, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+func (c *OutcomeClient) post(path string, q url.Values, payload any) (map[string]any, error) {
+	u := c.BaseURL + path
+	if len(q) > 0 {
+		u += "?" + q.Encode()
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest(http.MethodPost, u, bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("outcome-engine HTTP %d", resp.StatusCode)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *OutcomeClient) CreateInvestigation(tenantID, connectorID, exceptionID, entityID string) (map[string]any, error) {
+	q := url.Values{}
+	q.Set("tenant_id", tenantID)
+	q.Set("connector_id", connectorID)
+	return c.post("/v1/reconciliation/investigations", q, map[string]string{
+		"exception_id": exceptionID,
+		"entity_id":    entityID,
+	})
 }
 
 func (c *OutcomeClient) getOptional(path string, q url.Values) (map[string]any, error) {

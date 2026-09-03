@@ -1,0 +1,13 @@
+{
+  "id": "failed_bank",
+  "entity_id": "pay_123",
+  "entity_type": "payment",
+  "fixture": "default",
+  "root_cause_category": "UNKNOWN",
+  "certainty": "UNKNOWN",
+  "classification": "FAILED_WITH_MONEY_MOVEMENT",
+  "impact": 10000,
+  "status": "completed",
+  "must_contain": ["unresolved exposure", "UNKNOWN", "failed"],
+  "must_not_contain": ["was lost", "incorrectly processed", "incorrectly settled", "STUCK", "was settled"]
+}

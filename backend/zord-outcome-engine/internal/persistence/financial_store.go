@@ -86,7 +86,8 @@ func scanCanonicalPayment(row scanner) (paymenttruth.CanonicalPayment, error) {
 
 func (s *ReconSQLStore) ListObservationEvents(ctx context.Context, tenantID, connectorID, paymentID string) ([]recon.ObservationFact, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT COALESCE(source_event_id,''), COALESCE(source_hash, payload_hash), COALESCE(raw_reference,'')
+		SELECT COALESCE(source,''), COALESCE(provider_status,''), COALESCE(canonical_status,''),
+			COALESCE(source_event_id,''), COALESCE(source_hash, payload_hash), COALESCE(raw_reference,''), observed_at
 		FROM provider_payment_observation_events
 		WHERE tenant_id=$1 AND connector_id=$2 AND payment_id=$3
 		ORDER BY observed_at ASC`,
@@ -99,7 +100,7 @@ func (s *ReconSQLStore) ListObservationEvents(ctx context.Context, tenantID, con
 	var out []recon.ObservationFact
 	for rows.Next() {
 		var obs recon.ObservationFact
-		if err := rows.Scan(&obs.SourceEventID, &obs.SourceHash, &obs.RawReference); err != nil {
+		if err := rows.Scan(&obs.Source, &obs.ProviderStatus, &obs.CanonicalStatus, &obs.SourceEventID, &obs.SourceHash, &obs.RawReference, &obs.ObservedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, obs)
@@ -118,6 +119,9 @@ func toPaymentFact(pay paymenttruth.CanonicalPayment) recon.PaymentFact {
 		Currency:          pay.Currency,
 		ProviderCreatedAt: pay.ProviderCreatedAt,
 		FirstObservedAt:   pay.FirstObservedAt,
+		Sources:           pay.Sources,
+		FeeMinor:          pay.FeeMinor,
+		TaxMinor:          pay.TaxMinor,
 	}
 }
 
@@ -279,6 +283,36 @@ func (s *ReconSQLStore) GetReconciliationResult(ctx context.Context, tenantID, c
 	return r, true, nil
 }
 
+func (s *ReconSQLStore) ListReconciliationResults(ctx context.Context, tenantID, connectorID string) ([]recon.FinancialResult, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id::text, COALESCE(run_id::text,''), entity_type, entity_id, status, result,
+			expected_amount_minor, observed_amount_minor, variance_amount_minor, confidence, reason,
+			candidate_ids, evidence_refs, bank_credit_proven
+		FROM reconciliation_results
+		WHERE tenant_id=$1 AND connector_id=$2
+		ORDER BY entity_type, entity_id`, tenantID, connectorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []recon.FinancialResult
+	for rows.Next() {
+		var r recon.FinancialResult
+		var cands, refs []byte
+		var runID sql.NullString
+		if err := rows.Scan(&r.ID, &runID, &r.EntityType, &r.EntityID, &r.Status, &r.Result,
+			&r.ExpectedAmount, &r.ObservedAmount, &r.VarianceAmount, &r.Confidence, &r.Reason,
+			&cands, &refs, &r.BankCreditProven); err != nil {
+			return nil, err
+		}
+		r.RunID = runID.String
+		_ = json.Unmarshal(cands, &r.CandidateIDs)
+		_ = json.Unmarshal(refs, &r.EvidenceRefs)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 func (s *ReconSQLStore) InsertReconciliationException(ctx context.Context, tenantID, connectorID, runID string, ex recon.ReconciliationException) (recon.ReconciliationException, error) {
 	if ex.ID == "" {
 		ex.ID = uuid.Must(uuid.NewV7()).String()
@@ -418,4 +452,60 @@ func (s *ReconSQLStore) GetInvestigation(ctx context.Context, tenantID, connecto
 	rec.ExceptionID = exID.String
 	_ = json.Unmarshal(eids, &rec.EvidenceIDs)
 	return rec, true, nil
+}
+
+func (s *ReconSQLStore) ListRefunds(ctx context.Context, tenantID, connectorID, paymentID string) ([]recon.RefundFact, error) {
+	q := `
+		SELECT id::text, refund_id, COALESCE(payment_id,''), amount_minor, currency, COALESCE(provider_status,''), COALESCE(source,'')
+		FROM provider_refund_observations
+		WHERE tenant_id=$1 AND connector_id=$2`
+	args := []any{tenantID, connectorID}
+	if paymentID != "" {
+		q += ` AND payment_id=$3`
+		args = append(args, paymentID)
+	}
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []recon.RefundFact
+	for rows.Next() {
+		var r recon.RefundFact
+		if err := rows.Scan(&r.ID, &r.RefundID, &r.PaymentID, &r.AmountMinor, &r.Currency, &r.ProviderStatus, &r.Source); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *ReconSQLStore) UpsertRefund(ctx context.Context, tenantID, connectorID string, r recon.RefundFact) (recon.RefundFact, error) {
+	if r.ID == "" {
+		r.ID = uuid.Must(uuid.NewV7()).String()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO provider_refund_observations (
+			id, tenant_id, connector_id, refund_id, payment_id, amount_minor, currency, provider_status, source
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		ON CONFLICT (tenant_id, connector_id, refund_id) DO UPDATE SET
+			payment_id=EXCLUDED.payment_id, amount_minor=EXCLUDED.amount_minor, currency=EXCLUDED.currency,
+			provider_status=EXCLUDED.provider_status, source=EXCLUDED.source, updated_at=now()`,
+		r.ID, tenantID, connectorID, r.RefundID, nullIfEmpty(r.PaymentID), r.AmountMinor, nzCur(r.Currency), r.ProviderStatus, nzCurSrc(r.Source),
+	)
+	return r, err
+}
+
+func nzCur(s string) string {
+	if s == "" {
+		return "INR"
+	}
+	return s
+}
+
+func nzCurSrc(s string) string {
+	if s == "" {
+		return "webhook"
+	}
+	return s
 }

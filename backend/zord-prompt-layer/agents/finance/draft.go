@@ -68,7 +68,7 @@ func draftBatch(st *FinanceInvestigationState) string {
 		fmt.Fprintf(&b, "%s: count=%d impact=%d. ", reason, g.count, g.impact)
 	}
 	fmt.Fprintf(&b, "Financial impact is %d (copied from structured variance_amount). ", total)
-	b.WriteString("Razorpay statuses are unchanged. Ledger source is not in this phase.")
+	b.WriteString("Razorpay statuses are unchanged. Derived ledger lines are omitted when evidence is missing.")
 	return strings.TrimSpace(b.String())
 }
 

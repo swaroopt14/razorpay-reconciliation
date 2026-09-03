@@ -1,0 +1,7 @@
+{
+  "question": "What is the difference between settlement and bank credit?",
+  "expected_intent": "KNOWLEDGE",
+  "required_facts": [],
+  "forbidden_claims": ["pay_123", "ev_invented", "we lost"],
+  "required_limitations": []
+}

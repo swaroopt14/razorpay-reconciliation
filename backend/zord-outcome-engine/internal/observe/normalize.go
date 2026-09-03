@@ -150,3 +150,47 @@ func NormalizePayout(env Envelope) (razorpay.NeutralPayout, bool, error) {
 	item.PayloadHash = razorpay.HashRawResponse(canonical)
 	return item, true, nil
 }
+
+func isRefundEvent(eventType, entityType string) bool {
+	et := strings.ToLower(strings.TrimSpace(eventType))
+	ent := strings.ToLower(strings.TrimSpace(entityType))
+	if strings.HasPrefix(et, "refund.") {
+		return true
+	}
+	return ent == "refund"
+}
+
+func NormalizeRefund(env Envelope) (reconRefund, bool, error) {
+	if !isRefundEvent(env.ProviderEventType, env.ProviderEntityType) {
+		return reconRefund{}, false, nil
+	}
+	id := strings.TrimSpace(env.ProviderEntityID)
+	if id == "" {
+		return reconRefund{}, false, fmt.Errorf("missing refund id")
+	}
+	status := strings.ToLower(strings.TrimSpace(env.Status))
+	if status == "" {
+		status = strings.TrimPrefix(strings.ToLower(env.ProviderEventType), "refund.")
+	}
+	cur := strings.TrimSpace(env.Currency)
+	if cur == "" {
+		cur = "INR"
+	}
+	return reconRefund{
+		RefundID:       id,
+		PaymentID:      strings.TrimSpace(env.PaymentID),
+		AmountMinor:    env.Amount,
+		Currency:       cur,
+		ProviderStatus: status,
+		Source:         SourceWebhook,
+	}, true, nil
+}
+
+type reconRefund struct {
+	RefundID       string
+	PaymentID      string
+	AmountMinor    int64
+	Currency       string
+	ProviderStatus string
+	Source         string
+}

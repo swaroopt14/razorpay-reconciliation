@@ -1,0 +1,10 @@
+{
+  "id": "tenant_b",
+  "entity_id": "pay_123",
+  "entity_type": "payment",
+  "tenant_id": "tenant-b",
+  "fixture": "default",
+  "certainty": "UNKNOWN",
+  "impact": 0,
+  "must_not_contain": ["Bank received", "10000 was lost"]
+}

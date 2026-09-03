@@ -1,0 +1,10 @@
+{
+  "id": "missing_settlement",
+  "entity_id": "pay_cap",
+  "entity_type": "payment",
+  "fixture": "missing_settlement",
+  "classification": "MISSING_SETTLEMENT",
+  "impact": 7500,
+  "must_contain": ["No corresponding settlement"],
+  "must_not_contain": ["was settled", "was lost"]
+}

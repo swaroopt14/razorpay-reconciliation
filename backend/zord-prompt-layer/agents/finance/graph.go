@@ -78,9 +78,9 @@ func Classify(query, tenantID, connectorID string) *FinanceInvestigationState {
 
 func LoadPrimary(c *tools.OutcomeClient, st *FinanceInvestigationState) {
 	ledger, _ := c.GetLedgerEntry(st.TenantID, st.ConnectorID, st.EntityID)
-	if errCode(ledger) == "source_not_in_this_phase" {
+	if tools.LedgerEmpty(ledger) {
 		st.LedgerBlocked = true
-		st.Findings = append(st.Findings, "Ledger source is not in this phase. Do not invent a ledger entry.")
+		st.Findings = append(st.Findings, "No derived ledger lines were returned. Do not invent a ledger entry.")
 	}
 	if st.Batch {
 		body, _ := c.GetSimilarCases(st.TenantID, st.ConnectorID, st.EntityType, "")
@@ -213,5 +213,53 @@ func VerifyEvidence(c *tools.OutcomeClient, st *FinanceInvestigationState) {
 		if id := stringField(rec, "bank_observation_id"); id != "" {
 			st.EvidenceIDs = appendUnique(st.EvidenceIDs, id)
 		}
+	}
+
+	fin, _ := c.ListFinanceEvidence(st.TenantID, st.EntityType, st.EntityID)
+	for _, id := range tools.CollectFinanceEvidenceIDs(fin) {
+		st.EvidenceIDs = appendUnique(st.EvidenceIDs, id)
+	}
+	if tools.FinanceEvidenceNone(fin) {
+		st.Findings = append(st.Findings, "No finance evidence pack was returned. Do not invent evidence IDs.")
+	}
+	calcs, _ := c.GetCalculationTrace(st.TenantID, st.EntityType, st.EntityID)
+	if v, ok := tools.StructuredCalcVariance(calcs); ok && v != 0 {
+		st.VarianceAmount = v
+	}
+	if st.InvestigationID == "" {
+		if id := stringField(st.Exception, "investigation_id"); id != "" {
+			st.InvestigationID = id
+		}
+	}
+	if st.InvestigationID != "" {
+		pack, _ := c.GetEvidencePack(st.TenantID, st.InvestigationID)
+		for _, id := range tools.CollectFinanceEvidenceIDs(pack) {
+			st.EvidenceIDs = appendUnique(st.EvidenceIDs, id)
+		}
+		if doc, ok := pack["document"].(map[string]any); ok {
+			if inv, ok := doc["investigation"].(map[string]any); ok {
+				if stringField(inv, "certainty") == "UNKNOWN" || stringField(inv, "root_cause") == "UNKNOWN" {
+					st.Findings = append(st.Findings, "Evidence pack root cause remains UNKNOWN.")
+				}
+			}
+			if integ, ok := doc["integrity"].(map[string]any); ok {
+				st.PackIntegrity = stringField(integ, "status")
+			}
+		}
+		if h, ok := pack["pack_hash"].(string); ok && h != "" && st.PackIntegrity == "" {
+			st.PackIntegrity = "VALID"
+		}
+	}
+	if len(st.EvidenceIDs) > 0 {
+		first := st.EvidenceIDs[0]
+		if strings.HasPrefix(first, "ev_") {
+			ver, _ := c.VerifyEvidence(st.TenantID, first)
+			if stringField(ver, "integrity") == "INVALID" {
+				st.Findings = append(st.Findings, "Evidence integrity is INVALID. Do not treat the snapshot as authoritative.")
+			}
+		}
+	}
+	if st.ExceptionReason == "failed_with_bank_movement" || st.ExceptionReason == "payout_failed_with_bank_movement" {
+		st.Findings = append(st.Findings, "Root cause remains UNKNOWN. Bank movement is proven; why it happened is not. Certainty stays UNKNOWN; do not treat as PROVEN.")
 	}
 }

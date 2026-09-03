@@ -38,7 +38,7 @@ func OutboxRoutes(router *gin.Engine, h *handlers.OutboxHandler) {
 	}
 }
 
-func ReconRoutes(router *gin.Engine, h *handlers.ReconHandler, imp *handlers.ImportHandler, bank *handlers.BankIngestHandler, fin *handlers.FinancialHandler) {
+func ReconRoutes(router *gin.Engine, h *handlers.ReconHandler, imp *handlers.ImportHandler, bank *handlers.BankIngestHandler, fin *handlers.FinancialHandler, closeH *handlers.CloseHandler) {
 	protected := router.Group("/v1")
 	protected.Use(auth.GinProtect())
 	{
@@ -64,6 +64,12 @@ func ReconRoutes(router *gin.Engine, h *handlers.ReconHandler, imp *handlers.Imp
 			protected.GET("/reconciliation/payouts/:payout_id", fin.GetPayout)
 			protected.GET("/reconciliation/payouts/:payout_id/evidence", fin.GetPayoutEvidence)
 			protected.GET("/reconciliation/sla-policy", fin.SLAPolicy)
+			protected.GET("/reconciliation/summary", fin.GetFinanceSummary)
+			protected.GET("/reconciliation/cash-position", fin.GetCashPosition)
+			protected.GET("/reconciliation/cash-schedule", fin.GetCashSchedule)
+			protected.GET("/reconciliation/tax-breakdown/:payment_id", fin.GetTaxBreakdown)
+			protected.GET("/reconciliation/ledger", fin.GetLedger)
+			protected.GET("/reconciliation/refunds", fin.ListRefunds)
 			protected.GET("/reconciliation/exceptions", fin.ListExceptions)
 			protected.GET("/reconciliation/exceptions/:id", fin.GetException)
 			protected.POST("/reconciliation/run", fin.Run)
@@ -73,6 +79,11 @@ func ReconRoutes(router *gin.Engine, h *handlers.ReconHandler, imp *handlers.Imp
 			protected.GET("/reconciliation/settlements", fin.SearchSettlements)
 			protected.GET("/reconciliation/bank-transactions", fin.SearchBank)
 			protected.GET("/reconciliation/bank-transactions/:id", fin.GetBank)
+		}
+		if closeH != nil {
+			protected.POST("/finance-close/run", closeH.Run)
+			protected.GET("/finance-close/:id", closeH.Get)
+			protected.GET("/finance-close/:id/accuracy", closeH.Accuracy)
 		}
 	}
 	internal := router.Group("/internal")

@@ -6,7 +6,7 @@ import (
 	"log"
 	"strings"
 	"time"
-	"zord-prompt-layer/agents/finance"
+	"zord-prompt-layer/agents/askzord"
 	"zord-prompt-layer/client"
 	"zord-prompt-layer/dto"
 	"zord-prompt-layer/tools"
@@ -100,40 +100,37 @@ func (s *DefaultRAGService) Query(req dto.QueryRequest) (dto.QueryResponse, erro
 		}
 	}
 
-	if s.recon != nil {
-		if ans, ok := finance.Investigate(s.recon, req.TenantID, s.defaultConnector, resolvedQuery); ok {
-			resp := dto.QueryResponse{
-				Answer:        utils.SanitizeAnswerText(ans),
-				Confidence:    "high",
-				EntitiesFound: dto.EntitiesFound{},
-				Citations:     []dto.Citation{{SourceType: "reconciliation_exception", Snippet: "outcome-engine financial recon APIs; amounts copied from structured fields"}},
-				NextActions:   []string{},
-			}
-			s.persistConversationMemory(ctx, req, memorySummary, resp.Answer)
-			return resp, nil
+	if s.recon != nil && askzord.IsFinanceQuestion(resolvedQuery) {
+		inherit := askzord.EntityFromText(resolvedQuery)
+		if inherit.ID == "" && len(history) > 0 {
+			inherit = askzord.EntityFromText(history[len(history)-1].UserMessage)
 		}
-		if ans, ok := tools.Investigate(s.recon, req.TenantID, s.defaultConnector, resolvedQuery); ok {
-			resp := dto.QueryResponse{
-				Answer:        utils.SanitizeAnswerText(ans),
-				Confidence:    "high",
-				EntitiesFound: dto.EntitiesFound{},
-				Citations:     []dto.Citation{{SourceType: "reconciliation_exception", Snippet: "outcome-engine financial recon APIs; amounts copied from structured fields"}},
-				NextActions:   []string{},
-			}
-			s.persistConversationMemory(ctx, req, memorySummary, resp.Answer)
-			return resp, nil
+		az := askzord.Ask(s.recon, req.TenantID, s.defaultConnector, resolvedQuery, inherit)
+		citations := make([]dto.Citation, 0, len(az.Evidence)+len(az.Sources)+1)
+		for _, id := range az.Evidence {
+			citations = append(citations, dto.Citation{SourceType: "finance_evidence", RecordID: id, Snippet: "[Evidence: " + id + "]"})
 		}
-		if ans, ok := tools.Answer(s.recon, req.TenantID, s.defaultConnector, resolvedQuery); ok {
-			resp := dto.QueryResponse{
-				Answer:        utils.SanitizeAnswerText(ans),
-				Confidence:    "high",
-				EntitiesFound: dto.EntitiesFound{},
-				Citations:     []dto.Citation{{SourceType: "payment_proof", Snippet: "outcome-engine proof API; bank credit only when a bank row is matched"}},
-				NextActions:   []string{},
-			}
-			s.persistConversationMemory(ctx, req, memorySummary, resp.Answer)
-			return resp, nil
+		for _, src := range az.Sources {
+			citations = append(citations, dto.Citation{SourceType: "finance_knowledge", Snippet: "[Source: " + src + "]"})
 		}
+		if len(citations) == 0 {
+			citations = []dto.Citation{{SourceType: "reconciliation_exception", Snippet: "structured finance tools; amounts copied from stored fields"}}
+		}
+		conf := "high"
+		if az.Confidence < 0.5 {
+			conf = "low"
+		} else if az.Confidence < 0.85 {
+			conf = "medium"
+		}
+		resp := dto.QueryResponse{
+			Answer:        utils.SanitizeAnswerText(az.Answer),
+			Confidence:    conf,
+			EntitiesFound: dto.EntitiesFound{},
+			Citations:     citations,
+			NextActions:   []string{},
+		}
+		s.persistConversationMemory(ctx, req, memorySummary, resp.Answer)
+		return resp, nil
 	}
 	selectedUIContext := buildSelectedUIContextBlock(req.UIContext)
 

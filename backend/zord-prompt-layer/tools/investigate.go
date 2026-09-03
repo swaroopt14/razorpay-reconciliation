@@ -56,7 +56,7 @@ func loadFacts(c *OutcomeClient, tenantID, connectorID, paymentID string) Invest
 		facts.PayoutBlocked = true
 	}
 	ledger, _ := c.GetLedgerEntry(tenantID, connectorID, paymentID)
-	if errCode(ledger) == "source_not_in_this_phase" {
+	if LedgerEmpty(ledger) {
 		facts.LedgerBlocked = true
 	}
 	if paymentID == "" {
@@ -115,7 +115,7 @@ func DraftConclusion(f InvestigationFacts, query string) string {
 		b.WriteString("Payout source is not in this phase. Do not invent a payout record. ")
 	}
 	if f.LedgerBlocked && strings.Contains(q, "ledger") {
-		b.WriteString("Ledger source is not in this phase. Do not invent a ledger entry. ")
+		b.WriteString("No derived ledger lines were returned. Do not invent a ledger entry. ")
 	}
 	if f.Status != "" {
 		fmt.Fprintf(&b, "Razorpay status remains %s. ", f.Status)

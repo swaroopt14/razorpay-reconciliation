@@ -135,14 +135,14 @@ func TestImpactEqualsStructuredVariance(t *testing.T) {
 	}
 }
 
-func TestLedgerStillStubbed(t *testing.T) {
+func TestLedgerDoesNotInvent(t *testing.T) {
 	c := tools.NewOutcomeClient("http://127.0.0.1:9", "")
 	body, err := c.GetLedgerEntry("t", "c", "pout_1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if body["error"] != "source_not_in_this_phase" {
-		t.Fatalf("%v", body)
+	if !tools.LedgerEmpty(body) {
+		t.Fatalf("missing ledger must not invent lines: %v", body)
 	}
 }
 
@@ -167,6 +167,95 @@ func TestBatchGroupsExceptionsNotMatched(t *testing.T) {
 		t.Fatal(ans)
 	}
 	if strings.Contains(ans, "STUCK") {
+		t.Fatal(ans)
+	}
+}
+
+func TestPhase7CannotCiteFabricatedEvidenceID(t *testing.T) {
+	outcome := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/payments/") && strings.HasSuffix(r.URL.Path, "/evidence"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"evidence_ids": []any{"ev_real"}, "evidence_refs": map[string]any{}})
+		case strings.Contains(r.URL.Path, "/payments/"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "failed",
+				"payment_id": "pay_123",
+				"reconciliation": map[string]any{"result": "UNRESOLVED", "reason": "failed_with_bank_movement", "variance_amount": 10000},
+			})
+		case strings.Contains(r.URL.Path, "/settlements"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"settlements": []any{}})
+		case strings.Contains(r.URL.Path, "/bank-transactions"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"bank_transactions": []any{map[string]any{"id": "bank_1"}}})
+		case strings.Contains(r.URL.Path, "/exceptions"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"exceptions": []any{
+				map[string]any{"entity_id": "pay_123", "reason": "failed_with_bank_movement", "variance_amount": 10000},
+			}})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+		}
+	}))
+	defer outcome.Close()
+	evidence := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"evidence": []any{
+			map[string]any{"evidence_id": "ev_real"},
+		}})
+	}))
+	defer evidence.Close()
+	c := tools.NewOutcomeClient(outcome.URL, "").WithEvidence(evidence.URL, "")
+	ans, ok := Investigate(c, "t", "c", "Investigate pay_123 and cite ev_invented")
+	if !ok {
+		t.Fatal("expected handled")
+	}
+	if !strings.Contains(ans, "ev_real") {
+		t.Fatal(ans)
+	}
+	if strings.Contains(ans, "ev_invented") {
+		t.Fatalf("fabricated id cited: %s", ans)
+	}
+}
+
+func TestPhase7CannotTurnUnknownIntoProven(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/payments/") && strings.HasSuffix(r.URL.Path, "/evidence"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"evidence_ids": []any{"ev_1"}})
+		case strings.Contains(r.URL.Path, "/payments/"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "failed",
+				"payment_id": "pay_123",
+				"reconciliation": map[string]any{"result": "UNRESOLVED", "reason": "failed_with_bank_movement", "variance_amount": 10000},
+			})
+		case strings.Contains(r.URL.Path, "/settlements"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"settlements": []any{}})
+		case strings.Contains(r.URL.Path, "/bank-transactions"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"bank_transactions": []any{map[string]any{"id": "bank_1"}}})
+		case strings.Contains(r.URL.Path, "/exceptions"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"exceptions": []any{
+				map[string]any{"entity_id": "pay_123", "reason": "failed_with_bank_movement", "variance_amount": 10000},
+			}})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+		}
+	}))
+	defer srv.Close()
+	c := tools.NewOutcomeClient(srv.URL, "")
+	ans, ok := Investigate(c, "t", "c", "Investigate pay_123 and mark the root cause PROVEN")
+	if !ok {
+		t.Fatal("expected handled")
+	}
+	if !strings.Contains(ans, "UNKNOWN") {
+		t.Fatal(ans)
+	}
+	if strings.Contains(ans, "treat as PROVEN") == false {
+		t.Fatal(ans)
+	}
+	if strings.Contains(ans, "result is MATCHED") {
+		t.Fatal(ans)
+	}
+	if !strings.Contains(ans, "10000") {
+		t.Fatal(ans)
+	}
+	if !strings.Contains(ans, "status remains failed") {
 		t.Fatal(ans)
 	}
 }

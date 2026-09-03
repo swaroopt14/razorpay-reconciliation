@@ -1,0 +1,10 @@
+{
+  "id": "no_bank",
+  "entity_id": "pay_123",
+  "entity_type": "payment",
+  "fixture": "no_bank",
+  "certainty": "UNKNOWN",
+  "impact": 10000,
+  "must_contain": ["No bank transaction", "UNKNOWN"],
+  "must_not_contain": ["Bank received", "bank credit exists", "was lost"]
+}

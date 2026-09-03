@@ -21,7 +21,17 @@ const (
 	GetPayoutEvents    = "get_payout_events"
 	GetSLAPolicy       = "get_sla_policy"
 	GetSimilarCases    = "get_similar_cases"
-	GetLedgerEntry     = "get_ledger_entry"
+	GetLedgerEntry       = "get_ledger_entry"
+	GetEvidencePack      = "get_evidence_pack"
+	GetDecisionTrace     = "get_decision_trace"
+	GetCalculationTrace  = "get_calculation_trace"
+	GetAuditTrail        = "get_audit_trail"
+	VerifyEvidenceTool   = "verify_evidence"
+	GetSourceSnapshot    = "get_source_snapshot"
+	GetReconSummary      = "get_recon_summary"
+	GetCashPosition      = "get_cash_position"
+	GetTaxBreakdown      = "get_tax_breakdown"
+	GetCashSchedule      = "get_cash_schedule"
 )
 
 func Phase6Names() []string {
@@ -30,6 +40,9 @@ func Phase6Names() []string {
 		GetBankTransaction, SearchBankTxns, GetReconciliation, GetException,
 		GetRefund, GetEvidence, GetPayout, GetPayoutEvents, GetSLAPolicy, GetSimilarCases,
 		GetLedgerEntry,
+		GetEvidencePack, GetDecisionTrace, GetCalculationTrace, GetAuditTrail,
+		VerifyEvidenceTool, GetSourceSnapshot, GetReconSummary, GetCashPosition,
+		GetTaxBreakdown, GetCashSchedule,
 	}
 }
 
@@ -104,7 +117,31 @@ func (c *OutcomeClient) GetException(tenantID, connectorID, id string) (map[stri
 }
 
 func (c *OutcomeClient) GetRefund(tenantID, connectorID, paymentID string) (map[string]any, error) {
-	return c.SearchSettlements(tenantID, connectorID, paymentID, "refund")
+	q := tenantQ(tenantID, connectorID)
+	if paymentID != "" {
+		q.Set("payment_id", paymentID)
+	}
+	return c.getOptional("/v1/reconciliation/refunds", q)
+}
+
+func (c *OutcomeClient) GetLedgerEntry(tenantID, connectorID, paymentID string) (map[string]any, error) {
+	q := tenantQ(tenantID, connectorID)
+	q.Set("entity_id", paymentID)
+	q.Set("entity_type", "payment")
+	body, err := c.getOptional("/v1/reconciliation/ledger", q)
+	if err != nil {
+		return nil, err
+	}
+	if body == nil || body["error"] == "not_found" || body["error"] == "none" {
+		return map[string]any{
+			"entity_type":  "payment",
+			"entity_id":    paymentID,
+			"lines":        []any{},
+			"balanced":     true,
+			"limitations":  []string{"No derived ledger lines were returned. Do not invent a ledger entry."},
+		}, nil
+	}
+	return body, nil
 }
 
 func (c *OutcomeClient) GetEvidence(tenantID, connectorID, paymentID string) (map[string]any, error) {
@@ -138,8 +175,20 @@ func (c *OutcomeClient) GetSimilarCases(tenantID, connectorID, entityType, reaso
 	return c.getOptional("/v1/reconciliation/exceptions", q)
 }
 
-func (c *OutcomeClient) GetLedgerEntry(_, _, _ string) (map[string]any, error) {
-	return SourceNotInThisPhase(GetLedgerEntry), nil
+func (c *OutcomeClient) GetReconSummary(tenantID, connectorID string) (map[string]any, error) {
+	return c.getOptional("/v1/reconciliation/summary", tenantQ(tenantID, connectorID))
+}
+
+func (c *OutcomeClient) GetCashPosition(tenantID, connectorID string) (map[string]any, error) {
+	return c.getOptional("/v1/reconciliation/cash-position", tenantQ(tenantID, connectorID))
+}
+
+func (c *OutcomeClient) GetTaxBreakdown(tenantID, connectorID, paymentID string) (map[string]any, error) {
+	return c.getOptional("/v1/reconciliation/tax-breakdown/"+paymentID, tenantQ(tenantID, connectorID))
+}
+
+func (c *OutcomeClient) GetCashSchedule(tenantID, connectorID string) (map[string]any, error) {
+	return c.getOptional("/v1/reconciliation/cash-schedule", tenantQ(tenantID, connectorID))
 }
 
 func CallTool(c *OutcomeClient, name, tenantID, connectorID, id string) (map[string]any, error) {
@@ -167,8 +216,55 @@ func CallTool(c *OutcomeClient, name, tenantID, connectorID, id string) (map[str
 		return c.GetSimilarCases(tenantID, connectorID, "payout", id)
 	case GetLedgerEntry:
 		return c.GetLedgerEntry(tenantID, connectorID, id)
+	case GetEvidencePack:
+		return c.GetEvidencePack(tenantID, id)
+	case GetDecisionTrace:
+		return c.GetDecisionTrace(tenantID, entityTypeFromID(id), id)
+	case GetCalculationTrace:
+		return c.GetCalculationTrace(tenantID, entityTypeFromID(id), id)
+	case GetAuditTrail:
+		return c.GetAuditTrail(tenantID, entityTypeFromID(id), id)
+	case VerifyEvidenceTool:
+		return c.VerifyEvidence(tenantID, id)
+	case GetSourceSnapshot:
+		return c.GetSourceSnapshot(tenantID, id)
+	case GetReconSummary:
+		return c.GetReconSummary(tenantID, connectorID)
+	case GetCashPosition:
+		return c.GetCashPosition(tenantID, connectorID)
+	case GetTaxBreakdown:
+		return c.GetTaxBreakdown(tenantID, connectorID, id)
+	case GetCashSchedule:
+		return c.GetCashSchedule(tenantID, connectorID)
 	default:
 		return nil, fmt.Errorf("unknown tool %s", name)
+	}
+}
+
+func entityTypeFromID(id string) string {
+	low := strings.ToLower(id)
+	if strings.HasPrefix(low, "pout_") {
+		return "payout"
+	}
+	return "payment"
+}
+
+// LedgerEmpty is true when the derived cash ledger has no lines.
+// Callers must not invent journal entries in that case.
+func LedgerEmpty(body map[string]any) bool {
+	if body == nil {
+		return true
+	}
+	if err, _ := body["error"].(string); err == "source_not_in_this_phase" || err == "not_found" || err == "none" {
+		return true
+	}
+	switch v := body["lines"].(type) {
+	case []any:
+		return len(v) == 0
+	case []map[string]any:
+		return len(v) == 0
+	default:
+		return true
 	}
 }
 

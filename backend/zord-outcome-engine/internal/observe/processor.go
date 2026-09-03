@@ -10,6 +10,7 @@ import (
 	"zord-outcome-engine/internal/payouttruth"
 	"zord-outcome-engine/internal/poll"
 	"zord-outcome-engine/internal/poll/providers/razorpay"
+	"zord-outcome-engine/internal/recon"
 )
 
 type ResultKind string
@@ -26,13 +27,19 @@ type Result struct {
 	Kind      ResultKind
 	PaymentID string
 	PayoutID  string
+	RefundID  string
 	EventType string
+}
+
+type RefundSink interface {
+	UpsertRefund(ctx context.Context, tenantID, connectorID string, r recon.RefundFact) (recon.RefundFact, error)
 }
 
 type Processor struct {
 	store   poll.Store
 	truth   *paymenttruth.Processor
 	payouts *payouttruth.Processor
+	Refunds RefundSink
 }
 
 func NewProcessor(store poll.Store) *Processor {
@@ -66,7 +73,7 @@ func (p *Processor) Apply(ctx context.Context, env Envelope) (Result, error) {
 		return Result{Kind: ResultSkipped, EventType: env.ProviderEventType}, nil
 	}
 	if !ok {
-		return p.applyPayout(ctx, env)
+		return p.applyRefundOrPayout(ctx, env)
 	}
 	if strings.TrimSpace(env.TenantID) == "" || strings.TrimSpace(env.ConnectorID) == "" {
 		return Result{}, fmt.Errorf("missing tenant_id or connector_id")
@@ -92,6 +99,30 @@ func (p *Processor) Apply(ctx context.Context, env Envelope) (Result, error) {
 		return out, nil
 	}
 	return p.applyLegacy(ctx, env, item, provider, mode)
+}
+
+func (p *Processor) applyRefundOrPayout(ctx context.Context, env Envelope) (Result, error) {
+	item, ok, err := NormalizeRefund(env)
+	if err != nil {
+		return Result{Kind: ResultSkipped, EventType: env.ProviderEventType}, nil
+	}
+	if ok {
+		if p.Refunds == nil {
+			return Result{Kind: ResultSkipped, EventType: env.ProviderEventType, RefundID: item.RefundID}, nil
+		}
+		if strings.TrimSpace(env.TenantID) == "" || strings.TrimSpace(env.ConnectorID) == "" {
+			return Result{}, fmt.Errorf("missing tenant_id or connector_id")
+		}
+		saved, err := p.Refunds.UpsertRefund(ctx, env.TenantID, env.ConnectorID, recon.RefundFact{
+			RefundID: item.RefundID, PaymentID: item.PaymentID, AmountMinor: item.AmountMinor,
+			Currency: item.Currency, ProviderStatus: item.ProviderStatus, Source: item.Source,
+		})
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{Kind: ResultInserted, RefundID: saved.RefundID, PaymentID: saved.PaymentID, EventType: env.ProviderEventType}, nil
+	}
+	return p.applyPayout(ctx, env)
 }
 
 func (p *Processor) applyPayout(ctx context.Context, env Envelope) (Result, error) {

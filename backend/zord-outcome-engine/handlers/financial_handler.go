@@ -108,13 +108,19 @@ func (h *FinancialHandler) GetPayment(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
 		return
 	}
+	var events []recon.ObservationFact
+	if h.Store != nil {
+		events, _ = h.Store.ListObservationEvents(c.Request.Context(), tenantID, connectorID, pay.PaymentID)
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"status": pay.CanonicalStatus,
-		"provider_status": pay.ProviderStatus,
-		"payment_id": pay.PaymentID,
-		"amount_minor": pay.AmountMinor,
-		"currency": pay.Currency,
-		"captured": pay.Captured,
+		"status":           pay.CanonicalStatus,
+		"provider_status":  pay.ProviderStatus,
+		"payment_id":       pay.PaymentID,
+		"amount_minor":     pay.AmountMinor,
+		"currency":         pay.Currency,
+		"captured":         pay.Captured,
+		"sources":          pay.Sources,
+		"observations":     observationJSON(events),
 		"reconciliation": gin.H{
 			"result":             fr.Result,
 			"reason":             fr.Reason,
@@ -226,6 +232,32 @@ func (h *FinancialHandler) GetEvidence(c *gin.Context) {
 		"evidence_refs": fr.EvidenceRefs,
 		"evidence_ids":  recon.EvidenceIDList(fr.EvidenceRefs),
 	})
+}
+
+func (h *FinancialHandler) GetFinanceSummary(c *gin.Context) {
+	tenantID, connectorID, ok := h.scope(c)
+	if !ok {
+		return
+	}
+	sum, err := h.Service.FinanceSummary(c.Request.Context(), tenantID, connectorID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, sum)
+}
+
+func (h *FinancialHandler) GetCashPosition(c *gin.Context) {
+	tenantID, connectorID, ok := h.scope(c)
+	if !ok {
+		return
+	}
+	snap, err := h.Service.CashPosition(c.Request.Context(), tenantID, connectorID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, snap)
 }
 
 func (h *FinancialHandler) ListExceptions(c *gin.Context) {
@@ -391,4 +423,86 @@ func (h *FinancialHandler) scope(c *gin.Context) (string, string, bool) {
 		return "", "", false
 	}
 	return tenantID, connectorID, true
+}
+
+func observationJSON(events []recon.ObservationFact) []gin.H {
+	out := make([]gin.H, 0, len(events))
+	for _, ev := range events {
+		out = append(out, gin.H{
+			"source":           ev.Source,
+			"provider_status":  ev.ProviderStatus,
+			"canonical_status": ev.CanonicalStatus,
+			"source_event_id":  ev.SourceEventID,
+			"source_hash":      ev.SourceHash,
+			"observed_at":      ev.ObservedAt,
+		})
+	}
+	return out
+}
+
+func (h *FinancialHandler) GetTaxBreakdown(c *gin.Context) {
+	tenantID, connectorID, ok := h.scope(c)
+	if !ok {
+		return
+	}
+	tb, err := h.Service.TaxBreakdown(c.Request.Context(), tenantID, connectorID, c.Param("payment_id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+		return
+	}
+	c.JSON(http.StatusOK, tb)
+}
+
+func (h *FinancialHandler) GetCashSchedule(c *gin.Context) {
+	tenantID, connectorID, ok := h.scope(c)
+	if !ok {
+		return
+	}
+	sch, err := h.Service.CashSchedule(c.Request.Context(), tenantID, connectorID, 7)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, sch)
+}
+
+func (h *FinancialHandler) GetLedger(c *gin.Context) {
+	tenantID, connectorID, ok := h.scope(c)
+	if !ok {
+		return
+	}
+	led, err := h.Service.Ledger(c.Request.Context(), tenantID, connectorID, strings.TrimSpace(c.Query("entity_id")))
+	if err != nil {
+		if strings.TrimSpace(c.Query("entity_id")) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "entity_id is required"})
+			return
+		}
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+		return
+	}
+	c.JSON(http.StatusOK, led)
+}
+
+func (h *FinancialHandler) ListRefunds(c *gin.Context) {
+	tenantID, connectorID, ok := h.scope(c)
+	if !ok {
+		return
+	}
+	list, err := h.Service.ListRefunds(c.Request.Context(), tenantID, connectorID, strings.TrimSpace(c.Query("payment_id")))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if list == nil {
+		list = []recon.RefundFact{}
+	}
+	out := gin.H{
+		"payment_id": strings.TrimSpace(c.Query("payment_id")),
+		"refunds":    list,
+		"source":     "provider_refund_observations",
+	}
+	if len(list) == 0 {
+		out["error"] = "not_found"
+	}
+	c.JSON(http.StatusOK, out)
 }

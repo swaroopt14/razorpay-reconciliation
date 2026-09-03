@@ -1,0 +1,8 @@
+{
+  "id": "ledger_stub",
+  "entity_id": "pay_123",
+  "entity_type": "payment",
+  "fixture": "default",
+  "must_contain": ["Do not invent a ledger entry"],
+  "must_not_contain": ["ledger entry exists"]
+}

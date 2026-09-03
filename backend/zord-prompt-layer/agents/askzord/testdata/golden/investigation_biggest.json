@@ -1,0 +1,7 @@
+{
+  "question": "What are the biggest unresolved financial issues?",
+  "expected_intent": "INVESTIGATION",
+  "required_facts": ["exposure_minor=42500"],
+  "forbidden_claims": ["fully reconciled", "ev_invented"],
+  "required_limitations": []
+}

@@ -48,12 +48,29 @@ type PaymentFact struct {
 	Currency          string
 	ProviderCreatedAt time.Time
 	FirstObservedAt   time.Time
+	Sources           []string
+	FeeMinor          int64
+	TaxMinor          int64
 }
 
 type ObservationFact struct {
-	SourceEventID string
-	SourceHash    string
-	RawReference  string
+	Source           string
+	ProviderStatus   string
+	CanonicalStatus  string
+	SourceEventID    string
+	SourceHash       string
+	RawReference     string
+	ObservedAt       time.Time
+}
+
+type RefundFact struct {
+	ID             string
+	RefundID       string
+	PaymentID      string
+	AmountMinor    int64
+	Currency       string
+	ProviderStatus string
+	Source         string
 }
 
 type PayoutFact struct {
@@ -84,6 +101,7 @@ type FinancialInput struct {
 	Lines      []SettlementLine
 	Decisions  []SettlementBankDecision
 	Banks      []BankTxn
+	Refunds    []RefundFact
 	Now        time.Time
 	StuckAfter time.Duration
 }
@@ -131,7 +149,7 @@ func ReconcilePayment(in FinancialInput) FinancialResult {
 
 	paymentLines, refundLines := splitLines(in.Lines)
 	hasPaymentSettlement := len(paymentLines) > 0
-	hasRefund := len(refundLines) > 0
+	hasRefund := len(refundLines) > 0 || len(in.Refunds) > 0
 	hasAnySettlement := len(in.Lines) > 0
 	moved := HasBankMovement(in.Banks)
 
@@ -147,7 +165,7 @@ func ReconcilePayment(in FinancialInput) FinancialResult {
 	out.EvidenceRefs.SettlementNetMinor = settlementNet(in.Lines)
 	if len(paymentLines) > 0 {
 		out.EvidenceRefs.SettlementLineID = lineID(paymentLines[0])
-	} else if hasRefund {
+	} else if len(refundLines) > 0 {
 		out.EvidenceRefs.SettlementLineID = lineID(refundLines[0])
 	}
 
@@ -206,6 +224,30 @@ func reconcileFailed(out FinancialResult, in FinancialInput, hasSettlement, hasR
 func reconcileCaptured(out FinancialResult, in FinancialInput, hasPaymentSettlement bool, exact, high, conflicted, ambiguous *SettlementBankDecision) FinancialResult {
 	if !hasPaymentSettlement {
 		return withException(out, ResultUnresolved, "captured_missing_settlement", 0.8)
+	}
+	paymentLines, _ := splitLines(in.Lines)
+	if len(paymentLines) > 1 {
+		totalNet := settlementNet(in.Lines)
+		out.ObservedAmount = totalNet
+		if totalNet > in.Payment.AmountMinor {
+			out.VarianceAmount = totalNet - in.Payment.AmountMinor
+		}
+		if exact != nil {
+			attachDecision(&out, *exact)
+		}
+		return withException(out, ResultConflicted, "duplicate_settlement", 0.85)
+	}
+	if gap, partial := partialSettlementGap(in.Payment.AmountMinor, paymentLines); partial {
+		out.ObservedAmount = settlementNet(in.Lines)
+		out.VarianceAmount = gap
+		if exact != nil {
+			attachDecision(&out, *exact)
+			out.BankCreditProven = true
+			if v, ok := evidenceInt64(exact.Evidence, "bank_credit_minor"); ok {
+				out.ObservedAmount = v
+			}
+		}
+		return withException(out, ResultVariance, "partial_settlement", 0.88)
 	}
 	if conflicted != nil {
 		out.CandidateIDs = append([]string{}, conflicted.Candidates...)
@@ -388,6 +430,31 @@ func settlementNet(lines []SettlementLine) int64 {
 		}
 	}
 	return n
+}
+
+func feeTaxDeduction(lines []SettlementLine) int64 {
+	var n int64
+	for _, l := range lines {
+		if strings.EqualFold(l.LineType, "payment") || l.LineType == "" {
+			n += l.FeeMinor + l.TaxMinor
+		}
+	}
+	return n
+}
+
+func partialSettlementGap(paymentAmount int64, paymentLines []SettlementLine) (int64, bool) {
+	if paymentAmount <= 0 || len(paymentLines) == 0 {
+		return 0, false
+	}
+	net := settlementNet(paymentLines)
+	if net >= paymentAmount {
+		return 0, false
+	}
+	explained := feeTaxDeduction(paymentLines)
+	if net+explained >= paymentAmount {
+		return 0, false
+	}
+	return paymentAmount - net, true
 }
 
 func lineID(l SettlementLine) string {
