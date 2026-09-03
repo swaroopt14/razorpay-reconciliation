@@ -23,8 +23,12 @@ function roleMatchesPath(pathname: string, role: string) {
 export function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname
 
-  // Legacy URLs → canonical /signin (no ?next=).
-  if (pathname === '/signin/tenant' || (pathname === '/signin' && request.nextUrl.search)) {
+  // Legacy URLs → canonical /signin. Keep empty `?` and tenant query so a
+  // successful login is not bounced back onto this page.
+  if (pathname === '/signin/tenant') {
+    return NextResponse.redirect(new URL('/signin', request.url))
+  }
+  if (pathname === '/signin' && request.nextUrl.searchParams.has('next')) {
     return NextResponse.redirect(new URL('/signin', request.url))
   }
 

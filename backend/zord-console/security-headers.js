@@ -9,14 +9,18 @@
 
 /** @returns {string} */
 function buildContentSecurityPolicy() {
+  const isDev = process.env.NODE_ENV !== 'production'
   const directives = [
     "default-src 'self'",
-    // Next.js App Router emits inline bootstrapping scripts; keep eval off in prod CSP.
-    "script-src 'self' 'unsafe-inline'",
+    // Next.js App Router emits inline bootstrapping scripts.
+    // Dev Fast Refresh / webpack eval-source-map need 'unsafe-eval'; keep it off in prod.
+    isDev
+      ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+      : "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
     "font-src 'self' data:",
-    "connect-src 'self'",
+    isDev ? "connect-src 'self' ws: wss:" : "connect-src 'self'",
     "worker-src 'self' blob:",
     "manifest-src 'self'",
     "object-src 'none'",
@@ -25,7 +29,7 @@ function buildContentSecurityPolicy() {
     "frame-ancestors 'none'",
   ]
   // Avoid breaking local HTTP (`npm run dev`); Kong/prod CSP can tighten further.
-  if (process.env.NODE_ENV === 'production') {
+  if (!isDev) {
     directives.push('upgrade-insecure-requests')
   }
   return directives.join('; ')

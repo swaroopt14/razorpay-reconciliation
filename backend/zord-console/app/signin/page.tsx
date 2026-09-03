@@ -53,7 +53,6 @@ function SignInForm() {
       const user = await hydrateSession()
       if (!user) {
         setError('Signed in but session could not be restored. Refresh and try again.')
-        setLoading(false)
         return
       }
 
@@ -70,6 +69,7 @@ function SignInForm() {
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unable to sign in right now.'
       setError(message)
+    } finally {
       setLoading(false)
     }
   }
@@ -86,7 +86,10 @@ function SignInForm() {
         </p>
       }
     >
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form
+        onSubmit={handleSubmit}
+        className="space-y-4"
+      >
         <label className="block">
           <span className={authLabelClass}>Work email</span>
           <input

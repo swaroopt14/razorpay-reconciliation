@@ -41,8 +41,14 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify(requestBody),
     })
   } catch {
+    const edge = BACKEND_SERVICES.EDGE.BASE_URL
+    const usingDefaultEdge = !process.env.ZORD_EDGE_URL?.trim()
+    const message =
+      usingDefaultEdge && (edge.includes('localhost:8080') || edge.includes('127.0.0.1:8080'))
+        ? 'Authentication service is unavailable. zord-edge is not running on :8080. If the payout smoke simulator is up, set ZORD_EDGE_URL=http://localhost:8099 in .env.local and restart npm run dev.'
+        : `Authentication service is unavailable right now (${edge}).`
     return NextResponse.json(
-      { code: 'AUTH_SERVICE_UNAVAILABLE', message: 'Authentication service is unavailable right now.' },
+      { code: 'AUTH_SERVICE_UNAVAILABLE', message },
       { status: 503 },
     )
   }
