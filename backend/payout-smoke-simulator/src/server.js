@@ -1,8 +1,17 @@
 import http from 'node:http'
 import { TENANT_ID } from './constants.js'
+import { initLoginAudit } from './loginAudit.js'
+import { initLoginGate } from './loginGate.js'
 import { handleRequest } from './router.js'
 
 const port = Number.parseInt(process.env.PORT ?? '8099', 10)
+
+await initLoginAudit().catch((err) => {
+  console.error('[payout-smoke-simulator] login audit init error:', err)
+})
+await initLoginGate().catch((err) => {
+  console.error('[payout-smoke-simulator] login gate init error:', err)
+})
 
 const server = http.createServer(async (req, res) => {
   try {

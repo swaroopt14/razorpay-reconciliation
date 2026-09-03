@@ -1,6 +1,6 @@
 /**
  * Maps live `/api/prod/intents/:id` payloads + table row context into the
- * `IntentDetail` contract for the Intent Journal drawer — without using canned
+ * `IntentDetail` contract for the Intent Journal drawer - without using canned
  * mock generators.
  */
 
@@ -20,7 +20,6 @@ import type {
 } from '@/services/payout-command/intent-journal-types'
 import type { ApiProdIntentDetailPayload } from '@/services/payout-command/prod-api/prodApiTypes'
 import { generateBenToken, tokenizeBeneficiaryFull } from '@/services/payout-command/tokenize'
-import { normalizeCurrency } from '@/services/payout-command/money/money'
 
 export type LiveJournalDrawerRowInput = {
   requestId: string
@@ -29,15 +28,13 @@ export type LiveJournalDrawerRowInput = {
   clientPayoutRef?: string
   sourceRowNum?: number | null
   amount: number
-  /** ISO currency from live adapters; missing → UNKNOWN (never invent INR). */
-  currency?: string | null
-  method: 'Bank Transfer' | 'LSM' | 'NACH' | '—'
+  method: 'Bank Transfer' | 'LSM' | 'NACH' | '-'
   rail?: string
   beneficiaryName?: string | null
   paymentPartner: string
   bank: string
   /** Table row status label */
-  uiStatus: 'Ready to Process' | 'Confirmed' | 'Pending' | 'Needs Review' | 'In Progress' | 'Decision unavailable'
+  uiStatus: 'Ready to Process' | 'Confirmed' | 'Pending' | 'Needs Review' | 'In Progress'
 }
 
 function hashToLast4(seed: string): string {
@@ -54,7 +51,6 @@ function uiStatusToLifecycle(ui: LiveJournalDrawerRowInput['uiStatus']): IntentL
   if (ui === 'Needs Review') return 'ambiguous'
   if (ui === 'In Progress') return 'processing'
   if (ui === 'Ready to Process') return 'created'
-  if (ui === 'Decision unavailable') return 'ambiguous'
   return 'pending'
 }
 
@@ -75,14 +71,14 @@ function beneficiaryNameFromApi(b: unknown): { first: string; last: string } | n
   const raw = (b as { name?: unknown }).name
   if (typeof raw !== 'string' || !raw.trim()) return null
   const parts = raw.trim().split(/\s+/)
-  if (parts.length === 1) return { first: parts[0]!, last: '—' }
+  if (parts.length === 1) return { first: parts[0]!, last: '-' }
   return { first: parts[0]!, last: parts.slice(1).join(' ') }
 }
 
 function beneficiaryNameFromHint(name: string | null | undefined): { first: string; last: string } | null {
   if (typeof name !== 'string' || !name.trim()) return null
   const parts = name.trim().split(/\s+/)
-  if (parts.length === 1) return { first: parts[0]!, last: '—' }
+  if (parts.length === 1) return { first: parts[0]!, last: '-' }
   return { first: parts[0]!, last: parts.slice(1).join(' ') }
 }
 
@@ -96,7 +92,7 @@ function railFromRow(method: LiveJournalDrawerRowInput['method'], railHint?: str
   if (hint.includes('LSM') || hint.includes('INSTA')) return 'LSM'
   if (method === 'LSM') return 'IMPS'
   if (method === 'NACH') return 'NACH'
-  return '—'
+  return '-'
 }
 
 function connectorFromRow(partner: string, bank: string): string {
@@ -179,9 +175,7 @@ export function buildLiveIntentDetailFromRowAndApi(
   const parsed =
     typeof rawAmt === 'string' ? parseFloat(rawAmt) : typeof rawAmt === 'number' ? rawAmt : Number.NaN
   const amount = Number.isFinite(parsed) ? parsed : row.amount
-  const currency = normalizeCurrency(
-    (api?.canonical?.amount?.currency as string | undefined) ?? row.currency,
-  )
+  const currency = (api?.canonical?.amount?.currency as string | undefined)?.trim() || 'INR'
 
   const ingestedAt = api?.created_at?.trim() || new Date().toISOString()
   const dispatchedAt = ingestedAt

@@ -24,33 +24,21 @@ type EvidenceSignals = Partial<
   proof_components?: Partial<Record<ProofComponentKey, boolean>>
 }
 
-export type NormalizedVerificationState =
-  | 'verified'
-  | 'failed'
-  | 'internally_consistent'
-  | 'unknown'
+export type NormalizedVerificationState = 'verified' | 'failed' | 'unknown'
 
 export function normalizeVerificationState(value: unknown): NormalizedVerificationState {
   if (typeof value === 'boolean') return value ? 'verified' : 'unknown'
-  const text = apiTrimmedString(value).toUpperCase().replace(/[\s-]+/g, '_')
+  const text = apiTrimmedString(value).toUpperCase()
   if (!text) return 'unknown'
-  if (text === 'VERIFIED') return 'verified'
-  if (text === 'INTERNALLY_CONSISTENT') return 'internally_consistent'
-  if (
-    text === 'FAILED' ||
-    text === 'CORRUPTED' ||
-    text === 'COMPROMISED' ||
-    text === 'INVALID'
-  ) {
-    return 'failed'
-  }
+  if (text === 'VERIFIED' || text === 'PASS' || text === 'PASSED' || text === 'TRUE') return 'verified'
+  if (text === 'FAILED' || text === 'CORRUPTED' || text === 'INVALID') return 'failed'
   return 'unknown'
 }
 
 /**
- * Explicit proof signals are authoritative when present.
- * Returns `undefined` when no explicit signal exists so callers can fallback to item inference.
- */
+  * Explicit proof signals are authoritative when present.
+  * Returns `undefined` when no explicit signal exists so callers can fallback to item inference.
+  */
 export function resolveExplicitSignal(
   source: EvidenceSignals | null | undefined,
   opts: { component?: ProofComponentKey; flag?: FlagKey },

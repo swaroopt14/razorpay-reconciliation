@@ -1,7 +1,7 @@
 'use client'
 
 /**
- * Connected providers — localStorage-backed list of PSPs / banks the user
+ * Connected providers - localStorage-backed list of PSPs / banks the user
  * has hooked up in their sandbox. Without at least one connected provider,
  * intent dispatch is blocked (just like in production).
  *
@@ -40,7 +40,7 @@ export type ConnectedProvider = {
   health: ProviderHealth
 }
 
-/** Catalog of providers a user can connect — drives the empty-state grid. */
+/** Catalog of providers a user can connect - drives the empty-state grid. */
 export const PROVIDER_CATALOG: Array<{
   id: ProviderId
   kind: ProviderKind

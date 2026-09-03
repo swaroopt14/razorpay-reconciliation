@@ -3,15 +3,10 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { EnvironmentProvider, useEnvironment } from '@/services/auth/EnvironmentProvider'
-import { DOCS_LINKS } from '@/services/payout-command/docsLinks'
+import { SANDBOX_DOCS_LINKS } from '@/services/payout-command/sandbox-data'
 import { ActivateLiveWizard } from '@/features/payout-command/sandbox/ActivateLiveWizard'
 import { Glyph } from '@/features/payout-command/shared'
 import { useSessionTenantId } from '@/services/auth/useSessionTenantId'
-import {
-  clearLegacyTenantApiSecrets,
-  formatSecretKeyPrefix,
-} from '@/services/auth/readStoredTenantApiKey'
-import { workspaceApiKeysPath } from '@/services/payout-command/workspaceApiKeysPath'
 
 type WorkspaceKeysPayload = {
   tenant_id: string
@@ -23,45 +18,46 @@ type WorkspaceKeysPayload = {
 
 type DisplayApiKey = {
   type: 'publishable' | 'secret'
-  mode: 'live'
+  mode: 'sandbox'
   value: string
   lastUsedAt: string | null
 }
 
 /**
- * ApiKeysClient — Stripe-style API keys page.
- *
- * Layout:
- *   ┌──────────────────────────────────────────┬─────────────────┐
- *   │ Page header                              │                 │
- *   │ Publishable keys card                    │ Recommendations │
- *   │ Secret keys card                         │ (sidebar)       │
- *   │ Recent API requests table                │                 │
- *   └──────────────────────────────────────────┴─────────────────┘
- *
- * Wraps in its own EnvironmentProvider so it works as a standalone route too.
- */
+  * ApiKeysClient - Stripe-style API keys page.
+  *
+  * Layout:
+  *  ┌──────────────────────────────────────────┬─────────────────┐
+  *  │ Page header               │         │
+  *  │ Publishable keys card          │ Recommendations │
+  *  │ Secret keys card             │ (sidebar)    │
+  *  │ Recent API requests table        │         │
+  *  └──────────────────────────────────────────┴─────────────────┘
+  *
+  * Wraps in its own EnvironmentProvider so it works as a standalone route too.
+  */
 export function ApiKeysClient() {
   return (
-    <EnvironmentProvider routeMode="live">
+    <EnvironmentProvider>
       <ApiKeysClientInner />
     </EnvironmentProvider>
   )
 }
 
 function ApiKeysClientInner() {
-  const { mode, canSwitchToLive, liveActivationStatus } = useEnvironment()
+  const { canSwitchToLive, liveActivationStatus } = useEnvironment()
   const [activateOpen, setActivateOpen] = useState(false)
   const tenantId = useSessionTenantId()
   const [keys, setKeys] = useState<WorkspaceKeysPayload | null>(null)
   const [keysLoading, setKeysLoading] = useState(true)
   const [keysError, setKeysError] = useState<string | null>(null)
+  const [tenantApiKey, setTenantApiKey] = useState<string | null>(null)
 
   const loadKeys = useCallback(async () => {
     setKeysLoading(true)
     setKeysError(null)
     try {
-      const res = await fetch(workspaceApiKeysPath(mode), { credentials: 'include', cache: 'no-store' })
+      const res = await fetch('/api/sandbox/workspace-api-keys', { credentials: 'include', cache: 'no-store' })
       if (!res.ok) {
         const j = (await res.json().catch(() => null)) as { message?: string } | null
         setKeysError(j?.message || `Could not load keys (${res.status})`)
@@ -69,34 +65,41 @@ function ApiKeysClientInner() {
         return
       }
       const body = (await res.json()) as WorkspaceKeysPayload
-      clearLegacyTenantApiSecrets(body.tenant_id)
       setKeys(body)
+      try {
+        const stored = window.localStorage.getItem(`zord_tenant_api_key:${body.tenant_id}`)
+        if (stored?.trim()) setTenantApiKey(stored.trim())
+        else setTenantApiKey(null)
+      } catch {
+        setTenantApiKey(null)
+      }
     } catch {
       setKeysError('Network error loading keys.')
       setKeys(null)
     } finally {
       setKeysLoading(false)
     }
-  }, [mode])
+  }, [])
 
   useEffect(() => {
-    clearLegacyTenantApiSecrets(tenantId || undefined)
     void loadKeys()
   }, [loadKeys, tenantId])
 
   const publishableValue = keys?.publishable_key ?? keys?.workspace_code ?? ''
-  const secretPrefixDisplay = formatSecretKeyPrefix(keys?.secret_key_prefix ?? keys?.workspace_code)
+  const secretValue =
+    tenantApiKey ??
+    (keys?.secret_key_prefix ? `${keys.secret_key_prefix.slice(0, 16)}…` : '')
 
-  const livePublishable: DisplayApiKey = {
+  const sandboxPublishable: DisplayApiKey = {
     type: 'publishable',
-    mode: 'live',
-    value: publishableValue || '—',
+    mode: 'sandbox',
+    value: publishableValue || '-',
     lastUsedAt: null,
   }
-  const liveSecret: DisplayApiKey = {
+  const sandboxSecret: DisplayApiKey = {
     type: 'secret',
-    mode: 'live',
-    value: secretPrefixDisplay,
+    mode: 'sandbox',
+    value: secretValue || '-',
     lastUsedAt: null,
   }
 
@@ -106,11 +109,12 @@ function ApiKeysClientInner() {
       <div className="mb-5">
         <h1 className="text-[24px] font-semibold tracking-[-0.02em] text-[#0f172a]">API keys</h1>
         <p className="mt-1 max-w-2xl text-[16px] leading-relaxed text-[#64748b]">
-          Use live workspace credentials from your signed-in session. The secret is never stored in the
-          browser — only the prefix is shown.
+          Use sandbox keys (<span className="font-mono">pk_test_…</span>) to test your integration. Live keys
+          (<span className="font-mono">pk_live_…</span>) are issued only after activation. Treat secret keys
+          like passwords - never commit them.
         </p>
         {keysError ? (
-          <p className="mt-2 text-[14px] text-amber-800">{keysError}</p>
+          <p className="mt-2 text-[14px] text-[#0B1324]">{keysError}</p>
         ) : null}
       </div>
 
@@ -121,7 +125,7 @@ function ApiKeysClientInner() {
             {keysLoading ? (
               <KeyRowSkeleton />
             ) : (
-              <KeyRow apiKey={livePublishable} copyDisabled={!publishableValue} />
+              <KeyRow apiKey={sandboxPublishable} copyDisabled={!publishableValue} />
             )}
             <LiveLockedRow
               type="publishable"
@@ -134,16 +138,16 @@ function ApiKeysClientInner() {
           {/* Secret keys card */}
           <KeyCard
             title="Secret keys"
-            subtitle="Prefix only after signup. The full secret is shown once at registration and is never stored in this browser."
+            subtitle="Server-side only. Anyone with this key can move money in your account."
             warning
           >
             {keysLoading ? (
               <KeyRowSkeleton />
             ) : (
               <KeyRow
-                apiKey={liveSecret}
+                apiKey={sandboxSecret}
                 masked
-                copyDisabled={secretPrefixDisplay === '—'}
+                copyDisabled={!secretValue || secretValue === '-'}
                 rotateDisabled
               />
             )}
@@ -182,28 +186,28 @@ function ApiKeysClientInner() {
           </article>
         </div>
 
-        {/* Right sidebar — recommendations */}
+        {/* Right sidebar - recommendations */}
         <aside className="space-y-3">
           <p className="text-[14px] font-semibold uppercase tracking-[0.12em] text-[#94a3b8]">Recommendations</p>
           <RecommendationCard
             icon="document"
             title="View API docs"
             body="OpenAPI reference, schema, and examples."
-            href={DOCS_LINKS.apiReference}
+            href={SANDBOX_DOCS_LINKS.apiReference}
             external
           />
           <RecommendationCard
             icon="terminal"
             title="Postman collection"
             body="Pre-built requests with sandbox keys baked in."
-            href={DOCS_LINKS.postmanCollection}
+            href={SANDBOX_DOCS_LINKS.postmanCollection}
             external
           />
           <RecommendationCard
             icon="bell"
             title="Webhooks setup"
             body="Receive real-time signals from Zord."
-            href={DOCS_LINKS.webhookGuide}
+            href={SANDBOX_DOCS_LINKS.webhookGuide}
             external
             soon
           />
@@ -224,7 +228,7 @@ function KeyCard({ title, subtitle, warning, children }: { title: string; subtit
         <div className="flex items-center justify-between gap-2">
           <p className="text-[17px] font-semibold text-[#0f172a]">{title}</p>
           {warning ? (
-            <span className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[14px] font-semibold text-rose-700">
+            <span className="inline-flex items-center gap-1 rounded-full border border-[#0B1324]/20 bg-[#F1F5F9] px-1.5 py-0.5 text-[14px] font-semibold text-[#0B1324]">
               <Glyph name="lock" className="h-2.5 w-2.5" />
               Sensitive
             </span>
@@ -260,9 +264,9 @@ function KeyRow({
   const [revealed, setRevealed] = useState(!masked)
   const [copied, setCopied] = useState(false)
 
-  const hasValue = apiKey.value && apiKey.value !== '—'
+  const hasValue = apiKey.value && apiKey.value !== '-'
   const display = !hasValue
-    ? '—'
+    ? '-'
     : revealed
       ? apiKey.value
       : `${apiKey.value.slice(0, 12)}${'•'.repeat(Math.max(0, apiKey.value.length - 16))}${apiKey.value.slice(-4)}`
@@ -282,7 +286,7 @@ function KeyRow({
     <div className="flex flex-wrap items-center gap-3 border-t border-[#E5E5E5] px-5 py-3 first:border-t-0">
       <span className="inline-flex items-center gap-1.5 rounded-full border border-[#F59E0B]/30 bg-[#FFF7ED] px-2 py-0.5 text-[14px] font-semibold uppercase tracking-[0.1em] text-[#9A3412]">
         <span className="h-1.5 w-1.5 rounded-full bg-[#F59E0B]" aria-hidden />
-        Live
+        Sandbox
       </span>
       <code className="flex-1 truncate font-mono text-[16px] text-[#0f172a]">{display}</code>
       <span className="text-[14px] text-[#94a3b8]">Last used {apiKey.lastUsedAt ?? 'never'}</span>
@@ -343,7 +347,7 @@ function LiveLockedRow({
   if (canSwitch) {
     return (
       <div className="flex items-center gap-3 border-t border-[#E5E5E5] bg-[#fafafa] px-5 py-3 text-[15px] text-[#64748b]">
-        Live {type} key issued — switch to Live mode in the dock to view.
+        Live {type} key issued - switch to Live mode in the dock to view.
       </div>
     )
   }
@@ -356,7 +360,7 @@ function LiveLockedRow({
       </span>
       <span className="text-[15px] text-[#64748b]">
         {status === 'in_review'
-          ? 'Activation submitted — live keys will be issued after approval.'
+          ? 'Activation submitted - live keys will be issued after approval.'
           : 'Activate live to issue your live keys.'}
       </span>
       {status !== 'in_review' ? (

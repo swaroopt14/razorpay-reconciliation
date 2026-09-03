@@ -2,16 +2,6 @@
 
 import { User, UserRole } from '@/types/auth'
 import { STORAGE_KEYS } from '@/constants'
-import { clearLegacyTenantApiSecrets } from '@/services/auth/readStoredTenantApiKey'
-import {
-  clearTabSessionTenantId,
-  installSessionTenantFetchPatch,
-  readTabSessionTenantId,
-  sessionTenantHeaders,
-  withSessionTenantQuery,
-  writeTabSessionTenantId,
-} from '@/services/auth/tenantSessionBrowser'
-import { SESSION_TENANT_QUERY } from '@/services/auth/tenantSessionConstants'
 
 const AUTH_KEY = STORAGE_KEYS.AUTH
 const ROLE_KEY = STORAGE_KEYS.CURRENT_ROLE
@@ -51,6 +41,7 @@ interface LoginRequest {
   workspaceId: string
   email: string
   password: string
+  companyName?: string
   loginSurface: 'console' | 'customer' | 'ops' | 'admin'
 }
 
@@ -122,7 +113,6 @@ function clearUserStorage() {
   localStorage.removeItem('zord_tenant_id')
   localStorage.removeItem('zord_tenant_name')
   localStorage.removeItem('cx_tenant_name')
-  clearLegacyTenantApiSecrets()
 }
 
 async function parseResponse<T>(response: Response): Promise<T | null> {
@@ -152,37 +142,10 @@ export function setCurrentUser(user: User): void {
 
 export function clearAuth(): void {
   clearUserStorage()
-  // CON-P1-12: drop session Ask Zord / workspace chat memory on sign-out.
-  // Device-persisted copies remain only when the user explicitly opted in.
-  if (typeof window !== 'undefined') {
-    // Inline clear avoids pulling feature modules into every auth import graph.
-    try {
-      const persistApproved = window.localStorage.getItem('ask-zord-persist-approved') === '1'
-      const removeByPrefix = (storage: Storage, prefix: string) => {
-        const keys: string[] = []
-        for (let i = 0; i < storage.length; i += 1) {
-          const key = storage.key(i)
-          if (key && key.startsWith(prefix)) keys.push(key)
-        }
-        for (const key of keys) storage.removeItem(key)
-      }
-      removeByPrefix(window.sessionStorage, 'ask-zord-threads-session-v1:')
-      removeByPrefix(window.sessionStorage, 'zord:workspace-threads-session:')
-      if (!persistApproved) {
-        removeByPrefix(window.localStorage, 'ask-zord-threads-v1:')
-        removeByPrefix(window.localStorage, 'zord:workspace-threads:')
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-  clearTabSessionTenantId()
   clearClientCookie(SESSION_HINT_COOKIE)
   clearClientCookie(ROLE_COOKIE)
   emitAuthChanged()
 }
-
-export { withSessionTenantQuery, writeTabSessionTenantId, readTabSessionTenantId }
 
 export async function login(request: LoginRequest): Promise<AuthApiEnvelope> {
   const response = await fetch('/api/auth/login', {
@@ -196,6 +159,7 @@ export async function login(request: LoginRequest): Promise<AuthApiEnvelope> {
       workspace_id: request.workspaceId,
       email: request.email,
       password: request.password,
+      company_name: request.companyName || '',
       login_surface: request.loginSurface,
     }),
   })
@@ -211,35 +175,26 @@ export async function login(request: LoginRequest): Promise<AuthApiEnvelope> {
     throw new Error('Unable to sign in right now.')
   }
 
-  const user = toClientUser(payload as AuthApiEnvelope)
-  writeTabSessionTenantId(user.tenantId || user.tenant || '')
-  storeUser(user)
+  storeUser(toClientUser(payload as AuthApiEnvelope))
   return payload as AuthApiEnvelope
 }
 
 export async function hydrateSession(): Promise<User | null> {
-  installSessionTenantFetchPatch()
-  const tabTenant = readTabSessionTenantId()
-  const mePath = tabTenant
-    ? `/api/auth/me?${SESSION_TENANT_QUERY}=${encodeURIComponent(tabTenant)}`
-    : '/api/auth/me'
-
   let response: Response
   try {
-    response = await fetch(mePath, {
+    response = await fetch('/api/auth/me', {
       method: 'GET',
       cache: 'no-store',
       credentials: 'include',
-      headers: sessionTenantHeaders(tabTenant),
     })
   } catch {
-    // Network down, CORS misconfig, or browser blocked request — do not clear auth;
+    // Network down, CORS misconfig, or browser blocked request - do not clear auth;
     // caller should not treat this the same as an invalid session.
     return null
   }
 
   if (!response.ok) {
-    // Only tear down client auth on explicit session rejection — not edge outages.
+    // Only tear down client auth on explicit session rejection - not edge outages.
     if (response.status === 401 || response.status === 403) {
       clearAuth()
     }
@@ -253,20 +208,17 @@ export async function hydrateSession(): Promise<User | null> {
   }
 
   const user = toClientUser(payload)
-  writeTabSessionTenantId(user.tenantId || user.tenant || '')
   storeUser(user)
   return user
 }
 
 export async function logout(): Promise<void> {
   try {
-    const { csrfMutationHeaders } = await import('@/services/auth/csrfBrowser')
     await fetch('/api/auth/logout', {
       method: 'POST',
-      credentials: 'include',
-      headers: csrfMutationHeaders({
+      headers: {
         'Content-Type': 'application/json',
-      }),
+      },
       cache: 'no-store',
       body: JSON.stringify({}),
     })

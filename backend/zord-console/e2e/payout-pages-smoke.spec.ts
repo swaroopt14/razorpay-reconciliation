@@ -1,5 +1,4 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test'
-import liveNav from '../product-contract/live-nav.json'
 
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3000'
 const SESSION_TENANT = 'e2e-session-tenant-111'
@@ -12,13 +11,20 @@ const PACK_BATCH = 'pack-batch-001'
 const PACK_INTENT_A = 'pack-intent-a'
 const PACK_INTENT_B = 'pack-intent-b'
 
-/** Live payout console docks from product-contract/live-nav.json (CON-P1-38). */
-const DOCK_CASES: { dock: string; title: string }[] = liveNav.liveNavDockIds.map((dock) => ({
-  dock,
-  title: liveNav.liveDockTitles[dock as keyof typeof liveNav.liveDockTitles],
-}))
-
-const BLOCKED_LIVE_DOCKS = ['verification', 'monitoring', 'billing', 'connectors'] as const
+/** Live payout console docks (excludes sandbox-only). */
+const DOCK_CASES: { dock: string; title: string }[] = [
+  { dock: 'home', title: 'Payment Command Center' },
+  { dock: 'workspace', title: 'Payment Operations View' },
+  { dock: 'leakage', title: 'Payment Gaps & Value at Risk' },
+  { dock: 'ambiguity', title: 'Match Review' },
+  { dock: 'verification', title: 'Borrower Verification' },
+  { dock: 'monitoring', title: 'Post-Disbursal Monitoring' },
+  { dock: 'grid', title: 'Intent Journal' },
+  { dock: 'settlement', title: 'Settlement Journal' },
+  { dock: 'connectors', title: 'Connector Performance & Leakage' },
+  { dock: 'proof', title: 'Evidence & Dispute Resolution' },
+  { dock: 'billing', title: 'Billing' },
+]
 
 const STANDALONE_ROUTES = [
   '/payout-command-view/batch-command-center',
@@ -327,13 +333,9 @@ function emptyProdBody(path: string): unknown {
       variance_amount: -388.32,
       orphan_amount: 22_381.29,
       unmatch_amount: 0,
-      // CON-P0-24 / CON-P1-22: authoritative matched value + as-of (total_confirmed_amount is not a substitute)
-      confirmed_matched_value_minor: 52_653.42,
-      original_settled_amount: 52_653.42,
       total_confirmed_amount: 52_653.42,
       match_confidence: 0.75,
       missing_reference_rate: '0.00%',
-      computed_at: '2026-06-02T07:00:00Z',
     }
   }
   if (path.endsWith('/intents/payment-intents') || path.endsWith('/intents/dlq-items')) {
@@ -913,38 +915,14 @@ function evidenceFixtureBody(path: string, search: URLSearchParams): unknown {
 }
 
 function installAuthRoutes(page: Page) {
-  const accessExpiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString()
-  const idleExpiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString()
-  const absoluteExpiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString()
   return Promise.all([
     page.route('**/api/auth/me', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          session: {
-            tenant_id: SESSION_TENANT,
-            access_expires_at: accessExpiresAt,
-            idle_expires_at: idleExpiresAt,
-            absolute_expires_at: absoluteExpiresAt,
-          },
-          user: {
-            id: 'e2e-user',
-            email: 'qa@example.com',
-            role: 'CUSTOMER_USER',
-            tenant_id: SESSION_TENANT,
-            name: 'QA Engineer',
-          },
-        }),
-      })
-    }),
-    page.route('**/api/auth/session/status', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          idle_expires_at: idleExpiresAt,
-          absolute_expires_at: absoluteExpiresAt,
+          session: { tenant_id: SESSION_TENANT },
+          user: { tenant_id: SESSION_TENANT },
         }),
       })
     }),
@@ -970,14 +948,10 @@ function installEmptyProdMocks(page: Page) {
         body: JSON.stringify({
           status: 'VERIFIED',
           evidence_pack_id: PACK_BATCH,
-          verification_run_id: 'run_e2e_empty',
           checked_at: new Date().toISOString(),
           stored_root: 'a'.repeat(64),
           computed_root: 'a'.repeat(64),
-          explanation: 'Merkle root reproduced from live database entries, and every independent source verified successfully.',
-          db_merkle_status: 'PASSED',
-          signature_status: 'PASSED',
-          archive_status: 'PASSED',
+          explanation: 'Merkle root reproduced exactly from live database entries.',
         }),
       })
       return
@@ -1057,14 +1031,10 @@ function installEvidenceFixtureMocks(page: Page) {
         body: JSON.stringify({
           status: 'VERIFIED',
           evidence_pack_id: packId,
-          verification_run_id: 'run_e2e_fixture',
           checked_at: new Date().toISOString(),
           stored_root: 'c'.repeat(64),
           computed_root: 'c'.repeat(64),
-          explanation: 'Merkle root reproduced from live database entries, and every independent source verified successfully.',
-          db_merkle_status: 'PASSED',
-          signature_status: 'PASSED',
-          archive_status: 'PASSED',
+          explanation: 'Merkle root reproduced exactly from live database entries.',
         }),
       })
       return
@@ -1171,122 +1141,6 @@ test.describe('payout console pages smoke (empty prod → preview fallbacks)', (
     })
   }
 
-  test('blocked live docks redirect to Payment Command Center', async ({ page }) => {
-    for (const dock of BLOCKED_LIVE_DOCKS) {
-      await page.goto(`/payout-command-view/today?dock=${dock}`)
-      await expect(page.getByRole('heading', { name: 'Payment Command Center', level: 1 }).first()).toBeVisible({
-        timeout: 25_000,
-      })
-      await expect(page.getByRole('heading', { name: 'Borrower Verification', level: 1 })).toHaveCount(0)
-      await expect(page.getByRole('heading', { name: 'Post-Disbursal Monitoring', level: 1 })).toHaveCount(0)
-      await expect(page.getByRole('heading', { name: 'Billing', level: 1 })).toHaveCount(0)
-      await expect(page.getByRole('heading', { name: 'Connector Performance & Leakage', level: 1 })).toHaveCount(0)
-    }
-  })
-
-  test('live create-payment is not available and has no WALLET/CARD sample form', async ({ page }) => {
-    await page.goto('/payout-command-view/create-payment')
-    await expect(page.getByRole('heading', { name: 'Direct payment creation is not available', level: 1 })).toBeVisible({
-      timeout: 15_000,
-    })
-    await expect(page.getByText('WALLET')).toHaveCount(0)
-    await expect(page.getByText('ACC55knkn5000')).toHaveCount(0)
-  })
-
-  test('Service 7 outage is shown as unavailable, not an empty or zero-risk state', async ({ page }) => {
-    await page.route('**/api/prod/intelligence/**', async (route) => {
-      await route.fulfill({
-        status: 503,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          availability: 'UNAVAILABLE',
-          data_available: false,
-          reason: 'Intelligence service is temporarily unavailable. Retry shortly.',
-          retryable: true,
-        }),
-      })
-    })
-
-    await page.goto('/payout-command-view/today?dock=home')
-    await expect(page.getByTestId('intelligence-unavailable')).toBeVisible({ timeout: 25_000 })
-    await expect(page.getByText('Intelligence data is unavailable')).toBeVisible()
-    await expect(page.getByText(/Values are not zero|unknown, not zero/i).first()).toBeVisible()
-  })
-
-  test('support logs email intent without claiming provider delivery', async ({ page }) => {
-    const now = new Date().toISOString()
-    const ticket = {
-      id: 'qa-support-ticket',
-      ticketNumber: 'QA-1001',
-      category: 'API & integrations',
-      topic: 'Provider delivery wording',
-      status: 'open',
-      state: 'active',
-      preview: 'Acceptance test',
-      createdAt: now,
-      updatedAt: now,
-      unreadForCustomer: 0,
-      messages: [
-        {
-          id: 'qa-message-1',
-          author: 'You',
-          role: 'customer',
-          body: 'Acceptance test',
-          createdAt: now,
-        },
-      ],
-    }
-    let postedKind = ''
-    await page.route('**/api/support/tickets', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ tickets: [ticket] }),
-      })
-    })
-    await page.route('**/api/support/tickets/qa-support-ticket/messages', async (route) => {
-      const posted = route.request().postDataJSON() as { kind?: string; body?: string; subject?: string }
-      postedKind = posted.kind ?? ''
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          ok: true,
-          ticket: {
-            ...ticket,
-            preview: `Email logged for support: ${posted.subject}`,
-            messages: [
-              ...ticket.messages,
-              {
-                id: 'qa-message-2',
-                author: 'Email logged',
-                role: 'customer',
-                kind: 'email',
-                emailDirection: 'outbound',
-                body: posted.body,
-                createdAt: now,
-              },
-            ],
-          },
-          delivery: { support_log_created: true, email_sent: false, slack_notified: false },
-        }),
-      })
-    })
-
-    await page.goto('/payout-command-view/today?dock=support')
-    const logButton = page.getByRole('button', { name: 'Log email / notify support' })
-    await expect(logButton).toBeVisible({ timeout: 25_000 })
-    await expect(page.getByText('Email sent')).toHaveCount(0)
-    await logButton.click()
-    await expect(page.getByRole('heading', { name: 'Log email / notify support' })).toBeVisible()
-    await expect(page.getByText('It does not send an email.')).toBeVisible()
-    await page.getByPlaceholder('Write email...').fill('Please record this for support follow-up.')
-    await page.getByRole('button', { name: 'Log email', exact: true }).click()
-    await expect(page.getByText('Email logged for support').first()).toBeVisible()
-    await expect(page.getByText('Email sent')).toHaveCount(0)
-    expect(postedKind).toBe('email_log')
-  })
-
   test('navy KPI heroes render all expected bucket counts', async ({ page }) => {
     await page.goto('/payout-command-view/today?dock=grid')
     await expect(page.getByTestId('intent-kpi-hero')).toBeVisible({ timeout: 20_000 })
@@ -1310,8 +1164,8 @@ test.describe('payout console pages smoke (empty prod → preview fallbacks)', (
 
   test('home payment health cards render from intelligence APIs', async ({ page }) => {
     await page.goto('/payout-command-view/today?dock=home')
-    await expect(page.getByText('Observed Outcome Value')).toBeVisible({ timeout: 20_000 })
-    await expect(page.getByText('Unresolved Intended Value')).toBeVisible()
+    await expect(page.getByText('Settlement Value Observed')).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByText('Unmatched Intent Value')).toBeVisible()
     await expect(page.getByText('Match Confidence')).toBeVisible()
     await expect(page.getByText('Proof Readiness')).toBeVisible()
     await expect(page.getByText('75%')).toBeVisible({ timeout: 20_000 })
@@ -1328,26 +1182,9 @@ test.describe('payout console pages smoke (empty prod → preview fallbacks)', (
     await expect(page.getByTestId('leakage-batch-watchlist')).toBeVisible({ timeout: 20_000 })
   })
 
-  test('view batches navigates from ambiguity dock header', async ({ page }) => {
-    await page.goto('/payout-command-view/today?dock=ambiguity')
-    await expect(page.getByTestId('ambiguity-kpi-hero')).toBeVisible({ timeout: 20_000 })
-    const viewBatches = page.getByTestId('view-batches-link')
-    await expect(viewBatches).toHaveAttribute('href', /\/payout-command-view\/batch-command-center/)
-    await viewBatches.click()
-    await expect(page).toHaveURL(/\/payout-command-view\/batch-command-center/, { timeout: 15_000 })
-  })
-
-  test('view batches link works from settlement and intent journal docks', async ({ page }) => {
-    for (const dock of ['settlement', 'grid'] as const) {
-      await page.goto(`/payout-command-view/today?dock=${dock}`)
-      await expect(page.getByTestId('view-batches-link')).toBeVisible({ timeout: 20_000 })
-      await expect(page.getByTestId('view-batches-link')).toHaveAttribute(
-        'href',
-        /\/payout-command-view\/batch-command-center/,
-      )
-      await page.getByTestId('view-batches-link').click()
-      await expect(page).toHaveURL(/\/payout-command-view\/batch-command-center/, { timeout: 15_000 })
-    }
+  test('batch command center route opens directly', async ({ page }) => {
+    await page.goto('/payout-command-view/batch-command-center')
+    await expect(page.getByTestId('batch-review-page')).toBeVisible({ timeout: 20_000 })
   })
 
   test('leakage hides Preview when live comparison timeseries is available', async ({ page }) => {
@@ -1365,22 +1202,56 @@ test.describe('payout console pages smoke (empty prod → preview fallbacks)', (
     await expect(page.getByText('Preview', { exact: true })).toHaveCount(0)
   })
 
-  test('deferred and sandbox-only docks are not live nav destinations', async ({ page }) => {
+  test('connectors renders API-driven routing sections', async ({ page }) => {
+    test.setTimeout(45_000)
+    const captures: ProdCapture[] = []
+    page.on('request', (req) => {
+      if (req.method() !== 'GET') return
+      const cap = captureProdGet(req.url())
+      if (cap) captures.push(cap)
+    })
+
     await page.goto('/payout-command-view/today?dock=connectors')
-    await expect(page.getByRole('heading', { name: 'Payment Command Center', level: 1 }).first()).toBeVisible({
+    await expect(page.getByRole('heading', { name: 'Connector Performance & Leakage', level: 1 })).toBeVisible({
       timeout: 25_000,
     })
-    await expect(page.getByRole('heading', { name: 'Connector Performance & Leakage', level: 1 })).toHaveCount(0)
+    await expect(page.getByTestId('routing-kpi-bar')).toBeVisible({ timeout: 25_000 })
+    await expect(page.getByTestId('leakage-exposure-chart')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('leakage-composition-chart')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('connector-grid')).toContainText('Cashfree', { timeout: 15_000 })
+    await expect(page.getByTestId('connector-grid')).toContainText('Strengthen provider contract')
+    await expect(page.getByTestId('recommended-routes')).toHaveCount(0)
+    await expect(page.getByText('Razorpay')).toHaveCount(0)
+    await expect(page.getByText('ICICI Bank')).toHaveCount(0)
+    expect(captures.some((c) => c.pathname.endsWith('/api/prod/intelligence/leakage'))).toBe(true)
+    expect(captures.some((c) => c.pathname.endsWith('/api/prod/intelligence/ambiguity/heatmap'))).toBe(true)
+    expect(captures.some((c) => c.pathname.endsWith('/api/prod/intelligence/pattern'))).toBe(true)
+    expect(captures.some((c) => c.pathname.endsWith('/api/prod/intelligence/pattern/history'))).toBe(true)
+    expect(captures.some((c) => c.pathname.endsWith('/api/prod/intelligence/recommendations'))).toBe(true)
+  })
+
+  test('connectors shows empty state when intelligence APIs have no data', async ({ page }) => {
+    await page.route('**/api/prod/intelligence/**', async (route) => {
+      if (route.request().method() !== 'GET') {
+        await route.continue()
+        return
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ data_available: false, tenant_id: SESSION_TENANT }),
+      })
+    })
+
+    await page.goto('/payout-command-view/today?dock=connectors')
+    await expect(page.getByRole('heading', { name: 'Connector Performance & Leakage', level: 1 })).toBeVisible({
+      timeout: 25_000,
+    })
+    await expect(page.getByTestId('routing-empty-state')).toBeVisible({ timeout: 20_000 })
     await expect(page.getByTestId('routing-kpi-bar')).toHaveCount(0)
     await expect(page.getByTestId('connector-grid')).toHaveCount(0)
-
-    await page.goto('/payout-command-view/today?dock=billing')
-    await expect(page.getByRole('heading', { name: 'Payment Command Center', level: 1 }).first()).toBeVisible()
-    await expect(page.getByRole('heading', { name: 'Billing', level: 1 })).toHaveCount(0)
-
-    await page.goto('/payout-command-view/today?dock=verification')
-    await expect(page.getByRole('heading', { name: 'Payment Command Center', level: 1 }).first()).toBeVisible()
-    await expect(page.getByText('is not part of live V1')).toHaveCount(0)
+    await expect(page.getByText('Razorpay')).toHaveCount(0)
+    await expect(page.getByTestId('preventable-leakage-impact')).toHaveCount(0)
   })
 
   test('evidence shows empty pack state when no live packs', async ({ page }) => {

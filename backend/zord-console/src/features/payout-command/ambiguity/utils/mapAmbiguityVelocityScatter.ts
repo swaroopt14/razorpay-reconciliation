@@ -15,7 +15,7 @@ export type AmbiguityBubblePoint = {
   amountAtRiskMinor: number
   /** (amount_at_risk / amount_value) × 100 */
   riskRatioPct: number
-  /** Normalized batch size 0–100 for X axis. */
+  /** Normalized batch size 0-100 for X axis. */
   sizePct: number
   /** sqrt(amount / max) × 100 for bubble area scaling via Z axis. */
   bubbleSizePct: number
@@ -27,10 +27,10 @@ export type AmbiguityBubblePoint = {
 export const BUBBLE_MAP_MAX_Z = 100
 
 const COLOR_CLEAN = '#94a3b8'
-const COLOR_SAFE = '#22c55e'
+const COLOR_SAFE = '#0B1324'
 const COLOR_WATCH = '#facc15'
 const COLOR_ALERT = '#fb923c'
-const COLOR_CRITICAL = '#ef4444'
+const COLOR_CRITICAL = '#0B1324'
 
 export function riskTierFromRatio(ratio: number): {
   tier: AmbiguityRiskTier
@@ -41,15 +41,15 @@ export function riskTierFromRatio(ratio: number): {
     return { tier: 'clean', color: COLOR_CLEAN, label: 'Clean (0%)' }
   }
   if (ratio <= 2) return { tier: 'safe', color: COLOR_SAFE, label: 'Safe (≤2%)' }
-  if (ratio <= 5) return { tier: 'watch', color: COLOR_WATCH, label: 'Watch (2–5%)' }
-  if (ratio <= 10) return { tier: 'alert', color: COLOR_ALERT, label: 'Alert (5–10%)' }
+  if (ratio <= 5) return { tier: 'watch', color: COLOR_WATCH, label: 'Watch (2-5%)' }
+  if (ratio <= 10) return { tier: 'alert', color: COLOR_ALERT, label: 'Alert (5-10%)' }
   return { tier: 'critical', color: COLOR_CRITICAL, label: 'Critical (>10%)' }
 }
 
 export const AMBIGUITY_BUBBLE_LEGEND = [
   { label: 'Critical (>10%)', color: COLOR_CRITICAL, hint: 'Investigate now' },
-  { label: 'Alert (5–10%)', color: COLOR_ALERT, hint: '' },
-  { label: 'Watch (2–5%)', color: COLOR_WATCH, hint: '' },
+  { label: 'Alert (5-10%)', color: COLOR_ALERT, hint: '' },
+  { label: 'Watch (2-5%)', color: COLOR_WATCH, hint: '' },
   { label: 'Safe (≤2%)', color: COLOR_SAFE, hint: '' },
   { label: 'Clean (0%)', color: COLOR_CLEAN, hint: 'No at-risk value' },
 ] as const
@@ -117,7 +117,7 @@ function mapBubbleMapBatches(
   const maxAmount = Math.max(...rows.map((row) => coerceMinor(row.amount_value)), 1)
   return rows.map((row) =>
     bubblePointFromAmounts(
-      row.batch_id?.trim() || '—',
+      row.batch_id?.trim() || '-',
       coerceMinor(row.amount_value),
       coerceMinor(row.amount_at_risk),
       maxAmount,
@@ -139,7 +139,7 @@ function mapLegacyTimeseriesPoints(
 
   return rows.map((row) =>
     bubblePointFromAmounts(
-      row.batch_id?.trim() || '—',
+      row.batch_id?.trim() || '-',
       coerceMinor(row.total_amount_minor),
       coerceMinor(row.ambiguous_amount_minor),
       maxAmount,

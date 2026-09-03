@@ -1,17 +1,6 @@
 // DLQ Service - Fetches Dead Letter Queue data from zord-intent-engine
 import { BACKEND_SERVICES, buildUrl, DEFAULT_FETCH_OPTIONS, API_TIMEOUT } from '@/config/api.endpoints'
 
-/**
- * R-02: zord-intent-engine's /internal/dlq/count requires a signed
- * internal-service token (X-Internal-Service-Token), not an end-user JWT —
- * it's a cross-tenant aggregate with no single tenant to scope to. Same
- * token as services/backend/intents.ts's internalServiceHeaders.
- */
-function internalServiceHeaders(): HeadersInit {
-  const token = process.env.INTERNAL_SERVICE_TOKEN
-  return token ? { 'X-Internal-Service-Token': token } : {}
-}
-
 export interface BackendDLQItem {
   dlq_id: string
   tenant_id: string
@@ -31,25 +20,20 @@ export interface BackendDLQItem {
 
 export interface DLQListParams {
   tenant_id?: string
-  /**
-   * R-01: /v1/dlq* is behind auth.Protect on zord-intent-engine — every
-   * caller must present the signed-in session's JWT (resolved via
-   * resolveProxyForwardAuthorization), or the request 401s before tenant_id
-   * is even checked. Omitting this is not a degraded mode, it's a guaranteed 401.
-   */
-  authorization?: string
 }
 
-function tenantHeaders(tenant_id?: string, authorization?: string): Record<string, string> {
+function tenantHeaders(tenant_id?: string): Record<string, string> {
   const tid = tenant_id?.trim()
+  if (!tid) return {}
   return {
-    ...(tid ? { 'x-tenant-id': tid, 'tenant-id': tid, tenant_id: tid } : {}),
-    ...(authorization ? { Authorization: authorization } : {}),
+    'x-tenant-id': tid,
+    'tenant-id': tid,
+    tenant_id: tid,
   }
 }
 
 async function fetchDLQListFromEndpoint(endpoint: string, params: DLQListParams = {}): Promise<BackendDLQItem[]> {
-  const { tenant_id, authorization } = params
+  const { tenant_id } = params
 
   const queryParams = new URLSearchParams()
   if (tenant_id) queryParams.set('tenant_id', tenant_id)
@@ -64,7 +48,7 @@ async function fetchDLQListFromEndpoint(endpoint: string, params: DLQListParams 
     const response = await fetch(fullUrl, {
       ...DEFAULT_FETCH_OPTIONS,
       method: 'GET',
-      headers: { ...DEFAULT_FETCH_OPTIONS.headers, ...tenantHeaders(tenant_id, authorization) },
+      headers: tenantHeaders(tenant_id),
       signal: controller.signal,
     })
 
@@ -114,7 +98,7 @@ export async function fetchDLQManualReviewItems(params: DLQListParams = {}): Pro
 
 /** Tenant-scoped terminal DLQ count from intent-engine. */
 export async function fetchDLQTerminalCount(params: DLQListParams = {}): Promise<number | null> {
-  const { tenant_id, authorization } = params
+  const { tenant_id } = params
   const queryParams = new URLSearchParams()
   if (tenant_id) queryParams.set('tenant_id', tenant_id)
   const url = buildUrl('INTENT_ENGINE', BACKEND_SERVICES.INTENT_ENGINE.ENDPOINTS.DLQ_TERMINAL_COUNT)
@@ -127,7 +111,7 @@ export async function fetchDLQTerminalCount(params: DLQListParams = {}): Promise
     const response = await fetch(fullUrl, {
       ...DEFAULT_FETCH_OPTIONS,
       method: 'GET',
-      headers: { ...DEFAULT_FETCH_OPTIONS.headers, ...tenantHeaders(tenant_id, authorization) },
+      headers: tenantHeaders(tenant_id),
       signal: controller.signal,
     })
     clearTimeout(timeoutId)
@@ -145,15 +129,8 @@ export async function fetchDLQTerminalCount(params: DLQListParams = {}): Promise
  * Fetch single DLQ item by ID
  * Endpoint: GET http://localhost:8083/v1/dlq/:id
  * FIXED: Now uses dedicated backend endpoint instead of fetching all and filtering
- *
- * R-01: zord-intent-engine's GetByID requires BOTH a verified JWT (auth.Protect)
- * AND an X-Tenant-ID header matching it — tenant_id is no longer optional here.
  */
-export async function fetchDLQItemById(
-  dlqId: string,
-  tenantId: string,
-  authorization: string
-): Promise<BackendDLQItem | null> {
+export async function fetchDLQItemById(dlqId: string): Promise<BackendDLQItem | null> {
   const url = buildUrl(
     'INTENT_ENGINE',
     BACKEND_SERVICES.INTENT_ENGINE.ENDPOINTS.DLQ_BY_ID(dlqId)
@@ -166,11 +143,6 @@ export async function fetchDLQItemById(
     const response = await fetch(url, {
       ...DEFAULT_FETCH_OPTIONS,
       method: 'GET',
-      headers: {
-        ...DEFAULT_FETCH_OPTIONS.headers,
-        'X-Tenant-ID': tenantId,
-        Authorization: authorization,
-      },
       signal: controller.signal,
     })
 
@@ -192,40 +164,5 @@ export async function fetchDLQItemById(
       throw new Error('Request timeout: Intent engine not responding')
     }
     throw error
-  }
-}
-
-/**
- * Fetch the platform-wide DLQ row count across all tenants.
- * Internal-only endpoint — not exposed through the API gateway.
- * Endpoint: GET http://localhost:8083/internal/dlq/count
- *
- * Replaces the old fetchDLQItems() + .length approach: that hit the public
- * /v1/dlq route, which now requires a tenant_id (R-01 fix) and no longer
- * has an "all tenants" fallback — the aggregate need moved here instead,
- * Internal-only DLQ count helper used by platform health probes.
- */
-export async function fetchDLQTotalCount(): Promise<number> {
-  const url = buildUrl('INTENT_ENGINE', BACKEND_SERVICES.INTENT_ENGINE.ENDPOINTS.DLQ_COUNT_ALL)
-
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT)
-
-  try {
-    const response = await fetch(url, {
-      ...DEFAULT_FETCH_OPTIONS,
-      method: 'GET',
-      headers: { ...DEFAULT_FETCH_OPTIONS.headers, ...internalServiceHeaders() },
-      signal: controller.signal,
-    })
-    clearTimeout(timeoutId)
-
-    if (!response.ok) return 0
-
-    const data = (await response.json()) as { total?: number }
-    return typeof data.total === 'number' ? data.total : 0
-  } catch {
-    clearTimeout(timeoutId)
-    return 0
   }
 }

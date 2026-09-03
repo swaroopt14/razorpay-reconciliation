@@ -8,22 +8,106 @@ import {
   PACK_INTENT_B,
   PRIMARY_BATCH,
   TENANT_ID,
+  UPLOAD_DEMO_BATCH_ID,
   batchPackId,
   intentId,
   parsePositiveInt,
+  tenantForEmail,
 } from './constants.js'
+import {
+  hasAnyFullyReadyBatch,
+  hasAnySettlementReadyBatch,
+  isBatchFullyReady,
+  isIntentReady,
+  isSettlementReady,
+  listFullyReadyBatchIds,
+  listIntentReadyBatchIds,
+  listSettlementReadyBatchIds,
+  markIntentUploaded,
+  markSettlementUploaded,
+} from './uploadReadiness.js'
+import {
+  DEMO_PAYOUT_AMOUNTS_INR,
+  demoPayeeLabel,
+  demoPayoutRef,
+  isDemoBatchId,
+} from './demoBatchInr.js'
+
+function _randId(prefix) { return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 8) }
+
+/** Token → email mapping so /v1/auth/refresh and /v1/auth/me can resolve the correct tenant. */
+const tokenEmailMap = new Map()
+
+/** Register a token→email mapping (called on login). */
+export function registerTokenEmail(token, email) {
+  if (token && email) tokenEmailMap.set(token, email.toLowerCase().trim())
+}
+
+/** Look up the email for a given Bearer token. */
+export function emailForToken(token) {
+  if (!token) return null
+  return tokenEmailMap.get(token) || null
+}
 
 const PROVIDERS = ['razorpay', 'cashfree']
 
+/** Resolve catalogue rows for a stage-specific id list (null = preseed / unrestricted). */
+function batchesFromReadyIds(readyIds) {
+  if (readyIds === null) return BATCHES
+  if (readyIds.length === 0) return []
+  return readyIds.map((id) => batchMeta(id))
+}
+
+/** Batches with obligation upload — Intent Journal / pre-settlement lists. */
+function activeIntentBatches(request) {
+  return batchesFromReadyIds(listIntentReadyBatchIds(request))
+}
+
+/** Batches with settlement upload — Settlement Journal lists. */
+function activeSettlementBatches(request) {
+  return batchesFromReadyIds(listSettlementReadyBatchIds(request))
+}
+
+/** Batches with both uploads — match / proof / leakage / overview KPIs. */
+function activeBatches(request) {
+  return batchesFromReadyIds(listFullyReadyBatchIds(request))
+}
+
+function emptyPaginated() {
+  return { items: [], pagination: { page: 1, page_size: 0, total: 0 } }
+}
+
 function batchMeta(batchId) {
+  const id = String(batchId || '').trim()
+  if (id === UPLOAD_DEMO_BATCH_ID || id.toUpperCase() === 'BATCH-001') {
+    const fromList = BATCHES.find((b) => b.id === UPLOAD_DEMO_BATCH_ID)
+    if (fromList) return fromList
+    const evidence = ALL_BATCHES.find((b) => b.id === EVIDENCE_BATCH) ?? ALL_BATCHES[0]
+    return { ...evidence, id: UPLOAD_DEMO_BATCH_ID, label: 'Batch 001' }
+  }
   return ALL_BATCHES.find((b) => b.id === batchId) ?? BATCHES.find((b) => b.id === batchId) ?? ALL_BATCHES[0]
 }
 
-/** Split a rupee total across N rows; last row absorbs rounding so the sum is exact. */
+/**
+ * Split a rupee total across N rows with every row amount distinct.
+ * Deterministic weighted split (weights shuffled so the table doesn't look ascending);
+ * the last row absorbs rounding so the sum stays exact.
+ */
 function distributeAmounts(totalRupees, count) {
   const n = Math.max(1, count)
   const totalCents = Math.round(Number(totalRupees) * 100)
-  const baseCents = Math.floor(totalCents / n)
+  if (n === 1) return [Number((totalCents / 100).toFixed(2))]
+
+  // Strictly increasing weights guarantee distinct shares; shuffle for a natural-looking order.
+  const weights = Array.from({ length: n }, (_, i) => 10 + i * 3)
+  let seed = 7
+  for (let i = n - 1; i > 0; i -= 1) {
+    seed = (seed * 31 + 17) % 97
+    const j = seed % (i + 1)
+    ;[weights[i], weights[j]] = [weights[j], weights[i]]
+  }
+  const weightTotal = weights.reduce((a, b) => a + b, 0)
+
   const amounts = []
   let assignedCents = 0
   for (let i = 0; i < n; i += 1) {
@@ -31,9 +115,8 @@ function distributeAmounts(totalRupees, count) {
       amounts.push(Number(((totalCents - assignedCents) / 100).toFixed(2)))
       break
     }
-    let cents = baseCents
-    const remainder = totalCents - baseCents * n
-    if (i < remainder) cents += 1
+    // Round to whole rupees; weight gaps are large enough to keep every amount distinct.
+    const cents = Math.round((totalCents * weights[i]) / weightTotal / 100) * 100
     amounts.push(Number((cents / 100).toFixed(2)))
     assignedCents += cents
   }
@@ -46,42 +129,61 @@ function payoutRef(batchId, rowIndex) {
 }
 
 function observationStatusForRow(meta, rowIndex) {
-  const settledEnd = meta.settledRows ?? 12
+  const settledEnd = meta.settledRows ?? 16
   const pendingEnd = settledEnd + (meta.pendingRows ?? 0)
   if (rowIndex < settledEnd) return 'SETTLED'
   if (rowIndex < pendingEnd) return 'PENDING'
   return 'FAILED'
 }
 
-export function authEnvelope() {
+export function authEnvelope(opts = {}) {
+  // Reuse existing token if provided (refresh/me should not rotate)
+  const existingToken = opts.existingAccessToken || null
   const now = Date.now()
   const accessExpires = new Date(now + 60 * 60 * 1000).toISOString()
   const idleExpires = new Date(now + 15 * 60 * 1000).toISOString()
   const absoluteExpires = new Date(now + 8 * 60 * 60 * 1000).toISOString()
+  const email =
+    typeof opts.email === 'string' && opts.email.trim()
+      ? opts.email.trim().toLowerCase()
+      : (existingToken ? emailForToken(existingToken) : null) || 'ops.reviewer@zordnet.com'
+  const name =
+    typeof opts.name === 'string' && opts.name.trim() ? opts.name.trim() : 'Ops Reviewer'
+  const role =
+    typeof opts.role === 'string' && opts.role.trim() ? opts.role.trim() : 'CUSTOMER_USER'
+  const companyName =
+    typeof opts.companyName === 'string' && opts.companyName.trim()
+      ? opts.companyName.trim()
+      : 'Zordnet Operations'
+  // Resolve per-user tenant — each email maps to a unique tenant_id.
+  const userTenant = tenantForEmail(email)
+  const tenantId = opts.tenantId || userTenant.tenant_id
+  const tenantName = opts.tenantName || userTenant.tenant_name || companyName
+  const workspaceCode = userTenant.workspace_code || 'ZORDNET'
   return {
     user: {
       id: 'usr_ops_reviewer_001',
-      email: 'ops.reviewer@zordnet.com',
-      role: 'CUSTOMER_USER',
-      name: 'Ops Reviewer',
-      tenant_id: TENANT_ID,
-      tenant_name: 'Zordnet Operations',
-      workspace_code: 'ZORDNET',
+      email,
+      role,
+      name,
+      tenant_id: tenantId,
+      tenant_name: tenantName,
+      workspace_code: workspaceCode,
       status: 'ACTIVE',
       mfa_enabled: false,
     },
     session: {
-      session_id: 'sess_dev_001',
-      tenant_id: TENANT_ID,
-      workspace_code: 'ZORDNET',
-      role: 'CUSTOMER_USER',
+      session_id: `sess_${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`,
+      tenant_id: tenantId,
+      workspace_code: workspaceCode,
+      role,
       access_expires_at: accessExpires,
       idle_expires_at: idleExpires,
       absolute_expires_at: absoluteExpires,
     },
     requires_mfa: false,
-    access_token: 'dev-access-token',
-    refresh_token: 'dev-refresh-token',
+    access_token: existingToken || _randId('tok_'),
+    refresh_token: `ref_${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`,
     access_expires_at: accessExpires,
     idle_expires_at: idleExpires,
     absolute_expires_at: absoluteExpires,
@@ -98,31 +200,38 @@ export function sessionStatus() {
   }
 }
 
-export function buildPaymentIntents(batchId) {
+export function buildPaymentIntents(batchId, request) {
+  if (!isIntentReady(batchId, request)) return emptyPaginated()
   const meta = batchMeta(batchId)
-  const count = meta.intentCount ?? 15
-  const total = meta.intentTotalRupees ?? meta.totalIntendedMinor ?? 55_000
-  const amounts = distributeAmounts(total, count)
+  const count = meta.intentCount ?? 20
+  const total = meta.intentTotalRupees ?? meta.totalIntendedMinor ?? 1237786756
+  const useCanonical = isDemoBatchId(batchId)
+  const amounts = useCanonical
+    ? DEMO_PAYOUT_AMOUNTS_INR.slice(0, count)
+    : distributeAmounts(total, count)
   const day = meta.date ?? '2026-06-12'
   const items = []
   for (let i = 0; i < count; i += 1) {
+    const payee = useCanonical ? demoPayeeLabel(i) : undefined
     items.push({
       tenant_id: TENANT_ID,
       intent_id: intentId(batchId, i),
       batch_id: batchId,
       batchid: batchId,
       client_batch_ref: batchId,
-      client_payout_ref: payoutRef(batchId, i),
+      client_payout_ref: useCanonical ? demoPayoutRef(i) : payoutRef(batchId, i),
       amount: amounts[i],
       currency: 'INR',
       provider_hint: meta.partner,
       beneficiary_type: i % 4 === 0 ? 'UPI' : 'BANK_TRANSFER',
+      beneficiary_name: payee,
       intent_quality_score: 0.72 + (i % 5) * 0.04,
       aggregate_confidence_score: meta.matchConfidence ?? 0.81,
       confidence_score: 0.79,
       source_row_num: i + 1,
       intended_execution_at: `${day}T09:00:00Z`,
       beneficiary: {
+        name: payee,
         instrument: { kind: i % 4 === 0 ? 'UPI' : 'NEFT' },
       },
     })
@@ -131,23 +240,29 @@ export function buildPaymentIntents(batchId) {
 }
 
 /** Mirrors intent-engine GET /api/prod/intents/batch-ids (`total_amount` = SUM(amount) per batch). */
-export function buildBatchIdsList() {
+export function buildBatchIdsList(request) {
   return {
-    items: BATCHES.map((b) => {
-      const { items } = buildPaymentIntents(b.id)
+    items: activeIntentBatches(request).map((b) => {
+      const { items } = buildPaymentIntents(b.id, request)
       const total_amount = Math.round(
         items.reduce((sum, row) => sum + (Number(row.amount) || 0), 0) * 100,
       ) / 100
-      return { batch_id: b.id, total_amount }
+      return {
+        batch_id: b.id,
+        total_amount,
+        total_count: items.length,
+        intent_count: items.length,
+      }
     }),
   }
 }
 
-export function buildDlqItems(batchId) {
+export function buildDlqItems(batchId, request) {
+  if (!isIntentReady(batchId, request)) return emptyPaginated()
   const meta = batchMeta(batchId)
   const count = meta.dlqCount ?? 0
   if (count <= 0) {
-    return { items: [], pagination: { page: 1, page_size: 0, total: 0 } }
+    return emptyPaginated()
   }
   const day = meta.date ?? '2026-06-12'
   const reasons = [
@@ -171,11 +286,21 @@ export function buildDlqItems(batchId) {
   return { items, pagination: { page: 1, page_size: items.length, total: items.length } }
 }
 
-export function buildSettlementObservations(batchId, page, pageSize) {
+export function buildSettlementObservations(batchId, page, pageSize, request) {
+  if (!isSettlementReady(batchId, request)) {
+    return { items: [], pagination: { page, page_size: pageSize, total: 0 } }
+  }
   const meta = batchMeta(batchId)
-  const count = meta.observationCount ?? 15
+  const count = meta.observationCount ?? 20
   const total = meta.settlementTotalRupees ?? 44_000
-  const amounts = distributeAmounts(total, count)
+  const useCanonical = isDemoBatchId(batchId)
+  const amounts = useCanonical
+    ? Array.from({ length: count }, (_, i) => {
+        const base = DEMO_PAYOUT_AMOUNTS_INR[i] ?? 0
+        // PAY-0019 short-settlement story (3% under)
+        return i === 18 ? Math.round(base * 0.97) : base
+      })
+    : distributeAmounts(total, count)
   const day = meta.date ?? '2026-06-12'
   const all = []
   for (let i = 0; i < count; i += 1) {
@@ -188,7 +313,7 @@ export function buildSettlementObservations(batchId, page, pageSize) {
           ? 0.35 + (i % 4) * 0.05
           : 0.18
     const intentIdx = i % count
-    const linkedRef = payoutRef(batchId, intentIdx)
+    const linkedRef = useCanonical ? demoPayoutRef(intentIdx) : payoutRef(batchId, intentIdx)
     all.push({
       settlement_observation_id: `obs-${batchId}-${String(i + 1).padStart(3, '0')}`,
       tenant_id: TENANT_ID,
@@ -222,8 +347,8 @@ export function buildSettlementObservations(batchId, page, pageSize) {
   }
 }
 
-export function buildSettlementBatchList(page = 1, pageSize = 20) {
-  const all = BATCHES.map((b) => ({ client_batch_id: b.id }))
+export function buildSettlementBatchList(page = 1, pageSize = 20, request) {
+  const all = activeSettlementBatches(request).map((b) => ({ client_batch_id: b.id }))
   const safePage = Math.max(1, page)
   const safeSize = Math.max(1, Math.min(100, pageSize))
   const start = (safePage - 1) * safeSize
@@ -233,8 +358,10 @@ export function buildSettlementBatchList(page = 1, pageSize = 20) {
   }
 }
 
-export function buildSettlementErrors(batchId) {
-  const bid = batchId || PRIMARY_BATCH
+export function buildSettlementErrors(batchId, request) {
+  if (batchId && !isSettlementReady(batchId, request)) return { items: [] }
+  if (!batchId && !hasAnySettlementReadyBatch(request)) return { items: [] }
+  const bid = batchId || activeSettlementBatches(request)[0]?.id || PRIMARY_BATCH
   return {
     items: [
       {
@@ -285,11 +412,12 @@ function batchMatchConfidencePct(meta) {
   return Math.round(ratio * 1000) / 10
 }
 
-export function buildIntelligenceBatches(opts = {}) {
-  const limit = opts.limit ? parsePositiveInt(opts.limit, BATCHES.length) : BATCHES.length
+export function buildIntelligenceBatches(opts = {}, request) {
+  const catalogue = activeBatches(request)
+  const limit = opts.limit ? parsePositiveInt(opts.limit, catalogue.length) : catalogue.length
   const status = opts.status?.trim().toUpperCase()
 
-  let batchRows = BATCHES.map((b) => {
+  let batchRows = catalogue.map((b) => {
       const leak = leakageFromBatchMeta(b)
       const leakagePct =
         b.intentTotalRupees > 0 ? Number((leak.unmatched / b.intentTotalRupees).toFixed(4)) : 0
@@ -425,7 +553,40 @@ function* leakageDaysInWindow(fromStr, toStr) {
  * day's own value. With no window (KPI strip) it returns the current calendar
  * month aggregate. With batch_id it returns that batch's scoped snapshot.
  */
-export function leakageKpi(fromDate, toDate, batchId) {
+export function leakageKpi(fromDate, toDate, batchId, request) {
+  if (batchId?.trim() && !isBatchFullyReady(batchId.trim(), request)) {
+    return {
+      data_available: false,
+      tenant_id: TENANT_ID,
+      batch_id: batchId.trim(),
+      computed_at: new Date().toISOString(),
+      total_intended_amount_minor: 0,
+      total_amount_minor: 0,
+      unmatched_amount_minor: 0,
+      under_settlement_amount_minor: 0,
+      orphan_amount_minor: 0,
+      reversal_exposure_minor: 0,
+      total_observed_settled_amount_minor: 0,
+      leakage_percentage: 0,
+      exposure_bands: [],
+    }
+  }
+  if (!batchId?.trim() && !hasAnyFullyReadyBatch(request)) {
+    return {
+      data_available: false,
+      tenant_id: TENANT_ID,
+      computed_at: new Date().toISOString(),
+      total_intended_amount_minor: 0,
+      total_amount_minor: 0,
+      unmatched_amount_minor: 0,
+      under_settlement_amount_minor: 0,
+      orphan_amount_minor: 0,
+      reversal_exposure_minor: 0,
+      total_observed_settled_amount_minor: 0,
+      leakage_percentage: 0,
+      exposure_bands: [],
+    }
+  }
   if (batchId?.trim()) {
     const meta = batchMeta(batchId.trim())
     const sum = leakageFromBatchMeta(meta)
@@ -581,7 +742,16 @@ function formatIsoDate(date) {
   return date.toISOString().slice(0, 10)
 }
 
-export function leakageExposureTimeseries(granularity = 'day') {
+export function leakageExposureTimeseries(granularity = 'day', request) {
+  if (!hasAnyFullyReadyBatch(request)) {
+    return {
+      data_available: false,
+      tenant_id: TENANT_ID,
+      computed_at: new Date().toISOString(),
+      granularity: granularity === 'week' || granularity === 'month' ? granularity : 'day',
+      series: [],
+    }
+  }
   const resolvedGranularity = granularity === 'week' || granularity === 'month' ? granularity : 'day'
   const today = new Date()
   today.setUTCHours(0, 0, 0, 0)
@@ -649,7 +819,29 @@ export function leakageExposureTimeseries(granularity = 'day') {
   }
 }
 
-export function ambiguityKpi() {
+export function ambiguityKpi(request) {
+  if (!hasAnyFullyReadyBatch(request)) {
+    return {
+      data_available: false,
+      tenant_id: TENANT_ID,
+      computed_at: new Date().toISOString(),
+      value_at_risk_minor: 0,
+      avg_attachment_confidence: 0,
+      avg_score_margin: 0,
+      provider_ref_missing_rate: 0,
+      low_confidence_rate: 0,
+      carrier_completeness_rate: 0,
+      candidate_collision_rate: 0,
+      ambiguous_intent_count: 0,
+      ambiguity_rate: 0,
+      velocity_series: [],
+      matching_execution_heatmap: { cells: [], summary: {}, intents_under_evaluation_count: 0 },
+      matching_execution_summary: {},
+      intents_under_evaluation_count: 0,
+      intelligence_headline: 'Upload obligation and settlement files to unlock ambiguity metrics.',
+      intelligence_body: 'No batch is ready yet.',
+    }
+  }
   // Ambiguity KPI strip appends "%" to these fields — use 0–100 scale (not 0–1).
   const providerRefMissingRatePct = 16
   const ambiguityRatePct = 8
@@ -658,6 +850,7 @@ export function ambiguityKpi() {
   const lowConfidenceRatePct = 18
   const carrierCompletenessRatePct = 84
   const candidateCollisionRatePct = 4
+  const matchingExecutionHeatmap = buildMatchingExecutionHeatmap()
   const mix = buildAmbiguityMixSegments({
     providerRefMissingRate: providerRefMissingRatePct / 100,
     ambiguityRate: ambiguityRatePct / 100,
@@ -678,6 +871,10 @@ export function ambiguityKpi() {
     candidate_collision_rate: candidateCollisionRatePct,
     ambiguous_intent_count: 12,
     ambiguity_rate: ambiguityRatePct,
+    velocity_series: buildAmbiguityVelocitySeries(),
+    matching_execution_heatmap: matchingExecutionHeatmap,
+    matching_execution_summary: matchingExecutionHeatmap.summary,
+    intents_under_evaluation_count: matchingExecutionHeatmap.intents_under_evaluation_count,
     intelligence_headline: '12 intents need provider reference review before dispatch.',
     intelligence_body: 'Missing UTR cluster on Cashfree rail is the top driver this week.',
     total_intended_amount_minor: 34_200_000,
@@ -687,7 +884,7 @@ export function ambiguityKpi() {
     reversal_exposure_minor: 1_500_000,
     unresolved_amount_minor: 400_000,
     unresolved_count: 12,
-    signal_clarity_subtitle: '₹34.2Cr book across 780 intents · ₹8.4Cr needing review',
+    signal_clarity_subtitle: '₹34.2Cr book across 780 payments · ₹8.4Cr needing match review',
     signal_clarity_roll_rates: [
       { from_band: 'Current', to_band: 'SMA-0', roll_pct: 9 },
       { from_band: 'SMA-0', to_band: 'SMA-1', roll_pct: 18 },
@@ -697,6 +894,7 @@ export function ambiguityKpi() {
     signal_clarity_bands: [
       {
         band: 'Current',
+        range_label: 'Confirmed settlement',
         amount_minor: 26_000_000,
         item_count: 645,
         share_pct: 76,
@@ -704,6 +902,7 @@ export function ambiguityKpi() {
       },
       {
         band: 'SMA-0',
+        range_label: 'Unclear match value',
         amount_minor: 4_100_000,
         item_count: 67,
         share_pct: 12,
@@ -712,6 +911,7 @@ export function ambiguityKpi() {
       },
       {
         band: 'SMA-1',
+        range_label: 'Settlement variance',
         amount_minor: 2_200_000,
         item_count: 38,
         share_pct: 6.4,
@@ -720,6 +920,7 @@ export function ambiguityKpi() {
       },
       {
         band: 'SMA-2',
+        range_label: 'Reversal exposure',
         amount_minor: 1_500_000,
         item_count: 18,
         share_pct: 4.4,
@@ -728,6 +929,7 @@ export function ambiguityKpi() {
       },
       {
         band: 'NPA-2',
+        range_label: 'Still open',
         amount_minor: 400_000,
         item_count: 12,
         share_pct: 1.2,
@@ -740,33 +942,149 @@ export function ambiguityKpi() {
   }
 }
 
-export function ambiguityHeatmap() {
+const AMBIGUITY_HEATMAP_X_LABELS = ['Exact', 'High', 'Amb', 'Unres', 'Conf']
+const AMBIGUITY_HEATMAP_MAX_ROWS = 12
+
+function addDaysIso(baseDate, days) {
+  const date = new Date(`${baseDate}T00:00:00Z`)
+  date.setUTCDate(date.getUTCDate() + days)
+  return date.toISOString().slice(0, 10)
+}
+
+function buildAmbiguityVelocitySeries() {
+  const day = Array.from({ length: 14 }, (_, idx) => ({
+    period: addDaysIso('2026-07-01', idx),
+    review_count: 8 + (idx % 5) + (idx >= 9 ? 2 : 0),
+    low_confidence_count: 3 + (idx % 4),
+    missing_ref_count: 2 + ((idx + 1) % 3),
+  }))
+
+  const week = Array.from({ length: 8 }, (_, idx) => ({
+    period: `W${String(idx + 24).padStart(2, '0')}`,
+    review_count: 41 + idx * 3 + (idx % 2) * 4,
+    low_confidence_count: 18 + idx * 2,
+    missing_ref_count: 12 + idx,
+  }))
+
+  const month = Array.from({ length: 6 }, (_, idx) => ({
+    period: addDaysIso('2026-02-01', idx * 30).slice(0, 7),
+    review_count: 144 + idx * 16,
+    low_confidence_count: 58 + idx * 7,
+    missing_ref_count: 35 + idx * 5,
+  }))
+
+  const year = [
+    { period: '2023', review_count: 940, low_confidence_count: 355, missing_ref_count: 218 },
+    { period: '2024', review_count: 1120, low_confidence_count: 420, missing_ref_count: 246 },
+    { period: '2025', review_count: 1288, low_confidence_count: 456, missing_ref_count: 280 },
+    { period: '2026', review_count: 780, low_confidence_count: 264, missing_ref_count: 166 },
+  ]
+
+  return { day, week, month, year }
+}
+
+function heatmapCellIntensity(count, total, columnIndex) {
+  const ratio = total > 0 ? count / total : 0
+  const healthyColumn = columnIndex === 0 || columnIndex === 1
+  if (healthyColumn) {
+    if (count <= 0) return 2
+    if (ratio >= 0.55) return 0
+    if (ratio >= 0.25) return 1
+    return 2
+  }
+  if (count <= 0) return 0
+  if (ratio >= 0.22) return 2
+  if (ratio >= 0.06) return 1
+  return 0
+}
+
+function ambiguityHeatmapRows() {
+  return BATCHES.map((b, idx) => {
+    const total = b.intentCount
+    const ambiguous = 2 + (idx % 5)
+    const unresolved = 1 + (idx % 4)
+    const conflicted = idx % 5 === 0 ? 2 : idx % 7 === 0 ? 1 : 0
+    const high = Math.min(Math.max(2, Math.floor(total * 0.22)), total)
+    const exact = Math.max(0, total - ambiguous - unresolved - conflicted - high)
+    const finality =
+      idx % 4 === 0 ? 'REQUIRES_REVIEW' : idx % 3 === 1 ? 'PROCESSING' : 'SETTLED'
+    return {
+      batch_id: b.id,
+      total_intended_amount_minor: b.totalIntendedMinor,
+      total_count: total,
+      finality_status: finality,
+      exact_match_count: exact,
+      high_confidence_count: high,
+      ambiguous_count: ambiguous,
+      unresolved_count: unresolved,
+      conflicted_count: conflicted,
+      aggregate_score: 0.68 + (idx % 9) * 0.03,
+    }
+  })
+}
+
+function buildMatchingExecutionSummary(rows) {
+  const reviewing = rows.filter((row) => row.finality_status === 'REQUIRES_REVIEW').length
+  const syncing = rows.filter((row) => row.finality_status === 'PROCESSING').length
+  const intents = rows.reduce((sum, row) => sum + row.total_count, 0)
+  const avgScore = rows.reduce((sum, row) => sum + row.aggregate_score, 0) / Math.max(1, rows.length)
+  const parts = [
+    `${rows.length} batches in matching log`,
+    syncing > 0 ? `${syncing} syncing` : null,
+    reviewing > 0 ? `${reviewing} in review` : null,
+    `avg match score ${Math.round(avgScore * 100)}%`,
+  ].filter(Boolean)
+  return `${parts.join(' · ')} · ${intents.toLocaleString('en-IN')} intents tracked.`
+}
+
+function buildMatchingExecutionHeatmap() {
+  const allRows = ambiguityHeatmapRows()
+  const rows = allRows.slice(0, AMBIGUITY_HEATMAP_MAX_ROWS)
+  const cells = rows.map((row) => {
+    const total = row.total_count > 0 ? row.total_count : 1
+    return [
+      heatmapCellIntensity(row.exact_match_count, total, 0),
+      heatmapCellIntensity(row.high_confidence_count, total, 1),
+      heatmapCellIntensity(row.ambiguous_count, total, 2),
+      heatmapCellIntensity(row.unresolved_count, total, 3),
+      heatmapCellIntensity(row.conflicted_count, total, 4),
+    ]
+  })
+
+  return {
+    y_labels: rows.map((_, idx) => idx + 1),
+    batch_ids: rows.map((row) => row.batch_id),
+    x_labels: AMBIGUITY_HEATMAP_X_LABELS,
+    cells,
+    summary: buildMatchingExecutionSummary(rows),
+    intents_under_evaluation_count: allRows.reduce(
+      (sum, row) => sum + row.ambiguous_count + row.unresolved_count,
+      0,
+    ),
+    column_totals: [
+      rows.reduce((sum, row) => sum + row.exact_match_count, 0),
+      rows.reduce((sum, row) => sum + row.high_confidence_count, 0),
+      rows.reduce((sum, row) => sum + row.ambiguous_count, 0),
+      rows.reduce((sum, row) => sum + row.unresolved_count, 0),
+      rows.reduce((sum, row) => sum + row.conflicted_count, 0),
+    ],
+  }
+}
+
+export function ambiguityHeatmap(request) {
+  if (!hasAnyFullyReadyBatch(request)) {
+    return {
+      data_available: false,
+      tenant_id: TENANT_ID,
+      intelligence_mode: 'GRADE_A',
+      batches: [],
+    }
+  }
   return {
     data_available: true,
     tenant_id: TENANT_ID,
     intelligence_mode: 'GRADE_A',
-    batches: BATCHES.map((b, idx) => {
-      const total = b.intentCount
-      const ambiguous = 2 + (idx % 5)
-      const unresolved = 1 + (idx % 4)
-      const conflicted = idx % 5 === 0 ? 2 : idx % 7 === 0 ? 1 : 0
-      const high = Math.min(Math.max(2, Math.floor(total * 0.22)), total)
-      const exact = Math.max(0, total - ambiguous - unresolved - conflicted - high)
-      const finality =
-        idx % 4 === 0 ? 'REQUIRES_REVIEW' : idx % 3 === 1 ? 'PROCESSING' : 'SETTLED'
-      return {
-        batch_id: b.id,
-        total_intended_amount_minor: b.totalIntendedMinor,
-        total_count: total,
-        finality_status: finality,
-        exact_match_count: exact,
-        high_confidence_count: high,
-        ambiguous_count: ambiguous,
-        unresolved_count: unresolved,
-        conflicted_count: conflicted,
-        aggregate_score: 0.68 + (idx % 9) * 0.03,
-      }
-    }),
+    batches: ambiguityHeatmapRows(),
   }
 }
 
@@ -775,7 +1093,16 @@ const BUBBLE_MAP_RISK_PCTS = [0, 1.2, 3.5, 7.8, 15.4, 0.6, 4.2, 9.1, 12.5, 2.1]
 
 const BUBBLE_MAP_WINDOW = 24
 
-export function bubbleMap() {
+export function bubbleMap(request) {
+  if (!hasAnyFullyReadyBatch(request)) {
+    return {
+      data_available: false,
+      tenant_id: TENANT_ID,
+      intelligence_mode: 'GRADE_A',
+      count: 0,
+      batches: [],
+    }
+  }
   const recent = BATCHES.slice(-BUBBLE_MAP_WINDOW)
   const batches = recent.map((b, idx) => {
     const amountValue = b.intentTotalRupees ?? b.totalIntendedMinor ?? 0
@@ -798,21 +1125,36 @@ export function bubbleMap() {
   }
 }
 
-export function patternsDashboard(batchId) {
+export function patternsDashboard(batchId, request) {
   const bid = batchId?.trim() || null
+  if ((bid && !isBatchFullyReady(bid, request)) || (!bid && !hasAnyFullyReadyBatch(request))) {
+    return {
+      data_available: false,
+      tenant_id: TENANT_ID,
+      computed_at: new Date().toISOString(),
+      ...(bid ? { batch_id: bid } : {}),
+      total_count: 0,
+      success_count: 0,
+      failed_count: 0,
+      pending_count: 0,
+      ambiguous_count: 0,
+      patterns: [],
+    }
+  }
   const batchIndex = bid ? ALL_BATCHES.findIndex((b) => b.id === bid) : -1
   const meta = bid ? batchMeta(bid) : null
   const known = Boolean(!bid || batchIndex >= 0 || meta)
 
-  const tenantBatchCount = BATCHES.length
+  const catalogue = activeBatches(request)
+  const tenantBatchCount = catalogue.length
   const totalCount = bid ? (meta?.intentCount ?? 100) : Math.max(tenantBatchCount, 100)
   const successCount = bid
     ? (meta?.settledRows ?? 12)
-    : BATCHES.reduce((sum, b) => sum + (b.settledRows ?? 0), 0)
-  const failedCount = bid ? (meta?.failedRows ?? 1) : BATCHES.reduce((sum, b) => sum + (b.failedRows ?? 0), 0)
+    : catalogue.reduce((sum, b) => sum + (b.settledRows ?? 0), 0)
+  const failedCount = bid ? (meta?.failedRows ?? 1) : catalogue.reduce((sum, b) => sum + (b.failedRows ?? 0), 0)
   const pendingCount = bid
     ? (meta?.pendingRows ?? 2)
-    : BATCHES.reduce((sum, b) => sum + (b.pendingRows ?? 0), 0)
+    : catalogue.reduce((sum, b) => sum + (b.pendingRows ?? 0), 0)
   const ambiguousCount = bid ? 8 + ((batchIndex >= 0 ? batchIndex : 0) % 7) : 18
   const batchRiskScore = bid
     ? Number((0.31 + ((batchIndex >= 0 ? batchIndex : 0) % 6) * 0.04).toFixed(2))
@@ -857,7 +1199,13 @@ export function patternsDashboard(batchId) {
     success_count: successCount,
     failed_count: failedCount,
     pending_count: pendingCount,
+    exact_match_count: Math.max(0, successCount - Math.floor(ambiguousCount / 2)),
+    high_confidence_count: Math.max(0, Math.floor(successCount * 0.35)),
     ambiguous_count: ambiguousCount,
+    unresolved_count: bid ? 3 + ((batchIndex >= 0 ? batchIndex : 0) % 4) : 9,
+    conflicted_count: bid ? 1 + ((batchIndex >= 0 ? batchIndex : 0) % 2) : 4,
+    duplicate_risk_rate: bid ? 0.06 + ((batchIndex >= 0 ? batchIndex : 0) % 5) * 0.01 : 0.08,
+    duplicate_risk_count: bid ? 2 + ((batchIndex >= 0 ? batchIndex : 0) % 3) : 7,
     value_date_mismatch_count: bid ? 2 + ((batchIndex >= 0 ? batchIndex : 0) % 3) : 5,
     risk_driver_breakdown: [
       { label: 'Orphan settlements', count: orphanCount, share_pct: 42 },
@@ -874,20 +1222,59 @@ export function patternsDashboard(batchId) {
   }
 }
 
-export function operationsSummary(batchId) {
+export function operationsSummary(batchId, request) {
   const bid = batchId?.trim() || null
-  const scope = bid ? [batchMeta(bid)] : BATCHES
-  const leak = bid ? leakageKpi(undefined, undefined, bid) : leakageKpi()
+  if (bid && !isBatchFullyReady(bid, request)) {
+    return {
+      data_available: false,
+      tenant_id: TENANT_ID,
+      batch_id: bid,
+      computed_at: new Date().toISOString(),
+      settlement_confirmation_coverage_pct: 0,
+      confirmed_matched_value_minor: 0,
+      total_intended_amount_minor: 0,
+      open_exception_queue_count: 0,
+      open_exception_queue_value_minor: 0,
+      batch_close_readiness: {
+        blocked_batch_count: 0,
+        close_ready_batch_count: 0,
+        blocked_batch_ids: [],
+        close_ready_batch_ids: [],
+      },
+      operations_insights: [],
+    }
+  }
+  if (!bid && !hasAnyFullyReadyBatch(request)) {
+    return {
+      data_available: false,
+      tenant_id: TENANT_ID,
+      computed_at: new Date().toISOString(),
+      settlement_confirmation_coverage_pct: 0,
+      confirmed_matched_value_minor: 0,
+      total_intended_amount_minor: 0,
+      open_exception_queue_count: 0,
+      open_exception_queue_value_minor: 0,
+      batch_close_readiness: {
+        blocked_batch_count: 0,
+        close_ready_batch_count: 0,
+        blocked_batch_ids: [],
+        close_ready_batch_ids: [],
+      },
+      operations_insights: [],
+    }
+  }
+  const scope = bid ? [batchMeta(bid)] : activeBatches(request)
+  const leak = bid ? leakageKpi(undefined, undefined, bid, request) : leakageKpi(undefined, undefined, undefined, request)
   const blocked = scope.filter((b) => b.finality === 'OPEN')
   const closeReady = scope.filter((b) => b.finality === 'FULLY_SETTLED')
   const dlqTotal = scope.reduce((sum, b) => sum + (b.dlqCount ?? 0), 0)
   const intended = leak.total_intended_amount_minor ?? 0
   const settled = leak.total_observed_settled_amount_minor ?? 0
-  const coverage = intended > 0 ? Number(((settled / intended) * 100).toFixed(1)) : 87.4
-  const exceptionValue = leak.total_amount_minor ?? 18_500_000
+  const coverage = intended > 0 ? Number(((settled / intended) * 100).toFixed(1)) : 0
+  const exceptionValue = leak.total_amount_minor ?? 0
 
   return {
-    data_available: true,
+    data_available: intended > 0 || settled > 0,
     tenant_id: TENANT_ID,
     computed_at: new Date().toISOString(),
     ...(bid ? { batch_id: bid } : {}),
@@ -931,8 +1318,8 @@ export function operationsSummary(batchId) {
   }
 }
 
-export function exceptionsSummary(batchId) {
-  const ops = operationsSummary(batchId)
+export function exceptionsSummary(batchId, request) {
+  const ops = operationsSummary(batchId, request)
   return {
     data_available: true,
     tenant_id: TENANT_ID,
@@ -944,8 +1331,8 @@ export function exceptionsSummary(batchId) {
 }
 
 /** Aggregate manual-review DLQ across journal batches for Payment Operations View. */
-export function buildManualReviewDlq() {
-  const items = BATCHES.flatMap((b) => buildDlqItems(b.id).items)
+export function buildManualReviewDlq(request) {
+  const items = BATCHES.flatMap((b) => buildDlqItems(b.id, request).items)
   return {
     items,
     pagination: { page: 1, page_size: items.length, total: items.length },
@@ -1033,6 +1420,9 @@ export function promptLayerQuery(body = {}) {
 
 export function patternDetail(batchId) {
   const bid = batchId || PRIMARY_BATCH
+  if (!isBatchFullyReady(bid)) {
+    return { data_available: false, tenant_id: TENANT_ID, batch_id: bid }
+  }
   return {
     data_available: true,
     tenant_id: TENANT_ID,
@@ -1095,6 +1485,9 @@ export function patternDetail(batchId) {
 }
 
 export function patternHistory() {
+  if (!hasAnyFullyReadyBatch()) {
+    return { count: 0, tenant_id: TENANT_ID, intelligence_mode: 'GRADE_A', snapshot_type: 'PATTERN', snapshots: [] }
+  }
   return {
     count: 1,
     tenant_id: TENANT_ID,
@@ -1116,6 +1509,13 @@ export function patternHistory() {
 }
 
 export function recommendationsDashboard() {
+  if (!hasAnyFullyReadyBatch()) {
+    return {
+      data_available: false,
+      tenant_id: TENANT_ID,
+      computed_at: new Date().toISOString(),
+    }
+  }
   return {
     data_available: true,
     tenant_id: TENANT_ID,
@@ -1130,6 +1530,9 @@ export function recommendationsDashboard() {
 }
 
 export function recommendationDetail() {
+  if (!hasAnyFullyReadyBatch()) {
+    return { data_available: false, tenant_id: TENANT_ID }
+  }
   return {
     data_available: true,
     tenant_id: TENANT_ID,
@@ -1144,6 +1547,13 @@ export function recommendationDetail() {
 }
 
 export function defensibilityKpi() {
+  if (!hasAnyFullyReadyBatch()) {
+    return {
+      data_available: false,
+      tenant_id: TENANT_ID,
+      computed_at: new Date().toISOString(),
+    }
+  }
   return {
     data_available: true,
     tenant_id: TENANT_ID,
@@ -1160,6 +1570,39 @@ export function defensibilityKpi() {
     dispute_ready_pct: 0.65,
     /** Evidence Pack Completeness KPI — ratio or 0–100 both format via normalizePercentRatio. */
     avg_pack_completeness_score: 0.78,
+  }
+}
+
+/** Match Review Zord intelligence panel — RCA fields distinct from ambiguity KPIs. */
+export function rcaKpi(batchId) {
+  const bid = batchId?.trim() || null
+  if (bid && !isBatchFullyReady(bid)) {
+    return { data_available: false, tenant_id: TENANT_ID, computed_at: new Date().toISOString(), batch_id: bid }
+  }
+  if (!bid && !hasAnyFullyReadyBatch()) {
+    return { data_available: false, tenant_id: TENANT_ID, computed_at: new Date().toISOString() }
+  }
+  const meta = bid ? batchMeta(bid) : null
+  const totalSettlements = bid
+    ? (meta?.observationCount ?? meta?.intentCount ?? 15)
+    : BATCHES.reduce((sum, b) => sum + (b.observationCount ?? b.intentCount ?? 0), 0)
+  return {
+    data_available: true,
+    tenant_id: TENANT_ID,
+    computed_at: new Date().toISOString(),
+    ...(bid ? { batch_id: bid } : {}),
+    parser_weakness_rate: 0.14,
+    weak_parse_count: bid ? 3 : 11,
+    mapping_weakness_rate: 0.09,
+    weak_mapping_count: bid ? 2 : 7,
+    source_system_defect_rate: 0.11,
+    source_system_defects: {
+      erp_sftp: 0.12,
+      bank_settlement: 0.08,
+      psp_webhook: 0.15,
+    },
+    rca_concentration: 0.62,
+    total_settlements: totalSettlements,
   }
 }
 
@@ -1272,15 +1715,42 @@ function isIntentEvidencePackId(packId) {
 }
 
 function intentPackBatchId(packId) {
-  return BATCHES.find((b) => b.id === EVIDENCE_BATCH)?.id ?? EVIDENCE_BATCH
+  return batchIdFromPackId(packId)
 }
 
 function intentPackIndex(packId) {
-  if (packId === PACK_INTENT_B) return 1
-  return 0
+  const match = packId?.match(/-pi-(\d+)$/)
+  if (!match) return packId === PACK_INTENT_B ? 1 : 0
+  return Math.max(0, Number.parseInt(match[1], 10) - 1)
 }
 
-/** Six lineage leaves + proof root for per-payment intent attach packs. */
+/** One evidence pack summary per payment intent in the batch (matches intent journal row count). */
+function intentEvidencePacksForBatch(batchId) {
+  const meta = batchMeta(batchId)
+  const count = Math.max(1, meta?.intentCount ?? 15)
+  const day = meta?.date ?? '2026-06-12'
+  const packs = []
+  for (let i = 0; i < count; i += 1) {
+    const iid = intentId(batchId, i)
+    const score = 64 + ((i * 3) % 29)
+    packs.push(
+      packSummary(batchPackId(iid), {
+        intentId: iid,
+        batchId,
+        mode: 'INTELLIGENCE_ATTACH',
+        ref: payoutRef(batchId, i),
+        proofScore: score,
+        proofStatus: score >= 80 ? 'READY' : 'PARTIAL',
+        createdAt: `${day}T09:${String(Math.min(59, i)).padStart(2, '0')}:00Z`,
+        leafCount: 9,
+        requiredLeafCount: 9,
+      }),
+    )
+  }
+  return packs
+}
+
+/** Nine lineage leaves + proof root for per-payment intent attach packs. */
 function buildIntentLineageGraph(packId, batchId, intentIndex = 0) {
   const root = `${packId.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}intentroot`.padEnd(64, 'c').slice(0, 64)
   const iid = intentId(batchId, intentIndex)
@@ -1289,8 +1759,11 @@ function buildIntentLineageGraph(packId, batchId, intentIndex = 0) {
     { id: 'envelope', label: 'Envelope Hash', node_type: 'SOURCE', suffix: '2222222222222222', missing: false },
     { id: 'canonical_intent', label: 'Structured Payment Intent', node_type: 'TRANSFORM', suffix: '3333333333333333', missing: false },
     { id: 'governance', label: 'Governance Check', node_type: 'DECISION', suffix: '4444444444444444', missing: false },
-    { id: 'attachment', label: 'Attachment Decision', node_type: 'DECISION', suffix: '5555555555555555', missing: false },
-    { id: 'outcome', label: 'Outcome Signal', node_type: 'TRANSFORM', suffix: '6666666666666666', missing: false },
+    { id: 'settlement_file', label: 'Original Settlement File', node_type: 'SOURCE', suffix: '5555555555555555', missing: true },
+    { id: 'canonical_settlement', label: 'Structured Settlement Observation', node_type: 'TRANSFORM', suffix: '6666666666666666', missing: false },
+    { id: 'match_decision', label: 'Match Decision', node_type: 'DECISION', suffix: '7777777777777777', missing: false },
+    { id: 'variance', label: 'Variance Decision', node_type: 'DECISION', suffix: '8888888888888888', missing: true },
+    { id: 'evidence_summary', label: 'Evidence Summary', node_type: 'TRANSFORM', suffix: '9999999999999999', missing: false },
   ]
   const nodes = nodeDefs.map((def) => ({
     id: `${packId}-${def.id}`,
@@ -1314,9 +1787,12 @@ function buildIntentLineageGraph(packId, batchId, intentIndex = 0) {
     { from: n('payment_file'), to: n('envelope'), label: 'fingerprint' },
     { from: n('envelope'), to: n('canonical_intent'), label: 'canonicalise' },
     { from: n('canonical_intent'), to: n('governance'), label: 'govern' },
-    { from: n('governance'), to: n('attachment'), label: 'attach' },
-    { from: n('attachment'), to: n('outcome'), label: 'observe outcome' },
-    { from: n('outcome'), to: 'merkle_root', label: 'seal intent proof' },
+    { from: n('settlement_file'), to: n('canonical_settlement'), label: 'parse settlement' },
+    { from: n('canonical_settlement'), to: n('match_decision'), label: 'match' },
+    { from: n('match_decision'), to: n('variance'), label: 'variance check' },
+    { from: n('governance'), to: n('evidence_summary'), label: 'aggregate intent proof' },
+    { from: n('variance'), to: n('evidence_summary'), label: 'aggregate settlement proof' },
+    { from: n('evidence_summary'), to: 'merkle_root', label: 'seal intent proof' },
   ]
 
   return {
@@ -1333,19 +1809,33 @@ function buildIntentLineageGraph(packId, batchId, intentIndex = 0) {
 
 function packDetailFromLineage(packId, lineage, opts = {}) {
   const leafNodes = lineage.nodes.filter((node) => node.id !== 'merkle_root')
+  const index = opts.intentIndex ?? 0
   return {
     evidence_pack_id: packId,
     tenant_id: TENANT_ID,
     intent_id: lineage.intent_id ?? '',
     batch_id: lineage.batch_id ?? EVIDENCE_BATCH,
-    contract_id: opts.contractId ?? '—',
+    contract_id: opts.contractId ?? 'ctr-payroll-inr-v3',
     mode: opts.mode ?? 'BATCH_PROOF',
-    pack_status: 'READY',
+    pack_status: opts.packStatus ?? 'READY',
     proof_status: opts.proofStatus ?? 'PARTIAL',
     proof_score: opts.proofScore ?? 58,
     merkle_root: lineage.merkle_root,
     ruleset_version: '1',
     created_at: lineage.created_at,
+    client_payout_ref: opts.clientPayoutRef ?? null,
+    client_reference: opts.clientPayoutRef ?? null,
+    amount_minor: opts.amountMinor ?? null,
+    match_confidence: opts.matchConfidence ?? null,
+    governance_decision: opts.governanceDecision ?? null,
+    attachment_decision: opts.attachmentDecision ?? null,
+    bank_reference: opts.bankReference ?? null,
+    amount_match: opts.amountMatch ?? null,
+    value_date_check: opts.valueDateCheck ?? null,
+    settlement_leaf_present_flag: opts.settlementLeafPresent ?? false,
+    attachment_decision_leaf_present_flag: opts.attachmentLeafPresent ?? true,
+    leaf_count: leafNodes.length,
+    required_leaf_count: opts.requiredLeafCount ?? leafNodes.length,
     items: leafNodes.map((node) => ({
       type: node.label.replace(/\s+/g, '_').toUpperCase(),
       ref: node.item_ref,
@@ -1359,11 +1849,28 @@ function packDetailFromLineage(packId, lineage, opts = {}) {
 export function evidencePackDetail(packId) {
   if (isIntentEvidencePackId(packId)) {
     const batchId = intentPackBatchId(packId)
-    const lineage = buildIntentLineageGraph(packId, batchId, intentPackIndex(packId))
+    const index = intentPackIndex(packId)
+    const lineage = buildIntentLineageGraph(packId, batchId, index)
+    const score = 64 + ((index * 3) % 29)
+    const amountRupees = 2_750 + index * 125
+    const settled = index % 4 !== 2
     return packDetailFromLineage(packId, lineage, {
       mode: 'INTELLIGENCE_ATTACH',
-      proofScore: packId === PACK_INTENT_A ? 72 : 68,
-      proofStatus: 'PARTIAL',
+      intentIndex: index,
+      proofScore: score,
+      proofStatus: score >= 80 ? 'READY' : 'PARTIAL',
+      clientPayoutRef: payoutRef(batchId, index),
+      amountMinor: amountRupees * 100,
+      matchConfidence: 0.78 + (index % 5) * 0.04,
+      governanceDecision: index % 7 === 0 ? 'Review' : 'Pass',
+      attachmentDecision: settled ? 'Attached' : 'Pending attach',
+      bankReference: settled ? `UTR${202606120000 + index}` : null,
+      amountMatch: settled,
+      valueDateCheck: index % 5 !== 3,
+      settlementLeafPresent: settled,
+      attachmentLeafPresent: true,
+      requiredLeafCount: 9,
+      contractId: 'ctr-payroll-inr-v3',
     })
   }
 
@@ -1378,6 +1885,16 @@ export function evidencePackDetail(packId) {
     mode: 'BATCH_PROOF',
     proofScore: 58,
     proofStatus: 'PARTIAL',
+    matchConfidence: 0.81,
+    governanceDecision: 'Pass',
+    attachmentDecision: 'Batch sealed',
+    bankReference: `BATCH-UTR-${String(batchId).slice(-8).toUpperCase()}`,
+    amountMatch: true,
+    valueDateCheck: true,
+    settlementLeafPresent: false,
+    attachmentLeafPresent: true,
+    requiredLeafCount: 6,
+    contractId: 'ctr-payroll-inr-v3',
   })
 }
 
@@ -1394,48 +1911,89 @@ export function evidencePackVerify(packId) {
   }
 }
 
+/** Operational timeline for Evidence Pack Browser — UI hides timelines with < 2 events. */
+export function evidencePackTimeline(packId) {
+  const timestamp = '2026-07-20T12:45:00Z'
+  const steps = [
+    ['Payment instruction received from ERP', 'Payment instruction received from ERP'],
+    ['File payload fingerprint securely recorded', 'File payload fingerprint securely recorded'],
+    ['Structured payment intent schema verified', 'Structured payment intent schema verified'],
+    ['Governance and compliance checks passed', 'Governance and compliance checks passed'],
+    ['Bank settlement record received', 'Bank settlement record received'],
+    ['Bank settlement file received via SFTP', 'Bank settlement file received via SFTP'],
+    ['UTR reference auto-matched via reconciliation engine', 'UTR reference auto-matched via reconciliation engine'],
+    ['Variance, valuation, and reconciliation completed', 'Variance, valuation, and reconciliation completed'],
+    ['Immutable evidence pack successfully compiled', 'Immutable evidence pack successfully compiled'],
+  ]
+  return {
+    evidence_pack_id: packId,
+    intent_id: intentId(PRIMARY_BATCH, 0),
+    timeline: steps.map(([event, node_id]) => ({ timestamp, event, node_id })),
+  }
+}
+
 export function evidencePacksList(searchParams) {
-  const batchId = searchParams.get('batch_id')
+  const batchId = searchParams.get('batch_id') || searchParams.get('client_batch_id')
   const intentIdParam = searchParams.get('intent_id')
+  const intentsOnly = searchParams.get('intents_only') === '1'
   if (intentIdParam) {
+    const piMatch = intentIdParam.match(/^(.*)-pi-(\d+)$/)
+    const resolved = piMatch?.[1] ?? PRIMARY_BATCH
+    if (!isBatchFullyReady(resolved)) return { packs: [], total: 0 }
+    const index = piMatch ? Math.max(0, Number.parseInt(piMatch[2], 10) - 1) : 0
+    const iid = intentId(resolved, index)
     return {
-      packs: [packSummary(PACK_INTENT_A, { intentId: intentIdParam, mode: 'INTELLIGENCE_INTENT', ref: 'PAY-A' })],
+      packs: [
+        packSummary(batchPackId(iid), {
+          intentId: intentIdParam || iid,
+          batchId: resolved,
+          mode: 'INTELLIGENCE_ATTACH',
+          ref: payoutRef(resolved, index),
+          proofScore: 72,
+          leafCount: 9,
+          requiredLeafCount: 9,
+        }),
+      ],
       total: 1,
     }
   }
   const bid = batchId?.trim()
-  const knownBatch = bid && BATCHES.some((b) => b.id === bid)
-  if (knownBatch || bid === EVIDENCE_BATCH || bid === PRIMARY_BATCH) {
+  if (bid && !isBatchFullyReady(bid)) return { packs: [], total: 0 }
+  if (!bid && !hasAnyFullyReadyBatch()) return { packs: [], total: 0 }
+  const knownBatch = bid && (BATCHES.some((b) => b.id === bid) || activeBatches().some((b) => b.id === bid))
+  if (knownBatch || bid === EVIDENCE_BATCH || bid === PRIMARY_BATCH || (bid && isBatchFullyReady(bid))) {
     const resolved = bid ?? PRIMARY_BATCH
     const meta = batchMeta(resolved)
-    const pid = batchPackId(resolved)
-    return {
-      packs: [
-        packSummary(pid, {
-          batchId: resolved,
-          mode: 'BATCH_PROOF',
-          ref: `BATCH-${resolved.slice(-10)}`,
-          merkleRoot: merkleRootForBatch(resolved),
-          proofScore: 58,
-          proofStatus: 'PARTIAL',
-          createdAt: `${meta.date}T09:00:00Z`,
-          leafCount: 9,
-        }),
-        packSummary(PACK_INTENT_A, {
-          intentId: intentId(resolved, 0),
-          batchId: resolved,
-          mode: 'INTELLIGENCE_ATTACH',
-          ref: payoutRef(resolved, 0),
-          proofScore: 72,
-          leafCount: 6,
-        }),
-      ],
-      total: 2,
+    const intentPacks = intentEvidencePacksForBatch(resolved)
+    if (intentsOnly) {
+      return { packs: intentPacks, total: intentPacks.length }
     }
+    const pid = batchPackId(resolved)
+    const packs = [
+      packSummary(pid, {
+        batchId: resolved,
+        mode: 'BATCH_PROOF',
+        ref: `BATCH-${resolved.slice(-10)}`,
+        merkleRoot: merkleRootForBatch(resolved),
+        proofScore: 58,
+        proofStatus: 'PARTIAL',
+        createdAt: `${meta.date}T09:00:00Z`,
+        leafCount: 6,
+        requiredLeafCount: 6,
+      }),
+      ...intentPacks,
+    ]
+    return { packs, total: packs.length }
   }
   return {
     packs: BATCHES.map((b) =>
-      packSummary(batchPackId(b.id), { batchId: b.id, mode: 'BATCH_PROOF', ref: `REF-${b.date}`, leafCount: 9 }),
+      packSummary(batchPackId(b.id), {
+        batchId: b.id,
+        mode: 'BATCH_PROOF',
+        ref: `REF-${b.date}`,
+        leafCount: 6,
+        requiredLeafCount: 6,
+      }),
     ),
     total: BATCHES.length,
   }
@@ -1500,8 +2058,12 @@ export function lineageGraph(scope, id) {
   }
 }
 
-export function intentsListPage(page, pageSize) {
-  const all = buildPaymentIntents(PRIMARY_BATCH).items
+export function intentsListPage(page, pageSize, request) {
+  const readyId = activeIntentBatches(request)[0]?.id
+  if (!readyId) {
+    return { items: [], pagination: { page, page_size: pageSize, total: 0 } }
+  }
+  const all = buildPaymentIntents(readyId, request).items
   const start = (page - 1) * pageSize
   const slice = all.slice(start, start + pageSize)
   return {
@@ -1510,16 +2072,16 @@ export function intentsListPage(page, pageSize) {
   }
 }
 
-export function settlementObservationsRoute(url) {
+export function settlementObservationsRoute(url, request) {
   const clientBatchId = url.searchParams.get('client_batch_id')?.trim()
   if (!clientBatchId) {
     const page = parsePositiveInt(url.searchParams.get('page'), 1)
     const pageSize = Math.min(100, parsePositiveInt(url.searchParams.get('page_size'), 20))
-    return buildSettlementBatchList(page, pageSize)
+    return buildSettlementBatchList(page, pageSize, request)
   }
   const page = parsePositiveInt(url.searchParams.get('page'), 1)
   const pageSize = Math.min(100, parsePositiveInt(url.searchParams.get('page_size'), 20))
-  return buildSettlementObservations(clientBatchId, page, pageSize)
+  return buildSettlementObservations(clientBatchId, page, pageSize, request)
 }
 
 export function syncStatus() {
@@ -1532,6 +2094,60 @@ export function syncStatus() {
       last_sync_at: new Date().toISOString(),
     })),
     systems: [],
+  }
+}
+
+/**
+ * POST /v1/bulk-ingest — intent CSV/file accept (console Create Payout / Batch Command Center).
+ * Returns the shape expected by zord-console intakeHttpShared parsers.
+ */
+export function bulkIngestAck(request) {
+  const headerBatch =
+    request.headers.get('batch-id') ||
+    request.headers.get('Batch-ID') ||
+    request.headers.get('Batch-Id') ||
+    request.headers.get('x-batch-id')
+  const batchId = String(headerBatch || '').trim() || UPLOAD_DEMO_BATCH_ID
+  markIntentUploaded(batchId, request)
+  const total = 20
+  const now = new Date().toISOString()
+  const results = Array.from({ length: total }, (_, i) => ({
+    row: i + 1,
+    EnvelopeID: `env-${batchId}-${i + 1}`,
+    Trace_id: `tr-${batchId}-${i + 1}`,
+    Status: 'ACCEPTED',
+    Received_At: now,
+  }))
+  return {
+    batch_id: batchId,
+    batchId,
+    total,
+    accepted: total,
+    failed: 0,
+    results,
+    message: 'Bulk ingest accepted (smoke simulator) — Intent Journal unlocked for this batch',
+  }
+}
+
+/**
+ * POST /v1/settlement/upload — settlement CSV accept (console settlement intake).
+ */
+export function settlementUploadAck(url, request) {
+  const batchId =
+    url.searchParams.get('batch_id')?.trim() ||
+    url.searchParams.get('client_batch_id')?.trim() ||
+    request.headers.get('batch-id')?.trim() ||
+    request.headers.get('Batch-Id')?.trim() ||
+    UPLOAD_DEMO_BATCH_ID
+  markSettlementUploaded(batchId, request)
+  return {
+    ok: true,
+    status: 'ACCEPTED',
+    batch_id: batchId,
+    client_batch_id: batchId,
+    tenant_id: url.searchParams.get('tenant_id') || TENANT_ID,
+    psp: url.searchParams.get('psp') || 'razorpay',
+    message: 'Settlement file accepted (smoke simulator) — batch data unlocked when obligation was also uploaded',
   }
 }
 

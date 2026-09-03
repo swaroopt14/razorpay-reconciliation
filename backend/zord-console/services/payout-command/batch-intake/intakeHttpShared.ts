@@ -140,25 +140,9 @@ export function errorMessageFromProxyResponse(status: number, responseText: stri
     if (o.error && typeof o.error === 'object') {
       const inner = o.error as Record<string, unknown>
       if (typeof inner.message === 'string' && inner.message.trim()) return inner.message
-      if (typeof inner.detail === 'string' && inner.detail.trim()) return inner.detail
     }
     if (typeof o.message === 'string' && o.message.trim()) return o.message
-    if (typeof o.detail === 'string' && o.detail.trim()) return o.detail
     if (typeof o.details === 'string' && o.details.trim()) return o.details
-    if (Array.isArray(o.errors) && o.errors.length > 0) {
-      const parts = o.errors
-        .map((item) => {
-          if (typeof item === 'string' && item.trim()) return item.trim()
-          if (item && typeof item === 'object') {
-            const row = item as Record<string, unknown>
-            if (typeof row.message === 'string' && row.message.trim()) return row.message.trim()
-            if (typeof row.error === 'string' && row.error.trim()) return row.error.trim()
-          }
-          return ''
-        })
-        .filter(Boolean)
-      if (parts.length) return parts.join('\n')
-    }
     if (typeof o.upstream === 'string' && o.upstream.trim()) {
       const base =
         typeof o.error === 'string' && o.error.trim()

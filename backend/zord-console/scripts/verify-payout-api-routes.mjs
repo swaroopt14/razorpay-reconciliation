@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Verifies BFF route files exist for payout-command wiring.
+ * Verifies BFF route files exist for payout-command + customer + console wiring.
  * Run: node scripts/verify-payout-api-routes.mjs
  */
 import fs from 'node:fs'
@@ -35,12 +35,13 @@ const WIRED_ROUTES = [
   ['Home · ingest status', 'ingest-status/route.ts'],
   ['Leakage · timeseries', 'intelligence/timeseries/leakage/route.ts'],
   ['Systems · sync status', 'systems/sync-status/route.ts'],
+  ['Exports · gap report', 'exports/gap-report/route.ts'],
+  ['Exports · review list', 'exports/review-list/route.ts'],
   ['Evidence · verify', 'evidence/packs/[packId]/verify/route.ts'],
-  ['Intents · list', 'intents/route.ts'],
-  ['DLQ · list', 'dlq/route.ts'],
-  ['Overview · health', 'overview/route.ts'],
-  ['Live workspace API keys', 'workspace-api-keys/route.ts'],
-  ['Synthetic zord catch-all', 'zord/[...path]/route.ts'],
+  ['Customer · intents', 'intents/route.ts'],
+  ['Customer · dlq', 'dlq/route.ts'],
+  ['Console · overview', 'overview/route.ts'],
+  ['Zord · metrics overview', 'zord/metrics/overview/route.ts'],
 ]
 
 let missing = 0

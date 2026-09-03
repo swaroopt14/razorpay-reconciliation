@@ -2,7 +2,6 @@ import {
   PAYOUT_BATCH_COMMAND_CENTER_LIVE_PATH,
   PAYOUT_BATCH_COMMAND_CENTER_SANDBOX_PATH,
 } from './batchCommandCenterHref'
-import liveNavContract from '../../product-contract/live-nav.json'
 
 export type GlyphName =
   | 'home'
@@ -27,8 +26,12 @@ export type GlyphName =
   | 'check'
   | 'lock'
   | 'settlement'
+  | 'gaps'
   | 'billing'
   | 'support'
+  | 'link'
+  | 'banknote'
+  | 'payout'
 
 export type DockId =
   | 'home'
@@ -45,46 +48,29 @@ export type DockId =
   | 'billing'
   | 'support'
 
-/** Dock IDs in sandbox top nav: Today → Intent → Settlement → Billing. */
-export const SANDBOX_DOCK_IDS: DockId[] = ['home', 'grid', 'settlement', 'billing']
-
-/**
- * Sandbox URL allow-list. Borrower/post-disbursal mocks stay off the visible nav
- * but can still be opened with an explicit `?dock=` (CON-P0-07).
- */
-export const SANDBOX_ALLOWED_DOCK_IDS: DockId[] = [
-  ...SANDBOX_DOCK_IDS,
-  'verification',
-  'monitoring',
+/** Dock IDs in sandbox top nav - lifecycle path for sandbox demo (existing surfaces). */
+export const SANDBOX_DOCK_IDS: DockId[] = [
+  'home',
+  'grid',
+  'settlement',
+  'ambiguity',
+  'proof',
+  'workspace',
+  'billing',
 ]
-
-/** Live V1 nav — mock/hidden/deferred docks are not live (CON-P1-38). */
-export const LIVE_NAV_DOCK_IDS = liveNavContract.liveNavDockIds as DockId[]
-export const SANDBOX_ONLY_DOCK_IDS = liveNavContract.sandboxOnlyDockIds as DockId[]
-export const DEFERRED_LIVE_DOCK_IDS = liveNavContract.deferredDockIds as DockId[]
-
-/**
- * Live V1 docks for shell / landing consumers (alias of product-contract live nav).
- */
-export const LIVE_CONSOLE_DOCK_IDS: DockId[] = LIVE_NAV_DOCK_IDS
-
-/** Removed from live V1: lending mocks, billing, connectors, sandbox. */
-export const LIVE_BLOCKED_DOCK_IDS: readonly DockId[] = [
-  ...SANDBOX_ONLY_DOCK_IDS,
-  ...DEFERRED_LIVE_DOCK_IDS,
-]
-
-export function isLiveBlockedDock(id: string): boolean {
-  return (LIVE_BLOCKED_DOCK_IDS as readonly string[]).includes(id)
-}
 
 /** Temporarily hide Connectors from nav and routing; connector code remains in the repo. */
 export const CONNECTORS_DOCK_TEMPORARILY_HIDDEN = true
 
-/** Short labels for sandbox dock pills only (page titles stay full names). */
+/** Readable labels for sandbox dock pills (always visible - no hover-only text). */
 export const SANDBOX_DOCK_DISPLAY_LABELS: Partial<Record<DockId, string>> = {
-  grid: 'Intent',
+  home: 'Overview',
+  grid: 'Intent Journal',
   settlement: 'Settlement',
+  ambiguity: 'Outcome Review',
+  proof: 'Proof',
+  workspace: 'Ask Zord',
+  billing: 'Billing',
 }
 export type WorkspaceTab =
   | 'Today'
@@ -200,7 +186,7 @@ export type HomeOverviewSnapshot = {
   axisLabels: readonly string[]
   quarterName: 'Q1' | 'Q2' | 'Q3' | 'Q4'
   quarterMonths: readonly string[]
-  selectedYear: number
+  selectedYear: 2026 | 2027 | 2028
   holidayLabels: readonly string[]
   salesBaseValue: number
   expensesBaseValue: number
@@ -216,7 +202,7 @@ export type HomeCommandResponse = {
 
 export type HomeCommandStatus = 'idle' | 'loading' | 'typing' | 'complete'
 
-/** Inter-first stack — matches `globals.css` body; clean fintech / Ledger-style rhythm */
+/** Inter-first stack - matches `globals.css` body; clean fintech / Ledger-style rhythm */
 export const DASHBOARD_FONT_STACK =
   '"Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
 
@@ -233,22 +219,22 @@ export const dockItems = [
   },
   {
     id: 'home',
-    label: 'Today',
-    navLabel: 'Today',
-    title: 'Payment Command Center',
-    breadcrumbLabel: 'Payment Command Center',
+    label: 'Overview',
+    navLabel: 'Overview',
+    title: 'Payment integrity from instruction to settlement',
+    breadcrumbLabel: 'Operations Overview',
     summary:
-      'Track payment instructions, bank confirmations, settlement gaps, and proof readiness in one place.',
+      'Know what was authorised, what moved, what settled, and what can be proven.',
     icon: 'home',
   },
   {
     id: 'workspace',
     label: 'Ask',
     navLabel: 'Ask Zord',
-    title: 'Payment Operations View',
-    breadcrumbLabel: 'Payment Operations',
+    title: 'Ask Zord',
+    breadcrumbLabel: 'Ask Zord',
     summary:
-      'Track payment instructions, bank confirmations, settlement gaps, proof readiness, and review actions in one place.',
+      'Investigate payouts, build safe workflows, and navigate the product - AI on top of cryptographic truth.',
     icon: 'folder',
   },
   {
@@ -298,7 +284,7 @@ export const dockItems = [
     title: 'Intent Journal',
     breadcrumbLabel: 'Intent Journal',
     summary:
-      'Payment instructions your business submitted — track readiness, review items, and bank confirmation status per batch.',
+      'Payment instructions your business submitted - track readiness, review items, and bank confirmation status per batch.',
     icon: 'grid',
   },
   {
@@ -308,7 +294,7 @@ export const dockItems = [
     title: 'Settlement Journal',
     breadcrumbLabel: 'Settlement Journal',
     summary:
-      'What banks and payment partners reported — settlement records, match status, and observed amounts per batch.',
+      'What banks and payment partners reported - settlement records, match status, and observed amounts per batch.',
     icon: 'bank',
   },
   {
@@ -328,7 +314,7 @@ export const dockItems = [
     title: 'Evidence & Dispute Resolution',
     breadcrumbLabel: 'Evidence',
     summary:
-      'Build, verify, and export proof for payments, settlements, disputes, and audit review — one structured Evidence Pack instead of screenshots and PSP log chases.',
+      'Build, verify, and export proof for payments, settlements, disputes, and audit review - one structured Evidence Pack instead of screenshots and PSP log chases.',
     icon: 'document',
   },
   {
@@ -337,7 +323,7 @@ export const dockItems = [
     navLabel: 'Billing',
     title: 'Billing',
     breadcrumbLabel: 'Billing',
-    summary: 'Plan, payment method, and invoice history. Sandbox uses test billing — no real charges.',
+    summary: 'Plan, payment method, and invoice history. Sandbox uses test billing - no real charges.',
     icon: 'billing',
   },
   {
@@ -380,21 +366,28 @@ function dockPageRow(id: DockId): PayoutConsoleDockPage {
   return { dockId: id, dockLabel: d.navLabel, pageName: d.title }
 }
 
-/** Sandbox mode — dock order matches `SANDBOX_DOCK_IDS`. */
+/** Sandbox mode - dock order matches `SANDBOX_DOCK_IDS`. */
 export const SANDBOX_CONSOLE_DOCK_PAGES: readonly PayoutConsoleDockPage[] = SANDBOX_DOCK_IDS.map(dockPageRow)
 
 /**
- * Live (active) account — dock shows V1 live surfaces only (CON-P1-38).
- * Order follows `LIVE_NAV_DOCK_IDS` / product-contract/live-nav.json.
+ * Live (active) account - dock shows every surface except Sandbox and Billing.
+ * Order follows `dockItems`.
  */
-export const LIVE_CONSOLE_DOCK_PAGES: readonly PayoutConsoleDockPage[] = LIVE_NAV_DOCK_IDS.map(dockPageRow)
+export const LIVE_CONSOLE_DOCK_PAGES: readonly PayoutConsoleDockPage[] = dockItems
+  .filter(
+    (d) =>
+      d.id !== 'sandbox' &&
+      d.id !== 'billing' &&
+      !(CONNECTORS_DOCK_TEMPORARILY_HIDDEN && d.id === 'connectors'),
+  )
+  .map((d) => ({ dockId: d.id, dockLabel: d.navLabel, pageName: d.title }))
 
 /** Routes outside the main console shell (header links, deep links). */
 export const PAYOUT_STANDALONE_PAGE_NAMES = [
   { path: PAYOUT_VIEW_URLS.batchCommandCenter, name: 'Batch Command Center' },
   { path: PAYOUT_VIEW_URLS.sandboxBatchCommandCenter, name: 'Sandbox · Batch Command Center' },
-  { path: PAYOUT_VIEW_URLS.settingsAccount, name: 'Settings — Account' },
-  { path: PAYOUT_VIEW_URLS.settingsApiKeys, name: 'Settings — API keys' },
+  { path: PAYOUT_VIEW_URLS.settingsAccount, name: 'Settings - Account' },
+  { path: PAYOUT_VIEW_URLS.settingsApiKeys, name: 'Settings - API keys' },
   // { path: PAYOUT_VIEW_URLS.connectorIntelligence, name: 'Connector Intelligence' },
 ] as const
 
@@ -403,7 +396,7 @@ export const workspaceTabs: WorkspaceTab[] = ['Today', 'Value at Risk', 'Proof',
 
 export const workspaceRoutingTab: WorkspaceTab = 'Routing'
 
-/** @deprecated Import from paymentOperationsCopy — kept for backward-compatible imports. */
+/** @deprecated Import from paymentOperationsCopy - kept for backward-compatible imports. */
 export const workspacePromptCopy = {
   Today: {
     question: 'What should Zord check in this payment data?',
@@ -527,11 +520,11 @@ export function resolveHomeTimeframeFromPrompt(prompt: string, currentTimeframe:
   return currentTimeframe
 }
 
-export function resolveHomeYearFromPrompt(prompt: string, currentYear: number) {
+export function resolveHomeYearFromPrompt(prompt: string, currentYear: 2026 | 2027 | 2028) {
   const matched = prompt.match(/20(26|27|28)/)
   if (!matched) return currentYear
-  const parsed = Number(matched[0])
-  return (HOME_YEAR_OPTIONS as readonly number[]).includes(parsed) ? parsed : currentYear
+  const parsed = Number(matched[0]) as 2026 | 2027 | 2028
+  return HOME_YEAR_OPTIONS.includes(parsed) ? parsed : currentYear
 }
 
 export function resolveHomeQuarterFromPrompt(prompt: string, currentQuarterIndex: number) {
@@ -543,7 +536,7 @@ export function resolveHomeQuarterFromPrompt(prompt: string, currentQuarterIndex
   return currentQuarterIndex
 }
 
-function buildHomeTimeframeLayout(timeframe: HomeTimeframe, quarterIndex: number, selectedYear: number) {
+function buildHomeTimeframeLayout(timeframe: HomeTimeframe, quarterIndex: number, selectedYear: 2026 | 2027 | 2028) {
   if (timeframe === 'Today') {
     return {
       totalBars: 48,
@@ -603,7 +596,7 @@ export function buildSimulatedHomeOverviewSnapshot(
   scenario: HomeSimulation,
   timeframe: HomeTimeframe,
   tick: number,
-  selectedYear: number,
+  selectedYear: 2026 | 2027 | 2028,
   quarterIndex: number,
   filterMultiplier = 1,
 ): HomeOverviewSnapshot {
@@ -711,7 +704,7 @@ export function buildSimulatedHomeOverviewSnapshot(
 export function buildStaticHomeOverviewSnapshot(
   scenario: HomeSimulation,
   timeframe: HomeTimeframe,
-  selectedYear: number,
+  selectedYear: 2026 | 2027 | 2028,
   quarterIndex: number,
   _filterMultiplier = 1,
 ): HomeOverviewSnapshot {
@@ -721,19 +714,19 @@ export function buildStaticHomeOverviewSnapshot(
   const emptyChart: HomeOverviewSnapshot['chartData'] = []
 
   return {
-    metricValue: '—',
+    metricValue: '-',
     title: scenario.title,
     summary: scenario.summary,
-    tooltipValue: '—',
-    tooltipDelta: '—',
+    tooltipValue: '-',
+    tooltipDelta: '-',
     tooltipNote: scenario.tooltipNote,
     range,
     chartData: emptyChart,
-    salesValue: '—',
-    expensesValue: '—',
-    budgetValue: '—',
+    salesValue: '-',
+    expensesValue: '-',
+    budgetValue: '-',
     insightText: scenario.insightText,
-    insightValue: '—',
+    insightValue: '-',
     insightGaugeProgress: 0,
     forecastBars: [],
     budgetBars: [],
@@ -984,18 +977,18 @@ export const workspaceSimulationScenarios: Record<WorkspaceTab, readonly Workspa
       assistant:
         'Zord compared intended payment value with observed settlement. Unmatched and short-settled amounts are listed in Value at Risk; upload missing intent or bank data if totals look incomplete.',
       heroLabel: 'Value needing review',
-      heroValue: '—',
+      heroValue: '-',
       heroBars: [3, 5, 7, 9, 8, 6, 4, 3, 2, 2, 2],
       listTitle: 'Value at risk',
-      listRows: [['Intended', '—'], ['Settled', '—'], ['Unmatched', '—']],
+      listRows: [['Intended', '-'], ['Settled', '-'], ['Unmatched', '-']],
       listFooter: 'Upload missing files to refresh',
       listAction: 'View payment gaps',
       statTitle: 'Value needing review',
-      statValue: '—',
+      statValue: '-',
       statNote: 'From leakage and ambiguity signals',
       compareLabels: ['Intended', 'Observed'],
       bottomTitle: 'Items needing review',
-      bottomValue: '—',
+      bottomValue: '-',
       bottomMeta: 'Payments requiring finance/ops review.',
       moduleBodies: [
         'Review unmatched, ambiguous, or low-confidence payments.',
@@ -1014,18 +1007,18 @@ export const workspaceSimulationScenarios: Record<WorkspaceTab, readonly Workspa
       assistant:
         'Check Connected Sources for what Zord has received. Upload any source marked Missing before expecting full value at risk or proof readiness.',
       heroLabel: 'Connected sources',
-      heroValue: '—',
+      heroValue: '-',
       heroBars: [2, 3, 4, 5, 4, 3, 2, 2, 2, 2, 2],
       listTitle: 'Source health',
-      listRows: [['Intent file', '—'], ['Settlement', '—'], ['Bank statement', '—']],
+      listRows: [['Intent file', '-'], ['Settlement', '-'], ['Bank statement', '-']],
       listFooter: 'See source table for status',
       listAction: 'Open intent journal',
       statTitle: 'Proof readiness',
-      statValue: '—',
+      statValue: '-',
       statNote: 'Depends on connected sources',
       compareLabels: ['Received', 'Missing'],
       bottomTitle: 'Missing sources',
-      bottomValue: '—',
+      bottomValue: '-',
       bottomMeta: 'Sources blocking complete proof.',
       moduleBodies: [
         'Review unmatched, ambiguous, or low-confidence payments.',
@@ -1044,18 +1037,18 @@ export const workspaceSimulationScenarios: Record<WorkspaceTab, readonly Workspa
       assistant:
         'Open items are summarized under Items Needing Review. Accept or resolve recommended actions from the payment gaps and matching surfaces.',
       heroLabel: 'Open actions',
-      heroValue: '—',
+      heroValue: '-',
       heroBars: [2, 4, 6, 8, 7, 5, 4, 3, 2, 2, 2],
       listTitle: 'Review drivers',
-      listRows: [['Missing refs', '—'], ['Low confidence', '—'], ['Collisions', '—']],
+      listRows: [['Missing refs', '-'], ['Low confidence', '-'], ['Collisions', '-']],
       listFooter: 'See breakdown below',
       listAction: 'View actions',
       statTitle: 'Resolution rate',
-      statValue: '—',
+      statValue: '-',
       statNote: 'Accepted vs resolved actions',
       compareLabels: ['Open', 'Resolved'],
       bottomTitle: 'Items needing review',
-      bottomValue: '—',
+      bottomValue: '-',
       bottomMeta: 'Payments or records awaiting operator review.',
       moduleBodies: [
         'Review unmatched, ambiguous, or low-confidence payments.',
@@ -1160,6 +1153,27 @@ export type IntentJournalFailureRow = {
   failureStage: 'Validation' | 'Dispatch' | 'Processing' | 'Settlement'
   lastUpdated: string
   action: 'Retry' | 'Fix Details' | 'Investigate' | 'Escalate' | 'Fix Mandate'
+}
+
+export function getIntentJournalBatches(): IntentJournalBatchRecord[] {
+  const seed: IntentJournalBatchRecord[] = [
+    { batchId: 'B-2026-021', type: 'Disbursement', source: 'Loan System', totalValue: 1_200_000, transactions: 1200, confirmedCount: 840, highConfidenceCount: 60, mismatchCount: 20, unresolvedCount: 20 },
+    { batchId: 'ZB-2041', type: 'Disbursement', source: 'Loan System', totalValue: 2_400_000, transactions: 847, confirmedCount: 760, highConfidenceCount: 64, mismatchCount: 12, unresolvedCount: 11 },
+    { batchId: 'B-2026-023', type: 'Settlement', source: 'Payment Hub', totalValue: 980_000, transactions: 870, confirmedCount: 580, highConfidenceCount: 90, mismatchCount: 110, unresolvedCount: 90 },
+    { batchId: 'B-2026-024', type: 'Disbursement', source: 'Loan System', totalValue: 740_000, transactions: 640, confirmedCount: 320, highConfidenceCount: 40, mismatchCount: 120, unresolvedCount: 90 },
+  ]
+  const generated: IntentJournalBatchRecord[] = Array.from({ length: 22 }, (_, i) => ({
+    batchId: `B-2026-${String(25 + i).padStart(3, '0')}`,
+    type: i % 3 === 0 ? 'Settlement' : 'Disbursement',
+    source: i % 2 === 0 ? 'Loan System' : 'Payment Hub',
+    totalValue: 600_000 + ((i * 175_000) % 2_200_000),
+    transactions: 500 + ((i * 241) % 5100),
+    confirmedCount: 330 + ((i * 200) % 3200),
+    highConfidenceCount: 45 + ((i * 31) % 300),
+    mismatchCount: 40 + ((i * 19) % 240),
+    unresolvedCount: 20 + ((i * 23) % 220),
+  }))
+  return [...seed, ...generated]
 }
 
 export function getIntentJournalIntents(): IntentJournalIntentRow[] {

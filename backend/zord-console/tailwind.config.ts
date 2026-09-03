@@ -44,8 +44,10 @@ const config: Config = {
           text: '#FECACA',
         },
 
-        // Shared palette tokens (create-payment + legacy cx-* utilities)
-        // Static hex values so Tailwind generates classes (e.g. bg-cx-purple-600).
+        // Customer UI palette (used by /customer/* pages)
+        // These are static hex values to ensure Tailwind generates the classes
+        // (e.g. bg-cx-purple-600). Customer dark-mode tokens are handled via
+        // CSS variables in app/customer/layout.tsx.
         'cx-text': '#1F2937',
         'cx-neutral': '#6B7280',
         'cx-danger': {
@@ -100,10 +102,15 @@ const config: Config = {
           from: { transform: 'translateX(-50%)' },
           to: { transform: 'translateX(0)' },
         },
+        'indeterminate': {
+          '0%': { transform: 'translateX(-100%)' },
+          '100%': { transform: 'translateX(250%)' },
+        },
       },
       animation: {
         'cinematic-shimmer': 'cinematic-shimmer 4.8s ease-in-out infinite',
         'solutions-marquee-ltr': 'solutions-marquee-ltr 45s linear infinite',
+        'indeterminate': 'indeterminate 1.8s ease-in-out infinite',
       },
     },
   },

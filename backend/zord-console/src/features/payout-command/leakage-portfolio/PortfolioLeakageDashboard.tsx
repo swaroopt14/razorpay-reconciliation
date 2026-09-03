@@ -184,7 +184,7 @@ export function PortfolioLeakageDashboard({ tenantReady, initialBatchId }: Portf
   )
 
   return (
-    <div className="min-h-screen space-y-6 rounded-2xl bg-[#f4f4f1] p-4 sm:p-6">
+    <div className="min-h-screen space-y-6 rounded-2xl bg-[#F8FAFC] p-4 sm:p-6">
       <div className="relative">
         <PortfolioHeader
           batches={batches}

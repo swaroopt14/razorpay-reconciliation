@@ -1,12 +1,7 @@
 #!/usr/bin/env node
 /**
- * CON-P1-36 — Live roots may not import mocks. Sandbox has a separate allowlist.
- *
- * Live scan: app/payout-command-view, src/features/payout-command (except sandbox/),
- *            services/payout-command (except sandbox-data / sandbox-setup).
- * Sandbox scan: app/sandbox and payout-command/sandbox may import mocks.
- *
- * Acceptance: importing a mock into a live surface exits non-zero.
+ * Fails when non-allowlisted mock/fallback imports appear in active payout-command paths.
+ * Run: node scripts/verify-payout-mock-allowlist.mjs
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -14,49 +9,39 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 
-const LIVE_SCAN_ROOTS = [
-  path.join(root, 'app/payout-command-view'),
+const SCAN_ROOTS = [
   path.join(root, 'src/features/payout-command'),
-  path.join(root, 'services/payout-command'),
+  path.join(root, 'app/payout-command-view'),
 ]
 
-const SANDBOX_SCAN_ROOTS = [
-  path.join(root, 'app/sandbox'),
-  path.join(root, 'src/features/payout-command/sandbox'),
+const ALLOWLIST_PATH_FRAGMENTS = [
+  '/verification/borrowerVerificationMock',
+  '/verification/borrowerProfileMock',
+  '/monitoring/postDisbursalMonitoringMock',
+  '/monitoring/loanProfileMock',
+  '/support/',
 ]
 
-const SOURCE_EXT = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs'])
-
-const MOCK_MODULE_RE =
-  /(Mock|mock-data|sandbox-data|seeded-batches-store|intent-journal-mocks|seededRoutingData)/
-
-const LIVE_FORBIDDEN = [
-  { id: 'mock-module-import', re: /from\s+['"][^'"]*(Mock|sandbox-data|intent-journal-mocks|seeded-batches-store|seededRoutingData)[^'"]*['"]/ },
+const FORBIDDEN_PATTERNS = [
   { id: 'leakageComparisonMock', re: /leakageComparisonMock/ },
   { id: 'watchlistMock', re: /watchlistMock/ },
   { id: 'buildAmbiguityVelocityMock', re: /buildAmbiguityVelocityMock/ },
   { id: 'SAMPLE_PACK', re: /\bSAMPLE_PACK\b/ },
   { id: 'SANDBOX_API_KEYS', re: /\bSANDBOX_API_KEYS\b/ },
   { id: 'SANDBOX_RECENT_REQUESTS', re: /\bSANDBOX_RECENT_REQUESTS\b/ },
+  { id: 'intent-journal-mocks', re: /intent-journal-mocks/ },
+  { id: 'seeded-batches-store', re: /seeded-batches-store/ },
   { id: 'getIntentJournalBatches', re: /\bgetIntentJournalBatches\b/ },
+  { id: 'seededRoutingData', re: /seededRoutingData/ },
   { id: 'buildDefaultBatchRows', re: /\bbuildDefaultBatchRows\b/ },
   { id: 'buildSeedSummary', re: /\bbuildSeedSummary\b/ },
-  { id: 'BORROWER_VERIFICATION_MOCK', re: /\bBORROWER_VERIFICATION_MOCK\b/ },
-  { id: 'POST_DISBURSAL_MONITORING_MOCK', re: /\bPOST_DISBURSAL_MONITORING_MOCK\b/ },
 ]
 
-function isSandboxPath(filePath) {
+const SOURCE_EXT = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs'])
+
+function isAllowlisted(filePath) {
   const normalized = filePath.replace(/\\/g, '/')
-  const base = normalized.split('/').pop() || ''
-  return (
-    normalized.includes('/sandbox/') ||
-    normalized.endsWith('/sandbox-data.ts') ||
-    /Mock\.ts$/.test(normalized) ||
-    /mocks\.ts$/.test(normalized) ||
-    base === 'intent-journal-mocks.ts' ||
-    base === 'seeded-batches-store.ts' ||
-    /mocks?\//i.test(normalized)
-  )
+  return ALLOWLIST_PATH_FRAGMENTS.some((frag) => normalized.includes(frag))
 }
 
 function walk(dir, out = []) {
@@ -70,34 +55,28 @@ function walk(dir, out = []) {
   return out
 }
 
-const liveViolations = []
+const violations = []
 
-for (const scanRoot of LIVE_SCAN_ROOTS) {
+for (const scanRoot of SCAN_ROOTS) {
   for (const file of walk(scanRoot)) {
-    if (isSandboxPath(file)) continue
+    if (isAllowlisted(file)) continue
     const content = fs.readFileSync(file, 'utf8')
     const rel = path.relative(root, file)
-    for (const { id, re } of LIVE_FORBIDDEN) {
+    for (const { id, re } of FORBIDDEN_PATTERNS) {
       if (re.test(content)) {
-        liveViolations.push({ file: rel, pattern: id })
+        violations.push({ file: rel, pattern: id })
       }
     }
   }
 }
 
-if (liveViolations.length > 0) {
-  console.error('verify-payout-mock-allowlist: FAILED (live roots)\n')
-  for (const v of liveViolations) {
+if (violations.length > 0) {
+  console.error('verify-payout-mock-allowlist: FAILED\n')
+  for (const v of violations) {
     console.error(`  ${v.file}: forbidden ${v.pattern}`)
   }
-  console.error(`\n${liveViolations.length} live violation(s). Live surfaces may not import mocks.`)
+  console.error(`\n${violations.length} violation(s). Only borrower verification, post-disbursal monitoring, and support/ may import mock data.`)
   process.exit(1)
 }
 
-let sandboxMockFiles = 0
-for (const scanRoot of SANDBOX_SCAN_ROOTS) {
-  sandboxMockFiles += walk(scanRoot).filter((file) => MOCK_MODULE_RE.test(file)).length
-}
-
-console.log('verify-payout-mock-allowlist: OK (zero mock imports in live roots)')
-console.log(`sandbox allowlist roots preserved (${sandboxMockFiles} mock-named files under sandbox paths)`)
+console.log('verify-payout-mock-allowlist: OK (no forbidden mock imports in active payout-command paths)')

@@ -15,7 +15,6 @@ export type OperationsInsightItem = {
 
 export type OperationsSummaryResolved = {
   data_available: true
-  availability?: 'AVAILABLE' | 'STALE'
   tenant_id: string
   computed_at?: string
   snapshot_id?: string
@@ -33,6 +32,4 @@ export type OperationsSummaryResolved = {
 
 export type OperationsSummaryResponse =
   | OperationsSummaryResolved
-  | { data_available: false; availability?: 'EMPTY'; reason?: string; tenant_id?: string }
-  | IntelligenceUnavailableResponse
-import type { IntelligenceUnavailableResponse } from './intelligenceTypes'
+  | { data_available: false; reason?: string; tenant_id?: string }

@@ -12,8 +12,6 @@ import { useSettlementBatchSelection } from '../context/SettlementBatchSelection
 import { useSettlementBatchIntelligence } from '../hooks/useSettlementBatchIntelligence'
 import { useSettlementParseErrorTotal } from '../hooks/useSettlementParseErrorTotal'
 import { settlementJournalCopy } from '../copy/settlementJournalCopy'
-import { LIVE_KPI_UNAVAILABLE } from '../selectors/resolveSettlementIntelligenceKpis'
-import { normalizeCurrency } from '@/services/payout-command/money/money'
 
 function MetricCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
@@ -26,20 +24,20 @@ function MetricCard({ label, value, sub }: { label: string; value: string; sub?:
   )
 }
 
-function formatMoneyKpi(value: number | null, loading: boolean, currency: string | null): string {
-  if (loading && value == null) return '…'
-  if (value == null) return LIVE_KPI_UNAVAILABLE
-  return formatJournalMoney(value, currency)
+function formatMoneyKpi(value: number | null, loading: boolean): string {
+  if (loading && value == null) return '-'
+  if (value == null) return '-'
+  return formatJournalMoney(value)
 }
 
 function formatCoverageKpi(value: string | null, loading: boolean): string {
-  if (loading && !value) return '…'
-  return value ?? LIVE_KPI_UNAVAILABLE
+  if (loading && !value) return '-'
+  return value ?? '-'
 }
 
 export function SettlementJournalDataHealthPanel() {
   const { selectedClientBatchId, journalEnabled, tenantReady } = useSettlementBatchSelection()
-  const { batchDetail, kpis, loading: intelligenceLoading } = useSettlementBatchIntelligence(
+  const { kpis, loading: intelligenceLoading } = useSettlementBatchIntelligence(
     selectedClientBatchId,
     journalEnabled && tenantReady,
   )
@@ -51,20 +49,10 @@ export function SettlementJournalDataHealthPanel() {
   if (!selectedClientBatchId) return null
 
   const copy = settlementJournalCopy.dataHealth
-  const intelCurrencyRaw =
-    (batchDetail?.batch as unknown as { currency?: string; currency_code?: string; currencyCode?: string })?.currency ??
-    (batchDetail?.batch as unknown as { currency?: string; currency_code?: string; currencyCode?: string })?.currency_code ??
-    (batchDetail?.batch as unknown as { currency?: string; currency_code?: string; currencyCode?: string })?.currencyCode
-  const kpiCurrency = intelCurrencyRaw ? normalizeCurrency(String(intelCurrencyRaw)) : null
   const bankRefDisplay = formatCoverageKpi(kpis.bankReferenceCoverage, intelligenceLoading)
   const clientRefDisplay = formatCoverageKpi(kpis.clientReferenceCoverage, intelligenceLoading)
-  // CON-P1-22: missing parse-error total ⇒ Unavailable (do not zero-fill).
   const parseIssuesDisplay =
-    parseErrorsLoading && parseErrorTotal == null
-      ? '…'
-      : parseErrorTotal != null
-        ? parseErrorTotal.toLocaleString('en-IN')
-        : LIVE_KPI_UNAVAILABLE
+    parseErrorsLoading && parseErrorTotal == null ? '-' : (parseErrorTotal ?? 0).toLocaleString('en-IN')
 
   return (
     <section className="mb-4">
@@ -75,37 +63,22 @@ export function SettlementJournalDataHealthPanel() {
           value={parseIssuesDisplay}
           sub={copy.settlementParseIssuesSub}
         />
-        <MetricCard
-          label={copy.withBankRef}
-          value={bankRefDisplay}
-          sub={copy.bankRefCoverageSub}
-        />
-        <MetricCard
-          label={copy.withClientRef}
-          value={clientRefDisplay}
-          sub={copy.clientRefCoverageSub}
-        />
+        <MetricCard label={copy.withBankRef} value={bankRefDisplay} sub={copy.bankRefCoverageSub} />
+        <MetricCard label={copy.withClientRef} value={clientRefDisplay} sub={copy.clientRefCoverageSub} />
         <MetricCard
           label={copy.unmatchedSettlementValue}
-          value={formatMoneyKpi(kpis.unmatchedSettlementValue, intelligenceLoading, kpiCurrency)}
+          value={formatMoneyKpi(kpis.unmatchedSettlementValue, intelligenceLoading)}
           sub={copy.unmatchedSettlementValueSub}
         />
         <MetricCard
           label={copy.matchConfidence}
           value={
-            kpis.matchConfidence != null
-              ? `${(kpis.matchConfidence * 100).toFixed(0)}%`
-              : intelligenceLoading
-                ? '…'
-                : LIVE_KPI_UNAVAILABLE
+            kpis.matchConfidence != null ? `${(kpis.matchConfidence * 100).toFixed(0)}%` : '-'
           }
         />
         <MetricCard
           label={copy.missingRefRate}
-          value={
-            kpis.missingReferenceRate ??
-            (intelligenceLoading ? '…' : LIVE_KPI_UNAVAILABLE)
-          }
+          value={kpis.missingReferenceRate ?? '-'}
         />
       </div>
     </section>

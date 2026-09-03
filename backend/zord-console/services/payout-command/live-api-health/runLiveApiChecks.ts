@@ -229,30 +229,13 @@ export async function runLiveApiChecks(options: RunLiveApiChecksOptions = {}): P
       }),
     },
     {
-      id: 'evidence-packs',
-      label: 'Evidence · packs',
-      url: '/api/prod/evidence/packs',
-      summarize: (d) => {
-        const body = d as ListPacksResponse | null
-        if (!body) return { status: 'error', detail: 'No response' }
-        const n = body.packs?.length ?? 0
-        return { status: n > 0 ? 'ok' : 'empty', detail: n > 0 ? `${n} pack(s)` : 'reachable (empty)' }
-      },
-    },
-    {
       id: 'zord-overview',
       label: 'Zord metrics · overview',
       url: '/api/prod/zord/metrics/overview?time_range=24h',
-      summarize: (d) => {
-        const body = d as { availability?: string; code?: string } | null
-        if (body?.availability === 'UNAVAILABLE' || body?.code === 'UNAVAILABLE') {
-          return { status: 'empty', detail: 'synthetic metrics unavailable (live V1)' }
-        }
-        return {
-          status: d ? 'ok' : 'error',
-          detail: d ? 'metrics reachable' : 'No response',
-        }
-      },
+      summarize: (d) => ({
+        status: d ? 'ok' : 'error',
+        detail: d ? 'metrics reachable (synthetic BFF)' : 'No response',
+      }),
     },
   ]
 

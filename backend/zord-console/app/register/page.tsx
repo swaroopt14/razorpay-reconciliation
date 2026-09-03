@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Check, X } from 'lucide-react'
 import { persistEnvMode } from '@/services/auth/persistEnvMode'
-import { clearLegacyTenantApiSecrets } from '@/services/auth/readStoredTenantApiKey'
 import { AuthSplitLayout } from '@/components/auth/AuthSplitLayout'
 import { authInputClass, authLabelClass, authPrimaryButtonClass } from '@/components/auth/authUiTokens'
 
@@ -30,7 +29,7 @@ function PasswordChecklist({ password }: { password: string }) {
           <li key={rule.id} className="flex items-center gap-2 text-[12.5px]">
             <span
               className={`flex h-4 w-4 items-center justify-center rounded-full ${
-                ok ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-400'
+                ok ? 'bg-[#0B1324] text-white' : 'bg-slate-200 text-slate-400'
               }`}
             >
               {ok ? <Check className="h-3 w-3" strokeWidth={3} /> : <X className="h-3 w-3" strokeWidth={3} />}
@@ -44,7 +43,7 @@ function PasswordChecklist({ password }: { password: string }) {
 }
 
 /**
- * /register — internal tenant provisioning (used by sales/admin once a demo lead
+ * /register - internal tenant provisioning (used by sales/admin once a demo lead
  * is qualified). Creates a tenant + first admin user and reveals the API key once.
  * Public customer enquiries go through /signup (the "Book a demo" flow).
  */
@@ -94,8 +93,11 @@ export default function RegisterPage() {
       const tenantId: string | undefined = data?.user?.tenant_id ?? data?.session?.tenant_id
       const newTenantName: string | undefined = data?.user?.tenant_name
       if (apiKey && tenantId) {
-        // CON-P0-01: one-time disclosure in memory only — never write the full secret to storage.
-        clearLegacyTenantApiSecrets(tenantId)
+        try {
+          window.localStorage.setItem(`zord_tenant_api_key:${tenantId}`, apiKey)
+        } catch {
+          /* localStorage can be disabled */
+        }
         setSignupResult({ apiKey, tenantId, tenantName: newTenantName ?? tenantName })
         setLoading(false)
         return
@@ -136,9 +138,9 @@ export default function RegisterPage() {
         variant="signup"
         eyebrow="Workspace ready"
         title="Save your tenant API key"
-        subtitle={`${signupResult.tenantName} is live. Copy the secret below — we only show it once.`}
+        subtitle={`${signupResult.tenantName} is live. Copy the secret below - we only show it once.`}
       >
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] leading-relaxed text-amber-900">
+        <div className="rounded-xl border border-[#0B1324]/20 bg-[#F1F5F9] px-4 py-3 text-[13px] leading-relaxed text-[#0B1324]">
           <strong className="font-semibold">One-time disclosure.</strong> Rotate from Settings → API keys if you lose
           this secret.
         </div>
@@ -188,7 +190,15 @@ export default function RegisterPage() {
             </Link>
           </p>
           <p className="mt-3 text-center text-[12px] leading-relaxed text-slate-400">
-            By creating a workspace you agree to our terms of use and privacy policy.
+            By creating a workspace you agree to our{' '}
+            <Link href="/terms" className="font-medium text-[#2B55E8] hover:underline">
+              terms of use
+            </Link>{' '}
+            and{' '}
+            <Link href="/privacy" className="font-medium text-[#2B55E8] hover:underline">
+              privacy policy
+            </Link>
+            .
           </p>
         </>
       }
@@ -257,7 +267,7 @@ export default function RegisterPage() {
         </label>
 
         {error ? (
-          <div className="rounded-lg border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700">
+          <div className="rounded-lg border border-[#0B1324]/20 bg-[#F1F5F9] px-3.5 py-2.5 text-[13px] text-[#0B1324]">
             {error}
           </div>
         ) : null}

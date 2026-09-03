@@ -8,21 +8,17 @@ import {
 } from '../../command-center/homeCommandCenterTokens'
 import { evidenceCopy } from '../copy/evidenceCopy'
 import type { ProofCoverageTile } from '../types/evidenceViewModels'
-import { EVIDENCE_ASK } from '../utils/evidenceFormat'
 
 function statusLabel(status: ProofCoverageTile['status']): string {
   if (status === 'available') return evidenceCopy.coverage.available
   if (status === 'generated') return evidenceCopy.coverage.generated
   if (status === 'not_generated') return evidenceCopy.coverage.notGenerated
   if (status === 'missing') return evidenceCopy.coverage.missing
-  return '—'
+  return '-'
 }
 
-function statusTone(status: ProofCoverageTile['status']): string {
-  if (status === 'available' || status === 'generated')
-    return 'border-[#000000]/40 bg-[#f4f4f5] text-[#000000]'
-  if (status === 'missing' || status === 'not_generated') return 'border-amber-200/80 bg-amber-50/70 text-amber-900'
-  return `border ${EVIDENCE_ASK.border} bg-white text-[#475569]`
+function statusTone(_status: ProofCoverageTile['status']): string {
+  return 'border-[#0B1324] bg-[#0B1324] text-white'
 }
 
 type ProofCoverageSectionProps = {

@@ -55,14 +55,14 @@ function trendArrow(trend: TrendDirection): string {
 
 function statusTone(status: ConnectorHealthRow['status']): string {
   if (status === 'Healthy' || status === 'Reliable') return 'text-black'
-  if (status === 'Degraded' || status === 'Risk' || status === 'Load') return 'text-amber-700'
+  if (status === 'Degraded' || status === 'Risk' || status === 'Load') return 'text-[#0B1324]'
   return 'text-slate-700'
 }
 
 function confidenceTone(confidence: RecommendationConfidence): string {
   if (confidence === 'High') return 'border-black/30 bg-neutral-100 text-black'
-  if (confidence === 'Medium') return 'border-amber-200 bg-amber-50 text-amber-700'
-  return 'border-rose-200 bg-rose-50 text-rose-700'
+  if (confidence === 'Medium') return 'border-[#0B1324]/20 bg-[#F1F5F9] text-[#0B1324]'
+  return 'border-[#0B1324]/20 bg-[#F1F5F9] text-[#0B1324]'
 }
 
 function buildKpis(snapshot: RoutingKpiSnapshot) {
@@ -171,17 +171,17 @@ export default function ConnectorIntelligenceClient() {
   if (fetchError) {
     return (
       <section
-        className="rounded-2xl border border-rose-200 bg-rose-50 px-6 py-10 text-center"
+        className="rounded-2xl border border-[#0B1324]/20 bg-[#F1F5F9] px-6 py-10 text-center"
         data-testid="routing-error-state"
       >
-        <p className="text-[16px] font-semibold text-rose-900">{connectorsCopy.states.loadErrorTitle}</p>
-        <p className="mx-auto mt-2 max-w-md text-[14px] text-rose-800">
+        <p className="text-[16px] font-semibold text-[#0B1324]">{connectorsCopy.states.loadErrorTitle}</p>
+        <p className="mx-auto mt-2 max-w-md text-[14px] text-[#0B1324]">
           {connectorsCopy.states.loadErrorBody}
         </p>
         <button
           type="button"
           onClick={() => setReloadKey((key) => key + 1)}
-          className="mt-4 rounded-full border border-rose-300 bg-white px-4 py-2 text-[13px] font-semibold text-rose-900"
+          className="mt-4 rounded-full border border-[#0B1324]/25 bg-white px-4 py-2 text-[13px] font-semibold text-[#0B1324]"
         >
           Retry
         </button>
@@ -357,7 +357,7 @@ export default function ConnectorIntelligenceClient() {
           ))}
         </div>
         {lowConfidenceExists ? (
-          <p className="relative mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[13px] text-amber-900" data-testid="low-confidence-note">
+          <p className="relative mt-3 rounded-lg border border-[#0B1324]/20 bg-[#F1F5F9] px-3 py-2 text-[13px] text-[#0B1324]" data-testid="low-confidence-note">
             Some recommendations are low-confidence due to sample size or missing signals. Validate with fresh telemetry before auto-routing changes.
           </p>
         ) : null}

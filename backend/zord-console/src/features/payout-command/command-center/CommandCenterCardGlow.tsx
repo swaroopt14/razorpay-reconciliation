@@ -1,4 +1,4 @@
-/** Soft neutral corner glow — matches Home command center KPI cards. */
+/** Soft neutral corner glow - matches Home command center KPI cards. */
 export function CommandCenterCardGlow() {
   return (
     <div

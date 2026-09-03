@@ -4,8 +4,6 @@
  * is the swap point.
  */
 
-import { DOCS_LINKS } from './docsLinks'
-
 export type SandboxScenarioId = 'salary_run' | 'vendor_payouts' | 'refund_batch' | 'failure_injection'
 
 export type SandboxScenario = {
@@ -43,7 +41,7 @@ export const SANDBOX_SCENARIOS: SandboxScenario[] = [
   {
     id: 'refund_batch',
     name: 'Refund batch',
-    description: 'Customer refunds tied to prior transactions — tests reverse-flow reconciliation.',
+    description: 'Customer refunds tied to prior transactions - tests reverse-flow reconciliation.',
     expectedOutcome: 'Creates 25 intents · all linked to original transactions · 100% confirmed.',
     intentCount: 25,
     totalValue: '$32.5K',
@@ -53,7 +51,7 @@ export const SANDBOX_SCENARIOS: SandboxScenario[] = [
   {
     id: 'failure_injection',
     name: 'Failure injection',
-    description: 'Adversarial scenario — duplicate IDs, missing mandates, late webhooks.',
+    description: 'Adversarial scenario - duplicate IDs, missing mandates, late webhooks.',
     expectedOutcome: 'Creates 60 intents · 18 land in DLQ · tests retry + escalation paths.',
     intentCount: 60,
     totalValue: '$96.0K',
@@ -68,7 +66,7 @@ export type SandboxApiKey = {
   id: string
   type: 'publishable' | 'secret'
   mode: 'sandbox' | 'live'
-  /** Full key value — would be redacted server-side except on initial issue / rotate. */
+  /** Full key value - would be redacted server-side except on initial issue / rotate. */
   value: string
   lastUsedAt: string | null
   createdAt: string
@@ -119,4 +117,8 @@ export const SANDBOX_RECENT_REQUESTS: SandboxApiRequest[] = [
 
 // ─── Postman / docs links ──────────────────────────────────────────────────────
 
-export const SANDBOX_DOCS_LINKS = DOCS_LINKS
+export const SANDBOX_DOCS_LINKS = {
+  apiReference: 'https://docs.zord.com/api',
+  postmanCollection: 'https://www.postman.com/zord/zord-public/collection/sandbox',
+  webhookGuide: 'https://docs.zord.com/webhooks',
+}

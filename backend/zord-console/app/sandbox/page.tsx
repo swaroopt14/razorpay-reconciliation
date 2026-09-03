@@ -1,7 +1,7 @@
 import dynamic from 'next/dynamic'
 import type { Metadata } from 'next'
 import { resolveInitialDock } from '@/app/payout-command-view/today/_lib/resolveInitialDock'
-import { SANDBOX_ALLOWED_DOCK_IDS } from '@/services/payout-command/model'
+import { SANDBOX_DOCK_IDS } from '@/services/payout-command/model'
 
 export const metadata: Metadata = {
   title: 'Sandbox · Zord',
@@ -25,10 +25,10 @@ const PayoutCommandViewClient = dynamic(
 )
 
 /**
- * /sandbox — sandbox mode. Same Home command center layout as live (`/payout-command-view/today`),
+ * /sandbox - sandbox mode. Same Home command center layout as live (`/payout-command-view/today`),
  * plus the sandbox banner and mode toggle. API keys and batch flows use the header and other docks.
  *
- * The heavy client tree is loaded with `next/dynamic` so the route chunk stays small — reduces
+ * The heavy client tree is loaded with `next/dynamic` so the route chunk stays small - reduces
  * dev-time ChunkLoadError (timeouts) when the main bundle is large. If you still see stale chunks
  * after `next dev` restarts, hard-refresh or run `rm -rf .next` once.
  */
@@ -50,7 +50,7 @@ export default function SandboxPage({
   return (
     <PayoutCommandViewClient
       forceMode="sandbox"
-      initialDock={resolveInitialDock(searchParams.dock, SANDBOX_ALLOWED_DOCK_IDS)}
+      initialDock={resolveInitialDock(searchParams.dock, SANDBOX_DOCK_IDS)}
       scope={{
         batchId: readQueryParam(searchParams.batch_id),
         clientBatchId: readQueryParam(searchParams.client_batch_id),

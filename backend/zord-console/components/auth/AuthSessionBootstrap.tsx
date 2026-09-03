@@ -1,37 +1,73 @@
 'use client'
 
 import { useEffect } from 'react'
-import { usePathname, useRouter, useSearchParams } from 'next/navigation'
-import {
-  clearAuth,
-  getCurrentUser,
-  hasSessionHint,
-  hydrateSession,
-  readTabSessionTenantId,
-  withSessionTenantQuery,
-  writeTabSessionTenantId,
-} from '@/services/auth'
-import { installSessionTenantFetchPatch } from '@/services/auth/tenantSessionBrowser'
-import { SESSION_TENANT_QUERY } from '@/services/auth/tenantSessionConstants'
+import { usePathname, useRouter } from 'next/navigation'
+import { clearAuth, getCurrentUser, hasSessionHint, hydrateSession } from '@/services/auth'
 import { UserRole } from '@/types/auth'
 
-function getLoginRoute(pathname: string) {
-  if (pathname.startsWith('/payout-command-view') || pathname.startsWith('/sandbox')) {
+/** Spec 7.18: exact `/admin` is workspace Team & Access (customer session). */
+function isWorkspaceAdminPath(pathname: string) {
+  return pathname === '/admin' || pathname === '/admin/'
+}
+
+/** Platform tenant console: `/admin/tenants`, `/admin/login`, etc. */
+function isPlatformAdminPath(pathname: string) {
+  return pathname.startsWith('/admin/') && !isWorkspaceAdminPath(pathname)
+}
+
+function getLoginRoute(pathname: string, _searchSuffix: string) {
+  if (pathname.startsWith('/payout-command-view')) {
     return '/signin'
   }
+  if (pathname.startsWith('/sandbox')) {
+    return '/signin'
+  }
+  // Workspace Team & Access uses the same customer sign-in as Overview / Developer.
+  if (isWorkspaceAdminPath(pathname)) return '/signin'
+  if (isPlatformAdminPath(pathname)) return '/admin/login'
+  if (pathname.startsWith('/ops')) return '/ops/login'
+  if (pathname.startsWith('/customer')) return '/customer/login'
+  if (pathname.startsWith('/app-final')) return '/app-final/login'
   return '/signin'
 }
 
 function isProtectedPath(pathname: string) {
-  return pathname.startsWith('/payout-command-view') || pathname.startsWith('/sandbox')
+  return (
+    pathname.startsWith('/console') ||
+    pathname.startsWith('/customer') ||
+    pathname.startsWith('/ops') ||
+    pathname.startsWith('/admin') ||
+    pathname.startsWith('/app-final') ||
+    pathname.startsWith('/payout-command-view') ||
+    pathname.startsWith('/sandbox')
+  )
 }
 
 function isLoginPath(pathname: string) {
-  return pathname === '/signin' || pathname === '/signup' || pathname === '/register'
+  return (
+    pathname === '/signin' ||
+    pathname === '/signup' ||
+    pathname === '/register' ||
+    pathname === '/console/login' ||
+    pathname === '/customer/login' ||
+    pathname === '/ops/login' ||
+    pathname === '/admin/login' ||
+    pathname === '/app-final/login'
+  )
 }
 
 function roleMatchesPath(pathname: string, role: UserRole) {
-  if (pathname.startsWith('/payout-command-view') || pathname.startsWith('/sandbox')) {
+  // Only platform admin routes need ADMIN credentials.
+  if (isPlatformAdminPath(pathname)) return role === 'ADMIN'
+  if (pathname.startsWith('/ops')) return role === 'OPS'
+  if (
+    pathname.startsWith('/customer') ||
+    pathname.startsWith('/console') ||
+    pathname.startsWith('/app-final') ||
+    pathname.startsWith('/payout-command-view') ||
+    pathname.startsWith('/sandbox') ||
+    isWorkspaceAdminPath(pathname)
+  ) {
     return role === 'CUSTOMER_USER' || role === 'CUSTOMER_ADMIN'
   }
   return true
@@ -40,21 +76,17 @@ function roleMatchesPath(pathname: string, role: UserRole) {
 export function AuthSessionBootstrap() {
   const pathname = usePathname()
   const router = useRouter()
-  const searchParams = useSearchParams()
 
   useEffect(() => {
-    installSessionTenantFetchPatch()
-
-    // Bind this tab to ?tenant= before hydrate so /api/auth/me uses the right cookies.
-    const fromUrl = searchParams?.get(SESSION_TENANT_QUERY)?.trim() || ''
-    if (fromUrl) {
-      writeTabSessionTenantId(fromUrl)
-    }
-
     if (!pathname || isLoginPath(pathname) || !isProtectedPath(pathname)) {
       return
     }
 
+    const searchSuffix = typeof window !== 'undefined' ? window.location.search : ''
+
+    // Middleware already verified HttpOnly session cookies before this page loaded.
+    // Always revalidate through /api/auth/me - do not redirect based on hint/localStorage
+    // alone, or hard refresh drops users back to /signin while cookies are still valid.
     let cancelled = false
 
     void hydrateSession()
@@ -62,29 +94,16 @@ export function AuthSessionBootstrap() {
         if (cancelled) return
 
         if (!user) {
+          // hydrateSession clears client auth only on 401/403; transient failures keep hints.
           if (!hasSessionHint() && !getCurrentUser()) {
-            router.replace(getLoginRoute(pathname))
+            router.replace(getLoginRoute(pathname, searchSuffix))
           }
           return
         }
 
         if (!roleMatchesPath(pathname, user.role)) {
           clearAuth()
-          router.replace(getLoginRoute(pathname))
-          return
-        }
-
-        const tenantId = user.tenantId || user.tenant || ''
-        writeTabSessionTenantId(tenantId)
-        // Keep tenant in the URL so reload always restores this tab's workspace.
-        const urlTenant = searchParams?.get(SESSION_TENANT_QUERY)?.trim() || ''
-        if (tenantId && urlTenant !== tenantId && pathname) {
-          const qs = searchParams?.toString() || ''
-          const next = withSessionTenantQuery(
-            qs ? `${pathname}?${qs}` : pathname,
-            tenantId,
-          )
-          router.replace(next)
+          router.replace(getLoginRoute(pathname, searchSuffix))
         }
       })
       .catch(() => {
@@ -94,15 +113,7 @@ export function AuthSessionBootstrap() {
     return () => {
       cancelled = true
     }
-  }, [pathname, router, searchParams])
-
-  // Keep tab binding if URL changes without remount.
-  useEffect(() => {
-    const fromUrl = searchParams?.get(SESSION_TENANT_QUERY)?.trim() || ''
-    if (fromUrl && fromUrl !== readTabSessionTenantId()) {
-      writeTabSessionTenantId(fromUrl)
-    }
-  }, [searchParams])
+  }, [pathname, router])
 
   return null
 }

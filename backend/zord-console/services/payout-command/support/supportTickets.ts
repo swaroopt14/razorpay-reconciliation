@@ -48,19 +48,6 @@ export type EmailMessageInput = {
   body: string
 }
 
-/** Normalize legacy records created before an outbound mail provider existed. */
-export function normalizeSupportDeliveryClaims(ticket: SupportTicket): SupportTicket {
-  return {
-    ...ticket,
-    preview: ticket.preview.replace(/^Email\s+sent:/i, 'Email logged for support:'),
-    messages: ticket.messages.map((message) =>
-      message.kind === 'email' && message.emailDirection === 'outbound'
-        ? { ...message, author: 'Email logged' }
-        : message,
-    ),
-  }
-}
-
 const STORAGE_PREFIX = 'zord:support-tickets'
 
 function storageKey(tenantId: string) {
@@ -108,7 +95,7 @@ export function seedSupportTickets(): SupportTicket[] {
           id: 'm2',
           author: 'Zord support',
           role: 'zord',
-          body: 'Thanks — we received your request. Our onboarding team is reviewing your last 30-day volume and will confirm the revised limit within one business day.',
+          body: 'Thanks - we received your request. Our onboarding team is reviewing your last 30-day volume and will confirm the revised limit within one business day.',
           createdAt: t1,
         },
       ],
@@ -130,7 +117,7 @@ export function seedSupportTickets(): SupportTicket[] {
           id: 'm3',
           author: 'Shubham',
           role: 'customer',
-          body: 'We uploaded settlement file for batch SET-2026-03-12. Several rows are stuck in pending — can you check connector sync?',
+          body: 'We uploaded settlement file for batch SET-2026-03-12. Several rows are stuck in pending - can you check connector sync?',
           createdAt: t1,
         },
         {
@@ -144,7 +131,7 @@ export function seedSupportTickets(): SupportTicket[] {
           id: 'm5',
           author: 'Vivek Anand',
           role: 'customer',
-          body: 'Attaching statement snippet in the next reply — UTR column is in column H.',
+          body: 'Attaching statement snippet in the next reply - UTR column is in column H.',
           createdAt: t1,
         },
       ],
@@ -186,9 +173,7 @@ export function loadSupportTickets(tenantId: string): SupportTicket[] {
     const raw = window.localStorage.getItem(storageKey(tenantId))
     if (!raw) return seedSupportTickets()
     const parsed = JSON.parse(raw) as SupportTicket[]
-    return Array.isArray(parsed) && parsed.length > 0
-      ? parsed.map(normalizeSupportDeliveryClaims)
-      : seedSupportTickets()
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : seedSupportTickets()
   } catch {
     return seedSupportTickets()
   }
@@ -256,7 +241,7 @@ export function appendEmailMessage(ticket: SupportTicket, input: EmailMessageInp
   const ts = nowIso()
   const msg: SupportMessage = {
     id: `m-${Date.now()}`,
-    author: 'Email logged',
+    author: 'Email sent',
     role: 'customer',
     kind: 'email',
     emailDirection: 'outbound',
@@ -270,7 +255,7 @@ export function appendEmailMessage(ticket: SupportTicket, input: EmailMessageInp
     ...ticket,
     updatedAt: ts,
     state: 'awaiting_zord',
-    preview: `Email logged for support: ${input.subject.trim()}`,
+    preview: `Email sent: ${input.subject.trim()}`,
     messages: [...ticket.messages, msg],
   }
 }

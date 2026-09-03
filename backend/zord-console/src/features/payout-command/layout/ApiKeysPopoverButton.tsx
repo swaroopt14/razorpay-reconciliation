@@ -3,13 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 
-import { DOCS_LINKS } from '@/services/payout-command/docsLinks'
-import {
-  clearLegacyTenantApiSecrets,
-  formatSecretKeyPrefix,
-} from '@/services/auth/readStoredTenantApiKey'
-import { workspaceApiKeysPath } from '@/services/payout-command/workspaceApiKeysPath'
-import { useEnvironment } from '@/services/auth/EnvironmentProvider'
+import { SANDBOX_DOCS_LINKS } from '@/services/payout-command/sandbox-data'
 import { Glyph } from '../shared'
 
 type WorkspaceKeysPayload = {
@@ -21,18 +15,18 @@ type WorkspaceKeysPayload = {
 }
 
 export function ApiKeysPopoverButton({ label = 'API keys' }: { label?: string }) {
-  const { mode } = useEnvironment()
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
   const [keys, setKeys] = useState<WorkspaceKeysPayload | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [storedSecret, setStoredSecret] = useState<string | null>(null)
 
   const loadKeys = useCallback(async () => {
     setLoading(true)
     setLoadError(null)
     try {
-      const res = await fetch(workspaceApiKeysPath(mode), { credentials: 'include', cache: 'no-store' })
+      const res = await fetch('/api/sandbox/workspace-api-keys', { credentials: 'include', cache: 'no-store' })
       if (!res.ok) {
         const j = (await res.json().catch(() => null)) as { message?: string } | null
         setLoadError(j?.message || `Could not load keys (${res.status})`)
@@ -40,15 +34,20 @@ export function ApiKeysPopoverButton({ label = 'API keys' }: { label?: string })
         return
       }
       const body = (await res.json()) as WorkspaceKeysPayload
-      clearLegacyTenantApiSecrets(body.tenant_id)
       setKeys(body)
+      try {
+        const stored = window.localStorage.getItem(`zord_tenant_api_key:${body.tenant_id}`)
+        setStoredSecret(stored?.trim() || null)
+      } catch {
+        setStoredSecret(null)
+      }
     } catch {
       setLoadError('Network error loading keys.')
       setKeys(null)
     } finally {
       setLoading(false)
     }
-  }, [mode])
+  }, [])
 
   useEffect(() => {
     if (!open) return
@@ -71,8 +70,11 @@ export function ApiKeysPopoverButton({ label = 'API keys' }: { label?: string })
     }
   }, [open])
 
-  const publishableDisplay = keys?.publishable_key ?? keys?.workspace_code ?? '—'
-  const secretDisplay = formatSecretKeyPrefix(keys?.secret_key_prefix ?? keys?.workspace_code)
+  const publishableDisplay = keys?.publishable_key ?? keys?.workspace_code ?? '-'
+  const secretFull = storedSecret
+  const secretDisplay =
+    secretFull ??
+    (keys?.secret_key_prefix ? `${keys.secret_key_prefix.slice(0, 16)}…` : '-')
 
   const docsBase =
     typeof process.env.NEXT_PUBLIC_ZORD_DOCS_URL === 'string' && process.env.NEXT_PUBLIC_ZORD_DOCS_URL.trim()
@@ -124,7 +126,7 @@ export function ApiKeysPopoverButton({ label = 'API keys' }: { label?: string })
               <p>
                 Use{' '}
                 <a
-                  href={DOCS_LINKS.apiReference}
+                  href={SANDBOX_DOCS_LINKS.apiReference}
                   target="_blank"
                   rel="noreferrer noopener"
                   className="font-medium text-[#2563eb] underline decoration-[#93c5fd] underline-offset-2 hover:text-[#1d4ed8]"
@@ -136,7 +138,7 @@ export function ApiKeysPopoverButton({ label = 'API keys' }: { label?: string })
               <p>
                 Design flows with{' '}
                 <a
-                  href={docsBase ? `${docsBase}/webhooks` : DOCS_LINKS.webhookGuide}
+                  href={docsBase ? `${docsBase}/webhooks` : SANDBOX_DOCS_LINKS.webhookGuide}
                   target="_blank"
                   rel="noreferrer noopener"
                   className="font-medium text-[#2563eb] underline decoration-[#93c5fd] underline-offset-2 hover:text-[#1d4ed8]"
@@ -151,7 +153,7 @@ export function ApiKeysPopoverButton({ label = 'API keys' }: { label?: string })
               <div className="flex items-center justify-between gap-2">
                 <p className="text-[15px] font-semibold text-[#30313d]">API keys</p>
                 <a
-                  href={DOCS_LINKS.apiReference}
+                  href={SANDBOX_DOCS_LINKS.apiReference}
                   target="_blank"
                   rel="noreferrer noopener"
                   className="shrink-0 text-[13px] font-medium text-[#000000] hover:text-[#15803d]"
@@ -171,10 +173,15 @@ export function ApiKeysPopoverButton({ label = 'API keys' }: { label?: string })
                 <>
                   <CompactKeyRow label="Publishable key" value={publishableDisplay} />
                   <CompactKeyRow
-                    label="Secret key prefix"
-                    value={secretDisplay}
-                    masked
-                    helper="Full secret is shown once at signup and is never stored in this browser. Rotate server-side from Settings when supported."
+                    label="Secret key"
+                    value={secretFull ?? secretDisplay}
+                    masked={!secretFull}
+                    copyValue={secretFull ?? undefined}
+                    helper={
+                      !secretFull
+                        ? 'Full secret is only shown once at signup; it is saved in this browser if you copied it then. Rotate from settings when supported.'
+                        : undefined
+                    }
                   />
                 </>
               )}
@@ -206,10 +213,10 @@ export function CompactKeyRow({
   label: string
   value: string
   masked?: boolean
-  /** Optional clipboard override (must never be a full tenant API secret). */
+  /** When masked preview differs from clipboard (full key in localStorage). */
   copyValue?: string
   helper?: string
-  /** `imperial` — bold white on blue glass. `sky` — soft blue tint on light cards. */
+  /** `imperial` - bold white on blue glass. `sky` - soft blue tint on light cards. */
   tone?: 'default' | 'imperial' | 'sky'
 }) {
   const [revealed, setRevealed] = useState(!masked)
@@ -220,7 +227,7 @@ export function CompactKeyRow({
     revealed || !masked ? value : `${value.slice(0, 12)}${value.length > 16 ? '…' : ''}${value.slice(-4)}`
 
   const copy = async () => {
-    if (!clipboardText || clipboardText === '—') return
+    if (!clipboardText || clipboardText === '-') return
     try {
       await navigator.clipboard.writeText(clipboardText)
       setCopied(true)
@@ -265,7 +272,7 @@ export function CompactKeyRow({
           <button
             type="button"
             onClick={copy}
-            disabled={!clipboardText || clipboardText === '—'}
+            disabled={!clipboardText || clipboardText === '-'}
             className={
               imperial
                 ? 'inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] font-bold text-white transition hover:bg-white/15 disabled:pointer-events-none disabled:opacity-40'

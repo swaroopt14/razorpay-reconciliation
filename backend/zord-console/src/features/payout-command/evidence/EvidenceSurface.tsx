@@ -41,12 +41,12 @@ function sortBatchPickerRows(rows: IntelligenceBatchRow[]): IntelligenceBatchRow
 }
 
 /**
- * APIs (3 on workspace load):
- * 1. GET /api/prod/intelligence/defensibility
- * 2. GET /api/prod/intelligence/batches
- * 3. GET /api/prod/evidence/packs (+ intent journal for full batch list)
- * Export tab: GET /api/prod/evidence/packs/{packId} on demand
- */
+  * APIs (3 on workspace load):
+  * 1. GET /api/prod/intelligence/defensibility
+  * 2. GET /api/prod/intelligence/batches
+  * 3. GET /api/prod/evidence/packs (+ intent journal for full batch list)
+  * Export tab: GET /api/prod/evidence/packs/{packId} on demand
+  */
 export function EvidenceSurface({ initialBatchId }: { initialBatchId?: string } = {}) {
   const [pageTab, setPageTab] = useState<EvidencePageTab>('workspace')
   const [search, setSearch] = useState('')
@@ -123,7 +123,7 @@ export function EvidenceSurface({ initialBatchId }: { initialBatchId?: string } 
     }
   }, [tenantReady, batchId])
 
-  // Total payment intents in the batch — the "Complete" count for Pack Status Mix.
+  // Total payment intents in the batch - the "Complete" count for Pack Status Mix.
   useEffect(() => {
     const bid = apiTrimmedString(batchId)
     if (!tenantReady || !bid) {

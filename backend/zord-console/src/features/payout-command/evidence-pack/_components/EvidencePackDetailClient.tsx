@@ -64,7 +64,7 @@ export function EvidencePackDetailClient({ packId }: EvidencePackDetailClientPro
   const [pack, setPack] = useState<EvidencePackFull | null>(null)
   const [loading, setLoading] = useState(true)
 
-  const isBatch = pack ? isBatchEvidencePackFull(pack) : Boolean(batchId)
+  const isBatch = pack ? isBatchEvidencePackFull(pack) : false
   const tab = parseTab(searchParams.get('tab'), isBatch)
 
   useEffect(() => {
@@ -74,24 +74,22 @@ export function EvidencePackDetailClient({ packId }: EvidencePackDetailClientPro
       const bid = apiTrimmedString(batchId)
       let full = await getEvidencePackFull(packId)
 
-      // Prefer batch lineage when opening from Evidence Pack Browser (batch_id in URL),
-      // or when the pack endpoint is empty / not usable for BATCH_PROOF.
-      if (bid && (!full || isBatchEvidencePackFull(full))) {
+      if (!full && bid) {
         const { packs } = await listEvidencePacksForBatch(bid)
         if (cancelled) return
-        const summary =
-          packs.find((row) => apiTrimmedString(row.evidence_pack_id) === apiTrimmedString(packId)) ??
-          packs.find(isBatchEvidencePack) ??
-          null
-        const lineage = await getEvidenceBatchLineageGraph(bid)
-        if (lineage.data) {
-          const lineagePackId = apiTrimmedString(lineage.data.evidence_pack_id)
-          const summaryIsBatch = summary ? isBatchEvidencePack(summary) : false
-          const matchesPack =
-            apiTrimmedString(summary?.evidence_pack_id) === apiTrimmedString(packId) ||
-            lineagePackId === apiTrimmedString(packId)
-          if (summaryIsBatch || matchesPack || !full) {
+        const summary = packs.find((row) => apiTrimmedString(row.evidence_pack_id) === apiTrimmedString(packId))
+        if (summary && isBatchEvidencePack(summary)) {
+          const lineage = await getEvidenceBatchLineageGraph(bid)
+          if (lineage.data) {
             full = evidencePackFullFromBatchLineage(bid, lineage.data, summary, packId)
+          }
+        } else {
+          const lineage = await getEvidenceBatchLineageGraph(bid)
+          if (
+            lineage.data &&
+            apiTrimmedString(lineage.data.evidence_pack_id) === apiTrimmedString(packId)
+          ) {
+            full = evidencePackFullFromBatchLineage(bid, lineage.data, summary ?? null, packId)
           }
         }
       }
@@ -176,90 +174,93 @@ export function EvidencePackDetailClient({ packId }: EvidencePackDetailClientPro
     return evidenceCopy.graph.subtitle
   }, [isBatch])
 
-  if (loading) {
+  if (!loading && pack && !isBatch && redirectPending.current) {
     return (
       <main
         className="payout-command-console min-h-screen bg-[#f5f5f5] text-[15px] leading-[1.55] antialiased"
         style={{ fontFamily: DASHBOARD_FONT_STACK }}
       >
-        <div className="mx-auto max-w-[1400px] px-3 py-10 sm:px-4 lg:px-5">
-          <p className="text-center text-[14px] text-[#6f716d]">Loading evidence pack…</p>
+        <div className="mx-auto max-w-[1280px]">
+          <p className="text-center text-[14px] text-[#333333]">Opening batch evidence hub…</p>
         </div>
       </main>
     )
   }
-
-  if (!loading && pack && !isBatchEvidencePackFull(pack) && redirectPending.current) {
-    return (
-      <main
-        className="payout-command-console min-h-screen bg-[#f5f5f5] text-[15px] leading-[1.55] antialiased"
-        style={{ fontFamily: DASHBOARD_FONT_STACK }}
-      >
-        <div className="mx-auto max-w-[1400px] px-3 py-10 sm:px-4 lg:px-5">
-          <p className="text-center text-[14px] text-[#6f716d]">Opening batch evidence hub…</p>
-        </div>
-      </main>
-    )
-  }
-
-  const showBatchHub = Boolean(batchId) && (isBatch || !pack)
-  const showBatchExport = isBatch && tab === 'export' && pack
 
   return (
     <main
       className="payout-command-console min-h-screen bg-[#f5f5f5] text-[15px] leading-[1.55] antialiased"
       style={{ fontFamily: DASHBOARD_FONT_STACK }}
     >
-      <div className="mx-auto max-w-[1400px] space-y-5 px-3 py-5 sm:px-4 lg:px-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
+      <div
+        className={`space-y-4 py-4 ${
+          tab === 'graph'
+            ? 'mx-0 max-w-none px-0'
+            : 'mx-auto max-w-[1280px]'
+        }`}
+      >
+        <div className={`flex flex-wrap items-end justify-between gap-4 ${tab === 'graph' ? 'px-3 sm:px-4' : ''}`}>
+          <div className="min-w-0">
             <Link
               href={`/payout-command-view/today?dock=proof${batchId ? `&batch_id=${encodeURIComponent(batchId)}` : ''}`}
-              className="text-[13px] font-medium text-[#6f716d] hover:text-[#111111]"
+              className="inline-flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-[0.08em] text-[#555555] transition hover:text-[#111111]"
             >
               ← Evidence & Dispute Resolution
             </Link>
-            <h1 className="mt-2 font-mono text-[20px] font-semibold text-[#111111]">{packId}</h1>
-            <p className="mt-1 text-[14px] text-[#6f716d]">{subtitle}</p>
+            <h1 className="mt-2 truncate font-mono text-[18px] font-semibold tracking-tight text-[#111111] sm:text-[22px]">
+              {packId}
+            </h1>
+            <p className="mt-1 max-w-3xl text-[13px] leading-relaxed text-[#444444]">{subtitle}</p>
           </div>
         </div>
 
-        <nav className="flex flex-wrap gap-1 rounded-[0.85rem] border border-[#E5E5E5] bg-[#f8f8f6] p-1">
-          {visibleTabs.map((t) => (
-            <Link
-              key={t}
-              href={tabHref(t)}
-              scroll={false}
-              className={`rounded-[0.65rem] px-4 py-2 text-[14px] font-semibold transition ${
-                tab === t ? 'bg-white text-[#111111] shadow-sm' : 'text-[#6f716d] hover:text-[#111111]'
-              }`}
-            >
-              {tabLabels[t]}
-            </Link>
-          ))}
+        <nav
+          className={`flex flex-wrap items-center gap-1 rounded-2xl border border-[#E5E5E5] bg-white p-1.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] ${
+            tab === 'graph' ? 'mx-3 sm:mx-4' : ''
+          }`}
+          aria-label="Evidence pack sections"
+        >
+          {visibleTabs.map((t) => {
+            const active = tab === t
+            return (
+              <Link
+                key={t}
+                href={tabHref(t)}
+                scroll={false}
+                className={`relative rounded-xl px-4 py-2 text-[13px] font-semibold transition ${
+                  active
+                    ? 'bg-[#111111] text-white shadow-sm'
+                    : 'text-[#444444] hover:bg-[#f4f4f5] hover:text-[#111111]'
+                }`}
+              >
+                {tabLabels[t]}
+              </Link>
+            )
+          })}
         </nav>
 
-        <div className="rounded-[16px] border border-[#E5E5E5] bg-white p-5 sm:p-6">
-          {showBatchHub && tab === 'graph' ? (
+        <div
+          className={
+            tab === 'graph'
+              ? 'rounded-none border-y border-[#E5E5E5] bg-white p-2 sm:p-3'
+              : 'rounded-[16px] border border-[#E5E5E5] bg-white p-5 shadow-[0_8px_28px_rgba(15,23,42,0.04)] sm:p-6'
+          }
+        >
+          {isBatch && tab === 'graph' ? (
             <BatchEvidenceHub batchPackId={packId} batchId={batchId} />
           ) : null}
-          {showBatchExport ? <EvidencePackExportTab pack={pack} /> : null}
-          {!showBatchHub && tab === 'summary' ? (
+          {isBatch && tab === 'export' ? <EvidencePackExportTab pack={pack} /> : null}
+          {!isBatch && tab === 'summary' ? (
             <EvidencePackSummaryTab pack={pack} batchId={batchId} loading={loading} />
           ) : null}
-          {!showBatchHub && tab === 'timeline' ? (
+          {!isBatch && tab === 'timeline' ? (
             <EvidencePackTimelineTab pack={pack} packId={packId} loading={loading} />
           ) : null}
-          {!showBatchHub && tab === 'items' ? <EvidencePackItemsTab pack={pack} loading={loading} /> : null}
-          {!showBatchHub && tab === 'graph' ? (
+          {!isBatch && tab === 'items' ? <EvidencePackItemsTab pack={pack} loading={loading} /> : null}
+          {!isBatch && tab === 'graph' ? (
             <EvidencePackGraphTab packId={packId} batchId={batchId} intentId={pack?.intent_id} />
           ) : null}
-          {!showBatchHub && tab === 'export' ? <EvidencePackExportTab pack={pack} /> : null}
-          {!pack && !showBatchHub ? (
-            <p className="py-10 text-center text-[14px] text-[#6f716d]">
-              Evidence pack could not be loaded. Go back and open the batch proof again.
-            </p>
-          ) : null}
+          {!isBatch && tab === 'export' ? <EvidencePackExportTab pack={pack} /> : null}
         </div>
       </div>
     </main>

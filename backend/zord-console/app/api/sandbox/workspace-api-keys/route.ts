@@ -12,8 +12,7 @@ type EdgeMePayload = {
 
 /**
  * Sandbox workspace credentials for the signed-in user (zord-edge `/v1/auth/me`).
- * Returns tenant id + key prefix only. Full API secrets are never returned here
- * (CON-P0-01 — one-time disclosure at signup only).
+ * No fabricated keys - full API secret is only available client-side if saved at signup.
  */
 export async function GET(request: NextRequest) {
   const { edgeResponse, errorResponse, refreshedPayload } = await authorizedEdgeFetch(
@@ -54,8 +53,6 @@ export async function GET(request: NextRequest) {
     payload?.session?.workspace_code?.trim() || payload?.user?.workspace_code?.trim() || null
   const tenant_name = payload?.user?.tenant_name?.trim() ?? null
   const publishable_key = workspace_code
-  // Edge exposes tenants.key_prefix as workspace_code — prefix only, never the secret half.
-  const secret_key_prefix = workspace_code
 
   const res = NextResponse.json(
     {
@@ -63,7 +60,7 @@ export async function GET(request: NextRequest) {
       tenant_name,
       workspace_code,
       publishable_key,
-      secret_key_prefix,
+      secret_key_prefix: null,
     },
     { headers: { 'cache-control': 'no-store' } },
   )

@@ -36,7 +36,7 @@ function maxAxisLabelsForRange(range: DisbursementTrendRange, pointCount: number
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
 
-/** Brush silhouette only — uses the same per-day API values as the bars (no resampling or fill). */
+/** Brush silhouette only - uses the same per-day API values as the bars (no resampling or fill). */
 function brushAreaPath(
   values: number[],
   xFn: (i: number) => number,
@@ -237,12 +237,12 @@ export function PaymentValueTrendChart({
         style={{ left: `clamp(0.5rem, ${tooltipLeftPercent}%, calc(100% - 17rem))` }}
       >
         <div className="text-[11px] font-normal uppercase tracking-[0.06em] text-[#888888]">
-          Date: {activePoint?.label ?? '—'}
+          Date: {activePoint?.label ?? '-'}
         </div>
         <div className="mt-2 space-y-1 text-[13px] font-medium leading-relaxed text-[#00239C]">
-          <p>Intended payments: {activePoint ? fmtInrFromMinorExact(activePoint.intendedMinor) : '—'}</p>
-          <p>Bank-confirmed: {activePoint ? fmtInrFromMinorExact(activePoint.confirmedMinor) : '—'}</p>
-          <p>Needs review: {activePoint ? fmtInrFromMinorExact(activePoint.reviewMinor) : '—'}</p>
+          <p>Intended payments: {activePoint ? fmtInrFromMinorExact(activePoint.intendedMinor) : '-'}</p>
+          <p>Bank-confirmed: {activePoint ? fmtInrFromMinorExact(activePoint.confirmedMinor) : '-'}</p>
+          <p>Needs review: {activePoint ? fmtInrFromMinorExact(activePoint.reviewMinor) : '-'}</p>
         </div>
         <p className="mt-2 text-[13px] font-medium leading-relaxed text-[#00239C]">
           Zord compares your payment instructions with bank/settlement records for this date.

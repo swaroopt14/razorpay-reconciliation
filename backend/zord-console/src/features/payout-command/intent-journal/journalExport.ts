@@ -18,7 +18,7 @@ export function intentsToCsv(rows: JournalIntentRow[]) {
   ]
   const lines = rows.map((row) =>
     [
-      row.requestId ?? '',
+      row.requestId,
       row.tenantId,
       row.amount,
       row.currency ?? '',

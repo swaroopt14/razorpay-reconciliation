@@ -4,7 +4,12 @@ import Link from 'next/link'
 import { type ReactNode, type Ref, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useDebouncedValue } from '@/app/hooks/useDebouncedValue'
 import { useSessionTenant } from '@/services/auth/useSessionTenantId'
-import { markSandboxSetupStep } from '@/services/payout-command/sandbox-setup-guide'
+import {
+  markDemoIntentUploaded,
+  markDemoSettlementUploaded,
+} from '@/services/payout-command/demo/demoBatchReadiness'
+import { markSandboxSetupStep, openSandboxSetupPanel } from '@/services/payout-command/sandbox-setup-guide'
+import { PostUploadStepsCard } from './PostUploadStepsCard'
 import { COMMAND_CENTER_LABEL_GREEN, HOME_BODY_IMPERIAL_SM } from '../../command-center/homeCommandCenterTokens'
 import { parseUploadedSheet, type BatchRow, type ZordPipelineIntake } from '@/services/payout-command/batch-model'
 import { postIntentBulkIngest } from '@/services/payout-command/batch-intake/postIntentBulkIngest'
@@ -15,12 +20,8 @@ import {
 } from '@/services/payout-command/batch-intake/postSettlementFileUpload'
 import { BatchPortalUploadZone } from './portal/BatchPortalUploadZone'
 import { PORTAL_BLUE_TITLE, PORTAL_PRIMARY_BTN } from './portal/batchPortalTokens'
+import { SampleFileDownloads } from './SampleFileDownloads'
 import { BATCH_REVIEW_COPY, type SourceTypeOption } from '../copy/batchCommandCenterCopy'
-import {
-  type ReprocessReason,
-} from '@/services/payout-command/batch-intake/reprocessReason'
-import { BatchUploadErrorDialog } from './BatchUploadErrorDialog'
-import { ReprocessWhyDialog } from './ReprocessWhyDialog'
 
 const INTENT_FILE_ACCEPT =
   '.csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -42,40 +43,6 @@ function Card({ children, className = '' }: { children: ReactNode; className?: s
     <div className={`rounded-2xl border border-[#E5E5E5] bg-white shadow-[0_2px_12px_rgba(15,23,42,0.04)] ${className}`}>
       {children}
     </div>
-  )
-}
-
-function ReprocessFileControl({
-  checked,
-  onToggle,
-  inputName,
-  helper,
-}: {
-  checked: boolean
-  onToggle: (next: boolean) => void
-  inputName: string
-  helper: string
-}) {
-  const c = BATCH_REVIEW_COPY
-  return (
-    <label className="mt-3 flex flex-col justify-end gap-1">
-      <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#888888]">
-        {c.fields.reprocess}
-      </span>
-      <span className="flex min-h-9 flex-col justify-center gap-0.5 rounded-lg border border-[#E5E5E5] bg-white px-2.5 py-1.5 text-[13px] text-[#0A0A0A]">
-        <span className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={checked}
-            aria-label={inputName}
-            onChange={(event) => onToggle(event.target.checked)}
-            className="h-4 w-4 rounded border-[#cbd5e1]"
-          />
-          {c.fields.reprocess}
-        </span>
-        <span className="text-[11px] text-[#64748b]">{helper}</span>
-      </span>
-    </label>
   )
 }
 
@@ -104,10 +71,10 @@ export type BatchUploadStatus = {
 const BATCH_REFERENCE_DEBOUNCE_MS = 450
 
 type BatchIntakePanelProps = {
-  /** Committed batch id from URL / parent — syncs into the local draft when it changes externally. */
+  /** Committed batch id from URL / parent - syncs into the local draft when it changes externally. */
   committedBatchId: string
   batchReferenceRef?: Ref<HTMLInputElement>
-  /** Called after the user pauses typing — drives API load and URL without blocking the input. */
+  /** Called after the user pauses typing - drives API load and URL without blocking the input. */
   onBatchIdCommit: (value: string) => void
   isSandboxRoute: boolean
   onIntentIngestSuccess: (payload: IntentIngestSuccessPayload) => void
@@ -115,6 +82,10 @@ type BatchIntakePanelProps = {
   onSnapshotChange: (snapshot: BatchIntakeSnapshot) => void
   onUploadStatusChange?: (status: BatchUploadStatus) => void
   onIntentUploadFailed?: (batchId: string) => void
+  /**
+    * Spec 7.4 owns intent upload - use `settlement-only` so this panel is outcome confirmation.
+    */
+  mode?: 'full' | 'settlement-only'
 }
 
 export function BatchIntakePanel({
@@ -127,7 +98,9 @@ export function BatchIntakePanel({
   onSnapshotChange,
   onUploadStatusChange,
   onIntentUploadFailed,
+  mode = 'full',
 }: BatchIntakePanelProps) {
+  const settlementOnly = mode === 'settlement-only'
   const { tenantId, tenantReady, refreshTenant } = useSessionTenant()
   const [draftBatchRef, setDraftBatchRef] = useState(committedBatchId)
   const debouncedDraftBatchRef = useDebouncedValue(draftBatchRef, BATCH_REFERENCE_DEBOUNCE_MS)
@@ -156,14 +129,6 @@ export function BatchIntakePanel({
   const [sourceSystem, setSourceSystem] = useState('')
   const [psp, setPsp] = useState(() => process.env.NEXT_PUBLIC_ZORD_SETTLEMENT_PSP ?? 'razorpay')
   const [bulkForceReprocess, setBulkForceReprocess] = useState(false)
-  const [uploadError, setUploadError] = useState<{
-    kind: 'intent' | 'settlement'
-    message: string
-    fileName: string | null
-  } | null>(null)
-  const [settlementForceReprocess, setSettlementForceReprocess] = useState(false)
-  const [settlementForceReason, setSettlementForceReason] = useState<ReprocessReason | ''>('')
-  const [settlementReasonDialogOpen, setSettlementReasonDialogOpen] = useState(false)
   const [selectedIntentFile, setSelectedIntentFile] = useState<File | null>(null)
   const [selectedSettlementFile, setSelectedSettlementFile] = useState<File | null>(null)
   const [intentFileName, setIntentFileName] = useState<string | null>(null)
@@ -275,10 +240,10 @@ export function BatchIntakePanel({
     setUploadState('uploading')
     if (userBatchId) setSettlementBatchId(userBatchId)
     try {
+      const parsed = await parseUploadedSheet(file)
       if (bulkForceReprocess && !userBatchId) {
         throw new Error('Reprocess requires a batch reference in the field above.')
       }
-      const parsed = await parseUploadedSheet(file)
       const result = await postIntentBulkIngest({
         file,
         sourceType: bulkIngestSourceTypeFromFilename(file.name),
@@ -293,7 +258,9 @@ export function BatchIntakePanel({
           if (batchToKeep !== draftBatchRef.trim()) commitBatchRefImmediately(batchToKeep)
           onIntentUploadFailed?.(batchToKeep)
         }
-        throw new Error(result.errorMessage?.trim() || result.responseText.trim().slice(0, 500) || `HTTP ${result.httpStatus}`)
+        const detail = result.errorMessage?.trim() || `HTTP ${result.httpStatus}`
+        const extra = result.responseText.trim().slice(0, 280)
+        throw new Error(extra && !detail.includes(extra) ? `${detail} - ${extra}` : detail)
       }
       const ingestAckParsed = parseBulkIngestAcceptedResponse(result.responseText)
       if (ingestAckParsed && ingestAckParsed.accepted === 0) {
@@ -309,6 +276,8 @@ export function BatchIntakePanel({
       setIntentIngestOk(true)
       void refreshTenant()
       markSandboxSetupStep('intent-ingest')
+      markDemoIntentUploaded(effectiveBatch)
+      openSandboxSetupPanel()
       reportUploadStatus('synced', `Payment file accepted. Batch reference: ${effectiveBatch}.`)
       setUploadState('ready')
       setUploadedFileName(file.name)
@@ -320,12 +289,10 @@ export function BatchIntakePanel({
         fileName: file.name,
       })
     } catch (error) {
-      const detail = error instanceof Error ? error.message : 'Unknown error'
-      setUploadError({ kind: 'intent', message: detail, fileName: file.name })
       setIntentIngestOk(false)
       reportUploadStatus(
         'failed',
-        `Payment file upload failed (${detail}). Step 2 stays locked until upload succeeds.`,
+        `Payment file upload failed (${error instanceof Error ? error.message : 'unknown error'}). Step 2 stays locked until upload succeeds.`,
       )
       setIntakeStep('idle')
       setUploadState('idle')
@@ -353,63 +320,19 @@ export function BatchIntakePanel({
     [intakeStep, reportUploadStatus],
   )
 
-  const onConfirmSettlementReason = useCallback((reason: ReprocessReason) => {
-    setSettlementForceReprocess(true)
-    setSettlementForceReason(reason)
-    setSettlementReasonDialogOpen(false)
-  }, [])
-
-  const onToggleIntentReprocess = useCallback((next: boolean) => {
-    setBulkForceReprocess(next)
-  }, [])
-
-  const onToggleSettlementReprocess = useCallback((next: boolean) => {
-    if (next) {
-      setSettlementReasonDialogOpen(true)
-      return
-    }
-    setSettlementForceReprocess(false)
-    setSettlementForceReason('')
-  }, [])
-
-  const runSettlementBatchUpload = useCallback(async () => {
+  const onSettlementBatchUpload = useCallback(async () => {
     const file = selectedSettlementFile
     if (!file) return
     const pspVal = psp.trim().toLowerCase()
     const bid = (settlementBatchId ?? draftBatchRef.trim()).trim()
     if (!tenantReady || !pspVal || !bid) {
-      const detail = settlementBlockedReason ??
-        'Confirmation upload needs an active session, payment partner, and batch reference.'
-      reportUploadStatus('failed', detail)
-      setUploadError({ kind: 'settlement', message: detail, fileName: file.name })
+      reportUploadStatus(
+        'failed',
+        settlementBlockedReason ??
+          'Confirmation upload needs an active session, payment partner, and batch reference.',
+      )
       return
     }
-    if (settlementForceReprocess && !bid) {
-      reportUploadStatus('failed', 'Settlement reprocess requires a batch reference.')
-      setUploadError({
-        kind: 'settlement',
-        message: 'Settlement reprocess requires a batch reference.',
-        fileName: file.name,
-      })
-      return
-    }
-    if (settlementForceReprocess && !settlementForceReason) {
-      reportUploadStatus('failed', 'Choose a reprocess reason before uploading.')
-      setUploadError({
-        kind: 'settlement',
-        message: 'Choose a reprocess reason before uploading.',
-        fileName: file.name,
-      })
-      return
-    }
-
-    const settlementMode =
-      !settlementForceReprocess
-        ? 'new'
-        : settlementForceReason === 'CLIENT_CORRECTED_FILE'
-          ? 'correction'
-          : 'reprocess'
-
     setSettlementFileName(file.name)
     setIntakeStep('settlement_uploading')
     reportUploadStatus('syncing', BATCH_REVIEW_COPY.intake.uploadSettlementBusy)
@@ -419,35 +342,30 @@ export function BatchIntakePanel({
         file,
         psp: pspVal,
         batchId: bid,
-        mode: settlementMode,
-        forceReprocessReason:
-          settlementMode === 'new' ? undefined : settlementForceReason,
       })
       if (!result.ok) {
-        throw new Error(
-          result.errorMessage?.trim() ||
-            result.responseText.trim().slice(0, 500) ||
-            `HTTP ${result.httpStatus || 'error'}`,
-        )
+        const detail = result.errorMessage?.trim() || `HTTP ${result.httpStatus || 'error'}`
+        const extra = result.responseText.trim().slice(0, 400)
+        const parts = [detail]
+        if (extra && !detail.includes(extra)) parts.push(extra)
+        if (result.httpStatus) parts.unshift(`[${result.httpStatus}]`)
+        throw new Error(parts.join(' - '))
       }
       setSettlementIngestOk(true)
-      reportUploadStatus(
-        'synced',
-        result.alreadyProcessed
-          ? BATCH_REVIEW_COPY.dialogs.settlementDuplicateBody(bid)
-          : BATCH_REVIEW_COPY.dialogs.settlementBody(bid),
-      )
+      reportUploadStatus('synced', BATCH_REVIEW_COPY.dialogs.settlementBody(bid))
       markSandboxSetupStep('settlement')
+      markSandboxSetupStep('settlement-journal')
+      markDemoSettlementUploaded(bid)
+      openSandboxSetupPanel()
       setIntakeStep('closed')
       onSettlementIngestSuccess({ batchId: bid, fileName: file.name, parsedRows: parsed })
     } catch (error) {
-      const detail = error instanceof Error && error.message.trim()
-        ? error.message.trim()
-        : 'Check your session and retry.'
-      setUploadError({ kind: 'settlement', message: detail, fileName: file.name })
       reportUploadStatus(
         'failed',
-        `Confirmation upload failed: ${detail}`,
+        (() => {
+          const detail = error instanceof Error ? error.message.trim() : ''
+          return detail ? `Confirmation upload failed: ${detail}` : 'Confirmation upload failed. Check your session and retry.'
+        })(),
       )
       setIntakeStep('intent_ready')
     }
@@ -459,15 +377,8 @@ export function BatchIntakePanel({
     selectedSettlementFile,
     settlementBatchId,
     settlementBlockedReason,
-    settlementForceReason,
-    settlementForceReprocess,
     tenantReady,
   ])
-
-  const settlementActionLabel = useMemo(() => {
-    if (intakeStep === 'settlement_uploading') return BATCH_REVIEW_COPY.intake.uploadSettlementBusy
-    return BATCH_REVIEW_COPY.intake.uploadSettlement
-  }, [intakeStep])
 
   const c = BATCH_REVIEW_COPY
 
@@ -475,10 +386,18 @@ export function BatchIntakePanel({
     <div className="space-y-4">
       <Card className="p-5">
         <div className="flex items-baseline justify-between gap-2">
-          <SectionLabel>{c.intake.title}</SectionLabel>
-          <span className="text-[11px] font-medium uppercase tracking-[0.1em] text-[#888888]">{c.intake.stepBadge}</span>
+          <SectionLabel>
+            {settlementOnly ? 'Settlement confirmation' : c.intake.title}
+          </SectionLabel>
+          <span className="text-[11px] font-medium uppercase tracking-[0.1em] text-[#888888]">
+            {settlementOnly ? 'After draft intents' : c.intake.stepBadge}
+          </span>
         </div>
-        <p className={`mt-1 ${HOME_BODY_IMPERIAL_SM}`}>{c.intake.helper}</p>
+        <p className={`mt-1 ${HOME_BODY_IMPERIAL_SM}`}>
+          {settlementOnly
+            ? 'Upload bank or settlement confirmation for the batch created above. Outcomes are verified against sealed obligations.'
+            : c.intake.helper}
+        </p>
 
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <label className="flex flex-col gap-1">
@@ -520,6 +439,23 @@ export function BatchIntakePanel({
               className="h-9 rounded-lg border border-[#E5E5E5] bg-white px-2.5 text-[13px] text-[#0A0A0A] outline-none focus:border-[#6366f1]/50"
             />
           </label>
+          <label className="flex flex-col justify-end gap-1 sm:col-span-2 lg:col-span-1">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#888888]">
+              {c.fields.reprocess}
+            </span>
+            <span className="flex min-h-9 flex-col justify-center gap-0.5 rounded-lg border border-[#E5E5E5] bg-white px-2.5 py-1.5 text-[13px] text-[#0A0A0A]">
+              <span className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={bulkForceReprocess}
+                  onChange={(e) => setBulkForceReprocess(e.target.checked)}
+                  className="h-4 w-4 rounded border-[#cbd5e1]"
+                />
+                {c.fields.reprocess}
+              </span>
+              <span className="text-[11px] text-[#64748b]">{c.fields.reprocessHelper}</span>
+            </span>
+          </label>
         </div>
         {settlementBatchIdResolved ? (
           <p className="mt-3 text-[12px] text-[#1A1A1A]">
@@ -528,10 +464,13 @@ export function BatchIntakePanel({
           </p>
         ) : null}
         {settlementBlockedReason && !settlementCredentialsReady ? (
-          <p className="mt-2 text-[12px] font-medium text-amber-800">{settlementBlockedReason}</p>
+          <p className="mt-2 text-[12px] font-medium text-[#0B1324]">{settlementBlockedReason}</p>
         ) : null}
 
-        <div className="mt-5 grid gap-4 md:grid-cols-2">
+        {!settlementOnly ? <SampleFileDownloads /> : null}
+
+        <div className={`mt-5 grid gap-4 ${settlementOnly ? '' : 'md:grid-cols-2'}`}>
+          {!settlementOnly ? (
           <div
             id="batch-intake-step-1"
             className={`scroll-mt-24 rounded-2xl border p-4 ${
@@ -541,18 +480,12 @@ export function BatchIntakePanel({
             <p className={PORTAL_BLUE_TITLE}>{c.intake.uploadFilesLabel}</p>
             <p className="mt-0.5 text-[12px] font-medium text-[#64748b]">{c.intake.step1Short}</p>
             <p className="mt-1 text-[12px] text-[#64748b]">{c.intake.step1Helper}</p>
-            <ReprocessFileControl
-              checked={bulkForceReprocess}
-              onToggle={onToggleIntentReprocess}
-              inputName="Reprocess payment instruction file"
-              helper={c.fields.reprocessHelper}
-            />
             <div className="mt-3">
               <BatchPortalUploadZone
                 accept={INTENT_FILE_ACCEPT}
                 busy={intakeStep === 'intent_uploading'}
                 selectedFileName={selectedIntentFile?.name ?? intentFileName}
-                hint="CSV, XLS, or XLSX — one row per payment"
+                hint="CSV, XLS, or XLSX - one row per payment"
                 inputLabel={c.intake.step1Title}
                 onFileChosen={onIntentFileChosen}
               />
@@ -568,6 +501,7 @@ export function BatchIntakePanel({
               </button>
             ) : null}
           </div>
+          ) : null}
 
           <div
             id="batch-intake-step-2"
@@ -582,12 +516,6 @@ export function BatchIntakePanel({
             <p className={PORTAL_BLUE_TITLE}>{c.intake.uploadFilesLabel}</p>
             <p className="mt-0.5 text-[12px] font-medium text-[#64748b]">{c.intake.step2Short}</p>
             <p className="mt-1 text-[12px] text-[#64748b]">{c.intake.step2Helper}</p>
-            <ReprocessFileControl
-              checked={settlementForceReprocess || settlementReasonDialogOpen}
-              onToggle={onToggleSettlementReprocess}
-              inputName="Reprocess settlement confirmation file"
-              helper={c.fields.reprocessSettlementHelper}
-            />
             <div className="mt-3">
               <BatchPortalUploadZone
                 accept={SETTLEMENT_FILE_ACCEPT}
@@ -603,20 +531,15 @@ export function BatchIntakePanel({
               <button
                 type="button"
                 disabled={!settlementUploadEnabled}
-                onClick={() => void runSettlementBatchUpload()}
+                onClick={() => void onSettlementBatchUpload()}
                 className={`mt-3 w-full justify-center ${PORTAL_PRIMARY_BTN}`}
-                data-testid="settlement-upload-submit"
               >
-                {settlementActionLabel}
+                {intakeStep === 'settlement_uploading' ? c.intake.uploadSettlementBusy : c.intake.uploadSettlement}
               </button>
             ) : null}
             {settlementIngestOk && settlementBatchIdResolved ? (
               <Link
-                href={
-                  isSandboxRoute
-                    ? `/sandbox?dock=settlement&client_batch_id=${encodeURIComponent(settlementBatchIdResolved)}`
-                    : `/payout-command-view/today?dock=settlement&client_batch_id=${encodeURIComponent(settlementBatchIdResolved)}`
-                }
+                href={`/settlement/journal?demo=sandbox&client_batch_id=${encodeURIComponent(settlementBatchIdResolved)}`}
                 className="mt-3 inline-flex text-[12px] font-semibold text-[#2563eb] underline"
               >
                 {c.dialogs.openSettlementJournal}
@@ -624,21 +547,28 @@ export function BatchIntakePanel({
             ) : null}
           </div>
         </div>
+
+        <PostUploadStepsCard visible={intentIngestOk || settlementIngestOk} batchId={settlementBatchIdResolved} />
       </Card>
-      {settlementReasonDialogOpen ? (
-        <ReprocessWhyDialog
-          onCancel={() => setSettlementReasonDialogOpen(false)}
-          onConfirm={onConfirmSettlementReason}
-        />
-      ) : null}
-      {uploadError ? (
-        <BatchUploadErrorDialog
-          kind={uploadError.kind}
-          message={uploadError.message}
-          fileName={uploadError.fileName}
-          onClose={() => setUploadError(null)}
-        />
-      ) : null}
+
+      {/* Processing overlay during upload */}
+      {(intakeStep === 'intent_uploading' || intakeStep === 'settlement_uploading') && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+          <div className="mx-4 w-full max-w-sm rounded-2xl border border-[#e5e5e5] bg-white px-8 py-6 shadow-xl">
+            <p className="text-[16px] font-semibold text-[#0B1324]">
+              {intakeStep === 'intent_uploading' ? 'Processing intents…' : 'Processing settlement…'}
+            </p>
+            <div className="mt-3 h-2.5 w-full overflow-hidden rounded-full bg-[#E2E8F0]">
+              <div className="h-full w-full animate-[indeterminate_1.8s_ease-in-out_infinite] rounded-full bg-gradient-to-r from-[#3B82F6] via-[#6366F1] to-[#3B82F6]" />
+            </div>
+            <p className="mt-2 text-[12px] text-[#64748B]">
+              {intakeStep === 'intent_uploading'
+                ? 'Uploading and parsing payment instructions…'
+                : 'Uploading and verifying settlement confirmation…'}
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

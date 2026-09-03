@@ -22,7 +22,7 @@ function parseDlqAmount(raw: unknown): number {
 /** Map connector/source labels to EntityLogo registry names. */
 export function normalizePspDisplayName(raw: string | null | undefined): string {
   const name = apiTrimmedString(raw)
-  if (!name) return '—'
+  if (!name) return '-'
   const lower = name.toLowerCase()
   if (lower.includes('razor')) return 'Razorpay'
   if (lower.includes('cashfree')) return 'Cashfree'
@@ -72,7 +72,7 @@ export function parseDlqIntentContext(raw: unknown): ParsedDlqIntentContext {
 
 export function formatDlqStageLabel(stage?: string): string {
   const s = apiTrimmedString(stage)
-  if (!s) return '—'
+  if (!s) return '-'
   return s
     .split('_')
     .filter(Boolean)
@@ -96,13 +96,13 @@ export function resolveDlqDisplayStatus(input: {
       .map((part) => part.charAt(0) + part.slice(1).toLowerCase())
       .join(' '),
     input.replayable === true ? 'Replayable' : input.replayable === false ? 'Not replayable' : null,
-  ].filter((p) => p && p !== '—')
-  return parts.join(' · ') || '—'
+  ].filter((p) => p && p !== '-')
+  return parts.join(' · ') || '-'
 }
 
 export function formatDlqStatusLabel(status?: string): string {
   const s = apiTrimmedString(status)
-  if (!s) return '—'
+  if (!s) return '-'
   if (s === 'NEEDS_MANUAL_REVIEW') return 'Manual review'
   if (s === 'DLQ_TERMINAL') return 'Terminal DLQ'
   return s.replace(/_/g, ' ')

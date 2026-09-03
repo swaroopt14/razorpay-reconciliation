@@ -3,7 +3,6 @@ import { fetchDLQTerminalCount } from '@/services/backend/dlq'
 import {
   applyRefreshedSessionCookies,
   requireSessionTenantForProdProxy,
-  resolveProxyForwardAuthorization,
 } from '@/services/auth/resolvePayoutTenant.server'
 
 export const dynamic = 'force-dynamic'
@@ -14,13 +13,10 @@ export async function GET(request: NextRequest) {
   if (!gate.ok) return gate.response
   const tenantId = gate.tenantId
 
-  const auth = await resolveProxyForwardAuthorization(request, undefined)
-  if (!auth.ok) return auth.response
-
   try {
-    const count = await fetchDLQTerminalCount({ tenant_id: tenantId, authorization: auth.authorization })
+    const count = await fetchDLQTerminalCount({ tenant_id: tenantId })
     const res = NextResponse.json({ count: count ?? 0 })
-    applyRefreshedSessionCookies(res, auth.refreshedPayload ?? gate.refreshedPayload)
+    applyRefreshedSessionCookies(res, gate.refreshedPayload)
     return res
   } catch (error) {
     const res = NextResponse.json(
@@ -30,7 +26,7 @@ export async function GET(request: NextRequest) {
       },
       { status: 502 },
     )
-    applyRefreshedSessionCookies(res, auth.refreshedPayload ?? gate.refreshedPayload)
+    applyRefreshedSessionCookies(res, gate.refreshedPayload)
     return res
   }
 }

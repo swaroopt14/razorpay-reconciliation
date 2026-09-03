@@ -1,7 +1,7 @@
 /**
- * In-flight dedupe for settlement journal widgets — each hook calls these helpers independently;
- * concurrent requests for the same key share one promise.
- */
+  * In-flight dedupe for settlement journal widgets - each hook calls these helpers independently;
+  * concurrent requests for the same key share one promise.
+  */
 import {
   extractClientBatchIdsFromListResponse,
   getSettlementObservationBatchesForSession,

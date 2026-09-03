@@ -98,7 +98,7 @@ function buildRiskEvents(row: LoanMonitoringRow): RiskEvent[] {
     events.push({ time: 'Day 0', label: 'Full disbursal withdrawn within 2 hours of credit', severity: 'high' })
   }
   if (row.riskSignal === 'Dormant') {
-    events.push({ time: `Day ${Math.max(7, row.dpd - 7)}`, label: 'Account dormant — no inbound credits since disbursal', severity: 'medium' })
+    events.push({ time: `Day ${Math.max(7, row.dpd - 7)}`, label: 'Account dormant - no inbound credits since disbursal', severity: 'medium' })
   }
   if (row.riskSignal === 'Linked + Circular') {
     events.push({ time: 'Day 3', label: 'Shared device detected across linked accounts', severity: 'high' })
@@ -108,14 +108,14 @@ function buildRiskEvents(row: LoanMonitoringRow): RiskEvent[] {
     events.push({ time: 'Day 12', label: 'Login from device seen on 1 other active loan', severity: 'low' })
   }
   if (row.emiStatus === 'Bounced') {
-    events.push({ time: `Day ${30 - (row.dpd % 30 || 30) + row.dpd}`, label: 'eNACH presentation bounced — insufficient funds', severity: 'medium' })
+    events.push({ time: `Day ${30 - (row.dpd % 30 || 30) + row.dpd}`, label: 'eNACH presentation bounced - insufficient funds', severity: 'medium' })
   }
   if (row.dpd > 90) {
-    events.push({ time: `Day ${row.dpd}`, label: 'Crossed 90 DPD — classified NPA per RBI norms', severity: 'high' })
+    events.push({ time: `Day ${row.dpd}`, label: 'Crossed 90 DPD - classified NPA per RBI norms', severity: 'high' })
   } else if (row.dpd > 60) {
-    events.push({ time: `Day ${row.dpd}`, label: 'Rolled into SMA-2 (61–90 DPD)', severity: 'high' })
+    events.push({ time: `Day ${row.dpd}`, label: 'Rolled into SMA-2 (61-90 DPD)', severity: 'high' })
   } else if (row.dpd > 30) {
-    events.push({ time: `Day ${row.dpd}`, label: 'Rolled into SMA-1 (31–60 DPD)', severity: 'medium' })
+    events.push({ time: `Day ${row.dpd}`, label: 'Rolled into SMA-1 (31-60 DPD)', severity: 'medium' })
   }
   return events
 }

@@ -1,4 +1,4 @@
-import { fetchProdJsonGetWithAvailability } from './fetchProdJsonGet'
+import { fetchProdJsonGet } from './fetchProdJsonGet'
 import type { IntelligenceDateQuery } from './getIntelligenceKpis'
 import type { OperationsSummaryResponse } from './operationsSummaryTypes'
 
@@ -16,7 +16,7 @@ export async function getOperationsSummary(
   if (bid) extra.batch_id = bid
   const params = new URLSearchParams(extra)
   const qs = params.toString()
-  return fetchProdJsonGetWithAvailability<OperationsSummaryResponse>(
+  return fetchProdJsonGet<OperationsSummaryResponse>(
     qs ? `/api/prod/operations/summary?${qs}` : '/api/prod/operations/summary',
   )
 }

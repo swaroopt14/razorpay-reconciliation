@@ -1,9 +1,9 @@
 import type { GlyphName } from '@/services/payout-command/model'
 
 /**
- * Shared types for the Merkle evidence graph UI and API→graph builders.
- * Kept in a leaf module so `evidencePackGraphFromApi` never imports `MerkleGraphSurface` (avoids circular bundles).
- */
+  * Shared types for the Merkle evidence graph UI and API→graph builders.
+  * Kept in a leaf module so `evidencePackGraphFromApi` never imports `MerkleGraphSurface` (avoids circular bundles).
+  */
 
 export type LeafStatus = 'valid' | 'missing' | 'invalid'
 

@@ -4,7 +4,6 @@ export type BatchRowStatus = 'Success' | 'Failed' | 'Pending' | 'Processing'
 export type BatchTimelineStep = {
   label: string
   state: BatchStepState
-  description?: string
 }
 
 export type BatchRowTimelineStep = {
@@ -112,9 +111,9 @@ export function formatInr(value: number) {
   }).format(Math.round(value))
 }
 
-/** Table / summary amounts — preserve paise (no integer rounding). */
+/** Table / summary amounts - preserve paise (no integer rounding). */
 export function formatInrPrecise(value: number) {
-  if (!Number.isFinite(value)) return '—'
+  if (!Number.isFinite(value)) return '-'
   return new Intl.NumberFormat('en-IN', {
     style: 'currency',
     currency: 'INR',
@@ -176,6 +175,20 @@ export function createRow(index: number): BatchRow {
   }
 }
 
+export function buildDefaultBatchRows(count = 180): BatchRow[] {
+  return Array.from({ length: count }, (_, index) => createRow(index))
+}
+
+export function buildSeedSummary(): BatchSummary {
+  return {
+    totalRows: 10_000,
+    processed: 7_000,
+    success: 6_500,
+    failed: 300,
+    pending: 200,
+  }
+}
+
 export type ZordPipelineIntake = {
   intakeStep: 'idle' | 'intent_uploading' | 'intent_ready' | 'settlement_uploading' | 'closed'
   intentFileName: string | null
@@ -196,7 +209,7 @@ const ZORD_PIPELINE_LABELS = [
 ] as const
 
 /**
- * Batch Command Center pipeline — driven by bulk ingest / settlement intake and grid summary.
+ * Batch Command Center pipeline - driven by bulk ingest / settlement intake and grid summary.
  * `active` is used as the loader step; bank backlog uses `warning` on “Bank confirmation pending”.
  */
 export function deriveZordPipelineTimeline(
@@ -278,81 +291,17 @@ export const PAYMENT_PROOF_PIPELINE_STEPS = [
     label: 'Confirmation received',
     description: 'Bank/settlement/status file has been uploaded or connected.',
   },
-  {
-    label: 'Matching completed',
-    description: 'Service 5 attachment/finality confirms intents are linked to settlement outcomes.',
-  },
+  { label: 'Matching completed', description: 'Zord has linked payment intents with outcome records.' },
   {
     label: 'Ready for proof / review',
     description: 'Batch is ready for evidence export or issue review.',
   },
 ] as const
 
-/**
- * CON-P0-14 — authoritative matching / proof signals from Services 5–6.
- * Never infer "Matching completed" from generic processed-row counts alone.
- */
-export type PaymentProofMatchingSignals = {
-  /** Service 5 `finality_status` / batch health finality. */
-  finalityStatus?: string | null
-  unresolvedCount?: number | null
-  ambiguousCount?: number | null
-  conflictedCount?: number | null
-  unresolvedIntendedMinor?: number | null
-  totalIntendedMinor?: number | null
-  /** Service 5 settlement observations / artifact present for the batch. */
-  settlementArtifactReceived?: boolean
-  settlementObservationCount?: number | null
-  /**
-   * Service 6 evidence pack rate (0–1 or 0–100).
-   * Used for "Ready for proof / review" — not for Matching completed.
-   */
-  evidencePackRate?: number | null
-}
-
-function normalizeEvidencePackRate(rate: number | null | undefined): number | null {
-  if (rate == null || !Number.isFinite(rate)) return null
-  return rate <= 1 ? rate : rate / 100
-}
-
-function hasMaterialUnresolvedAttachment(signals: PaymentProofMatchingSignals | null | undefined): boolean {
-  if (!signals) return false
-  if ((signals.unresolvedCount ?? 0) > 0) return true
-  if ((signals.ambiguousCount ?? 0) > 0) return true
-  if ((signals.conflictedCount ?? 0) > 0) return true
-  const intended = signals.totalIntendedMinor
-  const unresolved = signals.unresolvedIntendedMinor
-  if (
-    intended != null &&
-    Number.isFinite(intended) &&
-    intended > 0 &&
-    unresolved != null &&
-    Number.isFinite(unresolved) &&
-    unresolved / intended >= 0.01
-  ) {
-    return true
-  }
-  return false
-}
-
-/** True only when Service 5 finality + attachment coverage say matching is closed. */
-export function isMatchingCompletedFromService5(
-  signals: PaymentProofMatchingSignals | null | undefined,
-): boolean {
-  if (!signals) return false
-  const finality = String(signals.finalityStatus ?? '')
-    .trim()
-    .toUpperCase()
-  if (finality !== 'FULLY_SETTLED' && finality !== 'SETTLED') return false
-  if (hasMaterialUnresolvedAttachment(signals)) return false
-  return true
-}
-
 /** Payment proof lifecycle for Batch Command Center (no disbursement language). */
 export function derivePaymentProofTimeline(
   summary: BatchSummary,
   intake: ZordPipelineIntake,
-  matchingSignals?: PaymentProofMatchingSignals | null,
 ): BatchTimelineStep[] {
   const fileReceived =
     Boolean(intake.intentFileName) ||
@@ -372,112 +321,55 @@ export function derivePaymentProofTimeline(
     intake.intakeStep === 'intent_uploading' ||
     (intake.uploadState === 'uploading' && Boolean(intake.uploadedFileName))
 
-  // Service 2 ingest complete → intents exist / mapped.
   const intentsCreated = summary.totalRows > 0 && fileMapped
   const intentsCreating = fileMapped && summary.totalRows === 0 && !mappingInFlight
 
-  // Service 5 settlement artifact received (intake upload and/or observations).
-  const settlementArtifactReceived =
-    intake.settlementIngestOk ||
-    intake.intakeStep === 'closed' ||
-    Boolean(intake.settlementFileName) ||
-    Boolean(matchingSignals?.settlementArtifactReceived) ||
-    (matchingSignals?.settlementObservationCount ?? 0) > 0
-  const confirmationReceived = settlementArtifactReceived
-  const confirmationActive = intake.intakeStep === 'settlement_uploading' && !settlementArtifactReceived
+  const confirmationReceived =
+    intake.settlementIngestOk || intake.intakeStep === 'closed' || Boolean(intake.settlementFileName)
+  const confirmationActive = intake.intakeStep === 'settlement_uploading'
 
-  // CON-P0-14: Matching completed ONLY from Service 5 attachment/finality — never from processed counts.
-  const matchingDone = isMatchingCompletedFromService5(matchingSignals)
-  const unresolvedAttachment = hasMaterialUnresolvedAttachment(matchingSignals)
-  const finality = String(matchingSignals?.finalityStatus ?? '')
-    .trim()
-    .toUpperCase()
-  const rowsFullyProcessed =
-    summary.totalRows > 0 && summary.processed >= summary.totalRows
-  const matchingReviewRequired =
+  const matchingDone =
     confirmationReceived &&
-    !matchingDone &&
-    (unresolvedAttachment ||
-      finality === 'PARTIALLY_SETTLED' ||
-      finality === 'REQUIRES_REVIEW' ||
-      finality === 'FAILED' ||
-      // All rows processed is processing completion only — stay in review until S5 closes matching.
-      rowsFullyProcessed ||
-      summary.failed > 0)
+    summary.totalRows > 0 &&
+    summary.processed >= summary.totalRows &&
+    summary.failed === 0
   const matchingActive =
-    confirmationReceived &&
-    !matchingDone &&
-    !matchingReviewRequired &&
-    (finality === 'PROCESSING' ||
-      finality === 'PENDING' ||
-      finality === 'OPEN' ||
-      summary.pending > 0 ||
-      (summary.totalRows > 0 && summary.processed < summary.totalRows))
+    confirmationReceived && summary.totalRows > 0 && summary.processed < summary.totalRows
 
-  const evidenceRate = normalizeEvidencePackRate(matchingSignals?.evidencePackRate ?? null)
-  const evidenceReady = evidenceRate != null && evidenceRate >= 0.8
-  const readyForProofDone = matchingDone && (evidenceReady || evidenceRate == null)
-  const readyForProofWarning =
-    matchingReviewRequired || (intentsCreated && summary.failed > 0) || (matchingDone && evidenceRate != null && !evidenceReady)
+  const readyForReview =
+    matchingDone ||
+    (intentsCreated && summary.failed > 0) ||
+    (intake.intakeStep === 'closed' && summary.totalRows > 0)
 
   const steps: BatchTimelineStep[] = PAYMENT_PROOF_PIPELINE_STEPS.map((s) => ({
     label: s.label,
     state: 'upcoming' as BatchStepState,
-    description: s.description,
   }))
-  const set = (i: number, state: BatchStepState, label?: string, description?: string) => {
+  const set = (i: number, state: BatchStepState) => {
     steps[i].state = state
-    if (label) steps[i].label = label
-    if (description) steps[i].description = description
   }
 
   set(0, fileReceived ? 'done' : 'upcoming')
   if (fileMapped) set(1, 'done')
   else if (mappingInFlight) set(1, 'active')
-  else set(1, 'upcoming')
+  else set(1, fileReceived ? 'upcoming' : 'upcoming')
 
   if (intentsCreated) set(2, 'done')
   else if (intentsCreating) set(2, 'active')
-  else set(2, 'upcoming')
+  else set(2, fileMapped ? 'upcoming' : 'upcoming')
 
   if (confirmationReceived) set(3, 'done')
   else if (confirmationActive) set(3, 'active')
   else set(3, intentsCreated ? 'warning' : 'upcoming')
 
-  if (matchingDone) {
-    set(
-      4,
-      'done',
-      'Matching completed',
-      'Service 5 attachment/finality confirms intents are linked to settlement outcomes.',
-    )
-  } else if (matchingReviewRequired) {
-    set(
-      4,
-      'warning',
-      'Matching / Review required',
-      'Rows may be processed, but Service 5 still has unresolved or ambiguous attachment outcomes.',
-    )
-  } else if (matchingActive) {
-    set(
-      4,
-      'active',
-      'Matching in progress',
-      'Settlement artifact received — waiting for Service 5 attachment/finality.',
-    )
-  } else {
-    set(4, 'upcoming')
-  }
+  if (matchingDone) set(4, 'done')
+  else if (matchingActive) set(4, 'active')
+  else if (confirmationReceived && summary.failed > 0) set(4, 'warning')
+  else set(4, 'upcoming')
 
-  if (readyForProofDone) {
-    set(5, 'done')
-  } else if (readyForProofWarning) {
-    set(5, 'warning')
-  } else if (matchingActive || matchingDone) {
-    set(5, 'active')
-  } else {
-    set(5, 'upcoming')
-  }
+  if (readyForReview) set(5, summary.failed > 0 && !matchingDone ? 'warning' : 'done')
+  else if (matchingActive) set(5, 'active')
+  else set(5, 'upcoming')
 
   return steps
 }
@@ -587,20 +479,20 @@ export function sortRowsByLatest(rows: BatchRow[], sortMode: 'Latest' | 'Oldest'
   return sortMode === 'Latest' ? sorted : sorted.reverse()
 }
 
-/** Neutral row for missing cells — no random “demo” grid. */
+/** Neutral row for missing cells - no random “demo” grid. */
 function emptyBatchRowSkeleton(index: number): BatchRow {
   return {
     refId: `R${index + 1}`,
     amount: 0,
-    beneficiary: '—',
+    beneficiary: '-',
     status: 'Pending',
     stage: STAGES_BY_STATUS.Pending,
     reason: '-',
     time: '-',
     actionLabel: actionFor('Pending'),
     provider: 'RazorpayX',
-    dispatchId: '—',
-    bankReference: '—',
+    dispatchId: '-',
+    bankReference: '-',
     timeline: buildTimeline('Pending', '-'),
   }
 }
@@ -612,14 +504,33 @@ function parseMatrixToBatchRows(matrix: string[][]): BatchRow[] {
   const [headerRow, ...dataRows] = rows
   const headers = headerRow.map((h) => h.toLowerCase())
 
-  const refIdx = headers.findIndex((header) => header.includes('ref') || header.includes('request'))
-  const invoiceIdx = headers.findIndex(
-    (header) => header.includes('invoice') || header === 'inv' || header.includes('invoice_id'),
+  const pickHeader = (...candidates: string[]) => {
+    for (const c of candidates) {
+      const exact = headers.findIndex((h) => h === c)
+      if (exact >= 0) return exact
+    }
+    for (const c of candidates) {
+      const partial = headers.findIndex((h) => h.includes(c))
+      if (partial >= 0) return partial
+    }
+    return -1
+  }
+
+  // Prefer payout/obligation refs over batch refs (YC sample has both).
+  const refIdx = pickHeader(
+    'client_payout_ref',
+    'obligation_id',
+    'payout_ref',
+    'request_id',
+    'requestid',
+    'ref_id',
+    'ref',
   )
-  const amountIdx = headers.findIndex((header) => header.includes('amount'))
-  const beneficiaryIdx = headers.findIndex((header) => header.includes('beneficiary') || header.includes('account'))
-  const statusIdx = headers.findIndex((header) => header.includes('status'))
-  const reasonIdx = headers.findIndex((header) => header.includes('reason') || header.includes('error'))
+  const invoiceIdx = pickHeader('invoice_id', 'invoice', 'inv')
+  const amountIdx = pickHeader('amount.value', 'amount', 'amount_value')
+  const beneficiaryIdx = pickHeader('beneficiary.name', 'beneficiary', 'payee', 'account_number')
+  const statusIdx = pickHeader('status')
+  const reasonIdx = pickHeader('reason', 'error', 'error_detail')
 
   return dataRows.slice(0, 1200).map((cells, index) => {
     const base = emptyBatchRowSkeleton(index)

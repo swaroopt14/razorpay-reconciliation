@@ -29,12 +29,9 @@ function BreakdownRow({ label, value }: { label: string; value: string }) {
 }
 
 export type PaymentHealthCardsProps = {
-  observedValue: string
-  observedSub: string
-  observedFooter?: string
-  matchedAllocatedDisplay: string
-  orphanObservedDisplay: string
-  observedSourceLabel: string
+  fullyMatchedValue: string
+  fullyMatchedSub: string
+  fullyMatchedFooter?: string
   awaitingConfirmation?: boolean
 
   reviewValue: string
@@ -59,17 +56,13 @@ export type PaymentHealthCardsProps = {
   proofFooter?: string
   proofReadyRow: string
   incompleteProofRow: string
-  evidenceVerificationRow: string
   proofHref: string
 }
 
 export function PaymentHealthCards({
-  observedValue,
-  observedSub,
-  observedFooter,
-  matchedAllocatedDisplay,
-  orphanObservedDisplay,
-  observedSourceLabel,
+  fullyMatchedValue,
+  fullyMatchedSub,
+  fullyMatchedFooter,
   awaitingConfirmation = false,
   reviewValue,
   reviewSub,
@@ -91,7 +84,6 @@ export function PaymentHealthCards({
   proofFooter,
   proofReadyRow,
   incompleteProofRow,
-  evidenceVerificationRow,
   proofHref,
 }: PaymentHealthCardsProps) {
   return (
@@ -99,30 +91,25 @@ export function PaymentHealthCards({
       <article className={COMMAND_CENTER_KPI_CARD + ' min-h-[280px]'}>
         <CommandCenterCardGlow />
         <div className="relative z-[1]">
-          <h3 className="text-[14px] font-medium text-[#000000]">Observed Outcome Value</h3>
+          <h3 className="text-[14px] font-medium text-[#000000]">Settlement Value Observed</h3>
           {awaitingConfirmation ? (
             <>
-              <p className={`mt-4 text-[18px] font-semibold ${HOME_TITLE_BLACK}`}>No observed outcomes yet</p>
+              <p className={`mt-4 text-[18px] font-semibold ${HOME_TITLE_BLACK}`}>Awaiting confirmation data</p>
               <p className={`mt-2 ${HOME_BODY_IMPERIAL_SM}`}>
-                Upload settlement records to calculate observed outcome value.
+                Upload bank/settlement records to calculate settlement value observed.
               </p>
             </>
           ) : (
             <>
               <p className="mt-4 text-center text-[36px] leading-none">
-                <HeroMetricWithSuperPercent text={observedValue} />
+                <HeroMetricWithSuperPercent text={fullyMatchedValue} />
               </p>
-              <p className={`mt-2 text-center text-[14px] font-medium ${HOME_BODY_IMPERIAL_SM}`}>{observedSub}</p>
-              <div className="mt-4">
-                <BreakdownRow label="Matched / allocated" value={matchedAllocatedDisplay} />
-                <BreakdownRow label="Unlinked / orphan observed" value={orphanObservedDisplay} />
-                <BreakdownRow label="Source" value={observedSourceLabel} />
-              </div>
+              <p className={`mt-2 text-center text-[14px] font-medium ${HOME_BODY_IMPERIAL_SM}`}>{fullyMatchedSub}</p>
             </>
           )}
         </div>
-        {observedFooter?.trim() ? (
-          <p className={`relative z-[1] mt-auto pt-4 ${HOME_INSIGHT_PROSE}`}>{observedFooter}</p>
+        {fullyMatchedFooter?.trim() ? (
+          <p className={`relative z-[1] mt-auto pt-4 ${HOME_INSIGHT_PROSE}`}>{fullyMatchedFooter}</p>
         ) : null}
       </article>
 
@@ -132,7 +119,7 @@ export function PaymentHealthCards({
       >
         <CommandCenterCardGlow />
         <div className="relative z-[1]">
-          <h3 className="text-[14px] font-medium text-[#000000]">Unresolved Intended Value</h3>
+          <h3 className="text-[14px] font-medium text-[#000000]">Unmatched Intent Value</h3>
           <p className="mt-4 text-center text-[36px] leading-none">
             <HeroMetricWithSuperPercent text={reviewValue} />
           </p>
@@ -181,8 +168,7 @@ export function PaymentHealthCards({
           </p>
           <p className={`mt-2 text-center text-[14px] font-medium ${HOME_BODY_IMPERIAL_SM}`}>{proofSub}</p>
           <div className="mt-4">
-            <BreakdownRow label="Audit coverage" value={proofReadyRow} />
-            <BreakdownRow label="Evidence verification" value={evidenceVerificationRow} />
+            <BreakdownRow label="Proof-ready payments" value={proofReadyRow} />
             <BreakdownRow label="Incomplete proof" value={incompleteProofRow} />
           </div>
         </div>

@@ -14,7 +14,7 @@ export const dynamic = 'force-dynamic'
 const RANGES: DisbursementTrendRange[] = ['week', 'month', 'quarter', 'year']
 
 /**
- * Home trend chart BFF — buckets Intended vs Bank-Confirmed from zord-intelligence
+ * Home trend chart BFF - buckets Intended vs Bank-Confirmed from zord-intelligence
  * leakage dashboard (GET /v1/intelligence/dashboard/leakage) per date window.
  * No intent-engine aggregation.
  */
@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  const buckets = await fetchLeakageTrendFromIntelligence(tenantId, range, gate.accessToken)
+  const buckets = await fetchLeakageTrendFromIntelligence(tenantId, range)
   const body: DisbursementTrendResponse = {
     data_available: buckets.some((b) => b.total_amount > 0 || b.confirmed_amount > 0),
     range,

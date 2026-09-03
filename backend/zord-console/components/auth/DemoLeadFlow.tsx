@@ -58,13 +58,13 @@ const COMPANY_TYPES = [
   'Other',
 ]
 
-const COMPANY_SIZES = ['1–10', '11–50', '51–200', '201–1,000', '1,000+']
+const COMPANY_SIZES = ['1-10', '11-50', '51-200', '201-1,000', '1,000+']
 
 const MONTHLY_VOLUMES = [
   'Under ₹10 lakh',
-  '₹10 lakh – ₹1 crore',
-  '₹1 – 10 crore',
-  '₹10 – 100 crore',
+  '₹10 lakh - ₹1 crore',
+  '₹1 - 10 crore',
+  '₹10 - 100 crore',
   '₹100 crore+',
 ]
 
@@ -124,7 +124,7 @@ const STEP_COPY: Record<StepId, { eyebrow: string; title: string; subtitle: stri
   'use-case': {
     eyebrow: 'Book a demo',
     title: 'What do you want to run on Zord?',
-    subtitle: 'Pick everything that applies — it helps us tailor the walkthrough.',
+    subtitle: 'Pick everything that applies - it helps us tailor the walkthrough.',
   },
   company: {
     eyebrow: 'Book a demo · Company',
@@ -232,7 +232,7 @@ export function DemoLeadFlow() {
       setStep(STEPS[currentIndex + 1].id)
       return
     }
-    // Final step — submit the lead.
+    // Final step - submit the lead.
     setLoading(true)
     try {
       const res = await fetch('/api/leads', {
@@ -259,7 +259,7 @@ export function DemoLeadFlow() {
       <AuthSplitLayout
         variant="demo"
         eyebrow="Request received"
-        title="Thanks — we'll be in touch"
+        title="Thanks - we'll be in touch"
         subtitle={`Our team will reach out to ${form.fullName.split(' ')[0] || 'you'} within one business day to set up your workspace and access.`}
       >
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4">

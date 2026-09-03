@@ -1,4 +1,4 @@
-import { fetchProdJsonGetWithAvailability } from './fetchProdJsonGet'
+import { fetchProdJsonGet } from './fetchProdJsonGet'
 import { apiTrimmedString } from './coerceApiField'
 import type {
   AmbiguityHeatmapResponse,
@@ -36,12 +36,12 @@ function dateQueryExtra(dates?: IntelligenceDateQuery): Record<string, string> {
   return { from_date: dates.from_date, to_date: dates.to_date }
 }
 
-/** Tenant-wide leakage KPI — BFF injects session tenant. */
+/** Tenant-wide leakage KPI - BFF injects session tenant. */
 export async function getLeakageKpis(dates?: IntelligenceDateQuery, batchId?: string): Promise<LeakageKpiResponse | null> {
   const extra = dateQueryExtra(dates)
   const bid = apiTrimmedString(batchId)
   if (bid) extra.batch_id = bid
-  return fetchProdJsonGetWithAvailability<LeakageKpiResponse>(
+  return fetchProdJsonGet<LeakageKpiResponse>(
     intelQueryPath(`${INTEL_BASE}/leakage`, extra),
   )
 }
@@ -50,14 +50,14 @@ export async function getAmbiguityKpis(dates?: IntelligenceDateQuery, batchId?: 
   const extra = dateQueryExtra(dates)
   const bid = apiTrimmedString(batchId)
   if (bid) extra.batch_id = bid
-  return fetchProdJsonGetWithAvailability<AmbiguityKpiResponse>(
+  return fetchProdJsonGet<AmbiguityKpiResponse>(
     intelQueryPath(`${INTEL_BASE}/ambiguity`, extra),
   )
 }
 
-/** Per-batch matching execution heatmap — BFF injects session tenant. */
+/** Per-batch matching execution heatmap - BFF injects session tenant. */
 export async function getAmbiguityHeatmap(): Promise<AmbiguityHeatmapResponse | null> {
-  return fetchProdJsonGetWithAvailability<AmbiguityHeatmapResponse>(`${INTEL_BASE}/ambiguity/heatmap`)
+  return fetchProdJsonGet<AmbiguityHeatmapResponse>(`${INTEL_BASE}/ambiguity/heatmap`)
 }
 
 export async function getDefensibilityKpis(
@@ -67,18 +67,18 @@ export async function getDefensibilityKpis(
   const extra = dateQueryExtra(dates)
   const bid = apiTrimmedString(batchId)
   if (bid) extra.batch_id = bid
-  return fetchProdJsonGetWithAvailability<DefensibilityKpiResponse>(
+  return fetchProdJsonGet<DefensibilityKpiResponse>(
     intelQueryPath(`${INTEL_BASE}/defensibility`, extra),
   )
 }
 
-/** Patterns KPI — optional `batch_id` scopes anomaly to one batch; omit for latest tenant snapshot. */
+/** Patterns KPI - optional `batch_id` scopes anomaly to one batch; omit for latest tenant snapshot. */
 export async function getPatternsKpis(batchId?: string): Promise<PatternsKpiResponse | null> {
   const bid = apiTrimmedString(batchId)
   const path = bid
     ? intelQueryPath(`${INTEL_BASE}/patterns`, { batch_id: bid })
     : intelQueryPath(`${INTEL_BASE}/patterns`)
-  return fetchProdJsonGetWithAvailability<PatternsKpiResponse>(path)
+  return fetchProdJsonGet<PatternsKpiResponse>(path)
 }
 
 export async function getRecommendationsKpis(
@@ -88,7 +88,7 @@ export async function getRecommendationsKpis(
   const extra = dateQueryExtra(dates)
   const bid = apiTrimmedString(batchId)
   if (bid) extra.batch_id = bid
-  return fetchProdJsonGetWithAvailability<RecommendationsKpiResponse>(
+  return fetchProdJsonGet<RecommendationsKpiResponse>(
     intelQueryPath(`${INTEL_BASE}/recommendations`, extra),
   )
 }
@@ -100,7 +100,7 @@ export async function getRcaKpis(
   const extra = dateQueryExtra(dates)
   const bid = apiTrimmedString(batchId)
   if (bid) extra.batch_id = bid
-  return fetchProdJsonGetWithAvailability<RcaKpiResponse>(
+  return fetchProdJsonGet<RcaKpiResponse>(
     intelQueryPath(`${INTEL_BASE}/rca`, extra),
   )
 }
@@ -110,21 +110,21 @@ export type BatchesListOptions = {
   limit?: number
 }
 
-/** Intelligence batch list — BFF injects session tenant (no client tenant_id). */
+/** Intelligence batch list - BFF injects session tenant (no client tenant_id). */
 export async function getIntelligenceBatches(
   opts: BatchesListOptions = {},
 ): Promise<BatchesListResponse | null> {
   const extra: Record<string, string> = {}
   if (opts.status) extra.status = opts.status
   if (opts.limit) extra.limit = String(opts.limit)
-  return fetchProdJsonGetWithAvailability<BatchesListResponse>(intelQueryPath(`${INTEL_BASE}/batches`, extra))
+  return fetchProdJsonGet<BatchesListResponse>(intelQueryPath(`${INTEL_BASE}/batches`, extra))
 }
 
-/** Per-batch intelligence snapshot — BFF injects session tenant. */
+/** Per-batch intelligence snapshot - BFF injects session tenant. */
 export async function getIntelligenceBatchDetail(batchId: string): Promise<BatchDetailResponse | null> {
   const bid = apiTrimmedString(batchId)
   if (!bid) return null
-  return fetchProdJsonGetWithAvailability<BatchDetailResponse>(
+  return fetchProdJsonGet<BatchDetailResponse>(
     intelQueryPath(`${INTEL_BASE}/batches/${encodeURIComponent(bid)}`),
   )
 }
@@ -133,7 +133,7 @@ export async function getIntelligenceBatchDetail(batchId: string): Promise<Batch
 export async function getBatchContractKpis(batchId: string): Promise<BatchContractKpiResponse | null> {
   const bid = apiTrimmedString(batchId)
   if (!bid) return null
-  return fetchProdJsonGetWithAvailability<BatchContractKpiResponse>(
+  return fetchProdJsonGet<BatchContractKpiResponse>(
     intelQueryPath(`${INTEL_BASE}/batch_contract/${encodeURIComponent(bid)}`),
   )
 }

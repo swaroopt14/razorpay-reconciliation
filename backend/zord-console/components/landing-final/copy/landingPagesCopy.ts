@@ -1,55 +1,53 @@
-/** V1-honest copy shared across final-landing pages, no fake scale stats or testimonials. */
-
-import { PAYOUT_COMMAND_HOLY_GRAIL as H } from '@/components/landing-final/copy/landingHolyGrailCopy'
+/** Everyday fintech language shared across final-landing pages. No fake stats or testimonials. */
 
 export const landingPricingCopy = {
   eyebrow: 'Pricing',
-  title: `Commercial clarity for ${H.productName}.`,
+  title: 'Clear pricing for Zord.',
   description:
-    `${H.productName} is sold as a payout operations workspace, sandbox to evaluate, then custom commercials for production rollout. Contact sales for pricing; no checkout or payroll SKUs on this product.`,
+    'Try first with sample data, book a demo when you are ready, then set production pricing with Arealis. No public checkout rates - Zord is a place to see and prove payouts, not a payment gateway plan.',
   heroStats: [
-    { value: 'Sandbox', label: 'evaluate first' },
-    { value: 'Custom', label: 'production commercials' },
-    { value: 'Demo', label: 'guided rollout' },
+    { value: 'Try first', label: 'sample data' },
+    { value: 'Demo', label: 'guided walkthrough' },
+    { value: 'Custom', label: 'production pricing' },
   ] as const,
   product: {
     id: 'payment-command-center',
-    label: H.productName,
-    eyebrow: H.productName,
-    kicker: 'Payout operations workspace',
-    metric: 'Contact sales',
+    label: 'Payout workspace',
+    eyebrow: 'Zord',
+    kicker: 'One place for payout work',
+    metric: 'Talk to sales',
     detail:
-      'Commercials are shaped around workspace depth, connector coverage, Evidence Pack workflows, and rollout support, not generic payment acceptance rates.',
+      'Pricing follows how your teams use Zord, how widely you roll it out, and how much help you need - not card acceptance rates.',
     subdetail:
-      'Start in sandbox to validate the operating model, then work with Arealis on production commercials when ops, finance, and engineering are ready.',
+      'Try with sample data first. When ops and finance are ready, Arealis helps set production pricing.',
     highlights: [
-      `${H.paymentCommandCenter.title}, ${H.pages.paymentGaps}, and ${H.connectorPerformance.title} views`,
-      `${H.evidence.artifact}s for finance close, disputes, and audit questions`,
-      H.askZord.title,
-      'Sandbox preview before production commercials',
+      'See batches, spot gaps, and clear mismatches in one place',
+      'Proof packs for finance close, disputes, and audit questions',
+      'Ask Zord about your payout data in plain language',
+      'Try with sample data before you talk pricing',
     ],
     stats: [
-      ['Commercial model', 'Custom / volume-led'],
-      ['Entry path', 'Sandbox + demo'],
-      ['Best for', 'Ops, finance, engineering'],
+      ['Pricing', 'Custom'],
+      ['Start with', 'Try first + demo'],
+      ['Best for', 'Ops, finance, risk'],
     ] as const,
   },
   plans: [
     {
-      title: 'Sandbox',
-      subtitle: 'Best for evaluation and pilot teams',
+      title: 'Try first',
+      subtitle: 'Best for teams evaluating fit',
       metric: 'No commitment',
       detail:
-        'Explore the payout workspace, connector views, and Evidence Pack flows with illustrative data before production rollout.',
-      points: ['Workspace preview', 'Product walkthrough', 'Technical fit review', 'Standard onboarding docs'],
+        'Explore the payout workspace and proof-pack flows with sample data before you commit to production.',
+      points: ['Workspace preview', 'Product walkthrough', 'Fit review', 'Getting-started guides'],
     },
     {
       title: 'Growth',
-      subtitle: 'Best for teams moving into production',
+      subtitle: 'Best for teams going live',
       metric: 'Annual agreement',
       detail:
-        'Unlock production workspace access, implementation support, and a commercial review cadence once payout volume becomes an operating concern.',
-      points: ['Production workspace', 'Implementation support', 'Commercial review cadence', 'Priority onboarding'],
+        'Live workspace access, onboarding help, and a regular pricing check-in once payouts are day-to-day work.',
+      points: ['Live workspace', 'Setup support', 'Pricing check-ins', 'Priority onboarding'],
       featured: true,
     },
     {
@@ -57,61 +55,76 @@ export const landingPricingCopy = {
       subtitle: 'Best for regulated and high-volume programs',
       metric: 'Custom',
       detail:
-        'Flexible commercials for security review, multi-team rollout, custom Evidence Pack workflows, and dedicated account coverage.',
-      points: ['Volume-led pricing', 'Security review support', 'White-glove rollout', 'Dedicated account coverage'],
+        'Flexible pricing for security review, multi-team go-live, tailored proof packs, and a dedicated account contact.',
+      points: ['Volume-based pricing', 'Security review help', 'Guided go-live', 'Dedicated account contact'],
     },
   ] as const,
   faqs: [
     {
-      question: `How is ${H.productName} priced?`,
+      question: 'How is Zord priced?',
       answer:
-        'Pricing is custom and based on workspace usage, connector coverage, rollout depth, and support needs. There is no self-serve checkout rate on this product, teams start in sandbox and move to commercials with sales.',
+        'Pricing is custom. It depends on how you use the workspace, how widely you use it, and how much support you need. There is no self-serve checkout - teams try first, then talk to sales.',
     },
     {
       question: 'When should I contact sales?',
       answer:
-        'Contact sales when you are ready for a guided demo, production rollout planning, security review, or a commercial discussion after sandbox evaluation.',
+        'Contact sales when you want a guided demo, a plan for going live, a security review, or a pricing talk after you have tried the product.',
     },
     {
-      question: 'Can I start in sandbox first?',
+      question: 'Can I try first?',
       answer:
-        'Yes. Teams should begin in sandbox to validate the operating model, workspace fit, and Evidence Pack workflows before committing to production commercials.',
+        'Yes. Start with sample data to try batch tracking, matching, and proof packs before you commit to production pricing.',
     },
     {
-      question: 'Does this page include Payments, Payroll, or Banking pricing?',
+      question: 'Does this page include Payments, Payroll, or Banking product pricing?',
       answer:
-        `No. This page covers ${H.productName} only. Payments acceptance, payroll subscriptions, and banking products are not part of the V1 payout console commercial model.`,
+        'No. This page covers Zord only - the shared place to see and prove payouts. Card acceptance, payroll subscriptions, and banking products are separate.',
     },
   ] as const,
 } as const
 
+/** Who uses Zord - job problems only. No named customers or fake outcomes. */
 export const buyerPersonas = [
-  {
-    title: 'Operations',
-    role: 'Payout ops & support',
-    body:
-      'Needs one queue for connector drift, confirmation delays, and unconfirmed exposure, not three dashboards and a spreadsheet rebuild every incident.',
-    tags: ['Exception queues', 'Connector watch', 'Batch review'],
-  },
   {
     title: 'Finance',
     role: 'Close & reconciliation',
     body:
-      'Needs Intended vs Bank-Confirmed value, Match Confidence, and exportable Evidence Packs before month-end questions turn into manual hunts.',
-    tags: ['Value at Risk', 'Evidence Packs', 'Close readiness'],
+      'Needs a clear view of money meant to pay versus money the bank confirmed - plus a proof pack before month-end questions turn into manual hunts.',
+    tags: ['Meant to pay vs confirmed', 'Proof packs', 'Ready for close'],
+  },
+  {
+    title: 'Operations',
+    role: 'Payout ops & support',
+    body:
+      'Needs one place to track batches, spot confirmation delays, and clear unclear matches - without rebuilding spreadsheets every time.',
+    tags: ['Batch tracking', 'Payment gaps', 'Needs a person'],
   },
   {
     title: 'Engineering',
     role: 'Platform & integrations',
     body:
-      'Needs a shared payout record across providers and banks so product teams stop rebuilding visibility in internal tools.',
-    tags: ['Payment sources', 'Confirmation context', 'Shared record'],
+      'Needs one shared payout record across banks and payment providers so teams stop rebuilding the same status in internal tools.',
+    tags: ['Shared record', 'Banks & providers', 'Bank confirmations'],
   },
   {
     title: 'Risk & compliance',
     role: 'Review & audit',
     body:
-      'Needs defensible proof attached to each payout state, not screenshots assembled after a dispute or regulator question arrives.',
-    tags: ['Audit trail', 'Evidence Pack exports', 'Case context'],
+      'Needs proof attached to each payout conclusion - not screenshots assembled after a dispute or audit question arrives.',
+    tags: ['Full payment trail', 'Export proof packs', 'Clear reasons'],
+  },
+  {
+    title: 'Audit',
+    role: 'Independent review',
+    body:
+      'Needs to follow a payment from the original instruction through bank confirmation, matching, and proof in one trail.',
+    tags: ['Full payment trail', 'Proof', 'One record'],
+  },
+  {
+    title: 'Leadership',
+    role: 'Payout health overview',
+    body:
+      'Needs a simple view of payout health: what was meant to pay, what was confirmed, and where money is still unclear.',
+    tags: ['Simple status view', 'Trends', 'Open amounts'],
   },
 ] as const

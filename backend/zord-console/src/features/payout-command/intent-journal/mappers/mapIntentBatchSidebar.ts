@@ -1,35 +1,28 @@
 import type { IntentJournalBatchIdItem } from '@/services/payout-command/prod-api/intentJournalTypes'
 import type { JournalBatchRecord } from '@/services/payout-command/prod-api/mapIntentEngineBatch'
-import {
-  JOURNAL_DEFAULT_CURRENCY,
-  resolveBatchTotalAmountMinor,
-} from '@/services/payout-command/prod-api/money/journalMoney'
 
-/** Parse batch total from Service 2 batch-ids into minor units (convert major once). */
-export function parseIntentBatchTotalAmountMinor(
-  item: IntentJournalBatchIdItem | Record<string, unknown>,
-): number {
-  return resolveBatchTotalAmountMinor({
-    total_amount_minor:
-      'total_amount_minor' in item
-        ? (item.total_amount_minor as number | string | null | undefined)
-        : undefined,
-    total_amount:
-      'total_amount' in item ? (item.total_amount as number | string | null | undefined) : undefined,
-  })
+/** Parse `total_amount` from intent-engine GET /api/prod/intents/batch-ids items. */
+export function parseIntentBatchTotalAmount(item: IntentJournalBatchIdItem | Record<string, unknown>): number {
+  const raw = 'total_amount' in item ? item.total_amount : undefined
+  const n = typeof raw === 'number' ? raw : Number.parseFloat(String(raw ?? '').replace(/,/g, ''))
+  return Number.isFinite(n) && n >= 0 ? n : 0
 }
 
 /** Minimal sidebar row from batch-ids list (counts/value enriched after batch select). */
 export function mapBatchIdItemToBatchRecord(item: IntentJournalBatchIdItem): JournalBatchRecord {
-  const batchId = String(item.batch_id ?? '').trim() || '—'
+  const batchId = String(item.batch_id ?? '').trim() || '-'
+  const countRaw = item.total_count ?? item.intent_count
+  const count =
+    typeof countRaw === 'number' && Number.isFinite(countRaw) && countRaw > 0
+      ? Math.floor(countRaw)
+      : 0
   return {
     batchId,
     type: 'Disbursement',
-    apiType: '—',
+    apiType: '-',
     source: 'Intent engine',
-    amountMinor: parseIntentBatchTotalAmountMinor(item),
-    currency: JOURNAL_DEFAULT_CURRENCY,
-    transactions: 0,
+    totalValue: parseIntentBatchTotalAmount(item),
+    transactions: count,
     confirmedCount: 0,
     highConfidenceCount: 0,
     mismatchCount: 0,
@@ -43,22 +36,21 @@ export function enrichBatchRecordWithMetrics(
   base: JournalBatchRecord,
   metrics: {
     instructionCount: number | null
-    intendedAmountMinor: number
+    intendedValue: number
     batchAggregateConfidenceScore: number | null
     reviewCount: number
   },
 ): JournalBatchRecord {
-  const amountMinor =
-    base.amountMinor > 0
-      ? base.amountMinor
-      : metrics.intendedAmountMinor > 0
-        ? metrics.intendedAmountMinor
-        : base.amountMinor
+  const totalValue =
+    base.totalValue > 0
+      ? base.totalValue
+      : metrics.intendedValue > 0
+        ? metrics.intendedValue
+        : base.totalValue
   return {
     ...base,
     transactions: metrics.instructionCount ?? base.transactions,
-    amountMinor,
+    totalValue,
     aggregateConfidenceScore: metrics.batchAggregateConfidenceScore ?? undefined,
   }
 }
-

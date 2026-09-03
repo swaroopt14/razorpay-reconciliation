@@ -1,4 +1,4 @@
-import { fetchProdJsonGetWithAvailability } from './fetchProdJsonGet'
+import { fetchProdJsonGet } from './fetchProdJsonGet'
 import type { IntelligenceDateQuery } from './getIntelligenceKpis'
 import type { ExceptionsSummaryResponse } from './exceptionsSummaryTypes'
 
@@ -16,7 +16,7 @@ export async function getExceptionsSummary(
   if (bid) extra.batch_id = bid
   const params = new URLSearchParams(extra)
   const qs = params.toString()
-  return fetchProdJsonGetWithAvailability<ExceptionsSummaryResponse>(
+  return fetchProdJsonGet<ExceptionsSummaryResponse>(
     qs ? `/api/prod/exceptions/summary?${qs}` : '/api/prod/exceptions/summary',
   )
 }

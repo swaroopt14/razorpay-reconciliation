@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   clamp,
   HOME_QUARTERS,
+  HOME_YEAR_OPTIONS,
   type HomeOverviewSnapshot,
   type HomeTimeframe,
 } from '@/services/payout-command/model'
@@ -70,18 +71,16 @@ export function HomeSurface({
   batchId,
   snapshot,
   timeframe,
-  yearOptions,
   onTimeframeChange,
   onYearChange,
   onQuarterChange,
 }: {
-  /** Optional URL `batch_id` — scopes patterns KPI only. */
+  /** Optional URL `batch_id` - scopes patterns KPI only. */
   batchId?: string
   snapshot: HomeOverviewSnapshot
   timeframe: HomeTimeframe
-  yearOptions: readonly number[]
   onTimeframeChange: (timeframe: HomeTimeframe) => void
-  onYearChange: (year: number) => void
+  onYearChange: (year: 2026 | 2027 | 2028) => void
   onQuarterChange: (quarterIndex: number) => void
 }) {
   const [commandPeriod, setCommandPeriod] = useState<CommandCenterPeriod>(() =>
@@ -91,7 +90,7 @@ export function HomeSurface({
     homeTimeframeToTrendRange(timeframe),
   )
   const [carouselPeriod, setCarouselPeriod] = useState<CarouselInsightPeriod>('weekly')
-  const [heroMetric, setHeroMetric] = useState<'intended' | 'observed'>('intended')
+  const [heroMetric, setHeroMetric] = useState<'intended' | 'confirmed'>('intended')
 
   const { tenantId, tenantReady } = useSessionTenant()
   const { mode } = useEnvironment()
@@ -135,28 +134,16 @@ export function HomeSurface({
     range: carouselTrendRange,
   })
 
-  const {
-    leakage,
-    ambiguity,
-    defensibility,
-    patterns,
-    recommendations,
-    availability: intelligenceState,
-    unavailableReason,
-    loading,
-    refresh,
-  } = useIntelligenceKpis({ tenantReady, batchId, dateQuery: intelligenceDateQuery })
+  const { leakage, ambiguity, defensibility, patterns, recommendations, loading, refresh } = useIntelligenceKpis({
+    tenantReady,
+    batchId,
+    dateQuery: intelligenceDateQuery,
+  })
   const leakageData = isDataAvailable(leakage) ? leakage : null
   const ambData = isDataAvailable(ambiguity) ? ambiguity : null
   const defData = isDataAvailable(defensibility) ? defensibility : null
   const patternsData = isDataAvailable(patterns) ? patterns : null
   const recsData = isDataAvailable(recommendations) ? recommendations : null
-  const intelligenceEmptyInsight =
-    intelligenceState === 'UNAVAILABLE'
-      ? 'Intelligence metrics are temporarily unavailable. Risk and exception values are unknown, not zero.'
-      : intelligenceState === 'STALE'
-        ? 'Current intelligence is delayed. The latest available snapshot is labelled stale.'
-        : TENANT_KPI_EMPTY_CAROUSEL_INSIGHT
 
   const handlePageRefresh = useCallback(async () => {
     await Promise.all([
@@ -277,10 +264,14 @@ export function HomeSurface({
     : trendTotalsMinor && trendTotalsMinor.total > 0
       ? trendTotalsMinor.total
       : null
+  const unmatchedMinor = parseMinorStrict(leakageData?.unmatched_amount_minor)
+  const underSettlementMinor = parseMinorStrict(leakageData?.under_settlement_amount_minor)
   const orphanMinor = parseMinorStrict(leakageData?.orphan_amount_minor)
+  const unlinkedSettlementMinor = orphanMinor
+  const reversalMinor = parseMinorStrict(leakageData?.reversal_exposure_minor)
   const observedMinor = parseMinorStrict(leakageData?.total_observed_settled_amount_minor)
-  const matchedAllocatedMinor =
-    observedMinor != null && orphanMinor != null ? Math.max(0, observedMinor - orphanMinor) : null
+
+  const bankConfirmedMinor = observedMinor
 
   const reviewMinor = leakageData != null ? parseMinorField(leakageData.unmatched_amount_minor) : null
   const unmatchedAmountExact =
@@ -300,7 +291,7 @@ export function HomeSurface({
       ? fmtInrFromMinorExact(reviewMinor)
       : loading
         ? '…'
-        : '—'
+        : '-'
 
   const insightCarouselCards = useMemo(
     () =>
@@ -308,7 +299,7 @@ export function HomeSurface({
         tenantReady,
         kpiLoading: loading || carouselTrendLoading,
         carouselPeriod,
-        emptyInsightParagraph: intelligenceEmptyInsight,
+        emptyInsightParagraph: TENANT_KPI_EMPTY_CAROUSEL_INSIGHT,
         trendSeries: carouselTrendSeries,
         trendChartReady: Boolean(
           carouselTrendSeries?.data_available && (carouselTrendSeries.buckets?.length ?? 0) > 0,
@@ -328,7 +319,6 @@ export function HomeSurface({
       ambData,
       defData,
       patternsData,
-      intelligenceEmptyInsight,
     ],
   )
 
@@ -343,7 +333,7 @@ export function HomeSurface({
         id: `empty-insight-${cards.length}`,
         type: 'insight' as const,
         label: 'Insights',
-        paragraph: intelligenceEmptyInsight,
+        paragraph: TENANT_KPI_EMPTY_CAROUSEL_INSIGHT,
       })
     }
     return cards.map((card, index) => (
@@ -355,10 +345,10 @@ export function HomeSurface({
         cards={[card]}
       />
     ))
-  }, [insightCarouselCards, intelligenceEmptyInsight, tenantReady, insightCarouselLoading])
+  }, [insightCarouselCards, tenantReady, insightCarouselLoading])
 
   const matchConfidencePct = useMemo(() => {
-    const withPct = (v: string) => (v === '—' || v === '…' ? v : `${v}%`)
+    const withPct = (v: string) => (v === '-' || v === '…' ? v : `${v}%`)
     return withPct(displayApiField(ambData?.avg_attachment_confidence, loading))
   }, [ambData, loading])
 
@@ -368,40 +358,22 @@ export function HomeSurface({
 
   const multiMatchRate = displayApiField(ambData?.candidate_collision_rate, loading)
 
-  const withPct = (v: string) => (v === '—' || v === '…' ? v : `${v}%`)
+  const withPct = (v: string) => (v === '-' || v === '…' ? v : `${v}%`)
   const proofCoveragePct = withPct(displayApiField(defData?.evidence_pack_rate, loading))
   const proofReadyRow = withPct(displayApiField(defData?.audit_ready_pct, loading))
   const incompleteProofRow = displayApiField(defData?.weak_evidence_count, loading)
-  const evidenceVerificationRow =
-    dataSources.evidenceStatus === 'ready'
-      ? 'Verified pack available'
-      : dataSources.evidenceStatus === 'partial'
-        ? 'Not verified'
-        : 'Unavailable'
 
   const settlementHeroDisplay = loading
     ? '…'
     : formatKpiMoneyMinor(leakageData?.total_observed_settled_amount_minor)
-  const matchedAllocatedDisplay = loading
-    ? '…'
-    : matchedAllocatedMinor != null
-      ? fmtInrFromMinorExact(matchedAllocatedMinor)
-      : '—'
-  // CON-P0-19 — label by actual ingest source metadata (never call observed "bank-confirmed").
-  const observedSourceLabel =
-    dataSources.bankStatementStatus === 'received' || dataSources.bankStatementStatus === 'partial'
-      ? 'Bank'
-      : dataSources.settlementStatus === 'received' || dataSources.settlementStatus === 'partial'
-        ? 'Settlement'
-        : 'Unavailable'
 
   const nextActions = useMemo(() => {
     const actions: Array<{ title: string; description: string; href?: string; emphasis?: boolean }> = []
     if (dataSources.settlementStatus === 'missing') {
       actions.push({
-        title: 'Upload settlement outcome file',
-        description: 'Required to populate observed outcome value for this period.',
-        href: '/payout-command-view/today?dock=settlement',
+        title: 'Upload bank confirmation file',
+        description: 'Required to complete proof for this period.',
+        href: '/settlement/journal?demo=sandbox',
         emphasis: true,
       })
     }
@@ -454,14 +426,14 @@ export function HomeSurface({
         </button>
         <button
           type="button"
-          onClick={() => setHeroMetric('observed')}
+          onClick={() => setHeroMetric('confirmed')}
           className={`rounded-full px-4 py-1.5 text-[13px] font-medium transition ${
-            heroMetric === 'observed'
+            heroMetric === 'confirmed'
               ? 'bg-white text-[#000000] shadow-sm ring-1 ring-black/5'
               : 'text-slate-500 hover:text-slate-700'
           }`}
         >
-          Observed
+          Bank-Confirmed
         </button>
       </div>
 
@@ -469,7 +441,7 @@ export function HomeSurface({
         {heroMetric === 'intended' ? (
           <>
             <div className={`text-[64px] font-extrabold leading-none tabular-nums text-[#000000] sm:text-[72px]`}>
-              {intendedMinor !== null ? fmtInrFromMinorExact(intendedMinor) : loading || trendLoading ? '₹…' : '—'}
+              {intendedMinor !== null ? fmtInrFromMinorExact(intendedMinor) : loading || trendLoading ? '₹…' : '-'}
             </div>
             <div className="mt-3 text-[18px] font-bold text-[#000000]">Intended Payment Value</div>
             <p className={`mt-2 max-w-xs ${HOME_BODY_IMPERIAL_CENTERED}`}>
@@ -477,22 +449,20 @@ export function HomeSurface({
                 ? `${intentCountLabel} payment instructions received in this period.`
                 : loading || trendLoading
                   ? '…'
-                  : '—'}
+                  : '-'}
             </p>
           </>
         ) : (
           <>
             <div className={`text-[64px] font-extrabold leading-none tabular-nums text-[#000000] sm:text-[72px]`}>
-              {observedMinor != null && observedMinor > 0
-                ? fmtInrFromMinorExact(observedMinor)
-                : loading
-                  ? '₹…'
-                  : '—'}
+              {bankConfirmedMinor != null && bankConfirmedMinor > 0
+                ? fmtInrFromMinorExact(bankConfirmedMinor)
+                : 'Not connected yet'}
             </div>
-            <div className="mt-3 text-[18px] font-bold text-[#000000]">Observed Outcome Value</div>
+            <div className="mt-3 text-[18px] font-bold text-[#000000]">Bank-Confirmed Value</div>
             <p className={`mt-2 max-w-xs ${HOME_BODY_IMPERIAL_CENTERED}`}>
-              {observedMinor != null && observedMinor > 0
-                ? 'Reported settlement/outcome value. This is not matched allocation or bank confirmation.'
+              {bankConfirmedMinor != null && bankConfirmedMinor > 0
+                ? 'Confirmed from bank/settlement records in this period.'
                 : PAYMENT_COMMAND_CENTER.bankPending}
             </p>
           </>
@@ -550,23 +520,6 @@ export function HomeSurface({
 
   return (
     <div className="mt-0 w-full min-w-0">
-        {!isSandbox && intelligenceState === 'UNAVAILABLE' ? (
-          <div className="px-4 pb-4 sm:px-6 lg:px-8" role="alert" data-testid="intelligence-unavailable">
-            <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-left">
-              <p className="text-[14px] font-semibold text-amber-950">Intelligence data is unavailable</p>
-              <p className="mt-1 text-[13px] leading-relaxed text-amber-900">
-                {unavailableReason || 'Risk, exception, and evidence metrics could not be loaded. Values are not zero.'}
-              </p>
-            </div>
-          </div>
-        ) : null}
-        {!isSandbox && intelligenceState === 'STALE' ? (
-          <div className="px-4 pb-4 sm:px-6 lg:px-8" role="status" data-testid="intelligence-stale">
-            <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-left text-[13px] text-sky-950">
-              Intelligence is showing the latest available snapshot. Current upstream data is delayed.
-            </div>
-          </div>
-        ) : null}
         {isSandbox ? (
           <div className="px-4 pt-2 sm:px-6 lg:px-8">
             <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between lg:gap-8">
@@ -585,7 +538,7 @@ export function HomeSurface({
             <span className="truncate">{snapshot.timeframeLabel}</span>
           </div>
           <div className="flex w-1/2 min-w-0 items-center justify-end gap-2 px-4 py-3 sm:px-6 lg:px-8">
-            {yearOptions.map((year) => (
+            {HOME_YEAR_OPTIONS.map((year) => (
               <button
                 key={year}
                 type="button"
@@ -641,22 +594,19 @@ export function HomeSurface({
         </div>
 
         <section
-          className="mt-8 space-y-3 bg-[#f4f4f1] px-2 pb-3 pt-1.5 sm:px-3 lg:px-4"
+          className="mt-8 space-y-3 bg-[#F8FAFC] px-2 pb-3 pt-1.5 sm:px-3 lg:px-4"
           aria-labelledby="home-today-command-center-title"
         >
           <PaymentCommandCenterBand
             carouselPeriod={carouselPeriod}
             onCarouselPeriodChange={setCarouselPeriod}
-            observedValue={settlementHeroDisplay}
-            observedSub="Reported outcome value — not matched allocation"
-            observedFooter="Orphan and unlinked records increase observed value. They do not increase matched or allocated value."
-            matchedAllocatedDisplay={matchedAllocatedDisplay}
-            orphanObservedDisplay={loading ? '…' : formatKpiMoneyMinor(leakageData?.orphan_amount_minor)}
-            observedSourceLabel={observedSourceLabel}
+            fullyMatchedValue={settlementHeroDisplay}
+            fullyMatchedSub="Settlement value confirmed by bank or PSP"
+            fullyMatchedFooter="Includes partial matches and linked outcomes. This is not the same as total intended payment value for the batch."
             awaitingConfirmation={false}
             reviewValue={reviewDisplay}
-            reviewSub="Intended payments without a confirmed settlement outcome"
-            reviewFooter="Unresolved intended value. Short-settled, over-settled, unlinked, and reversal amounts are broken out below."
+            reviewSub="Payments without a confirmed settlement outcome"
+            reviewFooter="Covers payments with no confirmed settlement link. Short-settled, over-settled, unlinked, and reversal amounts are broken out below."
             shortSettledDisplay={loading ? '…' : formatKpiMoneyMinor(leakageData?.under_settlement_amount_minor)}
             overSettledDisplay={loading ? '…' : formatKpiMoneyMinor(leakageData?.over_settlement_amount_minor)}
             unlinkedDisplay={loading ? '…' : formatKpiMoneyMinor(leakageData?.orphan_amount_minor)}
@@ -670,11 +620,10 @@ export function HomeSurface({
             refCompleteness={refCompleteness}
             multiMatchRate={multiMatchRate}
             proofCoverageDisplay={proofCoveragePct}
-            proofSub="Evidence pack coverage (analytical)"
-            proofFooter="Audit coverage is a Service 7 percentage. Evidence verification comes only from Service 6 pack status — 85% coverage is not Evidence Ready."
+            proofSub="Evidence coverage for audit or export"
+            proofFooter="Proof-ready payments have enough linked evidence to support audit or dispute export."
             proofReadyRow={proofReadyRow}
             incompleteProofRow={incompleteProofRow}
-            evidenceVerificationRow={evidenceVerificationRow}
             proofHref="/payout-command-view/today?dock=proof"
             nextActions={{ actions: nextActions, completionHint }}
             insightCarousels={insightCarouselSlots}

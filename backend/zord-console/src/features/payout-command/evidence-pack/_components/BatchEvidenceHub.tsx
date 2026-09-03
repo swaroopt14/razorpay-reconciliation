@@ -65,17 +65,19 @@ function IntentTabContent({
 
   if (subtab === 'graph') {
     return (
-      <div className="flex min-h-[520px] flex-col bg-[#fafafa]">
-        <div className="border-b border-[#E5E5E5] bg-white px-4 py-3 sm:px-5">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-            {evidenceCopy.hub.intentHeroTitle}
-          </p>
-          <p className="mt-1 font-mono text-[12px] text-slate-600">{activeIntentPackId}</p>
+      <div className="flex min-h-[640px] flex-col bg-white">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E5E5E5] bg-gradient-to-r from-[#111111] to-[#2a2a2a] px-4 py-3 text-white">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/55">
+              {evidenceCopy.hub.intentHeroTitle}
+            </p>
+            <p className="mt-1 truncate font-mono text-[13px] font-semibold text-white">{activeIntentPackId}</p>
+          </div>
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-white/90">
+            Intent proof
+          </span>
         </div>
-        <div className="border-b border-[#E5E5E5] bg-white px-4 py-3 sm:px-5">
-          <EvidencePackVerifyCard packId={activeIntentPackId} />
-        </div>
-        <div className="min-h-[420px] flex-1 bg-white p-3 sm:p-4">
+        <div className="min-h-[min(72vh,820px)] flex-1 p-1 sm:p-2">
           <MerkleGraphSurface
             initialPackId={activeIntentPackId}
             embedMode
@@ -84,6 +86,9 @@ function IntentTabContent({
             intentOptionsSource="table"
             hideScopePickers
           />
+        </div>
+        <div className="border-t border-[#E5E5E5] px-3 py-3 sm:max-w-lg">
+          <EvidencePackVerifyCard packId={activeIntentPackId} />
         </div>
       </div>
     )
@@ -208,6 +213,10 @@ export function BatchEvidenceHub({ batchPackId, batchId }: BatchEvidenceHubProps
     return fromList || batchPackId
   }, [batchPacks, batchPackId])
 
+  /** This hub is scoped to a single batch pack page - badge is always 1 when a batch is present. */
+  const batchGraphCount = bid || batchPackId ? 1 : 0
+  const intentProofCount = intentPacks.length
+
   const subtabHref = (t: IntentSubtab) => {
     const params = new URLSearchParams(searchParams.toString())
     params.set('tab', 'graph')
@@ -288,45 +297,63 @@ export function BatchEvidenceHub({ batchPackId, batchId }: BatchEvidenceHubProps
       ) : null}
 
       <div className="rounded-xl border border-[#E5E5E5] bg-white px-4 py-3">
-        <div className="inline-flex rounded-full border border-slate-200 bg-slate-100/80 p-1">
+        <div className="inline-flex rounded-full border border-[#E5E5E5] bg-[#f4f4f5] p-1">
           <button
             type="button"
             onClick={() => handleScopeChange('batch')}
-            className={`rounded-full px-3 py-1 text-[12px] font-semibold transition ${
-              scope === 'batch' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+            className={`inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[12px] font-semibold transition ${
+              scope === 'batch'
+                ? 'bg-[#111111] text-white shadow-sm'
+                : 'text-[#333333] hover:bg-white hover:text-[#111111]'
             }`}
           >
-            {evidenceCopy.hub.batchGraph} ({batchPacks.length || 1})
+            {evidenceCopy.hub.batchGraph}
+            <span
+              className={`rounded-full px-1.5 py-0.5 font-mono text-[11px] tabular-nums ${
+                scope === 'batch' ? 'bg-white/15 text-white' : 'bg-white text-[#111111]'
+              }`}
+            >
+              {batchGraphCount}
+            </span>
           </button>
           <button
             type="button"
             onClick={() => handleScopeChange('intent')}
             disabled={packLoading || intentPacks.length === 0}
-            className={`rounded-full px-3 py-1 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
-              scope === 'intent' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+            className={`inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+              scope === 'intent'
+                ? 'bg-[#111111] text-white shadow-sm'
+                : 'text-[#333333] hover:bg-white hover:text-[#111111]'
             }`}
           >
-            {evidenceCopy.hub.intentProofs} ({intentPacks.length})
+            {evidenceCopy.hub.intentProofs}
+            <span
+              className={`rounded-full px-1.5 py-0.5 font-mono text-[11px] tabular-nums ${
+                scope === 'intent' ? 'bg-white/15 text-white' : 'bg-white text-[#111111]'
+              }`}
+            >
+              {intentProofCount}
+            </span>
           </button>
         </div>
-        {packError ? <p className="mt-2 text-[12px] font-medium text-amber-700">{packError}</p> : null}
+        {packError ? <p className="mt-2 text-[12px] font-medium text-[#0B1324]">{packError}</p> : null}
       </div>
 
       {scope === 'batch' ? (
-        <div className="space-y-4">
-          <p className="text-[14px] text-[#6f716d]">{evidenceCopy.graph.batchSubtitle}</p>
-          <div className="grid gap-5 lg:grid-cols-[minmax(280px,320px)_minmax(0,1fr)]">
+        <div className="space-y-3">
+          <p className="px-1 text-[14px] text-[#333333]">{evidenceCopy.graph.batchSubtitle}</p>
+          <div className="min-w-0">
+            <MerkleGraphSurface
+              initialPackId={batchPackId}
+              embedMode
+              controlledBatchId={bid || undefined}
+              controlledPackId={batchViewPackId}
+              intentOptionsSource="table"
+              hideScopePickers
+            />
+          </div>
+          <div className="px-1 sm:max-w-lg">
             <EvidencePackVerifyCard packId={batchViewPackId} />
-            <div className="min-w-0">
-              <MerkleGraphSurface
-                initialPackId={batchPackId}
-                embedMode
-                controlledBatchId={bid || undefined}
-                controlledPackId={batchViewPackId}
-                intentOptionsSource="table"
-                hideScopePickers
-              />
-            </div>
           </div>
         </div>
       ) : (
@@ -343,23 +370,26 @@ export function BatchEvidenceHub({ batchPackId, batchId }: BatchEvidenceHubProps
 
           <div className="flex min-w-0 flex-1 flex-col border-[#E5E5E5] lg:border-l">
             <nav
-              className="flex flex-wrap gap-1 border-b border-[#E5E5E5] bg-[#f8f8f6] p-2"
+              className="flex flex-wrap gap-1 border-b border-[#E5E5E5] bg-[#fafafa] p-2"
               aria-label="Payment proof details"
             >
-              {INTENT_SUBTABS.map((t) => (
-                <Link
-                  key={t}
-                  href={subtabHref(t)}
-                  scroll={false}
-                  className={`rounded-[0.6rem] px-3 py-1.5 text-[13px] font-semibold transition ${
-                    currentSubtab === t
-                      ? 'bg-white text-[#111111] shadow-sm ring-1 ring-[#E5E5E5]'
-                      : 'text-[#6f716d] hover:bg-white/80 hover:text-[#111111]'
-                  }`}
-                >
-                  {subtabLabels[t]}
-                </Link>
-              ))}
+              {INTENT_SUBTABS.map((t) => {
+                const active = currentSubtab === t
+                return (
+                  <Link
+                    key={t}
+                    href={subtabHref(t)}
+                    scroll={false}
+                    className={`rounded-lg px-3.5 py-1.5 text-[12px] font-semibold transition ${
+                      active
+                        ? 'bg-[#111111] text-white shadow-sm'
+                        : 'text-[#444444] hover:bg-white hover:text-[#111111]'
+                    }`}
+                  >
+                    {subtabLabels[t]}
+                  </Link>
+                )
+              })}
             </nav>
 
             <div className="min-h-0 flex-1 overflow-y-auto">

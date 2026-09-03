@@ -2,7 +2,7 @@ import { fetchProdJsonGet } from './fetchProdJsonGet'
 import type { AmbiguityVelocityScatterResponse } from './ambiguityVelocityTypes'
 
 export type GetAmbiguityVelocityScatterParams = {
-  /** Optional — forwarded as `batch_id` to bubble-map upstream. */
+  /** Optional - forwarded as `batch_id` to bubble-map upstream. */
   batchId?: string
 }
 

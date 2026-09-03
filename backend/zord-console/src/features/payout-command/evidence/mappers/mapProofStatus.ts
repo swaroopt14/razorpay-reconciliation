@@ -12,26 +12,6 @@ export type MappedProofStatus = {
   label: string
 }
 
-function completenessFromLeafCount(
-  count: number | undefined,
-  leafTotal: number,
-  packStatus: string,
-): MappedProofStatus {
-  if (count !== undefined && count < 3) {
-    return { key: 'missingSettlement', label: PROOF_STATUS.missingSettlement }
-  }
-  if (packStatus === 'ACTIVE' || packStatus === 'SEALED') {
-    if (count !== undefined && count < leafTotal - 1) {
-      return { key: 'partialProof', label: PROOF_STATUS.partialProof }
-    }
-    return { key: 'proofReady', label: PROOF_STATUS.proofReady }
-  }
-  if (packStatus === 'PENDING' || packStatus === 'DRAFT') {
-    return { key: 'needsReview', label: PROOF_STATUS.needsReview }
-  }
-  return { key: 'partialProof', label: PROOF_STATUS.partialProof }
-}
-
 export function mapProofStatusFromPack(
   summary: EvidencePackSummaryRow,
   itemCount?: number,
@@ -63,15 +43,13 @@ export function mapProofStatusFromPack(
     component: 'replay_check_passed',
   })
 
-  if (verificationState === 'verified') return { key: 'verified', label: PROOF_STATUS.verified }
-  if (verificationState === 'internally_consistent') {
-    return { key: 'internallyConsistent', label: PROOF_STATUS.internallyConsistent }
-  }
+  if (verificationState === 'verified' || proofStatus === 'VERIFIED')
+    return { key: 'verified', label: PROOF_STATUS.verified }
   if (proofStatus === 'EXPORTED') return { key: 'exported', label: PROOF_STATUS.exported }
-  if (st === 'SUPERSEDED' || proofStatus === 'REVOKED' || proofStatus === 'REVOKED_SUPERSEDED') {
+  if (st === 'SUPERSEDED' || proofStatus === 'REVOKED')
     return { key: 'revoked', label: PROOF_STATUS.revoked }
-  }
   if (verificationState === 'failed') return { key: 'needsReview', label: PROOF_STATUS.needsReview }
+  if (proofStatus === 'CERTIFIED') return { key: 'proofReady', label: PROOF_STATUS.proofReady }
 
   if (!apiTrimmedString(summary.intent_id))
     return { key: 'missingIntent', label: PROOF_STATUS.missingIntent }
@@ -82,23 +60,22 @@ export function mapProofStatusFromPack(
     return { key: 'missingGovernanceCheck', label: PROOF_STATUS.missingGovernanceCheck }
   if (replaySignal === false) return { key: 'missingReplayCheck', label: PROOF_STATUS.missingReplayCheck }
 
-  if (
-    proofStatus === 'CERTIFIED' ||
-    proofStatus === 'PROOF_READY' ||
-    proofStatus === 'PROOF_ASSEMBLED' ||
-    proofStatus === 'VERIFIED'
-  ) {
+  if (count !== undefined && count < 3)
+    return { key: 'missingSettlement', label: PROOF_STATUS.missingSettlement }
+
+  if (st === 'ACTIVE' || st === 'SEALED') {
+    if (count !== undefined && count < leafTotal - 1)
+      return { key: 'partialProof', label: PROOF_STATUS.partialProof }
+    if (count !== undefined && count >= leafTotal - 1)
+      return { key: 'proofReady', label: PROOF_STATUS.proofReady }
     return { key: 'proofReady', label: PROOF_STATUS.proofReady }
   }
 
-  const completeness = completenessFromLeafCount(count, leafTotal, st)
-  if (completeness.key === 'proofReady' && verificationState === 'unknown') {
-    return { key: 'verificationNotRun', label: PROOF_STATUS.verificationNotRun }
-  }
-  return completeness
+  if (st === 'PENDING' || st === 'DRAFT') return { key: 'needsReview', label: PROOF_STATUS.needsReview }
+
+  return { key: 'partialProof', label: PROOF_STATUS.partialProof }
 }
 
-/** Export of a *verified* document requires Service 6 VERIFIED, not completeness. */
 export function isExportReadyStatus(key: MappedProofStatus['key']): boolean {
-  return key === 'verified' || key === 'exported'
+  return key === 'proofReady' || key === 'verified' || key === 'exported'
 }

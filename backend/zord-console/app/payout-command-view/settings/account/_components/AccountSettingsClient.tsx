@@ -26,12 +26,12 @@ export function AccountSettingsClient() {
   })
 
   const workspaceValue = useMemo(() => {
-    if (!profile) return loading ? 'Loading…' : '—'
+    if (!profile) return loading ? 'Loading…' : '-'
 
     const parts = [profile.tenantName, profile.workspaceCode ? `(${profile.workspaceCode})` : null].filter(Boolean)
     if (parts.length > 0) return parts.join(' ')
     if (profile.tenantId) return profile.tenantId
-    return '—'
+    return '-'
   }, [loading, profile])
 
   const sessionValue = useMemo(() => {
@@ -54,11 +54,11 @@ export function AccountSettingsClient() {
           <p className="text-[17px] font-semibold text-[#0f172a]">Profile</p>
         </header>
         <div className="space-y-3 px-5 py-4">
-          <Field label="Name" value={profile?.name || (loading ? 'Loading…' : '—')} />
-          <Field label="Email" value={profile?.email || (loading ? 'Loading…' : '—')} />
+          <Field label="Name" value={profile?.name || (loading ? 'Loading…' : '-')} />
+          <Field label="Email" value={profile?.email || (loading ? 'Loading…' : '-')} />
           <Field label="Workspace" value={workspaceValue} />
-          <Field label="Tenant ID" value={profile?.tenantId || (loading ? 'Loading…' : '—')} />
-          <Field label="Role" value={profile?.role || (loading ? 'Loading…' : '—')} />
+          <Field label="Tenant ID" value={profile?.tenantId || (loading ? 'Loading…' : '-')} />
+          <Field label="Role" value={profile?.role || (loading ? 'Loading…' : '-')} />
         </div>
       </article>
 
@@ -73,9 +73,9 @@ export function AccountSettingsClient() {
         </div>
       </article>
 
-      <article className="overflow-hidden rounded-[16px] border border-rose-200 bg-rose-50/40 shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
-        <header className="border-b border-rose-200 px-5 py-3">
-          <p className="text-[17px] font-semibold text-rose-700">Danger zone</p>
+      <article className="overflow-hidden rounded-[16px] border border-[#0B1324]/20 bg-[#F1F5F9] shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
+        <header className="border-b border-[#0B1324]/20 px-5 py-3">
+          <p className="text-[17px] font-semibold text-[#0B1324]">Danger zone</p>
         </header>
         <div className="space-y-3 px-5 py-4">
           <Field label="Delete account" value="Removes all sandbox data and revokes keys." action="Delete" destructive />
@@ -107,7 +107,7 @@ function Field({
           type="button"
           className={`rounded-[6px] border px-2.5 py-1 text-[15px] font-medium transition ${
             destructive
-              ? 'border-rose-300 bg-white text-rose-700 hover:bg-rose-100'
+              ? 'border-[#0B1324]/25 bg-white text-[#0B1324] hover:bg-[#F1F5F9]'
               : 'border-[#E5E5E5] bg-white text-[#475569] hover:bg-[#fafafa]'
           }`}
         >

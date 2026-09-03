@@ -48,7 +48,6 @@ export const BACKEND_SERVICES = {
       DLQ_MANUAL_REVIEW: '/v1/dlq/manual-review',
       DLQ_TERMINAL_COUNT: '/v1/dlq/terminal/count',
       DLQ_BY_ID: (id: string) => `/v1/dlq/${id}`,
-      DLQ_COUNT_ALL: '/internal/dlq/count',
     },
   },
 
@@ -126,7 +125,6 @@ export const BACKEND_SERVICES = {
         `/v1/evidence/packs/${encodeURIComponent(packId)}/lineage-graph`,
       PACK_VERIFY: (packId: string) =>
         `/v1/evidence/packs/${encodeURIComponent(packId)}/verify`,
-      DISPUTE_EXPORT: '/v1/dispute/export',
     },
   },
 } as const

@@ -26,7 +26,7 @@ const PLANS = [
   {
     id: 'pro',
     name: 'Pro',
-    price: '—',
+    price: '-',
     cadence: '',
     features: ['Higher intent volume', 'Email + chat support', 'Basic analytics', 'Single workspace'],
     cta: 'Pricing set at activation',
@@ -35,7 +35,7 @@ const PLANS = [
   {
     id: 'business',
     name: 'Business',
-    price: '—',
+    price: '-',
     cadence: '',
     features: ['Team-scale volume', 'Phone support', 'Advanced analytics', 'Team seats', 'Priority routing'],
     cta: 'Pricing set at activation',
@@ -45,7 +45,7 @@ const PLANS = [
 const SHELL_CARD =
   'rounded-[12px] border border-slate-200/90 bg-white/95 shadow-[0_2px_12px_rgba(15,23,42,0.04)]'
 const JOURNAL_PILL =
-  'inline-flex max-w-full flex-wrap items-center gap-2 rounded-full bg-[#000000] px-3.5 py-1.5 text-[14px] font-medium tracking-[0] text-[#000000] shadow-sm ring-1 ring-[#000000]/30'
+  'inline-flex max-w-full flex-wrap items-center gap-2 rounded-full bg-[#0B1324] px-3.5 py-1.5 text-[14px] font-medium tracking-[0] text-white shadow-sm ring-1 ring-[#0B1324]/30'
 
 export function BillingSurface({ onActivateClick }: { onActivateClick: () => void }) {
   const { mode, liveActivationStatus } = useEnvironment()
@@ -72,8 +72,8 @@ export function BillingSurface({ onActivateClick }: { onActivateClick: () => voi
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <LiveDataHint isLive={isSandbox && !processingLoading && processingCount !== null} source="intent-engine" />
           {inReview ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[13px] font-semibold text-amber-800">
-              <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden />
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-[#0B1324]/20 bg-[#F1F5F9] px-2.5 py-1 text-[13px] font-semibold text-[#0B1324]">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#0B1324]" aria-hidden />
               Activation in review
             </span>
           ) : null}
@@ -140,7 +140,7 @@ export function BillingSurface({ onActivateClick }: { onActivateClick: () => voi
                     <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[#E5E5E5]">
                       <div
                         className={`h-full rounded-full transition-all ${
-                          usagePct >= 90 ? 'bg-amber-500' : 'bg-black'
+                          usagePct >= 90 ? 'bg-[#0B1324]' : 'bg-black'
                         }`}
                         style={{ width: `${usagePct}%` }}
                       />
@@ -221,7 +221,7 @@ export function BillingSurface({ onActivateClick }: { onActivateClick: () => voi
               <p className={`mt-0.5 ${HOME_BODY_IMPERIAL_SM}`}>No charges in sandbox mode.</p>
             </header>
             <div className="px-5 py-10 text-center">
-              <p className="text-[14px] text-[#94a3b8]">No invoices yet — your sandbox is free.</p>
+              <p className="text-[14px] text-[#94a3b8]">No invoices yet - your sandbox is free.</p>
             </div>
           </section>
         </div>
@@ -254,7 +254,7 @@ export function BillingSurface({ onActivateClick }: { onActivateClick: () => voi
             <p className={`text-[16px] font-semibold ${HOME_TITLE_BLACK}`}>Billing contact</p>
             <p className={`mt-1 ${HOME_BODY_IMPERIAL_SM}`}>Where invoices and payment receipts are sent.</p>
             <div className="mt-3 space-y-1">
-              <p className={`text-[14px] ${HOME_TITLE_BLACK}`}>—</p>
+              <p className={`text-[14px] ${HOME_TITLE_BLACK}`}>-</p>
               <p className="text-[12px] text-[#94a3b8]">No billing contact on file</p>
             </div>
             <button

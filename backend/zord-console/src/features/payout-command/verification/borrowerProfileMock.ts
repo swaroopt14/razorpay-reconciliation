@@ -123,7 +123,7 @@ function buildDocuments(row: BorrowerQueueRow, seed: number): BorrowerDocument[]
       title: 'Aadhaar offline XML',
       state: row.stage === 'Aadhaar XML' ? 'pending' : panState,
       primary: `•••• •••• ${String(4000 + (seed % 6000)).slice(0, 4)}`,
-      meta: row.stage === 'Aadhaar XML' ? 'Share-code expired — re-requested' : 'Share-code verified',
+      meta: row.stage === 'Aadhaar XML' ? 'Share-code expired - re-requested' : 'Share-code verified',
       verifiedBy: 'Sumsub',
     },
     {

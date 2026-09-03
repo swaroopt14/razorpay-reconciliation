@@ -1,7 +1,7 @@
 # Use a public mirror by default to avoid Docker Hub auth DNS failures.
 # You can override at build time:
-# docker compose build --build-arg NODE_BASE_IMAGE=node:20-alpine
-ARG NODE_BASE_IMAGE=public.ecr.aws/docker/library/node:20-alpine
+# docker compose build --build-arg NODE_BASE_IMAGE=node:18-alpine
+ARG NODE_BASE_IMAGE=public.ecr.aws/docker/library/node:18-alpine
 FROM ${NODE_BASE_IMAGE} AS base
 
 # Install dependencies only when needed
@@ -12,17 +12,8 @@ WORKDIR /app
 
 # Install dependencies based on the preferred package manager
 COPY package.json package-lock.json* ./
-# Harden against flaky registry.npmjs.org idle timeouts (EIDLETIMEOUT).
-# Install all dependencies (including optional platform binaries needed by Next SWC).
-RUN npm config set fetch-retries 5 \
-  && npm config set fetch-retry-mintimeout 20000 \
-  && npm config set fetch-retry-maxtimeout 120000 \
-  && npm config set fetch-timeout 600000 \
-  && ( \
-       npm ci --include=optional \
-       || (echo "npm ci attempt 1 failed; retrying…" && sleep 15 && npm ci --include=optional) \
-       || (echo "npm ci attempt 2 failed; retrying…" && sleep 15 && npm ci --include=optional) \
-     )
+# Install all dependencies (including optional platform binaries needed by Next SWC)
+RUN npm ci --include=optional
 
 # Rebuild the source code only when needed
 FROM base AS builder
@@ -59,6 +50,9 @@ RUN chown nextjs:nodejs .next
 # https://nextjs.org/docs/advanced-features/output-file-tracing
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+# Writable dir for Zord Support tickets (console-owned, not smoke simulator)
+RUN mkdir -p .data/support-tickets && chown -R nextjs:nodejs .data
 
 USER nextjs
 
