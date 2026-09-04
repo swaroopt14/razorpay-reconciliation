@@ -21,9 +21,9 @@ import {
     useDemoBatchReady,
 } from '@/services/payout-command/demo/demoBatchReadiness'
 import {
-    downloadDisputePack,
+    downloadAuditPackHtml,
+    downloadFinanceSummaryHtml,
     downloadProofPackJson,
-    downloadProofPackPdf,
 } from '@/services/payout-command/demo/proofPackExport'
 import { withDemoBatchScope } from '@/services/payout-command/demo/ycDemoConstants'
 import { INDIA_CASE } from '@/services/payout-command/demo/indiaBulkCaseStudy'
@@ -267,20 +267,20 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
         )
     }
 
-    function downloadPack(pack: ProofPack, format: 'json' | 'pdf' | 'dispute') {
+    function downloadPack(pack: ProofPack, format: 'json' | 'finance' | 'audit') {
         try {
-            if (format === 'pdf') {
-                downloadProofPackPdf(pack)
-                setToast('Downloaded evidence pack PDF - same contract and outcome as on screen')
-            } else if (format === 'dispute') {
-                downloadDisputePack(pack)
-                setToast('Downloaded dispute pack PDF - cites contract, outcome, and evidence checklist')
+            if (format === 'finance') {
+                downloadFinanceSummaryHtml(pack)
+                setToast('Downloaded finance summary HTML')
+            } else if (format === 'audit') {
+                downloadAuditPackHtml(pack)
+                setToast('Downloaded audit evidence pack HTML')
             } else {
                 downloadProofPackJson(pack)
                 setToast('Downloaded evidence pack JSON - same contract and outcome as on screen')
             }
         } catch {
-            setToast('Export failed - try again or use Export JSON')
+            setToast('Export failed - try again')
         }
         window.setTimeout(() => setToast(null), 2800)
     }
@@ -853,17 +853,24 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
                         <div className="border border-[#E5E7EB] bg-white px-5 py-5">
                             <p className="text-[14px] font-semibold text-[#1A1A1A]">Export</p>
                             <p className="mt-1 text-[13px] text-[#6B6B6B]">
-                                Exports reference the same contract ({selected.contractId}) and outcome (
-                                {selected.businessOutcome}) as this pack.
+                                Same finance summary and audit pack HTML the evidence service issues for disputes
+                                ({selected.contractId} · {selected.businessOutcome}).
                             </p>
                             <div className="mt-4 flex flex-wrap gap-2">
                                 <button
                                     type="button"
-                                    onClick={() => downloadPack(selected, 'json')}
+                                    onClick={() => downloadPack(selected, 'finance')}
                                     className="inline-flex h-9 items-center gap-1.5 rounded-md bg-[#0B1324] px-3.5 text-[13px] font-semibold text-white hover:bg-[#1E293B]"
                                 >
                                     <Download className="h-3.5 w-3.5" strokeWidth={2} />
-                                    Download evidence pack
+                                    Finance summary HTML
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => downloadPack(selected, 'audit')}
+                                    className="inline-flex h-9 items-center rounded-md border border-[#E5E7EB] bg-white px-3.5 text-[13px] font-semibold text-[#1A1A1A] hover:bg-[#FAFAFA]"
+                                >
+                                    Audit pack HTML
                                 </button>
                                 <button
                                     type="button"
@@ -871,20 +878,6 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
                                     className="inline-flex h-9 items-center rounded-md border border-[#E5E7EB] bg-white px-3.5 text-[13px] font-semibold text-[#1A1A1A] hover:bg-[#FAFAFA]"
                                 >
                                     Export JSON
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => downloadPack(selected, 'pdf')}
-                                    className="inline-flex h-9 items-center rounded-md border border-[#E5E7EB] bg-white px-3.5 text-[13px] font-semibold text-[#1A1A1A] hover:bg-[#FAFAFA]"
-                                >
-                                    Export PDF
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => downloadPack(selected, 'dispute')}
-                                    className="inline-flex h-9 items-center rounded-md border border-[#E5E7EB] bg-white px-3.5 text-[13px] font-semibold text-[#1A1A1A] hover:bg-[#FAFAFA]"
-                                >
-                                    Create dispute pack
                                 </button>
                             </div>
                         </div>

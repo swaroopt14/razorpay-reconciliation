@@ -1,26 +1,36 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { getFinanceInvestigations, getFinancePayment } from '@/services/payout-command/prod-api/financeApi'
+import {
+  getFinanceInvestigations,
+  getFinancePayment,
+  getFinanceResults,
+} from '@/services/payout-command/prod-api/financeApi'
 import type { FinanceInvestigation, FinancePayment } from '@/services/payout-command/prod-api/financeTypes'
 import {
   RZ_CARD,
   RZ_MUTED,
   RZ_PAGE,
   RZ_WRAP,
+  StatusBadge,
 } from './razorpayChrome'
 import { formatPaise, reasonTitle } from './reasonCopy'
+import { buildRazorpayXError, INVESTIGATION_STEPS, INVESTIGATION_TOTAL_MS } from './razorpayXErrors'
+import { ErrorInvestigationPanel } from './ErrorInvestigationPanel'
+import { mapFinanceRowToPayoutRecon } from './payoutReconCopy'
+import { buildPayoutLifecycle } from './payoutLifecycleModel'
+import { PayoutLifecycleView } from './PayoutLifecycleView'
 
-const AGENT_STEPS = [
-  'Payment retrieved',
-  'Payment events checked',
-  'Settlement searched',
-  'Bank transactions searched',
-  'Refund searched',
-  'Ledger checked',
-  'Evidence verified',
-]
+type AgentPhase = 'booting' | 'running' | 'ready'
+
+type AgentToolCall = {
+  id: string
+  tool: string
+  input: string
+  output: string
+  atSec: number
+}
 
 function verdictTone(verdict: string) {
   const v = verdict.toUpperCase()
@@ -41,49 +51,113 @@ function verdictMark(verdict: string) {
 function defaultHypotheses(reason: string): Array<{ claim: string; verdict: string }> {
   if (reason === 'failed_with_bank_movement' || reason === 'payout_failed_with_bank_movement') {
     return [
-      { claim: 'Payment settled', verdict: 'CONTRADICTED' },
-      { claim: 'Payment refunded', verdict: 'CONTRADICTED' },
-      { claim: 'Bank transaction unrelated', verdict: 'POSSIBLE' },
-      { claim: 'Unexplained financial movement', verdict: 'SUPPORTED' },
+      { claim: 'Payment settled successfully', verdict: 'CONTRADICTED' },
+      { claim: 'Payment refunded to merchant', verdict: 'CONTRADICTED' },
+      { claim: 'Bank transaction unrelated to this payout', verdict: 'POSSIBLE' },
+      { claim: 'Unexplained financial movement after provider failed', verdict: 'SUPPORTED' },
     ]
   }
-  return [{ claim: 'Needs finance review', verdict: 'SUPPORTED' }]
+  if (reason.includes('variance') || reason.includes('mismatch') || reason.includes('amount')) {
+    return [
+      { claim: 'Force MATCHED on UTR alone', verdict: 'CONTRADICTED' },
+      { claim: 'Fee/tax/adjustment explains bank delta', verdict: 'POSSIBLE' },
+      { claim: 'Settlement net ≠ bank credit — variance stands', verdict: 'SUPPORTED' },
+    ]
+  }
+  return [
+    { claim: 'Rename Razorpay provider status', verdict: 'CONTRADICTED' },
+    { claim: 'Needs finance review with bank + settlement evidence', verdict: 'SUPPORTED' },
+  ]
+}
+
+function Spinner({ className = '' }: { className?: string }) {
+  return (
+    <span
+      className={`inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-[#BFDBFE] border-t-[#2F6FED] ${className}`}
+      aria-hidden
+    />
+  )
+}
+
+function CheckIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <circle cx="8" cy="8" r="8" fill="#22C55E" />
+      <path
+        d="M4.5 8.2L6.8 10.5L11.5 5.5"
+        stroke="white"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
 }
 
 export function InvestigationDetailSurface({ investigationId }: { investigationId: string }) {
   const [row, setRow] = useState<FinanceInvestigation | null>(null)
   const [payment, setPayment] = useState<FinancePayment | null>(null)
+  const [reconRow, setReconRow] = useState<ReturnType<typeof mapFinanceRowToPayoutRecon> | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [phase, setPhase] = useState<AgentPhase>('booting')
+  const [elapsedMs, setElapsedMs] = useState(0)
+  const [runKey, setRunKey] = useState(0)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    const [list, results] = await Promise.all([getFinanceInvestigations(), getFinanceResults('ALL')])
+    if (!list.ok || !list.data) {
+      setError('Could not load investigation.')
+      setLoading(false)
+      return
+    }
+    const hit =
+      (list.data.investigations ?? []).find((r) => r.id === investigationId) ||
+      (list.data.investigations ?? []).find((r) => r.entity_id === investigationId) ||
+      (list.data.investigations ?? [])[0] ||
+      null
+    setRow(hit)
+    if (hit?.entity_id) {
+      const pay = await getFinancePayment(hit.entity_id)
+      if (pay.ok) setPayment(pay.data ?? null)
+      const mapped = (results.data?.results ?? []).map(mapFinanceRowToPayoutRecon)
+      setReconRow(
+        mapped.find((r) => r.payoutId === hit.entity_id) ||
+          mapped.find((r) => r.payoutId.includes('fail')) ||
+          null,
+      )
+    }
+    setLoading(false)
+    setPhase('running')
+  }, [investigationId])
 
   useEffect(() => {
-    let cancelled = false
-    async function load() {
-      setLoading(true)
-      const list = await getFinanceInvestigations()
-      if (cancelled) return
-      if (!list.ok || !list.data) {
-        setError('Could not load investigation.')
-        setLoading(false)
+    void load()
+  }, [load])
+
+  useEffect(() => {
+    if (phase !== 'running') return
+    setElapsedMs(0)
+    const started = performance.now()
+    let raf = 0
+    let finished = false
+    const tick = () => {
+      const next = Math.min(INVESTIGATION_TOTAL_MS, performance.now() - started)
+      setElapsedMs(next)
+      if (next >= INVESTIGATION_TOTAL_MS) {
+        if (!finished) {
+          finished = true
+          setPhase('ready')
+        }
         return
       }
-      const hit =
-        (list.data.investigations ?? []).find((r) => r.id === investigationId) ||
-        (list.data.investigations ?? []).find((r) => r.entity_id === investigationId) ||
-        (list.data.investigations ?? [])[0] ||
-        null
-      setRow(hit)
-      if (hit?.entity_id) {
-        const pay = await getFinancePayment(hit.entity_id)
-        if (!cancelled && pay.ok) setPayment(pay.data)
-      }
-      setLoading(false)
+      raf = window.requestAnimationFrame(tick)
     }
-    void load()
-    return () => {
-      cancelled = true
-    }
-  }, [investigationId])
+    raf = window.requestAnimationFrame(tick)
+    return () => window.cancelAnimationFrame(raf)
+  }, [phase, runKey])
 
   const title = useMemo(() => {
     if (row?.issue) return row.issue
@@ -95,69 +169,295 @@ export function InvestigationDetailSurface({ investigationId }: { investigationI
   const amount = payment?.amount_minor ?? row?.financial_impact ?? 0
   const movement = payment?.financial_movement
   const recon = payment?.reconciliation
-  const provider = (payment?.provider_status || 'failed').toUpperCase()
-  const hasBank = Boolean(movement?.bank) || recon?.bank_credit_proven
-  const hasSettlement = movement?.settlement != null && movement.settlement > 0
+  const provider = (payment?.provider_status || reconRow?.status || 'failed').toLowerCase()
+  const hasBank = Boolean(movement?.bank) || Boolean(recon?.bank_credit_proven) || reconRow?.bank === true
+  const hasSettlement = (movement?.settlement != null && movement.settlement > 0) || reconRow?.settlement === true
   const hasRefund = movement?.refund != null && movement.refund > 0
   const hypotheses = row?.hypotheses?.length
     ? row.hypotheses
-    : defaultHypotheses(recon?.reason || '')
+    : defaultHypotheses(recon?.reason || reconRow?.reason || '')
+
+  const errorView = useMemo(
+    () =>
+      buildRazorpayXError({
+        reason: reconRow?.errorCode || recon?.reason || row?.root_cause || 'server_error',
+        status: provider,
+        description:
+          reconRow?.errorDescription ||
+          row?.root_cause ||
+          'A unique UTR matched a bank row whose amount differs from the settlement net.',
+        source: reconRow?.signalSource || 'internal',
+        nextSteps:
+          row?.recommendation ||
+          reconRow?.nextSteps ||
+          'Do not force a match. Review fee/tax/adjustment and the bank amount.',
+        payoutId: row?.entity_id,
+      }),
+    [reconRow, recon, row, provider],
+  )
+
+  const life = useMemo(() => (reconRow ? buildPayoutLifecycle(reconRow) : null), [reconRow])
+
+  const toolCalls: AgentToolCall[] = useMemo(() => {
+    const entity = row?.entity_id || 'payout'
+    return [
+      {
+        id: 't1',
+        tool: 'get_payout',
+        input: entity,
+        output: `status=${provider} · amount=${formatPaise(amount, 2)}`,
+        atSec: 3,
+      },
+      {
+        id: 't2',
+        tool: 'list_payout_events',
+        input: entity,
+        output: 'payout.pending → payout.processing → payout.failed',
+        atSec: 7,
+      },
+      {
+        id: 't3',
+        tool: 'search_settlement_lines',
+        input: `settlement ↔ ${entity}`,
+        output: hasSettlement ? 'Settlement line present' : 'No settlement credit for this payout',
+        atSec: 11,
+      },
+      {
+        id: 't4',
+        tool: 'search_bank_transactions',
+        input: `UTR / amount ${formatPaise(amount, 2)}`,
+        output: hasBank
+          ? 'Bank debit/credit observed — verify reversal'
+          : 'No matching bank movement (clean fail path)',
+        atSec: 15,
+      },
+      {
+        id: 't5',
+        tool: 'map_status_details',
+        input: errorView.error.reason,
+        output: `${errorView.forensics.signalName} · ${errorView.error.code}`,
+        atSec: 18,
+      },
+      {
+        id: 't6',
+        tool: 'score_hypotheses',
+        input: `${hypotheses.length} claims`,
+        output: `confidence ${Math.round((row?.confidence || errorView.defaultConfidence) * 100)}%`,
+        atSec: 20,
+      },
+    ]
+  }, [row, provider, amount, hasSettlement, hasBank, errorView, hypotheses.length])
+
+  const elapsedSec = elapsedMs / 1000
+  const visibleTools = toolCalls.filter((t) => phase === 'ready' || elapsedSec >= t.atSec)
+  const terminalFailed =
+    provider === 'failed' ||
+    life?.events.some((e) => e.state === 'fail') ||
+    Boolean(errorView.forensics.failedProcess)
 
   const conclusion =
     row?.recommendation ||
-    `${formatPaise(amount, 2)} remains financially unaccounted for. Permanent loss is not proven.`
+    (terminalFailed && !hasBank
+      ? `Provider failed with no money movement. Lifecycle stops at Failed — do not seal successful-credit evidence. Exposure ${formatPaise(row?.financial_impact ?? amount, 2)}.`
+      : `${formatPaise(amount, 2)} needs finance review. Permanent loss is not proven. Do not rename Razorpay provider status.`)
 
-  const complete = String(row?.status || '').toLowerCase() !== 'unresolved'
+  if (loading && phase === 'booting') {
+    return (
+      <div className={RZ_PAGE}>
+        <div className={`${RZ_WRAP} max-w-[980px]`}>
+          <p className={`mt-8 ${RZ_MUTED}`}>Booting investigation agent…</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className={RZ_PAGE}>
+        <div className={`${RZ_WRAP} max-w-[980px]`}>
+          <p className="mt-8 text-[13px] text-[#B91C1C]">{error}</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!row) {
+    return (
+      <div className={RZ_PAGE}>
+        <div className={`${RZ_WRAP} max-w-[980px]`}>
+          <p className={`mt-8 ${RZ_MUTED}`}>Investigation not found.</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className={RZ_PAGE}>
-      <div className={`${RZ_WRAP} max-w-[820px]`}>
+      <div className={`${RZ_WRAP} max-w-[980px]`}>
         <Link href="/investigations?demo=sandbox" className="text-[13px] font-medium text-[#528FF0] hover:underline">
           ← Investigations
         </Link>
 
-        {loading ? (
-          <p className={`mt-8 ${RZ_MUTED}`}>Loading investigation…</p>
-        ) : error ? (
-          <p className="mt-8 text-[13px] text-[#B91C1C]">{error}</p>
-        ) : row ? (
-          <div className="mt-4 space-y-5">
-            <header>
+        <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
+          <header className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
               <p className="font-mono text-[13px] font-semibold text-[#528FF0]">{row.id}</p>
-              <h1 className="mt-1 text-[26px] font-semibold tracking-[-0.03em] text-[#1A1A1A]">{title}</h1>
-              <p className="mt-2 text-[32px] font-semibold tabular-nums tracking-tight text-[#1A1A1A]">
-                {formatPaise(amount, 2)}
-                <span className="ml-2 text-[14px] font-medium text-[#8F8F8F]">
-                  {payment?.currency || 'INR'}
-                </span>
-              </p>
-              <p className={`mt-1 ${RZ_MUTED}`}>
-                {row.entity_type || 'payment'} · <span className="font-mono">{row.entity_id}</span>
-                <span className="mx-1.5 text-[#D0D4DA]">·</span>
-                Provider {provider}
-                <span className="mx-1.5 text-[#D0D4DA]">·</span>
-                Recon {recon?.result || 'UNRESOLVED'}
-              </p>
-            </header>
+              <StatusBadge tone={phase === 'ready' ? 'captured' : 'pending'}>
+                {phase === 'ready' ? 'Agent complete' : 'Agent running'}
+              </StatusBadge>
+              {terminalFailed ? <StatusBadge tone="failed">Stopped at failure</StatusBadge> : null}
+            </div>
+            <h1 className="mt-1 text-[26px] font-semibold tracking-[-0.03em] text-[#1A1A1A]">{title}</h1>
+            <p className="mt-2 text-[32px] font-semibold tabular-nums tracking-tight text-[#1A1A1A]">
+              {formatPaise(amount, 2)}
+              <span className="ml-2 text-[14px] font-medium text-[#8F8F8F]">
+                {payment?.currency || 'INR'}
+              </span>
+            </p>
+            <p className={`mt-1 ${RZ_MUTED}`}>
+              {row.entity_type || 'payout'} · <span className="font-mono">{row.entity_id}</span>
+              <span className="mx-1.5 text-[#D0D4DA]">·</span>
+              Provider {provider}
+              <span className="mx-1.5 text-[#D0D4DA]">·</span>
+              Recon {recon?.result || reconRow?.result || 'UNRESOLVED'}
+            </p>
+          </header>
+          <button
+            type="button"
+            onClick={() => {
+              setPhase('running')
+              setRunKey((k) => k + 1)
+            }}
+            className="inline-flex h-9 items-center gap-2 rounded-[6px] bg-[#0B1324] px-4 text-[13px] font-semibold text-white hover:bg-[#1E293B]"
+          >
+            {phase === 'running' ? <Spinner className="border-white/30 border-t-white" /> : null}
+            {phase === 'running' ? 'Agent working…' : 'Re-run agent'}
+          </button>
+        </div>
 
-            <section className={`${RZ_CARD} px-5 py-5`}>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#94A3B8]">Agent status</p>
-              <ul className="mt-4 space-y-2.5">
-                {AGENT_STEPS.map((step) => (
-                  <li key={step} className="flex items-center gap-2.5 text-[14px] text-[#0F172A]">
-                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#E8F8EE] text-[11px] font-bold text-[#147A3F]">
-                      ✓
+        <div className="mt-5 grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+          <section className={`${RZ_CARD} px-5 py-5`}>
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#94A3B8]">
+                  AI agent · live run
+                </p>
+                <p className="mt-0.5 text-[14px] font-semibold text-[#1A1A1A]">
+                  Finance investigation controller
+                </p>
+              </div>
+              {phase === 'running' ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-[#EEF4FF] px-2.5 py-1 text-[11px] font-semibold text-[#2F6FED]">
+                  <Spinner /> Thinking
+                </span>
+              ) : (
+                <span className="rounded-full bg-[#ECFDF5] px-2.5 py-1 text-[11px] font-semibold text-[#147A3F]">
+                  Ready
+                </span>
+              )}
+            </div>
+
+            <ol className="mt-4 space-y-2.5">
+              {INVESTIGATION_STEPS.map((step, i) => {
+                const done = phase === 'ready' || elapsedSec >= step.atSec
+                const prevAt = i === 0 ? 0 : INVESTIGATION_STEPS[i - 1].atSec
+                const current = phase === 'running' && !done && elapsedSec >= prevAt
+                return (
+                  <li key={step.id} className="flex items-center gap-2.5 text-[13px]">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+                      {done ? <CheckIcon /> : current ? <Spinner /> : (
+                        <span className="h-2 w-2 rounded-full bg-[#CBD5E1]" />
+                      )}
                     </span>
-                    {step}
+                    <span className={done || current ? 'font-medium text-[#1A1A1A]' : 'text-[#94A3B8]'}>
+                      {step.label}
+                    </span>
+                    <span className="ml-auto text-[11px] tabular-nums text-[#94A3B8]">{step.atSec}s</span>
                   </li>
-                ))}
-              </ul>
-              <p
-                className={`mt-5 rounded-[6px] px-3 py-2 text-[13px] font-semibold ${
-                  complete ? 'bg-[#E8F8EE] text-[#147A3F]' : 'bg-[#FFF6E5] text-[#B36B00]'
-                }`}
-              >
-                {complete ? 'Investigation complete' : 'Investigation in progress'}
+                )
+              })}
+            </ol>
+
+            {phase === 'running' ? (
+              <div className="mt-4">
+                <div className="h-1.5 overflow-hidden rounded-full bg-[#E2E8F0]">
+                  <div
+                    className="h-full rounded-full bg-[#2F6FED] transition-[width] duration-300 ease-linear"
+                    style={{ width: `${Math.min(100, (elapsedMs / INVESTIGATION_TOTAL_MS) * 100)}%` }}
+                  />
+                </div>
+                <p className="mt-2 text-[12px] text-[#64748B]">
+                  Agent is tracing process stage, failure signal, and error-code origin…
+                </p>
+              </div>
+            ) : (
+              <p className="mt-4 rounded-[6px] bg-[#E8F8EE] px-3 py-2 text-[13px] font-semibold text-[#147A3F]">
+                Investigation complete · do not rename provider status
+              </p>
+            )}
+          </section>
+
+          <section className={`${RZ_CARD} px-5 py-5`}>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#94A3B8]">
+              Tool calls
+            </p>
+            <p className="mt-1 text-[12px] text-[#94A3B8]">Agent actions stream as evidence is gathered</p>
+            <ul className="mt-3 max-h-[280px] space-y-2 overflow-y-auto">
+              {visibleTools.length === 0 ? (
+                <li className="text-[12px] text-[#94A3B8]">Waiting for first tool call…</li>
+              ) : (
+                visibleTools.map((t) => (
+                  <li
+                    key={t.id}
+                    className="rounded-[8px] border border-[#E8EEF7] bg-[#F8FAFF] px-3 py-2 font-mono text-[11px]"
+                  >
+                    <p className="font-semibold text-[#1D4ED8]">
+                      {t.tool}
+                      <span className="ml-2 font-normal text-[#94A3B8]">@{t.atSec}s</span>
+                    </p>
+                    <p className="mt-0.5 truncate text-[#64748B]">← {t.input}</p>
+                    <p className="mt-0.5 text-[#0F172A]">→ {t.output}</p>
+                  </li>
+                ))
+              )}
+            </ul>
+          </section>
+        </div>
+
+        {phase === 'ready' ? (
+          <div className="mt-5 space-y-5">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <Metric
+                label="Failed process"
+                value={errorView.forensics.failedProcess}
+                mono={false}
+              />
+              <Metric label="Signal" value={errorView.forensics.signalName} mono={false} />
+              <Metric
+                label="Error origin"
+                value={errorView.forensics.errorCodeOrigin}
+                mono={false}
+              />
+              <Metric
+                label="Confidence"
+                value={`${Math.round((row.confidence || errorView.defaultConfidence) * 100)}%`}
+                mono
+              />
+            </div>
+
+            <section className={`${RZ_CARD} border-[#FECACA] bg-[#FEF2F2] px-5 py-4`}>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#B91C1C]">
+                Agent finding
+              </p>
+              <p className="mt-2 text-[15px] font-semibold text-[#7F1D1D]">
+                {errorView.forensics.failedProcess} · pipeline {errorView.forensics.pipelineStage}
+              </p>
+              <p className="mt-1 text-[13px] leading-relaxed text-[#9F1239]">
+                {errorView.forensics.failedProcessDetail}
+              </p>
+              <p className="mt-2 font-mono text-[11px] text-[#991B1B]">{errorView.forensics.signalTold}</p>
+              <p className="mt-1 font-mono text-[11px] text-[#991B1B]">
+                code path · {errorView.forensics.errorCodePath}
               </p>
             </section>
 
@@ -171,11 +471,7 @@ export function InvestigationDetailSurface({ investigationId }: { investigationI
                   <p className="mt-1 text-[18px] font-semibold tabular-nums">{formatPaise(amount, 2)}</p>
                 </div>
                 <ol className="relative border-l border-[#E6E8EB] pl-5">
-                  <TimelineNode
-                    label={provider}
-                    tone="fail"
-                    detail="Provider status unchanged"
-                  />
+                  <TimelineNode label={provider.toUpperCase()} tone="fail" detail="Provider status unchanged" />
                   <TimelineNode
                     label={hasSettlement ? `Settlement ${formatPaise(movement?.settlement, 2)}` : 'No settlement'}
                     tone={hasSettlement ? 'ok' : 'muted'}
@@ -183,10 +479,11 @@ export function InvestigationDetailSurface({ investigationId }: { investigationI
                   <TimelineNode
                     label={
                       hasBank
-                        ? `Bank +${formatPaise(movement?.bank ?? amount, 2)}`
+                        ? `Bank movement ${formatPaise(movement?.bank ?? amount, 2)}`
                         : 'No bank movement'
                     }
                     tone={hasBank ? 'warn' : 'muted'}
+                    detail={hasBank ? 'Investigate — failure with money movement' : 'Clean fail path'}
                   />
                   <TimelineNode
                     label={hasRefund ? `Refund ${formatPaise(movement?.refund, 2)}` : 'No refund'}
@@ -195,10 +492,17 @@ export function InvestigationDetailSurface({ investigationId }: { investigationI
                   />
                 </ol>
               </div>
+              {terminalFailed && !hasBank ? (
+                <p className="mt-4 rounded-[6px] bg-[#FEE2E2] px-3 py-2 text-[12px] font-semibold text-[#B91C1C]">
+                  Lifecycle stops at Failed — no green Reconciled / Evidence sealed for a successful credit.
+                </p>
+              ) : null}
             </section>
 
             <section className={`${RZ_CARD} px-5 py-5`}>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#94A3B8]">Hypotheses</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#94A3B8]">
+                Hypotheses tested by agent
+              </p>
               <ul className="mt-3 divide-y divide-[#F1F5F9]">
                 {hypotheses.map((h) => (
                   <li key={h.claim} className="flex items-start justify-between gap-4 py-3">
@@ -208,7 +512,9 @@ export function InvestigationDetailSurface({ investigationId }: { investigationI
                       </span>
                       {h.claim}
                     </p>
-                    <span className={`shrink-0 text-[11px] font-semibold uppercase tracking-[0.06em] ${verdictTone(h.verdict)}`}>
+                    <span
+                      className={`shrink-0 text-[11px] font-semibold uppercase tracking-[0.06em] ${verdictTone(h.verdict)}`}
+                    >
                       {h.verdict}
                     </span>
                   </li>
@@ -217,21 +523,66 @@ export function InvestigationDetailSurface({ investigationId }: { investigationI
             </section>
 
             <section className={`${RZ_CARD} border-[#F6E7C1] bg-[#FFFEF8] px-5 py-5`}>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#94A3B8]">Conclusion</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#94A3B8]">
+                Agent conclusion
+              </p>
               <p className="mt-2 text-[16px] font-semibold leading-snug text-[#1A1A1A]">{conclusion}</p>
               {row.root_cause ? (
                 <p className="mt-3 text-[13px] leading-relaxed text-[#64748B]">{row.root_cause}</p>
               ) : null}
               <p className="mt-3 text-[12px] text-[#8F8F8F]">
-                Do not rename the Razorpay provider status. Exposure {formatPaise(row.financial_impact, 2)} ·
-                confidence {Math.round((row.confidence || 0) * 100)}%.
+                Exposure {formatPaise(row.financial_impact, 2)} · confidence{' '}
+                {Math.round((row.confidence || errorView.defaultConfidence) * 100)}%.
               </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Link
+                  href={`/reconciliation/${encodeURIComponent(row.entity_id)}?demo=sandbox`}
+                  className="rounded-[6px] border border-[#E6E8EB] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#2F6FED] hover:bg-[#F8FAFC]"
+                >
+                  Open full trace →
+                </Link>
+                <Link
+                  href="/exceptions?demo=sandbox"
+                  className="rounded-[6px] border border-[#E6E8EB] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#1A1A1A] hover:bg-[#F8FAFC]"
+                >
+                  Exceptions inbox
+                </Link>
+              </div>
             </section>
+
+            {life ? (
+              <section className={`${RZ_CARD} px-5 py-5`}>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#94A3B8]">
+                  Payout lifecycle (agent-aligned)
+                </p>
+                <p className="mt-1 text-[12px] text-[#94A3B8]">
+                  Same stop-at-failure rules as Payouts / Reconciliation drawers.
+                </p>
+                <div className="mt-4">
+                  <PayoutLifecycleView life={life} variant="drawer" initialTab="events" />
+                </div>
+              </section>
+            ) : null}
+
+            <ErrorInvestigationPanel
+              errorView={errorView}
+              financialImpactMinor={row.financial_impact || amount}
+              confidence={row.confidence || errorView.defaultConfidence}
+              hasRun
+              autoStart={false}
+            />
           </div>
-        ) : (
-          <p className={`mt-8 ${RZ_MUTED}`}>Investigation not found.</p>
-        )}
+        ) : null}
       </div>
+    </div>
+  )
+}
+
+function Metric({ label, value, mono }: { label: string; value: string; mono: boolean }) {
+  return (
+    <div className="rounded-[10px] border border-[#E6E8EB] bg-white px-4 py-3">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#94A3B8]">{label}</p>
+      <p className={`mt-1 text-[13px] font-semibold text-[#0F172A] ${mono ? 'font-mono' : ''}`}>{value}</p>
     </div>
   )
 }
@@ -256,7 +607,13 @@ function TimelineNode({
           ? 'bg-[#D97706]'
           : 'bg-[#CBD5E1]'
   const text =
-    tone === 'fail' ? 'text-[#C0372A]' : tone === 'warn' ? 'text-[#B36B00]' : tone === 'muted' ? 'text-[#94A3B8]' : 'text-[#0F172A]'
+    tone === 'fail'
+      ? 'text-[#C0372A]'
+      : tone === 'warn'
+        ? 'text-[#B36B00]'
+        : tone === 'muted'
+          ? 'text-[#94A3B8]'
+          : 'text-[#0F172A]'
   return (
     <li className={`relative ${last ? 'pb-0' : 'pb-4'}`}>
       <span className={`absolute -left-[23px] top-1.5 h-2.5 w-2.5 rounded-full ${dot}`} />

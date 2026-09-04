@@ -156,7 +156,7 @@ export function ExceptionsSurface() {
 
   return (
     <div className={RZ_PAGE}>
-      <div className={`${RZ_WRAP} ${openId ? 'pr-[min(560px,100%)]' : ''}`}>
+      <div className={`${RZ_WRAP} ${openId ? 'pr-[min(480px,100%)]' : ''}`}>
         <PageHeader
           title="Exceptions"
           range={range}
@@ -314,11 +314,12 @@ export function ExceptionsSurface() {
             aria-label="Close exception details overlay"
             onClick={closeDrawer}
           />
-          <div className="fixed inset-y-0 right-0 z-40 w-full max-w-[560px]">
+          <div className="fixed inset-y-0 right-0 z-40 w-full max-w-[480px]">
             <PaymentDrawer
               key={openId}
               entityId={openId}
               exceptionId={openException?.id}
+              exception={openException}
               onClose={closeDrawer}
             />
           </div>

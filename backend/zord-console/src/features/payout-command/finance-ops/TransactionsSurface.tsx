@@ -5,6 +5,10 @@ import { useRouter } from 'next/navigation'
 import { useEnvironment } from '@/services/auth/EnvironmentProvider'
 import { useSessionTenant } from '@/services/auth/useSessionTenantId'
 import { DEMO_BATCH_LABEL } from '@/services/payout-command/demo/ycDemoConstants'
+import {
+  markBatchDispatched,
+  useDispatchedBatchId,
+} from '@/services/payout-command/demo/demoBatchReadiness'
 import { fetchJournalSidebarBatches } from '../intent-journal/journalBatchCache'
 import { LIVE_JOURNAL_POLL_MS } from '../intent-journal/journalConstants'
 import type { JournalBatchRecord } from '@/services/payout-command/prod-api/mapIntentEngineBatch'
@@ -43,6 +47,12 @@ export function TransactionsSurface() {
   const [error, setError] = useState<string | null>(null)
   const [range, setRange] = useState('today')
   const [tab, setTab] = useState<'payments' | 'batches'>('batches')
+  const dispatchedBatchId = useDispatchedBatchId()
+
+  function openProof(batchId: string) {
+    markBatchDispatched(batchId)
+    router.push(`/proof?demo=sandbox&batch_id=${encodeURIComponent(batchId)}`)
+  }
 
   const load = useCallback(async () => {
     if (!tenantReady || !tenantId.trim()) {
@@ -117,6 +127,27 @@ export function TransactionsSurface() {
           onRangeChange={setRange}
           rangeOptions={RANGE_OPTIONS}
           docsHref="https://razorpay.com/docs/payments/"
+          actions={
+            visibleBatches[0] ? (
+              dispatchedBatchId === visibleBatches[0].batchId ? (
+                <button
+                  type="button"
+                  onClick={() => router.push(`/proof?demo=sandbox&batch_id=${encodeURIComponent(visibleBatches[0].batchId)}`)}
+                  className="inline-flex h-9 items-center rounded-[6px] border border-[#E6E8EB] bg-white px-3.5 text-[13px] font-semibold text-[#1A1A1A] hover:bg-[#FAFBFC]"
+                >
+                  Open proof
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => openProof(visibleBatches[0].batchId)}
+                  className="inline-flex h-9 items-center rounded-[6px] bg-[#0B1324] px-3.5 text-[13px] font-semibold text-white hover:bg-[#1E293B]"
+                >
+                  Dispatch
+                </button>
+              )
+            ) : null
+          }
         />
 
         <div className="mt-5 space-y-3">

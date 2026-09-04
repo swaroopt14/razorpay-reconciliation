@@ -64,12 +64,14 @@ export function PageHeader({
   onRangeChange,
   rangeOptions,
   docsHref,
+  actions,
 }: {
   title: string
   range: string
   onRangeChange: (value: string) => void
   rangeOptions: { value: string; label: string }[]
   docsHref: string
+  actions?: ReactNode
 }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -77,15 +79,18 @@ export function PageHeader({
         <h1 className="text-[20px] font-semibold tracking-[-0.02em] text-[#1A1A1A]">{title}</h1>
         <DateRangeSelect value={range} onChange={onRangeChange} options={rangeOptions} />
       </div>
-      <a
-        href={docsHref}
-        className="inline-flex items-center gap-1.5 text-[13px] font-medium text-[#528FF0] hover:underline"
-      >
-        Documentation
-        <svg className="h-3.5 w-3.5" viewBox="0 0 12 12" fill="none" aria-hidden>
-          <path d="M4 2H10V8M10 2 2 10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-        </svg>
-      </a>
+      <div className="flex flex-wrap items-center gap-2">
+        {actions}
+        <a
+          href={docsHref}
+          className="inline-flex items-center gap-1.5 text-[13px] font-medium text-[#528FF0] hover:underline"
+        >
+          Documentation
+          <svg className="h-3.5 w-3.5" viewBox="0 0 12 12" fill="none" aria-hidden>
+            <path d="M4 2H10V8M10 2 2 10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+          </svg>
+        </a>
+      </div>
     </div>
   )
 }
@@ -258,5 +263,59 @@ export function StatusBadge({ tone, children }: { tone: 'captured' | 'pending' |
     <span className={`inline-flex h-6 items-center rounded-[4px] px-2 text-[11px] font-semibold capitalize ${cls}`}>
       {children}
     </span>
+  )
+}
+
+export function DrawerField({
+  label,
+  children,
+  mono,
+}: {
+  label: string
+  children: ReactNode
+  mono?: boolean
+}) {
+  return (
+    <div className="grid grid-cols-[128px_1fr] items-start gap-3 border-b border-[#F3F4F6] py-[11px] text-[13px]">
+      <dt className="pt-px text-[#6B6B6B]">{label}</dt>
+      <dd className={`min-w-0 break-words font-medium text-[#1A1A1A] ${mono ? 'font-mono text-[12px] font-normal' : ''}`}>
+        {children || '—'}
+      </dd>
+    </div>
+  )
+}
+
+export function CopyIdButton({ value }: { value: string }) {
+  return (
+    <button
+      type="button"
+      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[4px] text-[#528FF0] hover:bg-[#EEF4FF]"
+      aria-label={`Copy ${value}`}
+      title="Copy"
+      onClick={(event) => {
+        event.stopPropagation()
+        void navigator.clipboard.writeText(value)
+      }}
+    >
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+        <rect x="4.5" y="4.5" width="7" height="7" rx="1.2" stroke="currentColor" strokeWidth="1.3" />
+        <path d="M2.5 9.5V3.2C2.5 2.54 3.04 2 3.7 2H9.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      </svg>
+    </button>
+  )
+}
+
+export function DrawerCloseButton({ onClick, label = 'Close' }: { onClick: () => void; label?: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[4px] text-[#6B6B6B] hover:bg-[#F5F6F8] hover:text-[#1A1A1A]"
+      aria-label={label}
+    >
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+        <path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    </button>
   )
 }

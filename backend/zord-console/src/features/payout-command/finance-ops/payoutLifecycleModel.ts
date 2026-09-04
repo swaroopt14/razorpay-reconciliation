@@ -21,7 +21,7 @@ type PayoutDetailLike = {
 
 export type SourceFlag = 'yes' | 'no' | 'na'
 
-export type LifecycleEventState = 'done' | 'warn' | 'current' | 'missing'
+export type LifecycleEventState = 'done' | 'warn' | 'current' | 'missing' | 'fail'
 
 export type LifecycleFact = { label: string; value: string }
 
@@ -241,7 +241,19 @@ export function buildPayoutLifecycle(row: PayoutReconDisplayRow): PayoutLifecycl
   const exposure = exposureFor(kind, row)
   const slaExceeded = kind === 'stuck_passed' || kind === 'processing' || kind === 'processed_missing_bank'
   const recovered = kind === 'stuck_passed' || kind === 'queued_success' || kind === 'failed_reversed' || kind === 'failed_then_reversed' || kind === 'bank_fail_reversed'
-  const passed = result === 'MATCHED' && (status === 'processed' || status === 'reversed' || status === 'cancelled' || status === 'rejected' || status === 'failed')
+  /** Terminal provider failure with no recovery path — timeline must stop at Failed. */
+  const terminalFailed =
+    kind === 'failed_clean' ||
+    kind === 'failed_money' ||
+    kind === 'scheduled_insufficient' ||
+    kind === 'pending_rejected' ||
+    kind === 'queued_cancelled' ||
+    (status === 'failed' && !recovered)
+  /** Lifecycle "Passed" only for successful processed/reversed paths — never for a failed payout. */
+  const passed =
+    !terminalFailed &&
+    result === 'MATCHED' &&
+    (status === 'processed' || status === 'reversed' || status === 'cancelled' || status === 'rejected')
   const exceptionType = exceptionTypeFor(kind, row)
 
   const events: LifecycleEvent[] = [
@@ -304,10 +316,10 @@ export function buildPayoutLifecycle(row: PayoutReconDisplayRow): PayoutLifecycl
       id: 'pending',
       title: kind === 'pending_rejected' ? 'Approval rejected' : 'Pending approval',
       timeLabel: timeOnly(t(40)),
-      state: kind === 'pending_rejected' ? 'done' : 'current',
+      state: kind === 'pending_rejected' ? 'fail' : 'current',
       summary:
         kind === 'pending_rejected'
-          ? 'Approver rejected the payout. No money movement.'
+          ? 'Approver rejected the payout. No money movement. Timeline stops here.'
           : 'Workflow for the payout is pending approval from the approver(s).',
       facts: [
         { label: 'Provider status', value: status },
@@ -340,8 +352,8 @@ export function buildPayoutLifecycle(row: PayoutReconDisplayRow): PayoutLifecycl
       id: 'cancelled',
       title: 'Cancelled',
       timeLabel: timeOnly(t(90)),
-      state: 'done',
-      summary: 'Payout cancelled from queued. No money left the source account.',
+      state: 'fail',
+      summary: 'Payout cancelled from queued. No money left the source account. Timeline stops here.',
       facts: [
         { label: 'Provider status', value: 'cancelled' },
         { label: 'Webhook', value: 'payout.cancelled' },
@@ -422,13 +434,17 @@ export function buildPayoutLifecycle(row: PayoutReconDisplayRow): PayoutLifecycl
       id: 'failed',
       title: 'Failed',
       timeLabel: timeOnly(t(240)),
-      state: 'done',
-      summary: 'Provider marked failed. No debit on the source account — financially accounted.',
+      state: 'fail',
+      summary:
+        kind === 'scheduled_insufficient'
+          ? 'Scheduled payout failed — insufficient balance. Timeline stops here; no evidence pack for a successful credit.'
+          : 'Provider marked failed. No debit on the source account. Timeline stops at failure — no reconcile / evidence seal for a successful payout.',
       facts: [
         { label: 'Provider status', value: 'failed' },
         { label: 'Webhook', value: 'payout.failed' },
         { label: 'Bank', value: 'NO TRANSACTION' },
         { label: 'Ledger', value: 'NO DEBIT' },
+        { label: 'Finance note', value: 'Books clean (no money movement) — not a processed credit.' },
       ],
     })
   }
@@ -438,8 +454,9 @@ export function buildPayoutLifecycle(row: PayoutReconDisplayRow): PayoutLifecycl
       id: 'failed',
       title: 'Failed · money movement unaccounted',
       timeLabel: timeOnly(t(240)),
-      state: 'warn',
-      summary: 'Razorpay status is failed, but the source account was debited and no reversal is observed.',
+      state: 'fail',
+      summary:
+        'Razorpay status is failed, but the source account was debited and no reversal is observed. Timeline stops here for investigation.',
       facts: [
         { label: 'Provider status', value: 'failed' },
         { label: 'Webhook', value: 'payout.failed' },
@@ -455,7 +472,7 @@ export function buildPayoutLifecycle(row: PayoutReconDisplayRow): PayoutLifecycl
       id: 'failed',
       title: 'Failed',
       timeLabel: timeOnly(t(240)),
-      state: 'warn',
+      state: 'fail',
       summary: 'Payout failed. Reversal transaction created to credit the business account back.',
       facts: [
         { label: 'Provider status', value: 'failed' },
@@ -512,36 +529,56 @@ export function buildPayoutLifecycle(row: PayoutReconDisplayRow): PayoutLifecycl
     })
   }
 
-  const reconState: LifecycleEventState =
-    result === 'MATCHED' ? 'done' : result === 'AMBIGUOUS' ? 'current' : 'warn'
-  events.push({
-    id: 'recon',
-    title: result === 'MATCHED' ? 'Reconciled' : `Reconciliation ${result}`,
-    timeLabel: timeOnly(t(847)),
-    state: reconState,
-    summary:
-      result === 'MATCHED'
-        ? 'All sources agree. Financial movement is accounted for.'
-        : `${exceptionType || result}. Provider status stays ${status}.`,
-    facts: [
-      { label: 'Provider status', value: status },
-      { label: 'Reconciliation', value: result },
-      { label: 'Exception', value: exceptionType || 'NONE' },
-      { label: 'Exposure', value: String(exposure) },
-    ],
-  })
-
-  if (result === 'MATCHED' || kind === 'processed' || kind === 'stuck_passed') {
+  /**
+   * Terminal failures stop at Failed — do not invent green Reconciled / Evidence sealed
+   * steps as if the payout completed successfully.
+   */
+  if (!terminalFailed) {
+    const reconState: LifecycleEventState =
+      result === 'MATCHED' ? 'done' : result === 'AMBIGUOUS' ? 'current' : 'warn'
     events.push({
-      id: 'sealed',
-      title: 'Evidence sealed',
-      timeLabel: timeOnly(t(848)),
-      state: 'done',
-      summary: 'Record hash committed to the evidence tree.',
+      id: 'recon',
+      title: result === 'MATCHED' ? 'Reconciled' : `Reconciliation ${result}`,
+      timeLabel: timeOnly(t(847)),
+      state: reconState,
+      summary:
+        result === 'MATCHED'
+          ? 'All sources agree. Financial movement is accounted for.'
+          : `${exceptionType || result}. Provider status stays ${status}.`,
       facts: [
-        { label: 'Record hash', value: shortHash(hash) },
-        { label: 'Merkle root', value: shortHash(merkle) },
-        { label: 'Leaf', value: leaf },
+        { label: 'Provider status', value: status },
+        { label: 'Reconciliation', value: result },
+        { label: 'Exception', value: exceptionType || 'NONE' },
+        { label: 'Exposure', value: String(exposure) },
+      ],
+    })
+
+    if (result === 'MATCHED' || kind === 'processed' || kind === 'stuck_passed') {
+      events.push({
+        id: 'sealed',
+        title: 'Evidence sealed',
+        timeLabel: timeOnly(t(848)),
+        state: 'done',
+        summary: 'Record hash committed to the evidence tree.',
+        facts: [
+          { label: 'Record hash', value: shortHash(hash) },
+          { label: 'Merkle root', value: shortHash(merkle) },
+          { label: 'Leaf', value: leaf },
+        ],
+      })
+    }
+  } else if (kind === 'failed_money') {
+    events.push({
+      id: 'recon',
+      title: `Investigation open · ${result === 'MATCHED' ? 'UNRESOLVED' : result}`,
+      timeLabel: timeOnly(t(847)),
+      state: 'warn',
+      summary: 'Failed with possible money movement. Do not seal successful-credit evidence until reversal or bank proof lands.',
+      facts: [
+        { label: 'Provider status', value: status },
+        { label: 'Reconciliation', value: result === 'MATCHED' ? 'UNRESOLVED' : result },
+        { label: 'Exception', value: exceptionType || 'FAILED_WITH_MONEY_MOVEMENT' },
+        { label: 'Exposure', value: String(exposure) },
       ],
     })
   }

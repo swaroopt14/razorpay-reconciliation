@@ -13,6 +13,7 @@ import {
   RZ_MUTED,
   RZ_PAGE,
   RZ_WRAP,
+  StatusBadge,
 } from './razorpayChrome'
 import { formatPaise } from './reasonCopy'
 
@@ -43,10 +44,11 @@ export function InvestigationsSurface() {
 
   const stats = useMemo(() => {
     const total = rows.length
-    const resolved = rows.filter((r) => r.status === 'completed').length
+    const resolved = rows.filter((r) => String(r.status).toLowerCase() === 'completed').length
     const unresolved = total - resolved
     const impact = rows.reduce((s, r) => s + (r.financial_impact || 0), 0)
-    return { total, resolved, unresolved, impact }
+    const highConf = rows.filter((r) => (r.confidence || 0) >= 0.9).length
+    return { total, resolved, unresolved, impact, highConf }
   }, [rows])
 
   return (
@@ -60,34 +62,35 @@ export function InvestigationsSurface() {
           docsHref="https://razorpay.com/docs/x/payouts/"
         />
         <p className={`mt-1 ${RZ_MUTED}`}>
-          Agent traces for recon exceptions. Provider status is never renamed.
+          Agentic finance controller — traces failure process, signal, and error-code origin. Provider status is
+          never renamed. Failed lifecycles stop at Failed (no fake evidence seal).
         </p>
 
         <div className="mt-5 space-y-3">
           <HeroAmountCard
-            label="Investigated exposure"
+            label="Agent-investigated exposure"
             amount={formatPaise(stats.impact, 2)}
-            subtitle={`${stats.total} cases`}
+            subtitle={`${stats.total} cases · ${stats.highConf} high-confidence`}
             info="Sum of financial_impact on investigation cases."
           />
           <div className="grid gap-3 sm:grid-cols-3">
             <MiniMetricCard
-              label="Complete"
+              label="Agent complete"
               value={String(stats.resolved)}
-              subtitle="agent finished"
+              subtitle="finished tool runs"
               info="status = completed"
             />
             <MiniMetricCard
-              label="Open"
+              label="Agent open"
               value={String(stats.unresolved)}
-              subtitle="still with the agent"
+              subtitle="still gathering evidence"
               info="Unresolved investigations"
               warn
             />
             <MiniMetricCard
               label="Cases"
               value={String(stats.total)}
-              subtitle="in the inbox"
+              subtitle="in the agent inbox"
               info="All investigation records"
             />
           </div>
@@ -101,44 +104,58 @@ export function InvestigationsSurface() {
 
         <div className={`${RZ_CARD} mt-6 overflow-hidden`}>
           {loading ? (
-            <p className={`px-6 py-10 text-center ${RZ_MUTED}`}>Loading investigations…</p>
+            <p className={`px-6 py-10 text-center ${RZ_MUTED}`}>Loading agent inbox…</p>
           ) : rows.length === 0 ? (
-            <PaymentsEmptyState title="No investigations" body="Run reconciliation on an open payout to create a case." />
+            <PaymentsEmptyState
+              title="No investigations"
+              body="Open an exception or failed payout and run the AI investigation agent."
+            />
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[860px] text-left text-[13px]">
-                <thead className="border-b border-[#EEF0F3] bg-[#FAFBFC] text-[11px] font-semibold uppercase tracking-[0.06em] text-[#8F8F8F]">
-                  <tr>
-                    <th className="px-4 py-3 font-semibold">Investigation</th>
-                    <th className="px-4 py-3 font-semibold">Entity</th>
-                    <th className="px-4 py-3 font-semibold">Issue</th>
-                    <th className="px-4 py-3 font-semibold">Status</th>
-                    <th className="px-4 py-3 text-right font-semibold">Impact</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row) => (
-                    <tr
-                      key={row.id}
-                      className="cursor-pointer border-t border-[#F3F4F6] hover:bg-[#FAFBFC]"
+            <ul className="divide-y divide-[#EEF0F3]">
+              {rows.map((row) => {
+                const open = String(row.status).toLowerCase() !== 'completed'
+                const conf = Math.round((row.confidence || 0.86) * 100)
+                return (
+                  <li key={row.id}>
+                    <button
+                      type="button"
                       onClick={() =>
                         router.push(`/investigations/${encodeURIComponent(row.id)}?demo=sandbox`)
                       }
+                      className="flex w-full items-start gap-4 px-5 py-4 text-left transition hover:bg-[#FAFBFC]"
                     >
-                      <td className="px-4 py-3 font-mono text-[12px] text-[#1A1A1A]">{row.id}</td>
-                      <td className="px-4 py-3 font-mono text-[12px] text-[#334155]">{row.entity_id}</td>
-                      <td className="max-w-[320px] px-4 py-3 text-[#334155]">
-                        {row.issue || row.root_cause}
-                      </td>
-                      <td className="px-4 py-3 capitalize text-[#64748B]">{row.status}</td>
-                      <td className="px-4 py-3 text-right font-medium tabular-nums">
-                        {formatPaise(row.financial_impact, 2)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-mono text-[13px] font-semibold text-[#1A1A1A]">{row.id}</p>
+                          <StatusBadge tone={open ? 'pending' : 'captured'}>
+                            {open ? 'Agent open' : 'Agent complete'}
+                          </StatusBadge>
+                          <span className="rounded-full bg-[#F1F5F9] px-2 py-0.5 text-[11px] font-semibold tabular-nums text-[#475569]">
+                            {conf}% conf
+                          </span>
+                        </div>
+                        <p className="mt-1 text-[14px] font-medium text-[#0F172A]">
+                          {row.issue || row.root_cause}
+                        </p>
+                        <p className={`mt-1 ${RZ_MUTED}`}>
+                          <span className="font-mono text-[12px]">{row.entity_id}</span>
+                          <span className="mx-1.5 text-[#D0D4DA]">·</span>
+                          {row.entity_type || 'payout'}
+                          <span className="mx-1.5 text-[#D0D4DA]">·</span>
+                          Impact {formatPaise(row.financial_impact, 2)}
+                        </p>
+                        <p className="mt-1 text-[12px] text-[#64748B]">
+                          {open
+                            ? 'Click to run live agent · tool calls · failure forensics'
+                            : 'View agent report · hypotheses · stop-at-failure lifecycle'}
+                        </p>
+                      </div>
+                      <span className="shrink-0 text-[13px] font-medium text-[#528FF0]">Open agent →</span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
           )}
         </div>
       </div>

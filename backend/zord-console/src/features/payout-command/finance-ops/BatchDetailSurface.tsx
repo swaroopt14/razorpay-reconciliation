@@ -6,6 +6,10 @@ import { useRouter } from 'next/navigation'
 import { useEnvironment } from '@/services/auth/EnvironmentProvider'
 import { useSessionTenant } from '@/services/auth/useSessionTenantId'
 import { DEMO_BATCH_LABEL } from '@/services/payout-command/demo/ycDemoConstants'
+import {
+  markBatchDispatched,
+  useDispatchedBatchId,
+} from '@/services/payout-command/demo/demoBatchReadiness'
 import { DemoTablePager, type DemoTablePageSize } from '../demo/DemoTablePager'
 import { formatJournalMoney } from '../intent-journal/formatJournalMoney'
 import { useJournalBatchMetrics } from '../intent-journal/hooks/useJournalBatchMetrics'
@@ -56,6 +60,13 @@ export function BatchDetailSurface({ batchId }: { batchId: string }) {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState<DemoTablePageSize>(DEFAULT_PAGE_SIZE)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const dispatchedBatchId = useDispatchedBatchId()
+  const alreadyDispatched = dispatchedBatchId === batchId
+
+  function openProof() {
+    markBatchDispatched(batchId)
+    router.push(`/proof?demo=sandbox&batch_id=${encodeURIComponent(batchId)}`)
+  }
 
   const enabled = tenantReady && Boolean(batchId.trim())
   const { batch, metrics, loading: metricsLoading, error: metricsError } = useJournalBatchMetrics(
@@ -212,6 +223,25 @@ export function BatchDetailSurface({ batchId }: { batchId: string }) {
           onRangeChange={setRange}
           rangeOptions={RANGE_OPTIONS}
           docsHref="https://razorpay.com/docs/payments/"
+          actions={
+            alreadyDispatched ? (
+              <button
+                type="button"
+                onClick={() => router.push(`/proof?demo=sandbox&batch_id=${encodeURIComponent(batchId)}`)}
+                className="inline-flex h-9 items-center rounded-[6px] border border-[#E6E8EB] bg-white px-3.5 text-[13px] font-semibold text-[#1A1A1A] hover:bg-[#FAFBFC]"
+              >
+                Open proof
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={openProof}
+                className="inline-flex h-9 items-center rounded-[6px] bg-[#0B1324] px-3.5 text-[13px] font-semibold text-white hover:bg-[#1E293B]"
+              >
+                Dispatch
+              </button>
+            )
+          }
         />
         <p className="mt-1 font-mono text-[12px] text-[#8F8F8F]">{batchId}</p>
 

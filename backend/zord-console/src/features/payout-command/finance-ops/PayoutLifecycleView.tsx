@@ -41,6 +41,7 @@ function flagMark(flag: SourceFlag) {
 
 function eventDot(state: LifecycleEvent['state']) {
   if (state === 'done') return 'bg-[#16A34A]'
+  if (state === 'fail') return 'bg-[#DC2626]'
   if (state === 'warn') return 'bg-[#D97706]'
   if (state === 'current') return 'bg-[#528FF0]'
   return 'bg-[#CBD5E1]'
@@ -97,6 +98,9 @@ export function PayoutLifecycleView({
         <PaymentProviderBadge provider={life.providerName} />
         {life.lifecyclePassed ? (
           <span className="text-[12px] font-medium text-[#147A3F]">Lifecycle · Passed ✓</span>
+        ) : life.events.some((e) => e.state === 'fail') ||
+          String(life.providerStatus || '').toLowerCase() === 'failed' ? (
+          <span className="text-[12px] font-medium text-[#C0372A]">Lifecycle · Stopped at failure</span>
         ) : life.exposureMinor > 0 ? (
           <span className="text-[12px] font-medium text-[#B36B00]">
             Exposure {formatPaise(life.exposureMinor, 2)}
@@ -195,7 +199,13 @@ export function PayoutLifecycleView({
               <li key={event.id} className="flex gap-3">
                 <div className="flex w-4 flex-col items-center">
                   <span className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${eventDot(event.state)}`} />
-                  {last ? null : <span className="my-0.5 w-px flex-1 bg-[#E2E8F0]" />}
+                  {last ? null : (
+                    <span
+                      className={`my-0.5 w-px flex-1 ${
+                        event.state === 'fail' ? 'bg-[#FECACA]' : 'bg-[#E2E8F0]'
+                      }`}
+                    />
+                  )}
                 </div>
                 <div className="min-w-0 flex-1 pb-4">
                   <button
@@ -210,8 +220,21 @@ export function PayoutLifecycleView({
                     <span className="text-[11px] font-medium text-[#528FF0]">{open ? 'Hide' : 'Details'}</span>
                   </button>
                   {open ? (
-                    <div className="mt-2 rounded-[8px] border border-[#E6E8EB] bg-white p-3">
+                    <div
+                      className={`mt-2 rounded-[8px] border bg-white p-3 ${
+                        event.state === 'fail'
+                          ? 'border-[#FECACA] bg-[#FEF2F2]'
+                          : event.state === 'warn'
+                            ? 'border-[#FDE68A] bg-[#FFFBEB]'
+                            : 'border-[#E6E8EB]'
+                      }`}
+                    >
                       <p className="text-[13px] leading-relaxed text-[#334155]">{event.summary}</p>
+                      {event.state === 'fail' ? (
+                        <p className="mt-2 rounded-[4px] bg-[#FEE2E2] px-2 py-1 text-[11px] font-semibold text-[#B91C1C]">
+                          Terminal failure · no successful evidence seal
+                        </p>
+                      ) : null}
                       {event.operational ? (
                         <p className="mt-2 rounded-[4px] bg-[#FFF6E5] px-2 py-1 text-[11px] font-semibold text-[#B36B00]">
                           {event.operational.label}: {event.operational.value}

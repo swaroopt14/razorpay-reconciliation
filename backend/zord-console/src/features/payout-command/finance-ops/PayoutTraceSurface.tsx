@@ -12,6 +12,8 @@ import {
 import { mapFinanceRowToPayoutRecon } from './payoutReconCopy'
 import { buildPayoutLifecycle } from './payoutLifecycleModel'
 import { PayoutLifecycleView } from './PayoutLifecycleView'
+import { ErrorInvestigationPanel } from './ErrorInvestigationPanel'
+import { buildRazorpayXError } from './razorpayXErrors'
 
 export function PayoutTraceSurface({ payoutId }: { payoutId: string }) {
   const [loading, setLoading] = useState(true)
@@ -77,8 +79,27 @@ export function PayoutTraceSurface({ payoutId }: { payoutId: string }) {
               </p>
             </div>
             <div className="mt-6">
-              <PayoutLifecycleView life={life} variant="page" initialTab="overview" />
+              <PayoutLifecycleView life={life} variant="page" initialTab="events" />
             </div>
+            {String(row.status || '').toLowerCase() === 'failed' ||
+            life.events.some((e) => e.state === 'fail') ||
+            String(row.result || '').toUpperCase() !== 'MATCHED' ? (
+              <div className="mt-6 rounded-[10px] border border-[#E6E8EB] bg-white px-5 py-2">
+                <ErrorInvestigationPanel
+                  errorView={buildRazorpayXError({
+                    reason: row.errorCode || row.reason,
+                    status: row.status,
+                    description: row.errorDescription || row.evidence,
+                    source: row.signalSource,
+                    nextSteps: row.nextSteps,
+                    payoutId: row.payoutId,
+                  })}
+                  financialImpactMinor={row.varianceMinor || row.amountMinor}
+                  confidence={0.91}
+                  autoStart
+                />
+              </div>
+            ) : null}
           </>
         ) : (
           <p className={`mt-8 ${RZ_MUTED}`}>Payout not found in this reconciliation set.</p>
