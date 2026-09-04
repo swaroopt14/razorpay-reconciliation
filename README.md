@@ -1,17 +1,23 @@
-# Razorpay Reconciliation
-
-Finance-controller software for Razorpay payment truth: ingest Razorpay events and settlement files, match them to bank credits, surface exceptions, and explain the result with cited evidence.
-
-Razorpay `settled` is never treated as `bank_credited`. Cash in the merchant account is proven only by a matched bank observation.
-
 <div align="center">
 
-![Go](https://img.shields.io/badge/Go-1.24-00ADD8?style=flat-square&logo=go&logoColor=white)
-![Next.js](https://img.shields.io/badge/Next.js-14-000000?style=flat-square&logo=next.js)
-![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=flat-square&logo=python&logoColor=white)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?style=flat-square&logo=postgresql&logoColor=white)
-![Apache Kafka](https://img.shields.io/badge/Apache%20Kafka-KRaft-231F20?style=flat-square&logo=apachekafka&logoColor=white)
-![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
+<img src="docs/assets/mark.svg" width="64" height="64" alt="Razorpay Reconciliation" />
+
+# Razorpay Reconciliation
+
+**Match Razorpay settlements to bank cash. Prove the exceptions.**
+
+Ingest events and files · reconcile a batch · cite evidence
+
+Razorpay `settled` is never `bank_credited`
+
+<br/>
+
+[![Go](https://img.shields.io/badge/Go-1.24-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev)
+[![Next.js](https://img.shields.io/badge/Next.js-14-000000?style=flat-square&logo=nextdotjs&logoColor=white)](https://nextjs.org)
+[![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?style=flat-square&logo=postgresql&logoColor=white)](https://www.postgresql.org)
+[![Razorpay](https://img.shields.io/badge/Razorpay-Test%20Mode-072654?style=flat-square)](https://razorpay.com)
+[![License: MIT](https://img.shields.io/badge/License-MIT-22C55E?style=flat-square)](./LICENSE)
 
 </div>
 
