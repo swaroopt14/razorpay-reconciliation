@@ -202,10 +202,10 @@ export function EvidencePackDetailClient({ packId }: EvidencePackDetailClientPro
         <div className={`flex flex-wrap items-end justify-between gap-4 ${tab === 'graph' ? 'px-3 sm:px-4' : ''}`}>
           <div className="min-w-0">
             <Link
-              href={`/payout-command-view/today?dock=proof${batchId ? `&batch_id=${encodeURIComponent(batchId)}` : ''}`}
+              href={`/proof?demo=sandbox${batchId ? `&batch_id=${encodeURIComponent(batchId)}` : ''}`}
               className="inline-flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-[0.08em] text-[#555555] transition hover:text-[#111111]"
             >
-              ← Evidence & Dispute Resolution
+              ← Evidence
             </Link>
             <h1 className="mt-2 truncate font-mono text-[18px] font-semibold tracking-tight text-[#111111] sm:text-[22px]">
               {packId}

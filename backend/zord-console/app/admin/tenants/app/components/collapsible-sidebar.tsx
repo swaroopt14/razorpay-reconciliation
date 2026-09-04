@@ -37,7 +37,7 @@ const navSections: NavSection[] = [
         id: 'intent-journal',
         label: 'Intent Journal',
         icon: <BookOpen className="w-4 h-4" />,
-        href: `${PAYOUT_VIEW_URLS.liveConsole}?dock=grid`,
+        href: '/transactions',
       },
       {
         id: 'settlement-journal',

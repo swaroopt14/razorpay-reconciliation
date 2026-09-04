@@ -12,7 +12,7 @@ const defaultChecklist = {
 
 /**
  * Persists sandbox vs live mode (localStorage + cookie) so EnvironmentProvider
- * and routes like `/sandbox` vs `/payout-command-view/today` stay aligned.
+ * stays aligned with the India console.
  */
 export function persistEnvMode(mode: EnvMode) {
   if (typeof window === 'undefined') return

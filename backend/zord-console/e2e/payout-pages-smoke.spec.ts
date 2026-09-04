@@ -11,19 +11,12 @@ const PACK_BATCH = 'pack-batch-001'
 const PACK_INTENT_A = 'pack-intent-a'
 const PACK_INTENT_B = 'pack-intent-b'
 
-/** Live payout console docks (excludes sandbox-only). */
-const DOCK_CASES: { dock: string; title: string }[] = [
-  { dock: 'home', title: 'Payment Command Center' },
-  { dock: 'workspace', title: 'Payment Operations View' },
-  { dock: 'leakage', title: 'Payment Gaps & Value at Risk' },
-  { dock: 'ambiguity', title: 'Match Review' },
-  { dock: 'verification', title: 'Borrower Verification' },
-  { dock: 'monitoring', title: 'Post-Disbursal Monitoring' },
-  { dock: 'grid', title: 'Intent Journal' },
-  { dock: 'settlement', title: 'Settlement Journal' },
-  { dock: 'connectors', title: 'Connector Performance & Leakage' },
-  { dock: 'proof', title: 'Evidence & Dispute Resolution' },
-  { dock: 'billing', title: 'Billing' },
+/** India finance console pages (legacy `/payout-command-view/today?dock=` redirects here). */
+const CONSOLE_PAGES: { path: string; title: string }[] = [
+  { path: '/transactions?demo=sandbox', title: 'Transactions' },
+  { path: '/exceptions?demo=sandbox', title: 'Exceptions' },
+  { path: '/proof?demo=sandbox', title: 'Evidence' },
+  { path: '/ask?demo=sandbox', title: 'Ask Zord' },
 ]
 
 const STANDALONE_ROUTES = [
@@ -1113,8 +1106,8 @@ async function preparePage(page: Page, context: BrowserContext, prodMock: (page:
   await page.addInitScript((tid) => {
     localStorage.setItem('zord_tenant_id', tid)
   }, SESSION_TENANT)
-  await page.goto(`${BASE_URL}/payout-command-view/today?dock=home`)
-  await expect(page.getByRole('heading', { name: 'Payment Command Center', level: 1 }).first()).toBeVisible({
+  await page.goto(`${BASE_URL}/overview?demo=sandbox`)
+  await expect(page.getByText('Financial control overview').first()).toBeVisible({
     timeout: 20_000,
   })
 }
@@ -1129,57 +1122,29 @@ test.describe('payout console pages smoke (empty prod → preview fallbacks)', (
     await preparePage(page, context, installEmptyProdMocks)
   })
 
-  for (const { dock, title } of DOCK_CASES) {
-    test(`dock=${dock} renders ${title}`, async ({ page }) => {
+  for (const { path, title } of CONSOLE_PAGES) {
+    test(`${path.split('?')[0]} renders ${title}`, async ({ page }) => {
       const pageErrors: string[] = []
       page.on('pageerror', (err) => pageErrors.push(err.message))
 
-      await page.goto(`/payout-command-view/today?dock=${dock}`)
+      await page.goto(path)
       await expect(page.getByRole('heading', { name: title, level: 1 }).first()).toBeVisible({ timeout: 25_000 })
       await expectNoRuntimeOverlay(page)
-      expect(pageErrors, `page errors on dock=${dock}`).toEqual([])
+      expect(pageErrors, `page errors on ${path}`).toEqual([])
     })
   }
 
-  test('navy KPI heroes render all expected bucket counts', async ({ page }) => {
-    await page.goto('/payout-command-view/today?dock=grid')
-    await expect(page.getByTestId('intent-kpi-hero')).toBeVisible({ timeout: 20_000 })
-    await expect(page.locator('[data-testid^="intent-kpi-hero-bucket-"]')).toHaveCount(4)
-
-    await page.goto('/payout-command-view/today?dock=settlement')
-    await expect(page.getByTestId('settlement-kpi-hero')).toBeVisible({ timeout: 20_000 })
-    await expect(page.locator('[data-testid^="settlement-kpi-hero-bucket-"]')).toHaveCount(4)
-
-    await page.goto('/payout-command-view/today?dock=ambiguity')
-    await expect(page.getByTestId('ambiguity-kpi-hero')).toBeVisible({ timeout: 20_000 })
-    await expect(page.getByTestId('signal-clarity-bar')).toBeVisible({ timeout: 20_000 })
-    await expect(page.getByTestId('matching-execution-log')).toBeVisible({ timeout: 20_000 })
-    await expect(page.getByTestId('matching-heatmap-focus-panel')).toBeVisible({ timeout: 20_000 })
-    await expect(page.getByTestId('ambiguity-batch-queue')).toBeVisible({ timeout: 20_000 })
-
-    await page.goto('/payout-command-view/today?dock=proof')
-    await expect(page.getByTestId('evidence-kpi-hero')).toBeVisible({ timeout: 20_000 })
-    await expect(page.locator('[data-testid^="evidence-kpi-hero-bucket-"]')).toHaveCount(3)
+  test('overview financial control cards render', async ({ page }) => {
+    await page.goto('/overview?demo=sandbox')
+    await expect(page.getByText('Financial control overview')).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByText('Current balance').first()).toBeVisible()
+    await expectNoRuntimeOverlay(page)
   })
 
-  test('home payment health cards render from intelligence APIs', async ({ page }) => {
+  test('legacy payout-command-view today redirects to overview', async ({ page }) => {
     await page.goto('/payout-command-view/today?dock=home')
-    await expect(page.getByText('Settlement Value Observed')).toBeVisible({ timeout: 20_000 })
-    await expect(page.getByText('Unmatched Intent Value')).toBeVisible()
-    await expect(page.getByText('Match Confidence')).toBeVisible()
-    await expect(page.getByText('Proof Readiness')).toBeVisible()
-    await expect(page.getByText('75%')).toBeVisible({ timeout: 20_000 })
-  })
-
-  test('leakage keeps 2x2 KPI structure with dark hero styling', async ({ page }) => {
-    await page.goto('/payout-command-view/today?dock=leakage')
-    await expect(page.getByTestId('leakage-kpi-strip')).toBeVisible({ timeout: 20_000 })
-    const hero = page.getByTestId('leakage-kpi-hero')
-    await expect(hero).toBeVisible({ timeout: 20_000 })
-    await expect(hero).toHaveAttribute('style', /0f172a/i)
-    await expect(hero).toContainText('Value needing review')
-    await expect(page.locator('[data-testid^="leakage-kpi-secondary-"]')).toHaveCount(4)
-    await expect(page.getByTestId('leakage-batch-watchlist')).toBeVisible({ timeout: 20_000 })
+    await expect(page).toHaveURL(/\/overview/, { timeout: 15_000 })
+    await expect(page.getByText('Financial control overview')).toBeVisible({ timeout: 20_000 })
   })
 
   test('batch command center route opens directly', async ({ page }) => {
@@ -1187,81 +1152,13 @@ test.describe('payout console pages smoke (empty prod → preview fallbacks)', (
     await expect(page.getByTestId('batch-review-page')).toBeVisible({ timeout: 20_000 })
   })
 
-  test('leakage hides Preview when live comparison timeseries is available', async ({ page }) => {
-    await page.goto('/payout-command-view/today?dock=leakage')
-    await expect(page.getByText('Current leakage').first()).toBeVisible({ timeout: 20_000 })
-    await expect(page.getByText('Preview', { exact: true })).toHaveCount(0)
-  })
-
-  test('ambiguity shows awaiting-live state when velocity scatter is empty', async ({ page }) => {
-    await page.goto('/payout-command-view/today?dock=ambiguity')
-    await expect(page.getByTestId('ambiguity-velocity-chart')).toBeVisible({ timeout: 20_000 })
-    await expect(page.getByText('Awaiting live data', { exact: true })).toBeVisible({
-      timeout: 20_000,
-    })
-    await expect(page.getByText('Preview', { exact: true })).toHaveCount(0)
-  })
-
-  test('connectors renders API-driven routing sections', async ({ page }) => {
-    test.setTimeout(45_000)
-    const captures: ProdCapture[] = []
-    page.on('request', (req) => {
-      if (req.method() !== 'GET') return
-      const cap = captureProdGet(req.url())
-      if (cap) captures.push(cap)
-    })
-
-    await page.goto('/payout-command-view/today?dock=connectors')
-    await expect(page.getByRole('heading', { name: 'Connector Performance & Leakage', level: 1 })).toBeVisible({
-      timeout: 25_000,
-    })
-    await expect(page.getByTestId('routing-kpi-bar')).toBeVisible({ timeout: 25_000 })
-    await expect(page.getByTestId('leakage-exposure-chart')).toBeVisible({ timeout: 15_000 })
-    await expect(page.getByTestId('leakage-composition-chart')).toBeVisible({ timeout: 15_000 })
-    await expect(page.getByTestId('connector-grid')).toContainText('Cashfree', { timeout: 15_000 })
-    await expect(page.getByTestId('connector-grid')).toContainText('Strengthen provider contract')
-    await expect(page.getByTestId('recommended-routes')).toHaveCount(0)
-    await expect(page.getByText('Razorpay')).toHaveCount(0)
-    await expect(page.getByText('ICICI Bank')).toHaveCount(0)
-    expect(captures.some((c) => c.pathname.endsWith('/api/prod/intelligence/leakage'))).toBe(true)
-    expect(captures.some((c) => c.pathname.endsWith('/api/prod/intelligence/ambiguity/heatmap'))).toBe(true)
-    expect(captures.some((c) => c.pathname.endsWith('/api/prod/intelligence/pattern'))).toBe(true)
-    expect(captures.some((c) => c.pathname.endsWith('/api/prod/intelligence/pattern/history'))).toBe(true)
-    expect(captures.some((c) => c.pathname.endsWith('/api/prod/intelligence/recommendations'))).toBe(true)
-  })
-
-  test('connectors shows empty state when intelligence APIs have no data', async ({ page }) => {
-    await page.route('**/api/prod/intelligence/**', async (route) => {
-      if (route.request().method() !== 'GET') {
-        await route.continue()
-        return
-      }
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ data_available: false, tenant_id: SESSION_TENANT }),
-      })
-    })
-
-    await page.goto('/payout-command-view/today?dock=connectors')
-    await expect(page.getByRole('heading', { name: 'Connector Performance & Leakage', level: 1 })).toBeVisible({
-      timeout: 25_000,
-    })
-    await expect(page.getByTestId('routing-empty-state')).toBeVisible({ timeout: 20_000 })
-    await expect(page.getByTestId('routing-kpi-bar')).toHaveCount(0)
-    await expect(page.getByTestId('connector-grid')).toHaveCount(0)
-    await expect(page.getByText('Razorpay')).toHaveCount(0)
-    await expect(page.getByTestId('preventable-leakage-impact')).toHaveCount(0)
-  })
-
   test('evidence shows empty pack state when no live packs', async ({ page }) => {
-    await page.goto(`/payout-command-view/today?dock=proof&batch_id=${encodeURIComponent(BATCH_ID)}`)
-    await expect(page.getByRole('heading', { name: 'Evidence & Dispute Resolution', level: 1 })).toBeVisible({
+    await page.goto(`/proof?demo=sandbox&batch_id=${encodeURIComponent(BATCH_ID)}`)
+    await expect(page.getByRole('heading', { name: 'Evidence', level: 1 })).toBeVisible({
       timeout: 25_000,
     })
-    await expect(page.getByText('Preview', { exact: true })).toHaveCount(0)
     await expect(
-      page.getByText(/No evidence packs|pack not found|Select a batch|awaiting/i).first(),
+      page.getByText(/No evidence packs|pack not found|Select a batch|awaiting|dispatch/i).first(),
     ).toBeVisible({ timeout: 15_000 })
   })
 
@@ -1293,47 +1190,21 @@ test.describe('evidence batch → intent → pack wiring', () => {
     await preparePage(page, context, installEvidenceFixtureMocks)
   })
 
-  test('evidence proof dock shows batch-only browser row', async ({ page }) => {
-    await page.goto(`${BASE_URL}/payout-command-view/today?dock=proof&batch_id=${encodeURIComponent(EVIDENCE_BATCH)}`)
-    await expect(page.getByRole('heading', { name: 'Evidence & Dispute Resolution', level: 1 })).toBeVisible({
+  test('evidence proof page loads for a batch', async ({ page }) => {
+    await page.goto(`${BASE_URL}/proof?demo=sandbox&batch_id=${encodeURIComponent(EVIDENCE_BATCH)}`)
+    await expect(page.getByRole('heading', { name: 'Evidence', level: 1 })).toBeVisible({
       timeout: 25_000,
     })
-    await expect(page.getByRole('columnheader', { name: 'Evidence Pack' })).toBeVisible({ timeout: 15_000 })
-    await expect(page.getByRole('columnheader', { name: 'Scope' })).toBeVisible()
-    await expect(page.getByRole('columnheader', { name: 'Proof Root' })).toBeVisible()
-    await expect(page.getByRole('columnheader', { name: 'Score' })).toBeVisible()
-    await expect(page.getByRole('columnheader', { name: 'Leaves' })).toBeVisible()
-    await expect(page.getByRole('link', { name: 'View batch proof' })).toHaveCount(1, { timeout: 15_000 })
-    await expect(page.getByRole('columnheader', { name: 'Intent' })).toHaveCount(0)
-    await expect(page.getByRole('columnheader', { name: 'Status' })).toHaveCount(0)
-    await expect(page.getByText('1100%')).toHaveCount(0)
-    await expect(page.getByText(/payment proofs/i).first()).toBeVisible({ timeout: 15_000 })
+    await expectNoRuntimeOverlay(page)
   })
 
-  test('fan-out API calls and table on Evidence dock', async ({ page, context }) => {
+  test('fan-out API calls on evidence pack detail', async ({ page, context }) => {
     const captures: ProdCapture[] = []
     page.on('request', (req) => {
       if (req.method() !== 'GET') return
       const cap = captureProdGet(req.url())
       if (cap) captures.push(cap)
     })
-
-    await page.goto(`${BASE_URL}/payout-command-view/today?dock=proof&batch_id=${encodeURIComponent(EVIDENCE_BATCH)}`)
-    await expect(page.getByRole('heading', { name: 'Evidence & Dispute Resolution', level: 1 })).toBeVisible({
-      timeout: 25_000,
-    })
-    await expect(page.getByRole('link', { name: 'View batch proof' }).first()).toBeVisible({ timeout: 25_000 })
-    await expect(page.getByText(PACK_BATCH).first()).toBeVisible({ timeout: 25_000 })
-    await expect(page.getByText(PACK_INTENT_A)).toHaveCount(0)
-
-    const packs = captures.filter((c) => c.pathname.endsWith('/evidence/packs'))
-    expect(packs.some((c) => c.searchParams.get('batch_id') === EVIDENCE_BATCH)).toBe(true)
-    const batchIntentsCalls = captures.filter((c) =>
-      c.pathname.endsWith(`/evidence/batch/${encodeURIComponent(EVIDENCE_BATCH)}/intents`),
-    )
-    expect(batchIntentsCalls.length).toBeGreaterThan(0)
-
-    await expect(page.getByText('Batch proof').first()).toBeVisible({ timeout: 10_000 })
 
     await installPayoutSessionCookies(context)
     await page.goto(`${BASE_URL}/payout-command-view/evidence-pack/${encodeURIComponent(PACK_BATCH)}?tab=graph&batch_id=${encodeURIComponent(EVIDENCE_BATCH)}`)

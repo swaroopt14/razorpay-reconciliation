@@ -14,7 +14,7 @@ export default function PayoutCommandViewLayout({ children }: { children: React.
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      const returnTo = pathname || '/payout-command-view'
+      const returnTo = pathname || '/overview'
       try {
         const res = await fetch('/api/auth/me', { credentials: 'include' })
         if (cancelled) return

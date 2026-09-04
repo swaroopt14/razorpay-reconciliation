@@ -258,9 +258,9 @@ export function SignUpFormMultiStep({
       // chosen mode. The EnvironmentProvider on the destination route reads
       // the localStorage state we persisted above.
       if (formData.mode === 'sandbox') {
-        router.push('/sandbox')
+        router.push('/overview?demo=sandbox')
       } else if (formData.mode === 'live') {
-        router.push('/payout-command-view/today')
+        router.push('/overview')
       }
     } catch (error) {
       setErrors({

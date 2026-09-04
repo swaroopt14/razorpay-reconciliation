@@ -41,7 +41,7 @@ export function ControlPlaneShell({ children }: { children: ReactNode }) {
         return
       }
       if (id === 'grid') {
-        router.push('/sandbox?dock=grid')
+        router.push(withScenarioScope(withDemoBatchScope('/transactions'), SCENARIO_CROSS_BORDER))
         return
       }
       router.push(withScenarioScope(sandboxDockHref(id), SCENARIO_CROSS_BORDER))

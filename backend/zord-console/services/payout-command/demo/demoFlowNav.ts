@@ -40,8 +40,9 @@ export const CROSS_BORDER_DEMO_FLOW: DemoFlowStep[] = [
     label: 'Intent Journal',
     match: (p) =>
       p.startsWith('/payouts/intents') ||
+      p.startsWith('/transactions') ||
       (p.startsWith('/sandbox') && !p.includes('batch-command-center')),
-    href: '/sandbox?dock=grid&demo=sandbox',
+    href: '/transactions?demo=sandbox',
   },
   {
     id: 'policies',

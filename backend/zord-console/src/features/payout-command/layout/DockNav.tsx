@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 
 import { ZordLogo } from '@/components/ZordLogo'
 import { useEnvironment } from '@/services/auth/EnvironmentProvider'
+import { persistEnvMode } from '@/services/auth/persistEnvMode'
 import { payoutBatchCommandCenterHref } from '@/services/payout-command/batchCommandCenterHref'
 import {
   DEMO_SMOKE_BATCH_ID,
@@ -868,8 +869,9 @@ export function DockNav({
         window.clearTimeout(stallNavTimerRef.current)
         stallNavTimerRef.current = null
       }
-      // Intent list is a heavy sandbox shell — hard-nav so the URL stays /sandbox?dock=grid.
-      if (href === '/sandbox?dock=grid') {
+      // Intent list used to live in the sandbox dock shell — keep a hard nav
+      // only for leftover `/sandbox?dock=` URLs that still redirect.
+      if (href.startsWith('/sandbox?dock=')) {
         window.location.assign(href)
         return
       }
@@ -986,11 +988,14 @@ export function DockNav({
                 type="button"
                 onClick={() => {
                   if (indiaSandboxOn) {
-                    if (canSwitchToLive) router.push('/payout-command-view/today')
-                    else onActivateClick()
+                    if (canSwitchToLive) {
+                      persistEnvMode('live')
+                      router.push('/overview')
+                    } else onActivateClick()
                     return
                   }
-                  router.push('/sandbox')
+                  persistEnvMode('sandbox')
+                  router.push('/overview?demo=sandbox')
                 }}
                 className={navItemClass(false, collapsed)}
                 aria-label={indiaSandboxOn ? 'Sandbox on. Switch to live.' : 'Sandbox off. Switch to sandbox.'}

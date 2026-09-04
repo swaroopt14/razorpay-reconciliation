@@ -103,7 +103,7 @@ export default function RegisterPage() {
         return
       }
       persistEnvMode('sandbox')
-      router.push('/sandbox')
+      router.push('/overview?demo=sandbox')
       router.refresh()
     } catch {
       setError('Network error. Try again.')
@@ -124,7 +124,7 @@ export default function RegisterPage() {
 
   function handleContinue() {
     persistEnvMode('sandbox')
-    router.push('/sandbox')
+    router.push('/overview?demo=sandbox')
     router.refresh()
   }
 

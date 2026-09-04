@@ -13,6 +13,7 @@ import {
 import { PayoutConsoleNavStack } from '@/features/payout-command/layout/PayoutConsoleNavStack'
 import { EnvironmentProvider, type EnvMode } from '@/services/auth/EnvironmentProvider'
 import { DASHBOARD_FONT_STACK, type DockId } from '@/services/payout-command/model'
+import { financeDockHref } from '@/features/payout-command/finance-ops/financeDockHref'
 
 type BatchCommandCenterShellProps = {
   /** Pin sandbox vs live for `/sandbox/batch-command-center` vs live batch route. */
@@ -30,10 +31,9 @@ export function BatchCommandCenterShell({ forceMode }: BatchCommandCenterShellPr
 
   const onDockChange = useCallback(
     (id: DockId) => {
-      const base = isSandbox ? '/sandbox' : '/payout-command-view/today'
-      router.push(`${base}?dock=${id}`)
+      router.push(financeDockHref(id))
     },
-    [isSandbox, router],
+    [router],
   )
 
   return (

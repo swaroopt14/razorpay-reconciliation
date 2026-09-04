@@ -80,8 +80,7 @@ export type WorkspaceTab =
   | 'Sources'
   | 'Actions'
   | 'Routing'
-/** Command center time window. 'Quarter' is set by the `onQuarterChange` handler
- * in PayoutCommandViewClient when the user picks a specific quarter. */
+/** Command center time window. 'Quarter' is set when the user picks a specific quarter. */
 export type HomeTimeframe = 'Today' | 'Week' | 'Month' | 'Year' | 'Custom' | 'Quarter'
 
 export type HomeSourceFilter = 'All' | 'Loan System' | 'Payment Partner'
@@ -351,16 +350,16 @@ export const dockItems = [
 
 /** Base URLs for payout console + settings (use for links and docs). */
 export const PAYOUT_VIEW_URLS = {
-  sandboxConsole: '/sandbox',
-  liveConsole: '/payout-command-view/today',
+  sandboxConsole: '/overview',
+  liveConsole: '/overview',
   /** Live-only shell; use `sandboxBatchCommandCenter` when `mode === 'sandbox'`. */
   batchCommandCenter: PAYOUT_BATCH_COMMAND_CENTER_LIVE_PATH,
   /** Same Batch Command Center UI under `/sandbox` so links from sandbox never jump to live. */
   sandboxBatchCommandCenter: PAYOUT_BATCH_COMMAND_CENTER_SANDBOX_PATH,
   settingsAccount: '/payout-command-view/settings/account',
   settingsApiKeys: '/payout-command-view/settings/api-keys',
-  connectorIntelligence: '/payout-command-view/connector-intelligence',
-  support: '/payout-command-view/today?dock=support',
+  connectorIntelligence: '/connections',
+  support: '/admin?tab=support',
 } as const
 
 /** One row per dock icon: tooltip label + full page name (matches `dockItems`). */

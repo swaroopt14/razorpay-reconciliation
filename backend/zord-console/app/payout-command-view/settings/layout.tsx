@@ -13,7 +13,7 @@ const SECTIONS = [
   {
     id: 'support',
     label: 'Support',
-    href: '/payout-command-view/today?dock=support',
+    href: '/admin?tab=support',
     enabled: true,
   },
   { id: 'webhooks', label: 'Webhooks', href: '#', enabled: false },
@@ -32,7 +32,7 @@ export default function SettingsLayout({ children }: { children: ReactNode }) {
         {/* Left sidebar */}
         <aside className="shrink-0 lg:w-[220px]">
           <Link
-            href="/payout-command-view/today"
+            href="/overview"
             className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#64748b] transition hover:text-[#0f172a]"
           >
             <svg className="h-3 w-3" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>

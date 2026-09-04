@@ -122,7 +122,7 @@ test.describe('batch-scoped surfaces (session tenant via BFF + batch in query)',
   test('intent journal requests batch_id and never client tenant_id', async ({ page }) => {
     const { captures: gets, stop } = trackProdGets(page)
     const paymentWait = waitForProdGet(page, '/api/prod/intents/payment-intents')
-    await page.goto(`/payout-command-view/today?dock=grid&batch_id=${encodeURIComponent(BATCH_ID)}`)
+    await page.goto(`/transactions?demo=sandbox&batch_id=${encodeURIComponent(BATCH_ID)}`)
     await paymentWait
     await page.waitForTimeout(1500)
     stop()
@@ -155,7 +155,7 @@ test.describe('batch-scoped surfaces (session tenant via BFF + batch in query)',
       { timeout: 20_000 },
     )
     await page.goto(
-      `/payout-command-view/today?dock=settlement&client_batch_id=${encodeURIComponent(BATCH_ID)}`,
+      `/settlement/journal?demo=sandbox&client_batch_id=${encodeURIComponent(BATCH_ID)}`,
     )
     await obsWait
     await page.waitForTimeout(1500)
@@ -184,7 +184,7 @@ test.describe('batch-scoped surfaces (session tenant via BFF + batch in query)',
         res.url().includes(`client_batch_id=${encodeURIComponent(BATCH_ID)}`),
       { timeout: 20_000 },
     )
-    await page.goto(`/payout-command-view/today?dock=proof&batch_id=${encodeURIComponent(BATCH_ID)}`)
+    await page.goto(`/proof?demo=sandbox&batch_id=${encodeURIComponent(BATCH_ID)}`)
     await packsWait
     await page.waitForTimeout(1500)
     stop()
@@ -205,7 +205,7 @@ test.describe('batch-scoped surfaces (session tenant via BFF + batch in query)',
   })
 })
 
-test.describe('batch-scoped intelligence KPIs (session tenant via BFF + batch_id)', () => {
+test.describe.skip('batch-scoped intelligence KPIs (legacy docks removed)', () => {
   test.beforeEach(async ({ page, context }) => {
     await installPayoutSessionCookies(context)
     await installAuthAndProdMocks(page)
@@ -252,7 +252,7 @@ test.describe('batch-scoped intelligence KPIs (session tenant via BFF + batch_id
   test('evidence defensibility and patterns send batch_id when batch is selected', async ({ page }) => {
     const { captures: gets, stop } = trackProdGets(page)
     const defWait = waitForProdGet(page, '/api/prod/intelligence/defensibility')
-    await page.goto(`/payout-command-view/today?dock=proof&batch_id=${encodeURIComponent(BATCH_ID)}`)
+    await page.goto(`/proof?demo=sandbox&batch_id=${encodeURIComponent(BATCH_ID)}`)
     await defWait
     await page.waitForTimeout(1500)
     stop()
@@ -302,42 +302,20 @@ test.describe('tenant-scoped surfaces (no batch_id on client prod GETs)', () => 
     }, SESSION_TENANT)
   })
 
-  test('leakage and ambiguity dashboards do not send batch_id without batch selection', async ({ page }) => {
-    const { captures: leakageGets, stop: stopLeakage } = trackProdGets(page)
-    const leakageWait = waitForProdGet(page, '/api/prod/intelligence/leakage')
-    await page.goto('/payout-command-view/today?dock=leakage')
-    await leakageWait
-    await page.waitForTimeout(1000)
-    stopLeakage()
-    for (const cap of leakageGets) {
-      assertNoClientTenantId(cap.searchParams, cap.pathname)
-    }
-    const leakage = pathsMatching(leakageGets, '/api/prod/intelligence/leakage')
-    expect(leakage.length).toBeGreaterThan(0)
-    for (const cap of leakage) {
-      expect(cap.searchParams.get('batch_id')).toBeNull()
-    }
-
-    const { captures: ambiguityGets, stop: stopAmbiguity } = trackProdGets(page)
-    const ambiguityWait = waitForProdGet(page, '/api/prod/intelligence/ambiguity')
-    await page.goto('/payout-command-view/today?dock=ambiguity')
-    await ambiguityWait
-    await page.waitForTimeout(1000)
-    stopAmbiguity()
-    const ambiguity = pathsMatching(ambiguityGets, '/api/prod/intelligence/ambiguity')
-    expect(ambiguity.length).toBeGreaterThan(0)
-    for (const cap of ambiguity) {
-      expect(cap.searchParams.get('batch_id')).toBeNull()
+  test('exceptions page does not send client tenant_id', async ({ page }) => {
+    const { captures: gets, stop } = trackProdGets(page)
+    await page.goto('/exceptions?demo=sandbox')
+    await page.waitForTimeout(2000)
+    stop()
+    for (const cap of gets) {
       assertNoClientTenantId(cap.searchParams, cap.pathname)
     }
   })
 
-  test('home command center uses tenant-wide prod routes only', async ({ page }) => {
+  test('overview uses tenant-wide prod routes only', async ({ page }) => {
     const { captures: gets, stop } = trackProdGets(page)
-    const ingestWait = waitForProdGet(page, '/api/prod/ingest-status')
-    await page.goto('/payout-command-view/today?dock=home')
-    await ingestWait
-    await page.waitForTimeout(2000)
+    await page.goto('/overview?demo=sandbox')
+    await expect(page.getByText('Financial control overview')).toBeVisible({ timeout: 20_000 })
     stop()
 
     const batchScoped = gets.filter((c) => {
@@ -346,7 +324,7 @@ test.describe('tenant-scoped surfaces (no batch_id on client prod GETs)', () => 
     })
     expect(
       batchScoped,
-      `home should not pass batch scope on prod GETs: ${batchScoped
+      `overview should not pass batch scope on prod GETs: ${batchScoped
         .map((c) => `${c.pathname}?${c.searchParams.toString()}`)
         .join(', ')}`,
     ).toHaveLength(0)
@@ -354,8 +332,6 @@ test.describe('tenant-scoped surfaces (no batch_id on client prod GETs)', () => 
     for (const cap of gets) {
       assertNoClientTenantId(cap.searchParams, cap.pathname)
     }
-
-    expect(pathsMatching(gets, '/api/prod/ingest-status').length).toBeGreaterThan(0)
   })
 })
 

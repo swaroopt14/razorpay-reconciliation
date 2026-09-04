@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEnvironment } from '@/services/auth/EnvironmentProvider'
+import { persistEnvMode } from '@/services/auth/persistEnvMode'
 import { Glyph } from '../shared'
 
 /**
@@ -10,8 +11,8 @@ import { Glyph } from '../shared'
   * Click to drop down a 2-row menu (Sandbox / Live). Live is locked unless
   * `canSwitchToLive` is true; the locked option points at the activate wizard.
   *
-  * Sandbox + live live at separate URLs (`/sandbox` and `/payout-command-view/today`).
-  * Switching mode = navigating between routes, not flipping local state.
+  * Sandbox + live share the India console (`/overview`). Switching mode
+  * persists env and reloads overview.
   */
 export function ModeTogglePill({
   onActivateClick,
@@ -27,9 +28,9 @@ export function ModeTogglePill({
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement | null>(null)
 
-  /** URL is source of truth for the pill label so SSR matches hydration (sandbox vs live routes). */
+  /** URL is source of truth for the pill label so SSR matches hydration. */
   const routeMode: 'sandbox' | 'live' | null =
-    pathname?.startsWith('/sandbox') ? 'sandbox' : pathname?.startsWith('/payout-command-view') ? 'live' : null
+    pathname?.startsWith('/sandbox') ? 'sandbox' : pathname?.startsWith('/payout-command-view/settings') ? 'live' : null
 
   // Close on outside click + Escape.
   useEffect(() => {
@@ -101,7 +102,8 @@ export function ModeTogglePill({
           <button
             type="button"
             onClick={() => {
-              router.push('/sandbox')
+              persistEnvMode('sandbox')
+              router.push('/overview?demo=sandbox')
               setOpen(false)
             }}
             className={`flex w-full items-start gap-2.5 rounded-[8px] px-2.5 py-2 text-left transition ${
@@ -131,7 +133,8 @@ export function ModeTogglePill({
             <button
               type="button"
               onClick={() => {
-                router.push('/payout-command-view/today')
+                persistEnvMode('live')
+                router.push('/overview')
                 setOpen(false)
               }}
               className={`mt-1 flex w-full items-start gap-2.5 rounded-[8px] px-2.5 py-2 text-left transition ${

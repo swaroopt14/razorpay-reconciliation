@@ -72,7 +72,7 @@ function SignInForm() {
 
       if (openInSandbox) {
         persistEnvMode('sandbox')
-        router.push('/sandbox')
+        router.push('/overview?demo=sandbox')
       } else {
         persistEnvMode('live')
         router.push(next)

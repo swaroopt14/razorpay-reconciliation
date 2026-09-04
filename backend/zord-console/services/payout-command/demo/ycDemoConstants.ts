@@ -1,4 +1,5 @@
 import { PAYOUT_BATCH_COMMAND_CENTER_SANDBOX_PATH } from '../batchCommandCenterHref'
+import { canonicalDockPath } from '../canonicalDockPath'
 import { CROSS_BORDER_TRACE_ID } from './scenarioMode'
 
 /** Single demo batch shown across the console after obligation upload (and settlement when present). */
@@ -22,13 +23,12 @@ export function isDemoQuery(value: string | null | undefined): boolean {
 export const DEMO_HOME_HREF = `/overview?demo=sandbox&batch_id=${DEMO_SMOKE_BATCH_ID}`
 
 export function demoBatchHref(dock: string, opts?: { sandbox?: boolean; extra?: string; guide?: boolean }) {
-  const base = opts?.sandbox === false ? '/payout-command-view/today' : '/sandbox'
-  const q = new URLSearchParams({
-    dock,
-    batch_id: DEMO_SMOKE_BATCH_ID,
-    client_batch_id: DEMO_SMOKE_BATCH_ID,
-    demo: DEMO_QUERY_VALUE,
-  })
+  const dest = canonicalDockPath(dock)
+  const [base, existing = ''] = dest.split('?')
+  const q = new URLSearchParams(existing)
+  q.set('batch_id', DEMO_SMOKE_BATCH_ID)
+  q.set('client_batch_id', DEMO_SMOKE_BATCH_ID)
+  q.set('demo', DEMO_QUERY_VALUE)
   if (opts?.guide) q.set('guide', '1')
   if (opts?.extra) {
     for (const [k, v] of new URLSearchParams(opts.extra)) q.set(k, v)
@@ -304,7 +304,7 @@ export function withDemoBatchScope(href: string, batchId?: string): string {
 }
 
 export function sandboxDockHref(dock: string, batchId?: string): string {
-  return withDemoBatchScope(`/sandbox?dock=${dock}`, batchId)
+  return withDemoBatchScope(canonicalDockPath(dock), batchId)
 }
 
 export function enterDemoSession(opts?: { guide?: boolean }) {

@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
 
 /**
- * Live sign-in smoke - canonical /signin (live payout command by default).
+ * Live sign-in smoke - canonical /signin (India console /overview by default).
  *
  * Creates the account first if it does not exist (same email/password env vars as signup smoke).
  *
@@ -54,7 +54,7 @@ test.describe('signin smoke (live zord-edge)', () => {
     }
   })
 
-  test('signs in on live workspace and opens payout command', async ({ page }) => {
+  test('signs in on live workspace and opens overview', async ({ page }) => {
     test.skip(!edgeHealthy, `zord-edge not reachable at ${EDGE_URL}`)
     test.skip(!EMAIL, 'Set SMOKE_SIGNUP_EMAIL (e.g. jainamoswal1811@gmail.com)')
 
@@ -69,7 +69,7 @@ test.describe('signin smoke (live zord-edge)', () => {
     await page.getByPlaceholder('Enter your password').fill(PASSWORD)
     await page.getByRole('button', { name: 'Continue', exact: true }).click()
 
-    await expect(page).toHaveURL(/\/payout-command-view/, { timeout: 25_000 })
+    await expect(page).toHaveURL(/\/overview/, { timeout: 25_000 })
     await expect(page.getByText('Invalid email or password')).toHaveCount(0)
 
     const me = await page.request.get('/api/auth/me')
@@ -78,7 +78,7 @@ test.describe('signin smoke (live zord-edge)', () => {
     expect(body.user?.email?.toLowerCase()).toBe(EMAIL)
 
     await page.reload()
-    await expect(page).toHaveURL(/\/payout-command-view\/today/, { timeout: 15_000 })
+    await expect(page).toHaveURL(/\/overview/, { timeout: 15_000 })
     await expect(page.getByRole('heading', { name: 'Sign in to your workspace' })).toHaveCount(0)
     const meAfterRefresh = await page.request.get('/api/auth/me')
     expect(meAfterRefresh.status()).toBe(200)
@@ -114,7 +114,7 @@ test.describe('signin smoke (live zord-edge)', () => {
     await page.getByPlaceholder('Enter your password').fill(password)
     await page.getByRole('button', { name: 'Continue', exact: true }).click()
 
-    await expect(page).toHaveURL(/\/payout-command-view/, { timeout: 25_000 })
+    await expect(page).toHaveURL(/\/overview/, { timeout: 25_000 })
     const me = await page.request.get('/api/auth/me')
     expect(me.status()).toBe(200)
   })

@@ -59,7 +59,6 @@ export function readAskZordSelectedContext(searchParams?: SearchParamsLike | nul
 
 export function buildAskZordWorkspaceHref(context: AskZordSelectedContext) {
   const params = new URLSearchParams()
-  params.set('dock', 'workspace')
   params.set('ask_scope', context.scope)
   params.set('source_page', context.sourcePage)
 
@@ -67,7 +66,7 @@ export function buildAskZordWorkspaceHref(context: AskZordSelectedContext) {
     params.set('batch_id', context.batchId)
   }
 
-  return `/payout-command-view/today?${params.toString()}`
+  return `/ask?${params.toString()}`
 }
 
 export function toPromptLayerUIContext(context: AskZordSelectedContext | null): PromptLayerUIContext | undefined {

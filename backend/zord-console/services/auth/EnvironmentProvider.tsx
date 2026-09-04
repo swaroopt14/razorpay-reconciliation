@@ -99,10 +99,7 @@ export function EnvironmentProvider({
 }: {
   children: ReactNode
   /**
-   * If set (typically from the route - `/sandbox` passes 'sandbox',
-   * `/payout-command-view/today` passes 'live'), forces the mode for this
-   * tree regardless of localStorage. The user reaches the other mode by
-   * navigating to its route, not by toggling state in place.
+   * If set, forces sandbox vs live for this tree regardless of localStorage.
    */
   routeMode?: EnvMode
 }) {
