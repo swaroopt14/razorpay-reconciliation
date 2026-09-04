@@ -1,0 +1,313 @@
+package handlers
+
+// dashboard_leakage_handler.go
+//
+// GET /v1/intelligence/dashboard/leakage
+//
+// Serves the 6 Leakage KPIs for the frontend dashboard:
+//   KPI 1  total_intended_volume        → total_intended_amount_minor
+//   KPI 2  unmatched_intent_amount      → unmatched_amount_minor (MATCH_UNRESOLVED
+//                                          + MATCH_AMBIGUOUS — see
+//                                          unmatched_excluding_ambiguous_amount_minor
+//                                          for the MATCH_UNRESOLVED-only figure)
+//   KPI 3  under_settlement_amount      → under_settlement_amount_minor
+//   KPI 4  orphan_settlement_amount     → orphan_amount_minor
+//   KPI 5  reversal_exposure            → reversal_exposure_minor
+//   KPI 6  leakage_rate                 → leakage_percentage
+//
+// Derived (not a separate snapshot field): total_observed_settled_volume_minor =
+//   intended − unmatched − under_settlement − reversal_exposure
+//   (complement of the leakage_percentage numerator; orphan is excluded there — projection_repo.recomputeLeakageTotals).
+//
+// Data source: intelligence_snapshots WHERE snapshot_type = 'LEAKAGE'.
+// The LeakageIntelligenceService writes these snapshots after every
+// attachment decision / variance record event.
+//
+// Query params:
+//   tenant_id   required
+//   from_date   optional — ISO-8601 date (YYYY-MM-DD); filters by snapshot created_at >= from
+//   to_date     optional — ISO-8601 date (YYYY-MM-DD); filters by snapshot created_at <= to
+//   batch_id    optional — scopes the LEAKAGE snapshot AND the
+//               unmatched/orphan batch_contracts override (see
+//               GetUnmatchedAndOrphanByCurrency) to one batch instead of the
+//               whole tenant. Despite an earlier version of this comment,
+//               it is NOT ignored.
+//   provider    optional — not applicable for leakage (TENANT-scoped); accepted and ignored
+
+import (
+	"encoding/json"
+	"math"
+	"net/http"
+	"time"
+
+	"github.com/shopspring/decimal"
+	"github.com/zord/zord-intelligence/internal/persistence"
+)
+
+// ambiguityKPIsForLeakage holds the ambiguity snapshot fields needed to compute
+// L4 (ambiguous_value_at_risk) and L10 (risk_weighted_leakage_estimate).
+type ambiguityKPIsForLeakage struct {
+	AmbiguousAmountMinor    decimal.Decimal `json:"ambiguous_amount_minor"`
+	AvgAttachmentConfidence float64         `json:"avg_attachment_confidence"`
+}
+
+// PerCurrencyLeakage is one currency's unmatched/orphan totals within a
+// tenant — see DashboardLeakageResponse.ByCurrency. INTEL-11.
+type PerCurrencyLeakage struct {
+	Currency             string          `json:"currency"`
+	UnmatchedAmountMinor decimal.Decimal `json:"unmatched_amount_minor"`
+	OrphanAmountMinor    decimal.Decimal `json:"orphan_amount_minor"`
+}
+
+// DashboardLeakageHandler serves GET /v1/intelligence/dashboard/leakage.
+type DashboardLeakageHandler struct {
+	snapshotRepo     *persistence.IntelligenceSnapshotRepo
+	batchRepo        *persistence.BatchContractRepo
+	intelligenceMode string
+}
+
+// NewDashboardLeakageHandler creates a DashboardLeakageHandler.
+func NewDashboardLeakageHandler(snapshotRepo *persistence.IntelligenceSnapshotRepo, batchRepo *persistence.BatchContractRepo, mode string) *DashboardLeakageHandler {
+	return &DashboardLeakageHandler{snapshotRepo: snapshotRepo, batchRepo: batchRepo, intelligenceMode: mode}
+}
+
+// leakageKPIFields contains the KPI fields extracted from LeakageSnapshot JSON.
+// We unmarshal just these fields to avoid coupling to the full service snapshot struct.
+type leakageKPIFields struct {
+	TotalAmountMinor                decimal.Decimal `json:"total_amount_minor"`
+	TotalIntendedAmountMinor        decimal.Decimal `json:"total_intended_amount_minor"`
+	TotalObservedSettledAmountMinor decimal.Decimal `json:"total_observed_settled_amount_minor"`
+	UnmatchedAmountMinor            decimal.Decimal `json:"unmatched_amount_minor"`
+	UnderSettlementAmountMinor      decimal.Decimal `json:"under_settlement_amount_minor"`
+	OrphanAmountMinor               decimal.Decimal `json:"orphan_amount_minor"`
+	ReversalExposureMinor           decimal.Decimal `json:"reversal_exposure_minor"`
+	LeakagePercentage               float64         `json:"leakage_percentage"`
+	RiskTier                        string          `json:"risk_tier"`
+	DuplicateRiskCount              int             `json:"duplicate_risk_count"`
+	DuplicateRiskExposureMinor      decimal.Decimal `json:"duplicate_risk_exposure_minor"`
+	ConfirmedDuplicateCount         int             `json:"confirmed_duplicate_count"`
+	ConfirmedDuplicateExposureMinor decimal.Decimal `json:"confirmed_duplicate_exposure_minor"`
+	OverSettlementAmountMinor       decimal.Decimal `json:"over_settlement_amount_minor"`
+}
+
+// DashboardLeakageResponse is the frontend-ready payload for the leakage dashboard card.
+type DashboardLeakageResponse struct {
+	TenantID      string     `json:"tenant_id"`
+	DataAvailable bool       `json:"data_available"`
+	SnapshotID    string     `json:"snapshot_id,omitempty"`
+	WindowStart   *time.Time `json:"window_start,omitempty"`
+	WindowEnd     *time.Time `json:"window_end,omitempty"`
+	ComputedAt    *time.Time `json:"computed_at,omitempty"`
+	Reason        string     `json:"reason,omitempty"`
+
+	// KPI 1 — total_intended_volume
+	TotalIntendedAmountMinor decimal.Decimal `json:"total_intended_amount_minor"`
+	// KPI 2 — unmatched_intent_amount
+	UnmatchedAmountMinor decimal.Decimal `json:"unmatched_amount_minor"`
+	// KPI 3 — under_settlement_amount
+	UnderSettlementAmountMinor decimal.Decimal `json:"under_settlement_amount_minor"`
+	// KPI 4 — orphan_settlement_amount
+	OrphanAmountMinor decimal.Decimal `json:"orphan_amount_minor"`
+	// KPI 5 — reversal_exposure
+	ReversalExposureMinor decimal.Decimal `json:"reversal_exposure_minor"`
+	// KPI 6 — leakage_rate
+	LeakagePercentage float64 `json:"leakage_percentage"`
+
+	// L2 — total_observed_settled_volume: sum of all SettledAmountMinor across all settlements
+	TotalObservedSettledAmountMinor decimal.Decimal `json:"total_observed_settled_amount_minor"`
+
+	// L4 — ambiguous_value_at_risk: ambiguous_amount_minor from AMBIGUITY snapshot
+	AmbiguousValueAtRiskMinor decimal.Decimal `json:"ambiguous_value_at_risk_minor"`
+
+	// UnmatchedExcludingAmbiguousAmountMinor — INTEL-11: unmatched_amount_minor
+	// (KPI 2, above) is sourced from batch_contracts and includes BOTH
+	// MATCH_UNRESOLVED and MATCH_AMBIGUOUS decisions ("money at risk" —
+	// batch_contract_repo.go's AtomicAddBatchUnmatchedAmount call site).
+	// This field is the narrower MATCH_UNRESOLVED-only figure straight from
+	// the LEAKAGE snapshot (same one leakage_percentage's own numerator
+	// uses), so a reader who wants "settlement genuinely never found" without
+	// still-ambiguous decisions mixed in has a correctly-labeled number to
+	// use instead of assuming unmatched_amount_minor means that.
+	UnmatchedExcludingAmbiguousAmountMinor decimal.Decimal `json:"unmatched_excluding_ambiguous_amount_minor"`
+
+	// INTEL-11: L10 used to blend a CONFIRMED amount with a SPECULATIVE one
+	// into a single risk_adjusted_leakage_minor field, the same conflation
+	// this file already avoids for L7/L7b (DuplicateRiskExposureMinor vs
+	// ConfirmedDuplicateExposureMinor below). Split into two labeled fields
+	// following that same pattern:
+
+	// ConfirmedLeakageMinor — the confirmed portion, straight from
+	// total_amount_minor (kpis.TotalAmountMinor). No speculative weighting.
+	ConfirmedLeakageMinor decimal.Decimal `json:"confirmed_leakage_minor"`
+
+	// RiskWeightedLeakageEstimateMinor (formerly risk_adjusted_leakage_minor,
+	// renamed for clarity) — total_amount_minor + (ambiguous_amount_minor ×
+	// weight), where weight is derived from avg_attachment_confidence:
+	// ≥0.90→0.25, ≥0.70→0.40, <0.70→0.60. This is a confidence-weighted
+	// ESTIMATE of additional exposure from still-ambiguous decisions, not a
+	// confirmed loss — do not sum it with ConfirmedLeakageMinor as if both
+	// were the same kind of number.
+	RiskWeightedLeakageEstimateMinor decimal.Decimal `json:"risk_weighted_leakage_estimate_minor"`
+
+	// Risk classification tier — included for frontend colour-coding
+	RiskTier string `json:"risk_tier,omitempty"`
+
+	// Intelligence mode — GRADE_A or GRADE_B
+	IntelligenceMode string `json:"intelligence_mode,omitempty"`
+
+	// L7 — duplicate_risk_exposure: intents flagged as duplicate risk at intent creation
+	DuplicateRiskCount         int             `json:"duplicate_risk_count"`
+	DuplicateRiskExposureMinor decimal.Decimal `json:"duplicate_risk_exposure_minor"`
+
+	// L7b — confirmed_duplicate_exposure: decisions confirmed as MATCH_DUPLICATE by Service 5C
+	ConfirmedDuplicateCount         int             `json:"confirmed_duplicate_count"`
+	ConfirmedDuplicateExposureMinor decimal.Decimal `json:"confirmed_duplicate_exposure_minor"`
+
+	// total_amount_minor: sum of all leakage types (unmatched + under_settlement + orphan + reversal)
+	TotalAmountMinor decimal.Decimal `json:"total_amount_minor"`
+
+	// over_settlement_amount_minor: sum of OVER_SETTLEMENT variance amounts
+	OverSettlementAmountMinor decimal.Decimal `json:"over_settlement_amount_minor"`
+
+	// ByCurrency — INTEL-11: UnmatchedAmountMinor/OrphanAmountMinor above are
+	// (for backward compatibility) still a sum across every currency the
+	// tenant has used, which is not commercially meaningful when a tenant
+	// mixes currencies. ByCurrency gives the authoritative per-currency
+	// breakdown from batch_contracts; currency-aware clients should read
+	// this instead of the blended totals above.
+	ByCurrency []PerCurrencyLeakage `json:"by_currency,omitempty"`
+}
+
+// GetLeakageKPIs handles GET /v1/intelligence/dashboard/leakage
+func (h *DashboardLeakageHandler) GetLeakageKPIs(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.URL.Query().Get("tenant_id")
+	if tenantID == "" {
+		writeError(w, http.StatusBadRequest, "tenant_id is required")
+		return
+	}
+
+	from, to := parseDateRangeParams(r)
+
+	batchID := r.URL.Query().Get("batch_id")
+	scopeType := "TENANT"
+	var scopeRef *string
+	if batchID != "" {
+		scopeType = "BATCH"
+		scopeRef = &batchID
+	}
+
+	snap, err := h.snapshotRepo.GetLatestByTypeFiltered(
+		r.Context(),
+		tenantID, "LEAKAGE", scopeType, scopeRef,
+		from, to,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fetch leakage snapshot")
+		return
+	}
+
+	resp := DashboardLeakageResponse{TenantID: tenantID, IntelligenceMode: h.intelligenceMode}
+
+	if snap == nil {
+		resp.DataAvailable = false
+		resp.Reason = "No payment data available for this period"
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
+	var kpis leakageKPIFields
+	if err := json.Unmarshal(snap.SnapshotJSON, &kpis); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to parse leakage snapshot")
+		return
+	}
+
+	resp.DataAvailable = true
+	resp.SnapshotID = snap.SnapshotID
+	resp.WindowStart = &snap.WindowStart
+	resp.WindowEnd = &snap.WindowEnd
+	resp.ComputedAt = &snap.CreatedAt
+	resp.TotalIntendedAmountMinor = kpis.TotalIntendedAmountMinor
+	resp.TotalObservedSettledAmountMinor = roundMinor(kpis.TotalObservedSettledAmountMinor)
+	resp.UnmatchedAmountMinor = kpis.UnmatchedAmountMinor
+	resp.UnderSettlementAmountMinor = kpis.UnderSettlementAmountMinor
+	resp.OrphanAmountMinor = kpis.OrphanAmountMinor
+	resp.ReversalExposureMinor = kpis.ReversalExposureMinor
+
+	// INTEL-11: captured BEFORE the batch_contracts override below, straight
+	// from the LEAKAGE snapshot, so this stays the MATCH_UNRESOLVED-only
+	// figure regardless of scope — see the field's own doc comment.
+	resp.UnmatchedExcludingAmbiguousAmountMinor = kpis.UnmatchedAmountMinor
+
+	// Override unmatched and orphan amounts from batch_contracts (authoritative
+	// source — see GetUnmatchedAndOrphanByCurrency's doc comment). INTEL-11:
+	// this now runs for BOTH the tenant-wide view and a single-batch view
+	// (passing batchID through), rather than only the tenant-wide view —
+	// previously a single-batch request skipped this override and returned
+	// the LEAKAGE snapshot's narrower MATCH_UNRESOLVED-only figure under the
+	// same unmatched_amount_minor field name the tenant-wide view used for
+	// the broader MATCH_UNRESOLVED+MATCH_AMBIGUOUS figure, so the same JSON
+	// field silently meant two different things depending on whether
+	// batch_id was supplied.
+	if h.batchRepo != nil {
+		if perCurrency, bErr := h.batchRepo.GetUnmatchedAndOrphanByCurrency(r.Context(), tenantID, batchID); bErr == nil {
+			var unmatchedSum, orphanSum decimal.Decimal
+			for _, pc := range perCurrency {
+				unmatchedSum = unmatchedSum.Add(pc.Unmatched)
+				orphanSum = orphanSum.Add(pc.Orphan)
+				resp.ByCurrency = append(resp.ByCurrency, PerCurrencyLeakage{
+					Currency:             pc.Currency,
+					UnmatchedAmountMinor: pc.Unmatched,
+					OrphanAmountMinor:    pc.Orphan,
+				})
+			}
+			resp.UnmatchedAmountMinor = unmatchedSum
+			resp.OrphanAmountMinor = orphanSum
+		}
+	}
+	resp.LeakagePercentage = math.Round(kpis.LeakagePercentage*10000) / 100
+	resp.RiskTier = kpis.RiskTier
+	resp.DuplicateRiskCount = kpis.DuplicateRiskCount
+	resp.DuplicateRiskExposureMinor = kpis.DuplicateRiskExposureMinor
+	resp.ConfirmedDuplicateCount = kpis.ConfirmedDuplicateCount
+	resp.ConfirmedDuplicateExposureMinor = kpis.ConfirmedDuplicateExposureMinor
+	resp.TotalAmountMinor = kpis.TotalAmountMinor
+	resp.OverSettlementAmountMinor = kpis.OverSettlementAmountMinor
+
+	// ConfirmedLeakageMinor is set unconditionally (no ambiguity data
+	// needed) — it never carries a speculative component.
+	resp.ConfirmedLeakageMinor = roundMinor(kpis.TotalAmountMinor)
+
+	// ── L4 and L10: fetch AMBIGUITY snapshot for cross-category derivation ──
+	// L4 = ambiguous_amount_minor (already computed in ambiguity snapshot)
+	// L10 = total_amount_minor + ambiguous_amount_minor × ambiguity_risk_weight
+	ambSnap, err := h.snapshotRepo.GetLatestByTypeFiltered(
+		r.Context(),
+		tenantID, "AMBIGUITY", scopeType, scopeRef,
+		from, to,
+	)
+	if err == nil && ambSnap != nil {
+		var ambKPIs ambiguityKPIsForLeakage
+		if jsonErr := json.Unmarshal(ambSnap.SnapshotJSON, &ambKPIs); jsonErr == nil {
+			// L4: ambiguous value at risk is the ambiguous_amount_minor from the ambiguity snapshot
+			resp.AmbiguousValueAtRiskMinor = ambKPIs.AmbiguousAmountMinor
+
+			// L10: weight is derived from avg_attachment_confidence
+			// ≥0.90 → low ambiguity risk weight 0.25
+			// ≥0.70 → medium ambiguity risk weight 0.40
+			// <0.70 → high ambiguity risk weight 0.60
+			var ambiguityRiskWeight float64
+			switch {
+			case ambKPIs.AvgAttachmentConfidence >= 0.90:
+				ambiguityRiskWeight = 0.25
+			case ambKPIs.AvgAttachmentConfidence >= 0.70:
+				ambiguityRiskWeight = 0.40
+			default:
+				ambiguityRiskWeight = 0.60
+			}
+			weightedRisk := ambKPIs.AmbiguousAmountMinor.Mul(decimal.NewFromFloat(ambiguityRiskWeight))
+			resp.RiskWeightedLeakageEstimateMinor = roundMinor(kpis.TotalAmountMinor.Add(weightedRisk))
+		}
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}

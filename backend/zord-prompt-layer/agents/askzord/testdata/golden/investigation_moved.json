@@ -1,0 +1,7 @@
+{
+  "question": "Show me all failed payments where money moved",
+  "expected_intent": "INVESTIGATION",
+  "required_facts": [],
+  "forbidden_claims": ["fully reconciled", "STUCK"],
+  "required_limitations": []
+}

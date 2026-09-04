@@ -1,0 +1,17 @@
+{
+  "entity": "event",
+  "account_id": "acc_test",
+  "event": "payment.failed",
+  "contains": ["payment"],
+  "payload": {
+    "payment": {
+      "entity": {
+        "id": "pay_test_789",
+        "amount": 50000,
+        "currency": "INR",
+        "status": "failed"
+      }
+    }
+  },
+  "created_at": 1725000002
+}

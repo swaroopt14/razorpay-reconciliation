@@ -1,0 +1,194 @@
+package handlers
+
+import (
+	"context"
+	"net/http"
+	"time"
+
+	"zord-outcome-engine/internal/poll"
+
+	"github.com/gin-gonic/gin"
+)
+
+type BackfillHandler struct {
+	Service   *poll.BackfillService
+	Freshness *poll.FreshnessService
+}
+
+type createBackfillBody struct {
+	TenantID       string `json:"tenant_id"`
+	ConnectorID    string `json:"connector_id"`
+	WindowFrom     string `json:"window_from"`
+	WindowTo       string `json:"window_to"`
+	TriggerType    string `json:"trigger_type"`
+	Mode           string `json:"mode"`
+	OverlapMinutes *int   `json:"overlap_minutes"`
+}
+
+func (h *BackfillHandler) requireRelay(c *gin.Context) bool {
+	if !authorizeRelay(c.Request) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return false
+	}
+	return true
+}
+
+func (h *BackfillHandler) CreatePayments(c *gin.Context) {
+	h.createAndMaybeRun(c, poll.ResourcePayments, true)
+}
+
+func (h *BackfillHandler) CreateSettlements(c *gin.Context) {
+	h.createAndMaybeRun(c, poll.ResourceSettlements, true)
+}
+
+func (h *BackfillHandler) createAndMaybeRun(c *gin.Context, resource string, run bool) {
+	if !h.requireRelay(c) {
+		return
+	}
+	if h.Service == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "backfill not configured"})
+		return
+	}
+	var body createBackfillBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "message": err.Error()})
+		return
+	}
+	from, err := time.Parse(time.RFC3339, body.WindowFrom)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid window_from"})
+		return
+	}
+	to, err := time.Parse(time.RFC3339, body.WindowTo)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid window_to"})
+		return
+	}
+	mode := body.Mode
+	if mode == "" {
+		mode = "test"
+	}
+	overlap := poll.DefaultOverlapMinutes
+	if body.OverlapMinutes != nil {
+		overlap = *body.OverlapMinutes
+	}
+	job, err := h.Service.CreateJob(c.Request.Context(), poll.CreateBackfillRequest{
+		TenantID:       body.TenantID,
+		ConnectorID:    body.ConnectorID,
+		Provider:       "razorpay",
+		Mode:           mode,
+		ResourceType:   resource,
+		WindowFrom:     from,
+		WindowTo:       to,
+		OverlapMinutes: overlap,
+		TriggerType:    body.TriggerType,
+	})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "message": err.Error()})
+		return
+	}
+
+	if run && job.Status != poll.JobRunning && job.Status != poll.JobSucceeded {
+		jobID := job.ID
+		res := resource
+		svc := h.Service
+		go func() {
+			ctx := context.Background()
+			if res == poll.ResourceSettlements {
+				_, _ = svc.RunSettlements(ctx, jobID)
+			} else {
+				_, _ = svc.RunPayments(ctx, jobID)
+			}
+		}()
+	}
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"job_id":        job.ID,
+		"status":        job.Status,
+		"resource_type": job.ResourceType,
+		"window_from":   job.WindowFrom.UTC().Format(time.RFC3339),
+		"window_to":     job.WindowTo.UTC().Format(time.RFC3339),
+	})
+}
+
+func (h *BackfillHandler) GetJob(c *gin.Context) {
+	if !h.requireRelay(c) {
+		return
+	}
+	job, cursor, err := h.Service.GetJobWithCursor(c.Request.Context(), c.Param("job_id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+		return
+	}
+	c.JSON(http.StatusOK, jobToJSON(job, cursor))
+}
+
+func (h *BackfillHandler) ResumeJob(c *gin.Context) {
+	if !h.requireRelay(c) {
+		return
+	}
+	jobID := c.Param("job_id")
+	svc := h.Service
+	go func() {
+		_, _ = svc.Resume(context.Background(), jobID)
+	}()
+	c.JSON(http.StatusAccepted, gin.H{"job_id": jobID, "status": "running"})
+}
+
+func (h *BackfillHandler) CancelJob(c *gin.Context) {
+	if !h.requireRelay(c) {
+		return
+	}
+	if err := h.Service.Cancel(c.Request.Context(), c.Param("job_id")); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"job_id": c.Param("job_id"), "status": poll.JobCancelled})
+}
+
+func (h *BackfillHandler) GetFreshness(c *gin.Context) {
+	if !h.requireRelay(c) {
+		return
+	}
+	if h.Freshness == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "freshness not configured"})
+		return
+	}
+	job, err := h.Service.GetJob(c.Request.Context(), c.Param("job_id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+		return
+	}
+	report, err := h.Freshness.CompareJob(c.Request.Context(), job)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, report)
+}
+
+func jobToJSON(job poll.BackfillJob, cursor poll.BackfillCursor) gin.H {
+	return gin.H{
+		"job_id":                  job.ID,
+		"status":                  job.Status,
+		"resource_type":           job.ResourceType,
+		"tenant_id":               job.TenantID,
+		"connector_id":            job.ConnectorID,
+		"provider_mode":           job.ProviderMode,
+		"window_from":             job.WindowFrom.UTC().Format(time.RFC3339),
+		"window_to":               job.WindowTo.UTC().Format(time.RFC3339),
+		"fetched_count":           job.FetchedCount,
+		"inserted_count":          job.InsertedCount,
+		"updated_count":           job.UpdatedCount,
+		"skipped_duplicate_count": job.DuplicateCount,
+		"missing_webhook_count":   job.MissingWebhookCount,
+		"api_error_count":         job.ErrorCount,
+		"last_error_code":         job.LastErrorCode,
+		"trace_id":                job.TraceID,
+		"cursor": gin.H{
+			"page_skip":       cursor.PageSkip,
+			"pages_completed": cursor.PagesCompleted,
+			"status":          cursor.Status,
+		},
+	}
+}

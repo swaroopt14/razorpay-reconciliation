@@ -1,0 +1,7 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.arealis.io/incoming_intent.request.v1.json",
+  "title": "IncomingIntentRequestV1",
+  "type": "object",
+  "additionalProperties": true
+}

@@ -1,0 +1,7 @@
+{
+  "question": "What is the Razorpay payout SLA?",
+  "expected_intent": "KNOWLEDGE",
+  "required_facts": [],
+  "forbidden_claims": ["pay_123", "we lost"],
+  "required_limitations": []
+}

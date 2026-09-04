@@ -1,0 +1,7 @@
+{
+  "question": "How much cash is expected versus actually received?",
+  "expected_intent": "CASH_POSITION",
+  "required_facts": ["exposure_minor=42500"],
+  "forbidden_claims": ["we lost", "STUCK"],
+  "required_limitations": []
+}

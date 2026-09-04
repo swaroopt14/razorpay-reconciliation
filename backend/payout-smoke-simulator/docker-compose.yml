@@ -1,0 +1,53 @@
+services:
+  smoke-postgres:
+    image: postgres:16-alpine
+    container_name: smoke-postgres
+    environment:
+      POSTGRES_DB: smoke_audit
+      POSTGRES_USER: smoke
+      # Smoke demo only — hardcoded so no .env is required
+      POSTGRES_PASSWORD: eXDQTEFNyzogVqq4fkgPSMbqJWWoUGPv
+    volumes:
+      - smoke_pg_data:/var/lib/postgresql/data
+      - ./sql/001_smoke_login_audit.sql:/docker-entrypoint-initdb.d/001_smoke_login_audit.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U smoke -d smoke_audit']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  payout-smoke-simulator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: payout-smoke-simulator
+    ports:
+      - "${SMOKE_SIMULATOR_PORT:-8099}:8099"
+    environment:
+      PORT: "8099"
+      SMOKE_TENANT_ID: "${SMOKE_TENANT_ID:-00000000-0000-0000-0000-000000000001}"
+      SMOKE_API_KEY: "${SMOKE_API_KEY:-zord-local-dev-api-key}"
+      # Artificial latency (ms) on heavy list routes — set 0 to disable
+      SMOKE_LATENCY_MS: "${SMOKE_LATENCY_MS:-0}"
+      # Full-year days for home Month/Quarter/Year charts; journals stay capped.
+      SMOKE_DEMO_DAY_COUNT: "${SMOKE_DEMO_DAY_COUNT:-366}"
+      SMOKE_BATCH_COUNT: "${SMOKE_BATCH_COUNT:-10}"
+      # Upload-first: journals / Control plane stay empty until obligation + settlement files.
+      # Set SMOKE_PRESEED_DATA=1 only to restore the always-populated catalogue.
+      SMOKE_PRESEED_DATA: "${SMOKE_PRESEED_DATA:-0}"
+      SMOKE_UPLOAD_FIRST: "${SMOKE_UPLOAD_FIRST:-1}"
+      ZORD_AUTH_REQUIRED: "${ZORD_AUTH_REQUIRED:-1}"
+      ZORD_DEMO_LOGIN_ENABLED: "${ZORD_DEMO_LOGIN_ENABLED:-0}"
+      ZORD_LOGIN_USERS: "${ZORD_LOGIN_USERS:-blank@company.com:YourLongPassword;demo@test123:Test@12344;demo@company.com:YourLongPassword}"
+      DATABASE_URL: postgres://smoke:eXDQTEFNyzogVqq4fkgPSMbqJWWoUGPv@smoke-postgres:5432/smoke_audit
+      SMOKE_DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      smoke-postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  smoke_pg_data:

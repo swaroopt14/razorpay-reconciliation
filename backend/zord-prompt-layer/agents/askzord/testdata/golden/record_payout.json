@@ -1,0 +1,7 @@
+{
+  "question": "What happened to payout pout_123?",
+  "expected_intent": "RECORD",
+  "required_facts": ["provider_status=processed"],
+  "forbidden_claims": ["STUCK", "SLA_BREACH", "fully reconciled"],
+  "required_limitations": []
+}

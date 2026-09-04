@@ -1,0 +1,10 @@
+{
+  "id": "payout_missing_bank",
+  "entity_id": "pout_123",
+  "entity_type": "payout",
+  "fixture": "payout_missing_bank",
+  "classification": "PAYOUT_MISSING_BANK",
+  "impact": 25000,
+  "must_contain": ["No bank transaction"],
+  "must_not_contain": ["was lost", "STUCK"]
+}

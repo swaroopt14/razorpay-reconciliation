@@ -1,0 +1,9 @@
+{
+  "id": "payout_processing",
+  "entity_id": "pout_open",
+  "entity_type": "payout",
+  "fixture": "payout_processing",
+  "classification": "PAYOUT_OPEN_SLA",
+  "must_contain": ["processing"],
+  "must_not_contain": ["STUCK", "SLA_BREACH", "was lost"]
+}

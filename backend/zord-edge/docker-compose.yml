@@ -1,0 +1,89 @@
+# Docker Compose configuration for Zord Edge microservice
+# This file defines the services, networks, and volumes needed to run the Zord Edge service
+
+services:
+  # Define the containers/services to run
+  zord-edge:
+    # Main application service
+    build:
+      # Build configuration
+      context: . # Build context (current directory)
+      dockerfile: Dockerfile # Dockerfile to use for building
+    container_name: zord-edge-service # Name of the running container
+    ports:
+      # Port mapping (host:container)
+      - "8080:8080" # Map host port 8080 to container port 8080
+    env_file:
+      - .env
+    environment:
+      # Environment variables for the application
+      - DB_HOST=zord-edge-postgres # Database host (references postgres service)
+      - DB_PORT=5432 # Database port
+      - DB_USER=zord_user # Database username
+      - DB_PASSWORD=zord_password # Database password
+      - DB_NAME=zord_edge_db # Database name
+      - DB_SSLMODE=disable # Disable SSL for local Docker connections
+      - ENVIRONMENT=production # Environment setting
+      - JAEGER_ENDPOINT=http://host.docker.internal:14268/api/traces # Jaeger tracing endpoint
+      - AWS_REGION=ap-south-1
+      - AWS_EC2_METADATA_DISABLED=true
+      - S3_BUCKET=zord-edge-ingress
+      - SIGNING_KEY_PATH=/run/secrets/ed25519_private.pem
+      - VAULT_KEY_ID=key-1234567890
+      - OBJECT_STORE_VERSION=v1
+    depends_on:
+      # Service dependencies (wait for health checks)
+      postgres:
+        condition: service_healthy
+    networks:
+      # Networks this service connects to
+      - zord-network
+    volumes:
+      - ./ed25519_private.pem:/run/secrets/ed25519_private.pem:ro
+    restart: unless-stopped # Restart policy (restart unless manually stopped)
+    # Container healthcheck intentionally omitted for minimal scratch image.
+    # Use platform/orchestrator health probes instead.
+
+  postgres:
+    # PostgreSQL database service
+    image: postgres:16-alpine # Docker image to use
+    container_name: zord-edge-postgres # Container name
+    command: postgres -c 'max_connections=100'
+    environment:
+      # Database configuration
+      - POSTGRES_USER=zord_user # Database superuser
+      - POSTGRES_PASSWORD=zord_password # Database password
+      - POSTGRES_DB=zord_edge_db # Default database to create
+    volumes:
+      # Volume mounts for data persistence
+      - postgres_edge_data:/var/lib/postgresql/data # Mount data directory
+    ports:
+      # External access port (different from internal to avoid conflicts)
+      - "5433:5432" # Map host port 5433 to container port 5432
+    networks:
+      # Networks this service connects to
+      - zord-network
+    restart: unless-stopped # Restart policy
+    healthcheck:
+      # Health check configuration
+      test: [ "CMD-SHELL", "pg_isready -U zord_user -d zord_edge_db" ] # Check if database is ready
+      interval: 10s # Check interval
+      timeout: 5s # Check timeout
+      retries: 5 # Number of retries before marking unhealthy
+      start_period: 10s # Initial delay before starting health checks
+
+# ---------------------------
+# Volumes
+# ---------------------------
+
+volumes:
+  postgres_edge_data:
+
+    # ---------------------------
+    # Network
+    # ---------------------------
+
+networks:
+  zord-network:
+    external: true
+    name: zord-shared-network

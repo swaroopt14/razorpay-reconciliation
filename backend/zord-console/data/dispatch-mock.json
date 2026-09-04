@@ -1,0 +1,1072 @@
+{
+  "trace_id": "trc_novacell_inv10482",
+  "pac_id": "pac_novacell_eu_10482",
+  "batch": {
+    "batch_id": "batch-001",
+    "label": "Batch 001",
+    "instruction_count": 100,
+    "intent_total_rupees": 1237786756,
+    "intent_total_display": "₹1,23,77,867.56",
+    "currency": "INR",
+    "policy": "Enterprise Supplier Payout v14",
+    "agent": "agt_treasury_eu_04",
+    "agent_label": "Treasury Action Agent",
+    "created_at": "2026-09-01T06:44:00Z"
+  },
+  "recommended_connector": {
+    "id": "conn_neft_01",
+    "name": "NEFT Gateway",
+    "health": "healthy",
+    "cutoff": "5:00 PM IST",
+    "cost": "₹2.50 per txn"
+  },
+  "allowed_rails": [
+    "NEFT",
+    "RTGS",
+    "IMPS"
+  ],
+  "preflight": [
+    {
+      "check": "PAC signature valid",
+      "result": "PASS"
+    },
+    {
+      "check": "Authority chain verified",
+      "result": "PASS"
+    },
+    {
+      "check": "Policy decision ALLOW",
+      "result": "PASS"
+    },
+    {
+      "check": "All approvals received",
+      "result": "PASS"
+    },
+    {
+      "check": "Structure attached",
+      "result": "PASS"
+    },
+    {
+      "check": "Rail allowed by policy",
+      "result": "PASS"
+    },
+    {
+      "check": "Connector health",
+      "result": "PASS"
+    },
+    {
+      "check": "Cutoff window",
+      "result": "PASS"
+    }
+  ],
+  "dispatch_gate": {
+    "dispatched": false,
+    "has_structure": true,
+    "structure_id": "abs_trc_001_v1",
+    "ready": true,
+    "message": "All preflight checks passed. Ready to dispatch batch."
+  },
+  "receipt": {},
+  "instructions": [
+    {
+      "ref": "PAY-0001",
+      "payee": "Apex Components Pvt Ltd",
+      "amount_rupees": 172347.78,
+      "amount_display": "₹172,347.78",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_001"
+    },
+    {
+      "ref": "PAY-0002",
+      "payee": "Northwind Supplies",
+      "amount_rupees": 62711.14,
+      "amount_display": "₹62,711.14",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_002"
+    },
+    {
+      "ref": "PAY-0003",
+      "payee": "Brightline Media",
+      "amount_rupees": 44790.38,
+      "amount_display": "₹44,790.38",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_003"
+    },
+    {
+      "ref": "PAY-0004",
+      "payee": "Summit Components",
+      "amount_rupees": 193549.44,
+      "amount_display": "₹193,549.44",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_004"
+    },
+    {
+      "ref": "PAY-0005",
+      "payee": "Meridian Services",
+      "amount_rupees": 96696.12,
+      "amount_display": "₹96,696.12",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_005"
+    },
+    {
+      "ref": "PAY-0006",
+      "payee": "Local Tools Co",
+      "amount_rupees": 90439.34,
+      "amount_display": "₹90,439.34",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_006"
+    },
+    {
+      "ref": "PAY-0007",
+      "payee": "Horizon Logistics",
+      "amount_rupees": 85938.14,
+      "amount_display": "₹85,938.14",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_007"
+    },
+    {
+      "ref": "PAY-0008",
+      "payee": "Cedar Softwares",
+      "amount_rupees": 68567.09,
+      "amount_display": "₹68,567.09",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_008"
+    },
+    {
+      "ref": "PAY-0009",
+      "payee": "Pacific Packaging",
+      "amount_rupees": 192494.95,
+      "amount_display": "₹192,494.95",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_009"
+    },
+    {
+      "ref": "PAY-0010",
+      "payee": "Vertex Alloys",
+      "amount_rupees": 60876.67,
+      "amount_display": "₹60,876.67",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_010"
+    },
+    {
+      "ref": "PAY-0011",
+      "payee": "Indigo Textiles",
+      "amount_rupees": 180085.83,
+      "amount_display": "₹180,085.83",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_011"
+    },
+    {
+      "ref": "PAY-0012",
+      "payee": "Orion Chemicals",
+      "amount_rupees": 193366.1,
+      "amount_display": "₹193,366.10",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_012"
+    },
+    {
+      "ref": "PAY-0013",
+      "payee": "Maple Print House",
+      "amount_rupees": 152820.13,
+      "amount_display": "₹152,820.13",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_013"
+    },
+    {
+      "ref": "PAY-0014",
+      "payee": "Nova Electrics",
+      "amount_rupees": 57647.05,
+      "amount_display": "₹57,647.05",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_014"
+    },
+    {
+      "ref": "PAY-0015",
+      "payee": "Silverline Foods",
+      "amount_rupees": 162188.62,
+      "amount_display": "₹162,188.62",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_015"
+    },
+    {
+      "ref": "PAY-0016",
+      "payee": "Atlas Couriers",
+      "amount_rupees": 127192.12,
+      "amount_display": "₹127,192.12",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_016"
+    },
+    {
+      "ref": "PAY-0017",
+      "payee": "Prime Bearing Co",
+      "amount_rupees": 46196.3,
+      "amount_display": "₹46,196.30",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_017"
+    },
+    {
+      "ref": "PAY-0018",
+      "payee": "Eastgate Plastics",
+      "amount_rupees": 45784.09,
+      "amount_display": "₹45,784.09",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_018"
+    },
+    {
+      "ref": "PAY-0019",
+      "payee": "BluePeak Marketing",
+      "amount_rupees": 59049.81,
+      "amount_display": "₹59,049.81",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_019"
+    },
+    {
+      "ref": "PAY-0020",
+      "payee": "Harbor Spare Parts",
+      "amount_rupees": 84988.87,
+      "amount_display": "₹84,988.87",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_020"
+    },
+    {
+      "ref": "PAY-0021",
+      "payee": "Redwood Trading",
+      "amount_rupees": 87900.12,
+      "amount_display": "₹87,900.12",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_021"
+    },
+    {
+      "ref": "PAY-0022",
+      "payee": "Titan Steelworks",
+      "amount_rupees": 144513.47,
+      "amount_display": "₹144,513.47",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_022"
+    },
+    {
+      "ref": "PAY-0023",
+      "payee": "Greenfield Agro",
+      "amount_rupees": 164581.53,
+      "amount_display": "₹164,581.53",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_023"
+    },
+    {
+      "ref": "PAY-0024",
+      "payee": "Sunrise Pharma",
+      "amount_rupees": 45106.96,
+      "amount_display": "₹45,106.96",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_024"
+    },
+    {
+      "ref": "PAY-0025",
+      "payee": "Quantum IT Services",
+      "amount_rupees": 156116.67,
+      "amount_display": "₹156,116.67",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_025"
+    },
+    {
+      "ref": "PAY-0026",
+      "payee": "Pinnacle Engineering",
+      "amount_rupees": 80878.11,
+      "amount_display": "₹80,878.11",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_026"
+    },
+    {
+      "ref": "PAY-0027",
+      "payee": "Nimbus Cloud Tech",
+      "amount_rupees": 188248.95,
+      "amount_display": "₹188,248.95",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_027"
+    },
+    {
+      "ref": "PAY-0028",
+      "payee": "Cobalt Energy",
+      "amount_rupees": 174518.84,
+      "amount_display": "₹174,518.84",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_028"
+    },
+    {
+      "ref": "PAY-0029",
+      "payee": "Falcon Air Cargo",
+      "amount_rupees": 185198.32,
+      "amount_display": "₹185,198.32",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_029"
+    },
+    {
+      "ref": "PAY-0030",
+      "payee": "Sterling Jewellers",
+      "amount_rupees": 152731.93,
+      "amount_display": "₹152,731.93",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_030"
+    },
+    {
+      "ref": "PAY-0031",
+      "payee": "Vanguard Consulting",
+      "amount_rupees": 126693.38,
+      "amount_display": "₹126,693.38",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_031"
+    },
+    {
+      "ref": "PAY-0032",
+      "payee": "Sapphire Hospitality",
+      "amount_rupees": 85363.07,
+      "amount_display": "₹85,363.07",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_032"
+    },
+    {
+      "ref": "PAY-0033",
+      "payee": "Crystal Analytics",
+      "amount_rupees": 132857.1,
+      "amount_display": "₹132,857.10",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_033"
+    },
+    {
+      "ref": "PAY-0034",
+      "payee": "Ironclad Manufacturing",
+      "amount_rupees": 161933.91,
+      "amount_display": "₹161,933.91",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_034"
+    },
+    {
+      "ref": "PAY-0035",
+      "payee": "Golden Gate Exports",
+      "amount_rupees": 97352.45,
+      "amount_display": "₹97,352.45",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_035"
+    },
+    {
+      "ref": "PAY-0036",
+      "payee": "Silver Fern Foods",
+      "amount_rupees": 207641.77,
+      "amount_display": "₹207,641.77",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_036"
+    },
+    {
+      "ref": "PAY-0037",
+      "payee": "Emerald Textiles",
+      "amount_rupees": 40947.1,
+      "amount_display": "₹40,947.10",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_037"
+    },
+    {
+      "ref": "PAY-0038",
+      "payee": "Ruby Mining Corp",
+      "amount_rupees": 197132.07,
+      "amount_display": "₹197,132.07",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_038"
+    },
+    {
+      "ref": "PAY-0039",
+      "payee": "Platinum Solutions",
+      "amount_rupees": 206892.08,
+      "amount_display": "₹206,892.08",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_039"
+    },
+    {
+      "ref": "PAY-0040",
+      "payee": "Diamond Precision",
+      "amount_rupees": 72744.38,
+      "amount_display": "₹72,744.38",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_040"
+    },
+    {
+      "ref": "PAY-0041",
+      "payee": "Ruby Software Labs",
+      "amount_rupees": 184536.94,
+      "amount_display": "₹184,536.94",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_041"
+    },
+    {
+      "ref": "PAY-0042",
+      "payee": "Amber Health Sciences",
+      "amount_rupees": 127335.86,
+      "amount_display": "₹127,335.86",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_042"
+    },
+    {
+      "ref": "PAY-0043",
+      "payee": "Jade Garden Supplies",
+      "amount_rupees": 110236.55,
+      "amount_display": "₹110,236.55",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_043"
+    },
+    {
+      "ref": "PAY-0044",
+      "payee": "Coral Reef Shipping",
+      "amount_rupees": 97286.13,
+      "amount_display": "₹97,286.13",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_044"
+    },
+    {
+      "ref": "PAY-0045",
+      "payee": "Pearl Academy Services",
+      "amount_rupees": 71876.69,
+      "amount_display": "₹71,876.69",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_045"
+    },
+    {
+      "ref": "PAY-0046",
+      "payee": "Opal Digital Media",
+      "amount_rupees": 84298.68,
+      "amount_display": "₹84,298.68",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_046"
+    },
+    {
+      "ref": "PAY-0047",
+      "payee": "Onyx Infrastructure",
+      "amount_rupees": 198105.09,
+      "amount_display": "₹198,105.09",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_047"
+    },
+    {
+      "ref": "PAY-0048",
+      "payee": "Sapphire Power Systems",
+      "amount_rupees": 109477.46,
+      "amount_display": "₹109,477.46",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_048"
+    },
+    {
+      "ref": "PAY-0049",
+      "payee": "Topaz Chemicals",
+      "amount_rupees": 60817.57,
+      "amount_display": "₹60,817.57",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_049"
+    },
+    {
+      "ref": "PAY-0050",
+      "payee": "Amethyst Biosciences",
+      "amount_rupees": 58852.71,
+      "amount_display": "₹58,852.71",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_050"
+    },
+    {
+      "ref": "PAY-0051",
+      "payee": "Garnet Agriculture",
+      "amount_rupees": 118473.73,
+      "amount_display": "₹118,473.73",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_051"
+    },
+    {
+      "ref": "PAY-0052",
+      "payee": "Zircon Aerospace",
+      "amount_rupees": 59676.95,
+      "amount_display": "₹59,676.95",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_052"
+    },
+    {
+      "ref": "PAY-0053",
+      "payee": "Aquamarine Marine",
+      "amount_rupees": 114124.78,
+      "amount_display": "₹114,124.78",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_053"
+    },
+    {
+      "ref": "PAY-0054",
+      "payee": "Turquoise Wellness",
+      "amount_rupees": 215544.14,
+      "amount_display": "₹215,544.14",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_054"
+    },
+    {
+      "ref": "PAY-0055",
+      "payee": "Lapis Education",
+      "amount_rupees": 111005.74,
+      "amount_display": "₹111,005.74",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_055"
+    },
+    {
+      "ref": "PAY-0056",
+      "payee": "Citrine Retail",
+      "amount_rupees": 164936.03,
+      "amount_display": "₹164,936.03",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_056"
+    },
+    {
+      "ref": "PAY-0057",
+      "payee": "Peridot Finance",
+      "amount_rupees": 94514.47,
+      "amount_display": "₹94,514.47",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_057"
+    },
+    {
+      "ref": "PAY-0058",
+      "payee": "Spinel Construction",
+      "amount_rupees": 207163.82,
+      "amount_display": "₹207,163.82",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_058"
+    },
+    {
+      "ref": "PAY-0059",
+      "payee": "Almandine Networks",
+      "amount_rupees": 48618.61,
+      "amount_display": "₹48,618.61",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_059"
+    },
+    {
+      "ref": "PAY-0060",
+      "payee": "Rhodolite Telecom",
+      "amount_rupees": 191095.75,
+      "amount_display": "₹191,095.75",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_060"
+    },
+    {
+      "ref": "PAY-0061",
+      "payee": "Charoite Semiconductors",
+      "amount_rupees": 134977.97,
+      "amount_display": "₹134,977.97",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_061"
+    },
+    {
+      "ref": "PAY-0062",
+      "payee": "Sphene Robotics",
+      "amount_rupees": 150922.9,
+      "amount_display": "₹150,922.90",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_062"
+    },
+    {
+      "ref": "PAY-0063",
+      "payee": "Kunzite Biotech",
+      "amount_rupees": 65512.8,
+      "amount_display": "₹65,512.80",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_063"
+    },
+    {
+      "ref": "PAY-0064",
+      "payee": "Taaffeite Optics",
+      "amount_rupees": 118184.56,
+      "amount_display": "₹118,184.56",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_064"
+    },
+    {
+      "ref": "PAY-0065",
+      "payee": "Musgravite Research",
+      "amount_rupees": 55957.41,
+      "amount_display": "₹55,957.41",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_065"
+    },
+    {
+      "ref": "PAY-0066",
+      "payee": "Hsanite Geology",
+      "amount_rupees": 154205.77,
+      "amount_display": "₹154,205.77",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_066"
+    },
+    {
+      "ref": "PAY-0067",
+      "payee": "Grandidierite Mining",
+      "amount_rupees": 100463.97,
+      "amount_display": "₹100,463.97",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_067"
+    },
+    {
+      "ref": "PAY-0068",
+      "payee": "Painite Rare Metals",
+      "amount_rupees": 211788.57,
+      "amount_display": "₹211,788.57",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_068"
+    },
+    {
+      "ref": "PAY-0069",
+      "payee": "Jeremejevite Labs",
+      "amount_rupees": 170108.32,
+      "amount_display": "₹170,108.32",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_069"
+    },
+    {
+      "ref": "PAY-0070",
+      "payee": "Australite Space",
+      "amount_rupees": 168007.25,
+      "amount_display": "₹168,007.25",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_070"
+    },
+    {
+      "ref": "PAY-0071",
+      "payee": "Roaldite Fuel Cells",
+      "amount_rupees": 114676.08,
+      "amount_display": "₹114,676.08",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_071"
+    },
+    {
+      "ref": "PAY-0072",
+      "payee": "Baksanite Materials",
+      "amount_rupees": 159460.62,
+      "amount_display": "₹159,460.62",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_072"
+    },
+    {
+      "ref": "PAY-0073",
+      "payee": "Carlsbergite Alloys",
+      "amount_rupees": 79518.51,
+      "amount_display": "₹79,518.51",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_073"
+    },
+    {
+      "ref": "PAY-0074",
+      "payee": "Chaoite Nanotech",
+      "amount_rupees": 185872.38,
+      "amount_display": "₹185,872.38",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_074"
+    },
+    {
+      "ref": "PAY-0075",
+      "payee": "Eakisite Sensors",
+      "amount_rupees": 54038.09,
+      "amount_display": "₹54,038.09",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_075"
+    },
+    {
+      "ref": "PAY-0076",
+      "payee": "Kornerupine Precision",
+      "amount_rupees": 49111.41,
+      "amount_display": "₹49,111.41",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_076"
+    },
+    {
+      "ref": "PAY-0077",
+      "payee": "Linarite Ceramics",
+      "amount_rupees": 176881.16,
+      "amount_display": "₹176,881.16",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_077"
+    },
+    {
+      "ref": "PAY-0078",
+      "payee": "Zunyite Glassworks",
+      "amount_rupees": 86911.36,
+      "amount_display": "₹86,911.36",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_078"
+    },
+    {
+      "ref": "PAY-0079",
+      "payee": "Edingtonite Plastics",
+      "amount_rupees": 200092.71,
+      "amount_display": "₹200,092.71",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_079"
+    },
+    {
+      "ref": "PAY-0080",
+      "payee": "Gerhardtite Polymers",
+      "amount_rupees": 99677.05,
+      "amount_display": "₹99,677.05",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_080"
+    },
+    {
+      "ref": "PAY-0081",
+      "payee": "Holdenite Fibers",
+      "amount_rupees": 56163.32,
+      "amount_display": "₹56,163.32",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_081"
+    },
+    {
+      "ref": "PAY-0082",
+      "payee": "Euchroite Solar",
+      "amount_rupees": 217168.36,
+      "amount_display": "₹217,168.36",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_082"
+    },
+    {
+      "ref": "PAY-0083",
+      "payee": "Lazulite Wind Power",
+      "amount_rupees": 87927.04,
+      "amount_display": "₹87,927.04",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_083"
+    },
+    {
+      "ref": "PAY-0084",
+      "payee": "Vesuvianite Hydro",
+      "amount_rupees": 60566.61,
+      "amount_display": "₹60,566.61",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_084"
+    },
+    {
+      "ref": "PAY-0085",
+      "payee": "Chlorargyrite Batteries",
+      "amount_rupees": 118515.01,
+      "amount_display": "₹118,515.01",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_085"
+    },
+    {
+      "ref": "PAY-0086",
+      "payee": "Adamite Clean Energy",
+      "amount_rupees": 97307.31,
+      "amount_display": "₹97,307.31",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_086"
+    },
+    {
+      "ref": "PAY-0087",
+      "payee": "Willemite Recycling",
+      "amount_rupees": 133729.35,
+      "amount_display": "₹133,729.35",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_087"
+    },
+    {
+      "ref": "PAY-0088",
+      "payee": "Awaruite Green Steel",
+      "amount_rupees": 171570.77,
+      "amount_display": "₹171,570.77",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_088"
+    },
+    {
+      "ref": "PAY-0089",
+      "payee": "Orpiment Pigments",
+      "amount_rupees": 212765.55,
+      "amount_display": "₹212,765.55",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_089"
+    },
+    {
+      "ref": "PAY-0090",
+      "payee": "Realgar Paints",
+      "amount_rupees": 115339.84,
+      "amount_display": "₹115,339.84",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_090"
+    },
+    {
+      "ref": "PAY-0091",
+      "payee": "Stibnite Coatings",
+      "amount_rupees": 73366.17,
+      "amount_display": "₹73,366.17",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_091"
+    },
+    {
+      "ref": "PAY-0092",
+      "payee": "Cinnabar Inks",
+      "amount_rupees": 116450.27,
+      "amount_display": "₹116,450.27",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_092"
+    },
+    {
+      "ref": "PAY-0093",
+      "payee": "Galena Batteries",
+      "amount_rupees": 113354.8,
+      "amount_display": "₹113,354.80",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_093"
+    },
+    {
+      "ref": "PAY-0094",
+      "payee": "Anglesite Wiring",
+      "amount_rupees": 83093.22,
+      "amount_display": "₹83,093.22",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_094"
+    },
+    {
+      "ref": "PAY-0095",
+      "payee": "Wulfenite Panels",
+      "amount_rupees": 178731.38,
+      "amount_display": "₹178,731.38",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_095"
+    },
+    {
+      "ref": "PAY-0096",
+      "payee": "Covellite Wiring",
+      "amount_rupees": 95024.59,
+      "amount_display": "₹95,024.59",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_096"
+    },
+    {
+      "ref": "PAY-0097",
+      "payee": "Enargite Electronics",
+      "amount_rupees": 185301.08,
+      "amount_display": "₹185,301.08",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_097"
+    },
+    {
+      "ref": "PAY-0098",
+      "payee": "Bournonite Switches",
+      "amount_rupees": 181507.59,
+      "amount_display": "₹181,507.59",
+      "currency": "INR",
+      "rail": "RTGS",
+      "status": "ready",
+      "intent_id": "int_098"
+    },
+    {
+      "ref": "PAY-0099",
+      "payee": "Jamesonite Fuses",
+      "amount_rupees": 174134.94,
+      "amount_display": "₹174,134.94",
+      "currency": "INR",
+      "rail": "IMPS",
+      "status": "ready",
+      "intent_id": "int_099"
+    },
+    {
+      "ref": "PAY-0100",
+      "payee": "Boulangerite Circuits",
+      "amount_rupees": 54421.59,
+      "amount_display": "₹54,421.59",
+      "currency": "INR",
+      "rail": "NEFT",
+      "status": "ready",
+      "intent_id": "int_100"
+    }
+  ]
+}

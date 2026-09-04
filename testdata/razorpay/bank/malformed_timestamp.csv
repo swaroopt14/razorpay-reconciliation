@@ -1,0 +1,2 @@
+transaction_id,value_date,description,credit,debit,currency,utr
+bank_txn_001,32-13-2026,RAZORPAY SETTLEMENT,96578,0,INR,utr_001

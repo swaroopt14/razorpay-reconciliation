@@ -1,0 +1,7 @@
+{
+  "question": "Why is the reconciliation rate only 94%?",
+  "expected_intent": "RECONCILIATION",
+  "required_facts": ["matched_count=94", "scored_count=100"],
+  "forbidden_claims": ["fully reconciled", "ev_invented"],
+  "required_limitations": []
+}

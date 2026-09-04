@@ -1,0 +1,9 @@
+{
+  "id": "failed_no_movement",
+  "entity_id": "pay_fail_ok",
+  "entity_type": "payment",
+  "fixture": "failed_no_movement",
+  "status": "refused",
+  "must_contain": ["MATCHED"],
+  "must_not_contain": ["was lost", "re-scored"]
+}

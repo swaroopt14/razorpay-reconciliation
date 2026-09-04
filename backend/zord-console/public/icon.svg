@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-45 -35 355 350" fill="none" role="img" aria-label="Zord">
+  <rect x="-45" y="-35" width="355" height="350" fill="#05070A"/>
+  <path
+    d="M157 10 L133 52 L99 39 L10 200 L247 270 L222 223 L255 199 Z M133 52 L222 223 L65 177 Z"
+    fill="#FFFFFF"
+    fill-rule="evenodd"
+    clip-rule="evenodd"
+  />
+</svg>

@@ -1,0 +1,7 @@
+{
+  "question": "How much money did we lose from failed payments?",
+  "expected_intent": "AGGREGATE",
+  "required_facts": ["exposure_minor=42500"],
+  "forbidden_claims": ["we lost"],
+  "required_limitations": ["not proven permanent loss"]
+}

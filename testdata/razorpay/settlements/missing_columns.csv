@@ -1,0 +1,2 @@
+type,debit,credit,amount,currency
+payment,0,100,100,INR

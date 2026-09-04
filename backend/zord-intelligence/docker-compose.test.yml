@@ -1,0 +1,140 @@
+services:
+
+  # ── App ──────────────────────────────────────────────────────────────────────
+  zord-intelligence:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: zord-intelligence-service
+    ports:
+      - "8089:8089"
+    environment:
+      - HTTP_PORT=8089
+      - ENVIRONMENT=development
+      - DATABASE_URL=postgres://zpi:zpi_secret@postgres:5432/zord_intelligence?sslmode=disable
+      - KAFKA_BROKERS=kafka:29092
+      - KAFKA_GROUP_ID=zord-intelligence-group
+      - INTELLIGENCE_MODE=GRADE_A
+      - TOPIC_ML_REQUEST=ml.request.events
+      - TOPIC_ML_RESULT=ml.result.events
+      # INTEL-01: test-only value, not the real shared dev secret — this
+      # compose stack is self-contained (no token issuer to interoperate
+      # with), so any fixed value works here.
+      - JWT_SIGNING_SECRET=test-only-jwt-signing-secret-not-for-production
+      - JWT_ISSUER=zord-edge
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      ml-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8089/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  # ── Python ML Service ────────────────────────────────────────────────────────
+  ml-service:
+    build:
+      context: ../ml-service
+      dockerfile: Dockerfile
+    container_name: zord-ml-service
+    environment:
+      - KAFKA_BROKERS=kafka:29092
+      - KAFKA_GROUP_ID=ml-service-group
+      - ML_REQUEST_TOPIC=ml.request.events
+      - ML_RESULT_TOPIC=ml.result.events
+      - LR_MODEL_PATH=/data/lr_model.json
+      - RCA_MODEL_PATH=/data/rca_model.pk
+      - LEAKAGE_MODEL_PATH=/data/leakage_prediction_bundle.joblib
+      - INTELLIGENCE_DATABASE_URL=postgres://zpi:zpi_secret@postgres:5432/zord_intelligence?sslmode=disable
+      - RCA_RETRAIN_THRESHOLD=50
+      - LEAKAGE_RETRAIN_THRESHOLD=50
+    volumes:
+      - ml_model_test_data:/data
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "/app/healthcheck.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ── PostgreSQL ───────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: zord-intelligence-postgres
+    environment:
+      POSTGRES_USER: zpi
+      POSTGRES_PASSWORD: zpi_secret
+      POSTGRES_DB: zord_intelligence
+    command:
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - work_mem=8MB
+    ports:
+      - "5440:5432"
+    volumes:
+     # - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - zord_intelligence_test_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zpi -d zord_intelligence"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Kafka (KRaft mode — no Zookeeper needed) ──────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: zord-intelligence-kafka
+    ports:
+      - "9092:9092"
+      - "9101:9101"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_LISTENERS: PLAINTEXT://kafka:29092,CONTROLLER://kafka:29093,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  # ── Kafka UI — open http://localhost:8090 to see topics and messages ──────────
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: zord-intelligence-kafka-ui
+    ports:
+      - "8090:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+volumes:
+  zord_intelligence_test_data:
+  ml_model_test_data:

@@ -1,0 +1,95 @@
+version: "3.9"
+
+services:
+  zord-token-enclave:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: zord-token-enclave-service
+    ports:
+      - "8087:8087"
+    env_file:
+      - ./.env
+    environment:
+      # App
+      - PORT=8087
+
+      # DB (inside docker network)
+      - DB_HOST=zord-token-enclave-postgres
+
+      - DB_PORT=5432
+      - DB_USER=token_user
+      - DB_PASSWORD=token_password
+      - DB_NAME=zord_token_enclave_db
+      - DB_SSLMODE=disable
+      - DB_URL=postgres://token_user:token_password@zord-token-postgres:5432/zord_token_enclave?sslmode=disable
+
+
+      # Crypto
+      # TOK-03: MASTER_KEY replaced with KMS_KEY_ID (see .env for details).
+      - KMS_KEY_ID=arn:aws:kms:ap-south-1:522189039032:key/99851fd6-8fd2-45eb-9817-8d1fbca90a5f
+      # Default: real AWS keys pasted into .env (AWS_ACCESS_KEY_ID/
+      # AWS_SECRET_ACCESS_KEY there). Works out of the box, but every
+      # teammate ends up with a real key sitting in a local file.
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
+      # Alternative: mount your already-configured `aws configure`
+      # credentials instead of copying keys into .env. This image is
+      # FROM scratch with a numeric, passwd-less USER (see Dockerfile),
+      # so the AWS SDK can't resolve a home directory on its own --
+      # point it at the mounted file explicitly. To use this instead of
+      # the AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY lines above:
+      #   1) leave AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY blank in .env
+      #   2) uncomment the two lines below AND the volumes: block further down
+      # - AWS_SHARED_CREDENTIALS_FILE=/aws-creds/credentials
+      # - AWS_PROFILE=${AWS_PROFILE:-default}
+      # TOK-04: replaces ENCLAVE_INTERNAL_TOKEN. Must match
+      # SERVICE_JWT_SIGNING_SECRET in zord-intent-engine's own .env.
+      - SERVICE_JWT_SIGNING_SECRET=${SERVICE_JWT_SIGNING_SECRET}
+
+       # -------- KAFKA --------
+     # -------- KAFKA --------
+      - KAFKA_BROKERS=${KAFKA_BROKERS}
+      - KAFKA_TOPIC_PII_TOKENIZE_REQUEST=${KAFKA_TOPIC_PII_TOKENIZE_REQUEST}
+      - KAFKA_TOPIC_PII_TOKENIZE_RESULT=${KAFKA_TOPIC_PII_TOKENIZE_RESULT}
+      - KAFKA_TOPIC_PII_TOKENIZE_REQUEST_DLQ=${KAFKA_TOPIC_PII_TOKENIZE_REQUEST_DLQ}
+
+      - ENVIRONMENT=production
+    depends_on:
+      - postgres
+    networks:
+      - zord-network
+    restart: unless-stopped
+    # Container healthcheck intentionally omitted for minimal scratch image.
+    # Use platform/orchestrator health probes instead.
+    # Uncomment to mount your local `aws configure` credentials instead of
+    # pasting keys into .env (pair with the AWS_SHARED_CREDENTIALS_FILE /
+    # AWS_PROFILE lines above). Host path is your OS's default AWS config
+    # dir: ~/.aws on Mac/Linux/WSL2, %USERPROFILE%\.aws on native Windows.
+    # volumes:
+    #   - ${HOME}/.aws:/aws-creds:ro
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: zord-token-enclave-postgres
+    command: postgres -c 'max_connections=100'
+    environment:
+      - POSTGRES_USER=token_user
+      - POSTGRES_PASSWORD=token_password
+      - POSTGRES_DB=zord_token_enclave_db
+    volumes:
+      - postgres_token_enclave_data:/var/lib/postgresql/data
+    ports:
+      - "5437:5432"   # optional: for local debugging
+    networks:
+      - zord-network
+    restart: unless-stopped
+
+volumes:
+  postgres_token_enclave_data:
+
+networks:
+  zord-network:
+    external: true
+    name: zord-shared-network

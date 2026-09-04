@@ -1,0 +1,198 @@
+'use client'
+
+import { useEffect, useRef, useState } from 'react'
+import { usePathname, useRouter } from 'next/navigation'
+import { useEnvironment } from '@/services/auth/EnvironmentProvider'
+import { persistEnvMode } from '@/services/auth/persistEnvMode'
+import { Glyph } from '../shared'
+
+/**
+  * ModeTogglePill - Stripe-style mode picker that lives in the dock nav.
+  * Click to drop down a 2-row menu (Sandbox / Live). Live is locked unless
+  * `canSwitchToLive` is true; the locked option points at the activate wizard.
+  *
+  * Sandbox + live share the India console (`/overview`). Switching mode
+  * persists env and reloads overview.
+  */
+export function ModeTogglePill({
+  onActivateClick,
+  compact,
+}: {
+  onActivateClick: () => void
+  /** Slim control for thin top nav (Ledger-style). */
+  compact?: boolean
+}) {
+  const { mode, canSwitchToLive, liveActivationStatus } = useEnvironment()
+  const pathname = usePathname()
+  const router = useRouter()
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef<HTMLDivElement | null>(null)
+
+  /** URL is source of truth for the pill label so SSR matches hydration. */
+  const routeMode: 'sandbox' | 'live' | null =
+    pathname?.startsWith('/sandbox') ? 'sandbox' : pathname?.startsWith('/payout-command-view/settings') ? 'live' : null
+
+  // Close on outside click + Escape.
+  useEffect(() => {
+    if (!open) return
+    const onClick = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onClick)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onClick)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const isSandbox = (routeMode ?? mode) === 'sandbox'
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className={
+          compact
+            ? `flex h-10 items-center gap-2 rounded-[10px] border px-3.5 text-left transition ${
+                isSandbox
+                  ? 'border-[#2F2F2F] bg-[#1C1C1C] text-white hover:border-[#3A3A3A] hover:bg-[#242424]'
+                  : 'border-[#2F2F2F] bg-[#1C1C1C] text-[#D4D4D4] hover:border-[#3A3A3A] hover:bg-[#242424]'
+              }`
+            : `flex h-11 items-center gap-2 rounded-xl border px-3.5 shadow-[0_3px_10px_-2px_rgba(15,23,42,0.08),inset_0_1px_0_rgba(255,255,255,0.85)] transition ${
+                isSandbox
+                  ? 'border-neutral-800 bg-neutral-900 text-white shadow-[0_3px_12px_-2px_rgba(0,0,0,0.2)] hover:border-neutral-700'
+                  : 'border-[#0B1324]/20 bg-[#F1F5F9] text-[#0B1324] shadow-[0_3px_12px_-2px_rgba(37,99,235,0.1),inset_0_1px_0_rgba(255,255,255,0.9)] hover:border-[#93C5FD]'
+              }`
+        }
+        aria-expanded={open}
+        aria-haspopup="listbox"
+      >
+        {compact ? (
+          <>
+            <span
+              className="h-2 w-2 shrink-0 rounded-full bg-[#0B1324]"
+              aria-hidden
+            />
+            <span className="text-[13px] font-semibold tracking-[0.02em]">
+              {isSandbox ? 'Demo' : 'Live'}
+            </span>
+          </>
+        ) : (
+          <span className="flex flex-col items-start leading-none">
+            <span className="text-[12px] font-semibold uppercase tracking-[0.08em] opacity-70">Mode</span>
+            <span className="mt-0.5 text-[15px] font-bold tracking-[-0.02em]">{isSandbox ? 'Demo' : 'Live'}</span>
+          </span>
+        )}
+        <svg className="h-3.5 w-3.5 shrink-0 opacity-70" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+          <path d="m3 4.5 3 3 3-3" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+
+      {open ? (
+        <div
+          role="listbox"
+          className="absolute left-0 top-full z-[60] mt-1.5 w-[18rem] origin-top-left rounded-none border border-[#E5E5E5] bg-white p-1.5 shadow-[0_12px_32px_rgba(15,23,42,0.12)]"
+        >
+          {/* Demo workspace row */}
+          <button
+            type="button"
+            onClick={() => {
+              persistEnvMode('sandbox')
+              router.push('/overview?demo=sandbox')
+              setOpen(false)
+            }}
+            className={`flex w-full items-start gap-2.5 rounded-[8px] px-2.5 py-2 text-left transition ${
+              isSandbox ? 'bg-neutral-100' : 'hover:bg-[#fafafa]'
+            }`}
+            role="option"
+            aria-selected={isSandbox}
+          >
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-neutral-900 text-white">
+              <Glyph name="terminal" className="h-3.5 w-3.5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <p className="text-[13px] font-semibold text-[#0f172a]">Demo</p>
+                {isSandbox ? (
+                  <Glyph name="check" className="h-3 w-3 text-neutral-700" />
+                ) : null}
+              </div>
+              <p className="mt-0.5 text-[12px] leading-relaxed text-[#64748b]">
+                Illustrative data · smoke / test keys · no real funds
+              </p>
+            </div>
+          </button>
+
+          {/* Live row */}
+          {canSwitchToLive ? (
+            <button
+              type="button"
+              onClick={() => {
+                persistEnvMode('live')
+                router.push('/overview')
+                setOpen(false)
+              }}
+              className={`mt-1 flex w-full items-start gap-2.5 rounded-[8px] px-2.5 py-2 text-left transition ${
+                !isSandbox ? 'bg-violet-50 ring-1 ring-violet-200/80' : 'hover:bg-[#fafafa]'
+              }`}
+              role="option"
+              aria-selected={!isSandbox}
+            >
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-violet-600 text-white shadow-sm">
+                <Glyph name="home" className="h-3.5 w-3.5" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <p className="text-[13px] font-semibold text-violet-950">Live</p>
+                  {!isSandbox ? <Glyph name="check" className="h-3 w-3 text-violet-600" /> : null}
+                </div>
+                <p className="mt-0.5 text-[12px] leading-relaxed text-[#64748b]">
+                  Production · pk_live_… keys · real funds
+                </p>
+              </div>
+            </button>
+          ) : (
+            <div className="mt-1 flex w-full items-start gap-2.5 rounded-[8px] px-2.5 py-2 opacity-70">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[#94a3b8] text-white">
+                <Glyph name="lock" className="h-3.5 w-3.5" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <p className="text-[13px] font-semibold text-[#0f172a]">Live</p>
+                  <span className="rounded-full bg-[#94a3b8]/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#475569]">
+                    {liveActivationStatus === 'in_review' ? 'In review' : 'Locked'}
+                  </span>
+                </div>
+                <p className="mt-0.5 text-[12px] leading-relaxed text-[#64748b]">
+                  {liveActivationStatus === 'in_review'
+                    ? 'Activation submitted · estimated 24h'
+                    : 'Complete activation to issue live keys'}
+                </p>
+                {liveActivationStatus !== 'in_review' ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpen(false)
+                      onActivateClick()
+                    }}
+                    className="mt-1.5 inline-flex items-center gap-1 text-[12px] font-semibold text-[#0f172a] underline-offset-2 hover:underline"
+                  >
+                    Activate now
+                    <svg className="h-3 w-3" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                      <path d="M3 9 9 3M5 3h4v4" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          )}
+        </div>
+      ) : null}
+    </div>
+  )
+}

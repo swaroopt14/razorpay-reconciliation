@@ -1,0 +1,10 @@
+{
+  "id": "two_banks",
+  "entity_id": "pay_amb",
+  "entity_type": "payment",
+  "fixture": "two_banks",
+  "classification": "AMBIGUOUS_BANK",
+  "certainty": "UNKNOWN",
+  "must_contain": ["not proven"],
+  "must_not_contain": ["ownership is proven", "was lost", "STUCK"]
+}

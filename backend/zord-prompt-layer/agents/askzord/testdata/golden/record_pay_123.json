@@ -1,0 +1,7 @@
+{
+  "question": "What happened to payment pay_123?",
+  "expected_intent": "RECORD",
+  "required_facts": ["provider_status=failed", "reconciliation_result=UNRESOLVED"],
+  "forbidden_claims": ["fully reconciled", "STUCK", "ev_invented"],
+  "required_limitations": []
+}

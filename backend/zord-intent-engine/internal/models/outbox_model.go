@@ -1,0 +1,147 @@
+package models
+
+import (
+	"encoding/json"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
+)
+
+// OutboxEvent intentionally has NO fields for batch_quality_score,
+// avg_reference_quality, avg_duplicate_risk, low_matchability_count, or
+// duplicate_risk_count, even though those columns exist on the outbox
+// table (db/migrations/20260707095144_create_outbox.sql). They are
+// batch-level aggregates that don't belong on a per-intent row — see
+// db/migrations/20260723070000_deprecate_outbox_batch_aggregate_columns.sql
+// (R-10). Do not add them here: the real, actively-written per-batch
+// versions live on CanonicalBatch (batch.go), backed by canonical_batches.
+type OutboxEvent struct {
+	EventID           string    `json:"event_id" db:"event_id"`
+	EnvelopeID        string    `json:"envelope_id" db:"envelope_id"`
+	TraceID           string    `json:"trace_id" db:"trace_id"`
+	TenantID          string    `json:"tenant_id" db:"tenant_id"`
+	ContractID        string    `json:"contract_id,omitempty" db:"contract_id"`
+	ArtifactID        string    `json:"artifact_id,omitempty" db:"artifact_id"`
+	ArtifactVersionID string    `json:"artifact_version_id,omitempty" db:"artifact_version_id"`
+	AggregateType     string    `json:"aggregate_type" db:"aggregate_type"`
+	AggregateID       uuid.UUID `json:"aggregate_id" db:"aggregate_id"`
+	IntentID          string    `json:"intent_id"`
+	EventType         string    `json:"event_type" db:"event_type"`
+
+	// EventVersion and SourceService are part of the standard cross-service
+	// event envelope (event_id, event_type, event_version, schema_version,
+	// trace_id, tenant_id, source_service). They are constant per producer
+	// rather than per-row data, so they are stamped in the outbox lease
+	// handler (internal/handlers/outbox_handler.go) rather than persisted
+	// as their own DB columns.
+	EventVersion  string `json:"event_version,omitempty"`
+	SourceService string `json:"source_service,omitempty"`
+
+	SchemaVersion string          `json:"schema_version" db:"schema_version"`
+	Amount        decimal.Decimal `json:"amount" db:"amount"`
+	Currency      string          `json:"currency" db:"currency"`
+
+	RetryCount  int             `json:"retry_count" db:"retry_count"`
+	NextRetryAt *time.Time      `json:"next_attempt_at,omitempty" db:"next_attempt_at"`
+	Payload     json.RawMessage `json:"payload" db:"payload"`
+	Status      string          `json:"status" db:"status"`
+	CreatedAt   time.Time       `json:"created_at" db:"created_at"`
+	LeaseID     string          `json:"lease_id,omitempty" db:"lease_id"`
+	LeasedBy    string          `json:"leased_by,omitempty" db:"leased_by"`
+	LeaseUntil  *time.Time      `json:"lease_until,omitempty" db:"lease_until"`
+	PayloadHash string          `json:"payload_hash" db:"payload_hash"`
+	// CanonicalPayloadHash is SHA-256 of the exact bytes Payload will be
+	// serialized as in the outbox lease HTTP response -- distinct from
+	// PayloadHash, which is SHA-256 of the raw, pre-transformation ingest
+	// payload. Relay's payload-integrity check verifies against this
+	// field, not PayloadHash, since it only ever receives Payload's bytes.
+	//
+	// The DB column backing this (outbox.canonical_payload_hash) is a
+	// Postgres GENERATED column, SHA-256 of payload::text -- but that is
+	// NOT what ends up in this Go field. LeaseOutboxBatch overwrites it
+	// after Scan: encoding/json automatically COMPACTS any embedded
+	// json.RawMessage field (strips insignificant whitespace) when Payload
+	// is later marshaled into the lease response, and Postgres's own
+	// jsonb-to-text output includes a space after every ':' and ','  --
+	// so the DB-generated hash never matches what actually goes out over
+	// the wire. LeaseOutboxBatch compacts Payload in place (idempotent --
+	// a no-op for a caller that bypasses HTTP) and recomputes this field
+	// from those exact final bytes. Read-only from an INSERT's
+	// perspective either way: never set this field before insert.
+	CanonicalPayloadHash string  `json:"canonical_payload_hash" db:"canonical_payload_hash"`
+	BatchID              *string `json:"batchid,omitempty" db:"batchid"`
+	CorridorID           *string `json:"corridor_id"`
+
+	// Intent Metadata (Synchronized from payment_intents)
+	IdempotencyKey      string          `json:"idempotency_key,omitempty" db:"idempotency_key"`
+	SalientHash         string          `json:"salient_hash,omitempty" db:"salient_hash"`
+	IntentType          string          `json:"intent_type,omitempty" db:"intent_type"`
+	CanonicalVersion    string          `json:"canonical_version,omitempty" db:"canonical_version"`
+	IntendedExecutionAt *time.Time      `json:"intended_execution_at,omitempty" db:"intended_execution_at"`
+	Constraints         json.RawMessage `json:"constraints,omitempty" db:"constraints"`
+	BeneficiaryType     string          `json:"beneficiary_type,omitempty" db:"beneficiary_type"`
+	PIITokens           json.RawMessage `json:"pii_tokens,omitempty" db:"pii_tokens"`
+	Beneficiary         json.RawMessage `json:"beneficiary,omitempty" db:"beneficiary"`
+	IntentStatus        string          `json:"intent_status,omitempty" db:"intent_status"`
+	ConfidenceScore     *float64        `json:"confidence_score,omitempty" db:"confidence_score"`
+
+	CanonicalHash                string `json:"canonical_hash,omitempty" db:"canonical_hash"`
+	RawRowHash                   string `json:"raw_row_hash,omitempty" db:"raw_row_hash"`
+	SourceRowRef                 string `json:"source_row_ref,omitempty" db:"source_row_ref"`
+	CanonicalRowHash             string `json:"canonical_row_hash,omitempty" db:"canonical_row_hash"`
+	TokenizedDataHash            string `json:"tokenized_data_hash,omitempty" db:"tokenized_data_hash"`
+	RawRowEvidenceLeafHash       string `json:"raw_row_evidence_leaf_hash,omitempty" db:"raw_row_evidence_leaf_hash"`
+	CanonicalRowEvidenceLeafHash string `json:"canonical_row_evidence_leaf_hash,omitempty" db:"canonical_row_evidence_leaf_hash"`
+	CanonicalSnapshotRef         string `json:"canonical_snapshot_ref,omitempty" db:"canonical_snapshot_ref"`
+	NIRSnapshotRef               string `json:"nir_snapshot_ref,omitempty" db:"nir_snapshot_ref"`
+	GovernanceSnapshotRef        string `json:"governance_snapshot_ref,omitempty" db:"governance_snapshot_ref"`
+	GovernanceHash               string `json:"governance_hash,omitempty" db:"governance_hash"`
+	GovernanceInputFactsHash     string `json:"input_facts_hash,omitempty" db:"input_facts_hash"`
+
+	ClientPayoutRef       string          `json:"client_payout_ref,omitempty" db:"client_payout_ref"`
+	ProviderHint          string          `json:"provider_hint,omitempty" db:"provider_hint"`
+	RequestFingerprint    string          `json:"request_fingerprint,omitempty" db:"request_fingerprint"`
+	RoutingHintsJSON      json.RawMessage `json:"routing_hints_json,omitempty" db:"routing_hints_json"`
+	GovernanceState       string          `json:"governance_state,omitempty" db:"governance_state"`
+	BusinessState         string          `json:"business_state,omitempty" db:"business_state"`
+	IntentLifecycleState  string          `json:"intent_lifecycle_state,omitempty" db:"intent_lifecycle_state"`
+	DuplicateRiskFlag     bool            `json:"duplicate_risk_flag,omitempty" db:"duplicate_risk_flag"`
+	MappingProfileID      string          `json:"mapping_profile_used,omitempty" db:"mapping_profile_id"`
+	MappingProfileVersion string          `json:"mapping_profile_version,omitempty" db:"mapping_profile_version"`
+	MappingProfileHash    string          `json:"mapping_profile_hash,omitempty" db:"mapping_profile_hash"`
+	PolicySource          string          `json:"policy_source,omitempty" db:"policy_source"`
+	PolicyVersion         string          `json:"policy_version,omitempty" db:"policy_version"`
+	PolicyHash            string          `json:"policy_hash,omitempty" db:"policy_hash"`
+	SourceSystem          string          `json:"source_system,omitempty" db:"source_system"`
+
+	PaymentInstructionReceived *time.Time `json:"payment_instruction_received,omitempty" db:"payment_instruction_received"`
+	CanonicalIntentCreated     *time.Time `json:"canonical_intent_created,omitempty" db:"canonical_intent_created"`
+
+	BusinessIdempotencyKey    string          `json:"business_idempotency_key,omitempty" db:"business_idempotency_key"`
+	BeneficiaryFingerprint    string          `json:"beneficiary_fingerprint,omitempty" db:"beneficiary_fingerprint"`
+	ProofReadinessScore       float64         `json:"proof_readiness_score,omitempty" db:"proof_readiness_score"`
+	MatchabilityScore         float64         `json:"matchability_score,omitempty" db:"matchability_score"`
+	IntentQualityScore        float64         `json:"intent_quality_score,omitempty" db:"intent_quality_score"`
+	MappingConfidenceScore    float64         `json:"mapping_confidence_score,omitempty" db:"mapping_confidence_score"`
+	SchemaCompletenessScore   float64         `json:"schema_completeness_score,omitempty" db:"schema_completeness_score"`
+	GovernanceReasonCodesJSON json.RawMessage `json:"governance_reason_codes_json,omitempty" db:"governance_reason_codes_json"`
+	DuplicateReasonCode       string          `json:"duplicate_reason_code,omitempty" db:"duplicate_reason_code"`
+	ClientBatchRef            string          `json:"client_batch_ref,omitempty" db:"client_batch_ref"`
+	AggregateConfidenceScore  *float64        `json:"aggregate_confidence_score,omitempty" db:"aggregate_confidence_score"` // NEW
+	SourceRowNum              *int            `json:"source_row_num,omitempty" db:"source_row_num"`
+
+	// 🆕 Status Fields
+	RequiredFieldsStatus *bool   `json:"required_fields_status,omitempty" db:"required_fields_status"`
+	TokenizationStatus   *bool   `json:"tokenization_status,omitempty" db:"tokenization_status"`
+	GovernanceDecision   *string `json:"governance_decision,omitempty" db:"governance_decision"`
+
+	// ── Scoring v2 fields (mirrors payment_intents; was missing here) ──────────
+	ReferenceQualityScore float64         `json:"reference_quality_score,omitempty" db:"reference_quality_score"`
+	DuplicateRiskScore    float64         `json:"duplicate_risk_score,omitempty" db:"duplicate_risk_score"`
+	ScoreVersion          string          `json:"score_version,omitempty" db:"score_version"`
+	ScoreValidityStatus   string          `json:"score_validity_status,omitempty" db:"score_validity_status"`
+	ScoreBreakdownJSON    json.RawMessage `json:"score_breakdown_json,omitempty" db:"score_breakdown_json"`
+	ScoreReasonCodesJSON  json.RawMessage `json:"score_reason_codes_json,omitempty" db:"score_reason_codes_json"`
+	ScoredAt              *time.Time      `json:"scored_at,omitempty" db:"scored_at"`
+}

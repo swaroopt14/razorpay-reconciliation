@@ -1,0 +1,5 @@
+entity_id,type,debit,credit,amount,currency,fee,tax,settlement_id,settlement_utr,payment_id,created_at,settled_at
+pay_test_001,payment,0,96578,100000,INR,2900,522,setl_001,utr_001,pay_test_001,2026-08-29T09:00:00Z,2026-08-30T03:00:00Z
+rfnd_test_001,refund,40000,0,40000,INR,0,0,setl_001,utr_001,pay_test_001,2026-08-29T11:00:00Z,2026-08-30T03:00:00Z
+trf_test_001,transfer,10000,0,10000,INR,0,0,setl_001,utr_001,pay_test_002,2026-08-29T12:00:00Z,2026-08-30T03:00:00Z
+adj_test_001,adjustment,0,500,500,INR,0,0,setl_001,,,,2026-08-30T03:00:00Z

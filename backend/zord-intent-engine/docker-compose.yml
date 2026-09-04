@@ -1,0 +1,72 @@
+# Docker Compose configuration for Zord Intent Engine microservice
+# This service handles intent canonicalization, validation, and processing
+
+services:
+  zord-intent-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: zord-intent-engine-service
+    ports:
+      - "8083:8083"
+    env_file:
+      - ./.env
+    environment:
+      - KAFKA_BROKERS=broker1:9092,broker2:9093,broker3:9094
+      - KAFKA_TOPIC=payments.ledger.events.v1
+      - KAFKA_TOPIC_PII_TOKENIZE_REQUEST=pii.tokenize.request
+      - KAFKA_TOPIC_PII_TOKENIZE_RESULT=pii.tokenize.result
+      - ZORD_PII_ENCLAVE_URL=http://host.docker.internal:8087
+      # TOK-04: replaces the old static ENCLAVE_INTERNAL_TOKEN shared secret.
+      # Must match SERVICE_JWT_SIGNING_SECRET in zord-token-enclave -- this
+      # service mints a signed, scoped JWT for each tokenize call; the
+      # enclave verifies it against the same secret.
+      - SERVICE_JWT_SIGNING_SECRET=${SERVICE_JWT_SIGNING_SECRET}
+      # Must match zord-edge (base64-encoded 32-byte AES key for API key decryption).
+      - ZORD_VAULT_KEY=${ZORD_VAULT_KEY}
+      - DB_HOST=zord-intent-postgres
+      - DB_PORT=5432
+      - DB_USER=intent_user
+      - DB_PASSWORD=intent_password
+      - DB_NAME=zord_intent_engine_db
+      - DB_SSLMODE=disable
+      - VAULT_JOURNAL_URL=http://host.docker.internal:8081
+      - PII_TOKEN_SECRET=your-secret-key-for-pii-tokenization-change-in-production
+      - ENVIRONMENT=production
+
+      - AWS_REGION=ap-south-1
+      - AWS_EC2_METADATA_DISABLED=true
+      - CANNONICALS3_BUCKET=zord-intent-engine-canonical
+      - NIRS3_BUCKET=zord-intent-engine-nir
+      - GOVERNANCES3_BUCKET=zord-intent-engine-governance
+    depends_on:
+      - postgres
+    networks:
+      - zord-network
+    restart: unless-stopped
+    # Container healthcheck intentionally omitted for minimal scratch image.
+    # Use platform/orchestrator health probes instead.
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: zord-intent-postgres
+    command: postgres -c 'max_connections=100'
+    environment:
+      - POSTGRES_USER=intent_user
+      - POSTGRES_PASSWORD=intent_password
+      - POSTGRES_DB=zord_intent_engine_db
+    volumes:
+      - postgres_intent_data_fix:/var/lib/postgresql/data
+    ports:
+      - "5436:5432"
+    networks:
+      - zord-network
+    restart: unless-stopped
+
+volumes:
+  postgres_intent_data_fix:
+
+networks:
+  zord-network:
+    external: true
+    name: zord-shared-network

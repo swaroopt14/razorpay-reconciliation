@@ -1,0 +1,7 @@
+{
+  "question": "Is that money lost on pay_123?",
+  "expected_intent": "EXPLANATION",
+  "required_facts": ["provider_status=failed"],
+  "forbidden_claims": ["we lost", "STUCK", "fully reconciled"],
+  "required_limitations": ["not proven permanent loss"]
+}

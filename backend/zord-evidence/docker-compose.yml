@@ -1,0 +1,97 @@
+# Docker Compose configuration for Zord Evidence microservice (Service 6)
+# Evidence Pack / Merkle Root Commitment service
+# Brokers live on the shared zord-edge cluster — this compose only owns postgres.
+
+services:
+
+  zord-evidence:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: zord-evidence-service
+    ports:
+      - "8088:8088"
+    env_file:
+      - .env
+    environment:
+      # --- Kafka (shared broker cluster from zord-edge) ---
+      - KAFKA_BROKERS=broker1:9092,broker2:9093,broker3:9094
+      - EVIDENCE_KAFKA_TOPIC=z.outcome.events.v1
+      - EVIDENCE_KAFKA_GROUP=zord-evidence-group
+
+      # --- Postgres ---
+      - DB_HOST=zord-evidence-postgres
+      - DB_PORT=5432
+      - DB_USER=evidence_user
+      - DB_PASSWORD=evidence_password
+      - DB_NAME=zord_evidence_db
+      - DB_SSLMODE=disable
+
+      # --- AWS / S3 archive store ---
+      - AWS_REGION=ap-south-1
+      - AWS_EC2_METADATA_DISABLED=true
+      - S3_BUCKET=zord-evidence-vault
+
+      # --- Evidence service config ---
+      - PORT=8088
+      - EVIDENCE_ARCHIVE_PREFIX=evidence-packs
+      - REPLAY_COMPARE_STRICT=true
+      - SIGNING_KEY_PATH=/run/secrets/signing_key.pem
+
+      # --- Production mode (secrets must be set in .env) ---
+      - APP_ENV=production
+
+      # --- Relay auth (must match zord-relay config.yaml's evidence-service auth_token) ---
+      - RELAY_AUTH_TOKEN=dev-dummy-token-123
+
+      # --- Secrets (set in .env — service will not start without these) ---
+      # EVIDENCE_ARCHIVE_ENCRYPTION_KEY_BASE64=
+
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4317
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./signing_key.pem:/run/secrets/signing_key.pem:ro
+    networks:
+      - zord-network
+    restart: unless-stopped
+    # Container healthcheck intentionally omitted for minimal scratch image.
+    # Use platform/orchestrator health probes (/healthz) instead.
+
+
+  # ---------------------------
+  # Postgres
+  # ---------------------------
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: zord-evidence-postgres
+    command: postgres -c 'max_connections=100'
+    environment:
+      - POSTGRES_USER=evidence_user
+      - POSTGRES_PASSWORD=evidence_password
+      - POSTGRES_DB=zord_evidence_db
+    volumes:
+      - postgres_evidence_data:/var/lib/postgresql/data
+    ports:
+      - "5438:5432"   # 5433=edge, 5436=intent-engine → 5437 for evidence
+    networks:
+      - zord-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evidence_user -d zord_evidence_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+
+volumes:
+  postgres_evidence_data:
+
+networks:
+  zord-network:
+    external: true
+    name: zord-shared-network

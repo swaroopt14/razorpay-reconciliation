@@ -1,0 +1,152 @@
+services:
+  zord-intelligence:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: zord-intelligence-service
+
+    ports:
+      - "8089:8089"
+
+    # INTEL-01: JWT_SIGNING_SECRET lives in the gitignored .env file (same
+    # shared value zord-edge/zord-intent-engine already use locally), not
+    # committed here — matches those services' existing env_file pattern.
+    env_file:
+      - ./.env
+
+    environment:
+      - HTTP_PORT=8089
+      - JWT_ISSUER=zord-edge
+
+      # Kafka
+      - KAFKA_BROKERS=broker1:9092,broker2:9093,broker3:9094
+      - KAFKA_GROUP_ID=zord-intelligence-group
+
+      # App config
+      - INTELLIGENCE_MODE=GRADE_A
+      # This is the local/dev docker-compose stack, not a real production
+      # deployment (matches docker-compose.test.yml's existing convention).
+      # ENVIRONMENT=production with no KMS-backed signer configured (only
+      # DevSigner exists today) disables actuation — action publication
+      # fails closed (INTEL-09) — but recommendation/projection intelligence
+      # still boots. Keep this "development" here so DevSigner covers the
+      # full actuation flow locally too.
+      - ENVIRONMENT=development
+
+      # Database URL
+      - DATABASE_URL=postgres://zpi:zpi_secret@zord-intelligence-postgres:5432/zord_intelligence?sslmode=disable
+
+      # DB Config
+      - DB_HOST=zord-intelligence-postgres
+      - DB_PORT=5432
+      - DB_USER=zpi
+      - DB_PASSWORD=zpi_secret
+      - DB_NAME=zord_intelligence
+      - DB_SSLMODE=disable
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ml-service:
+        condition: service_healthy
+
+    networks:
+      - zord-network
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8089/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ── Python ML Service ────────────────────────────────────────────────────────
+  ml-service:
+    build:
+      context: ../ml-service
+      dockerfile: Dockerfile
+    container_name: zord-ml-service
+    environment:
+      - KAFKA_BROKERS=broker1:9092,broker2:9093,broker3:9094
+      - KAFKA_GROUP_ID=ml-service-group
+      - ML_REQUEST_TOPIC=ml.request.events
+      - ML_RESULT_TOPIC=ml.result.events
+      - LR_MODEL_PATH=/data/lr_model.json
+      - RCA_MODEL_PATH=/data/rca_model.pkl
+      - LEAKAGE_MODEL_PATH=/data/leakage_prediction_bundle.joblib
+      - INTELLIGENCE_DATABASE_URL=postgres://zpi:zpi_secret@zord-intelligence-postgres:5432/zord_intelligence?sslmode=disable
+      - RCA_RETRAIN_THRESHOLD=50
+      - LEAKAGE_RETRAIN_THRESHOLD=50
+    volumes:
+      - ml_model_data:/data
+    networks:
+      - zord-network
+    # depends_on: kafka (removed as brokers are in zord-relay)
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "/app/healthcheck.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+      
+
+  postgres:
+    image: postgres:16-alpine
+
+    container_name: zord-intelligence-postgres
+
+    command:
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - work_mem=16MB
+      - -c
+      - effective_cache_size=1GB
+      - -c
+      - wal_buffers=16MB
+      - -c
+      - checkpoint_completion_target=0.9
+
+    environment:
+      POSTGRES_USER: zpi
+      POSTGRES_PASSWORD: zpi_secret
+      POSTGRES_DB: zord_intelligence
+
+    volumes:
+      - zord_intelligence_data:/var/lib/postgresql/data
+    #  - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+    ports:
+      - "5440:5432"
+
+    networks:
+      - zord-network
+
+    restart: unless-stopped
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U zpi -d zord_intelligence"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  zord_intelligence_data:
+  ml_model_data:
+
+networks:
+  zord-network:
+    external: true
+    name: zord-shared-network

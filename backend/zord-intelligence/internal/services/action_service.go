@@ -1,0 +1,765 @@
+package services
+
+// ============================================================
+// action_service.go
+// ============================================================
+//
+// Creates ActionContracts and their matching outbox entries.
+// Called by policy_service when a rule fires.
+//
+// PHASE 5 ADDITIONS:
+//
+// 1. REQUIRES_MANUAL_APPROVAL SUPPORT
+//    When a policy has requires_manual_approval=true, OR the decision itself
+//    requires approval (HOLD, RETRY, REVIEW_AMBIGUOUS_BATCH), the ActionContract
+//    is created with contract_status = PENDING_APPROVAL and NO outbox entry.
+//    The outbox entry is only inserted when ops approves the action via the API.
+//
+// 2. EXPIRY WINDOWS
+//    PENDING_APPROVAL contracts are given an expires_at deadline.
+//    Default: 24h. The outbox_worker sweeps and marks expired contracts.
+//    This prevents stale approval requests from lingering indefinitely.
+//
+// 3. POLICY METADATA PROPAGATION
+//    policy_family and severity are now carried from the policy into
+//    the ActionContract at creation time. This enables family-scoped
+//    and severity-scoped dashboard queries without parsing DSL text.
+//
+// 4. ACTUATION GATING
+//    needsActuation() is extended to cover all new Phase 5 decision types
+//    that should produce Kafka messages (not just advisory records).
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/zord/zord-intelligence/internal/logger"
+	"github.com/zord/zord-intelligence/internal/models"
+	"github.com/zord/zord-intelligence/internal/persistence"
+)
+
+// ActionService creates and stores ActionContracts.
+type ActionService struct {
+	actionRepo *persistence.ActionContractRepo
+	outboxRepo *persistence.OutboxRepo
+	pool       *pgxpool.Pool // needed to open transactions
+	signer     Signer        // PHASE 5 (refactor): real signature abstraction
+}
+
+// NewActionService creates an ActionService.
+//
+// PHASE 5 (refactor): pass whatever services.NewSignerForEnvironment(cfg.Environment)
+// returns from cmd/main.go.
+//
+// INTEL-09 (P1): signer may be nil — this happens in production until a
+// real KMS-backed Signer is configured (NewSignerForEnvironment returns
+// ErrNoProductionSigner there). A nil signer does NOT disable ActionService;
+// it disables actuation specifically. See resolveSignature: advisory/
+// audit-only contracts still get created (with an unsigned placeholder
+// digest), while any decision that could reach the actuation outbox fails
+// closed with an error and writes nothing to the DB.
+func NewActionService(
+	actionRepo *persistence.ActionContractRepo,
+	outboxRepo *persistence.OutboxRepo,
+	pool *pgxpool.Pool,
+	signer Signer,
+) *ActionService {
+	return &ActionService{
+		actionRepo: actionRepo,
+		outboxRepo: outboxRepo,
+		pool:       pool,
+		signer:     signer,
+	}
+}
+
+// CreateActionRequest holds everything needed to create an ActionContract.
+//
+// PHASE 5: RequiresManualApproval, PolicyFamily, Severity are new.
+// They come from the Policy row that triggered this action.
+// ActorInfo identifies who is approving/dismissing an action and why
+// (INTEL-02 audit trail). Sourced from the verified auth.AuthPrincipal on
+// the request — never from client-supplied identity.
+type ActorInfo struct {
+	SubjectID string
+	Roles     []string
+	Reason    string
+}
+
+type CreateActionRequest struct {
+	TenantID       string
+	PolicyID       string
+	PolicyVersion  int
+	ScopeRefs      models.ScopeRefs
+	InputRefsJSON  string
+	Decision       models.Decision
+	Confidence     float64
+	PayloadJSON    string
+	TriggerEventID string
+
+	// PHASE 5 — sourced from policy_registry
+	RequiresManualApproval bool                // policy.RequiresManualApproval
+	PolicyFamily           models.PolicyFamily // policy.PolicyFamily
+	Severity               string              // parsed from DSL or policy.Severity column
+
+	// PHASE 5 (refactor) — sourced from policy_registry via the
+	// policy_definitions correlated subquery (policy_repo.go). Empty string
+	// if the policy's dual-written definition hasn't landed (should not
+	// happen post-Phase-5, handled gracefully — see deriveScope/idempotency
+	// key builder below, which simply hash an empty string in that case).
+	PolicyRegistryID string // policy.PolicyRegistryID
+	PolicyDigest     string // policy.PolicyDigest
+	PolicySource     string // policy.PolicySource
+}
+
+// CreateAction creates an ActionContract and its outbox entry atomically.
+//
+// PHASE 5 APPROVAL LOGIC:
+//
+// A decision enters PENDING_APPROVAL when:
+//   a) The Policy has requires_manual_approval = true (DB column), OR
+//   b) The Decision itself always requires approval (HOLD, RETRY, REVIEW_AMBIGUOUS_BATCH)
+//
+// When PENDING_APPROVAL:
+//   - ActionContract is inserted with contract_status = PENDING_APPROVAL
+//   - No outbox entry is created (outbox_worker would skip it anyway, but
+//     we save a row to make the approval dashboard query simpler)
+//   - expires_at is set to now + ApprovalDefaultExpiryHours
+//
+// When ACTIVE (normal path):
+//   - ActionContract is inserted with contract_status = ACTIVE
+//   - Outbox entry is created in the SAME transaction (atomic)
+//   - Outbox worker delivers to Kafka on next poll
+func (s *ActionService) CreateAction(
+	ctx context.Context,
+	req CreateActionRequest,
+) error {
+
+	// ── PHASE 5 (refactor): scope classifier + envelope lineage + integrity
+	// hashes — computed before the idempotency key and signature so both can
+	// depend on them.
+	scopeType, scopeRef := deriveScope(req.ScopeRefs, req.TenantID)
+	scopeRefsHash, err := canonicalHash(req.ScopeRefs)
+	if err != nil {
+		return fmt.Errorf("action_service.CreateAction hash scope_refs: %w", err)
+	}
+	envMeta := models.EnvelopeMetaFromContext(ctx)
+	// INTEL-10: canonical (parse-then-sort-then-rehash) JSON hash, not a raw
+	// sha256 of the literal bytes — see canonicalJSONHash's doc comment.
+	// Equivalent facts (reordered keys/whitespace/flat-array order) now hash
+	// identically instead of silently producing a new idempotency key.
+	inputFactsHash, err := canonicalJSONHash(req.InputRefsJSON)
+	if err != nil {
+		return fmt.Errorf("action_service.CreateAction hash input_refs: %w", err)
+	}
+	payloadHash, err := canonicalJSONHash(req.PayloadJSON)
+	if err != nil {
+		return fmt.Errorf("action_service.CreateAction hash payload: %w", err)
+	}
+
+	// ── Build idempotency key ─────────────────────────────────────────────
+	// Same inputs → same key → DB UNIQUE constraint silently ignores duplicate.
+	idempotencyKey, err := buildIdempotencyKey(
+		req.TenantID, req.PolicyID, req.PolicyVersion, req.PolicySource, req.PolicyDigest,
+		scopeRefsHash, req.TriggerEventID, envMeta.EventVersion, inputFactsHash, payloadHash,
+	)
+	if err != nil {
+		return fmt.Errorf("action_service.CreateAction build idempotency key: %w", err)
+	}
+
+	// ── Determine contract status ─────────────────────────────────────────
+	// PHASE 5: the approval gate. Two conditions force PENDING_APPROVAL:
+	//   1. The policy explicitly declares it needs human approval
+	//   2. The decision type always requires human approval by design
+	needsApproval := req.RequiresManualApproval || req.Decision.RequiresApproval()
+
+	// INTEL-09: mayActuate is true for anything that could EVER cause a
+	// money/ops-impacting Kafka publish — either immediately (needsActuation)
+	// or later once a human approves it (needsApproval; ApproveAction inserts
+	// the outbox row at approval time, not here). resolveSignature uses this
+	// to fail closed on actuating decisions when no signer is configured,
+	// while still letting pure-advisory decisions (ADVISORY_RECOMMENDATION,
+	// ALLOW) through with a clearly-labeled unsigned digest.
+	mayActuate := needsApproval || needsActuation(req.Decision)
+
+	contractStatus := models.ContractStatusActive
+	var expiresAt *time.Time
+	if needsApproval {
+		contractStatus = models.ContractStatusPendingApproval
+		// Set a 24-hour window for approval. After this, outbox_worker auto-expires.
+		exp := time.Now().UTC().Add(models.ApprovalDefaultExpiryHours * time.Hour)
+		expiresAt = &exp
+	}
+
+	// ── Build the ActionContract ──────────────────────────────────────────
+	actionID := "act_" + uuid.New().String()
+	now := time.Now().UTC()
+
+	contract := models.ActionContract{
+		ActionID:       actionID,
+		TenantID:       req.TenantID,
+		PolicyID:       req.PolicyID,
+		PolicyVersion:  req.PolicyVersion,
+		ScopeRefs:      req.ScopeRefs,
+		InputRefsJSON:  req.InputRefsJSON,
+		Decision:       req.Decision,
+		Confidence:     req.Confidence,
+		PayloadJSON:    req.PayloadJSON,
+		IdempotencyKey: idempotencyKey,
+		ContractStatus: contractStatus,   // PHASE 5
+		ExpiresAt:      expiresAt,        // PHASE 5
+		PolicyFamily:   req.PolicyFamily, // PHASE 5
+		Severity:       req.Severity,     // PHASE 5
+		CreatedAt:      now,
+
+		// ── PHASE 5 (refactor) ────────────────────────────────────────────
+		PolicyRegistryID:     req.PolicyRegistryID,
+		PolicySource:         req.PolicySource,
+		PolicyDigest:         req.PolicyDigest,
+		ScopeType:            scopeType,
+		ScopeRef:             scopeRef,
+		ScopeRefsHash:        scopeRefsHash,
+		TriggerEventID:       req.TriggerEventID,
+		TriggerEventSource:   envMeta.EventSource,
+		TriggerEventType:     envMeta.EventType,
+		TriggerEventVersion:  envMeta.EventVersion,
+		InputFactsHash:       inputFactsHash,
+		PayloadHash:          payloadHash,
+		PayloadSchemaVersion: canonicalFactsHashVersion,
+	}
+
+	// PHASE 5 (refactor): sign the canonical hash of the immutable fields via
+	// the Signer abstraction (clarification §5) — never sign raw mutable JSON.
+	sigPayloadHash, err := buildSignaturePayloadHash(contract)
+	if err != nil {
+		return fmt.Errorf("action_service.CreateAction build signature payload: %w", err)
+	}
+	sigResult, err := resolveSignature(ctx, s.signer, mayActuate, sigPayloadHash)
+	if err != nil {
+		logger.Warn("action creation blocked — actuation fail-closed (INTEL-09)",
+			"policy_id", req.PolicyID,
+			"tenant_id", req.TenantID,
+			"decision", string(req.Decision),
+			"error", err.Error(),
+		)
+		return fmt.Errorf("action_service.CreateAction sign: %w", err)
+	}
+	contract.IntegrityDigest = sigResult.Signature
+	contract.SignatureAlgorithm = sigResult.Algorithm
+	contract.SignatureKeyID = sigResult.KeyID
+	contract.SignaturePayloadHash = sigPayloadHash
+	contract.CanonicalizationVersion = sigResult.CanonicalizationVersion
+	signedAt := sigResult.SignedAt
+	contract.SignedAt = &signedAt
+	// No external verification endpoint exists yet (clarification §5 "Phase
+	// 2" — key registry, auditor bundle, rotation — is out of scope here).
+	contract.SignatureVerificationStatus = "UNVERIFIED"
+
+	// ── Decide if an outbox entry is needed ───────────────────────────────
+	// No outbox for PENDING_APPROVAL — we wait for human sign-off.
+	// No outbox for advisory/audit-only decisions — they produce no Kafka message.
+	needsOutbox := contractStatus == models.ContractStatusActive && needsActuation(req.Decision)
+
+	// ── Open a database transaction ───────────────────────────────────────
+	// Either BOTH the contract and outbox entry land in the DB, or neither does.
+	// This eliminates the "contract inserted but Kafka never fires" failure mode.
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("action_service.CreateAction begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// ── Write 1: Insert ActionContract ───────────────────────────────────
+	inserted, err := s.actionRepo.InsertIfNewTx(ctx, tx, contract)
+	if err != nil {
+		return fmt.Errorf("action_service.CreateAction insert contract: %w", err)
+	}
+	if !inserted {
+		// Idempotent — already processed this exact (policy, scope, trigger) triple.
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("action_service.CreateAction commit duplicate: %w", err)
+		}
+		logger.Info("action deduplicated by idempotency key",
+			"policy_id", req.PolicyID,
+			"tenant_id", req.TenantID,
+			"idempotency_key", idempotencyKey,
+		)
+		return nil
+	}
+
+	// ── Write 2: Insert outbox entry (only when actuation is needed) ──────
+	if needsOutbox {
+		outboxPayload := buildOutboxPayload(req, actionID)
+		outboxEntry := models.ActuationOutbox{
+			EventID:     "evt_" + uuid.New().String(),
+			ActionID:    actionID,
+			EventType:   string(req.Decision),
+			Payload:     outboxPayload,
+			Status:      models.OutboxStatusPending,
+			Attempts:    0,
+			NextRetryAt: now,
+			CreatedAt:   now,
+			// PHASE 5 (refactor): denormalized from the parent contract so
+			// tenant/scope-filtered outbox queries don't need a join.
+			TenantID:             contract.TenantID,
+			ScopeType:            contract.ScopeType,
+			ScopeRef:             contract.ScopeRef,
+			PayloadHash:          fmt.Sprintf("%x", sha256.Sum256([]byte(outboxPayload))),
+			PayloadSchemaVersion: "legacy",
+		}
+		if err := s.outboxRepo.InsertTx(ctx, tx, outboxEntry); err != nil {
+			return fmt.Errorf("action_service.CreateAction insert outbox: %w", err)
+		}
+	}
+
+	// ── Commit ────────────────────────────────────────────────────────────
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("action_service.CreateAction commit: %w", err)
+	}
+
+	// ── Structured log ────────────────────────────────────────────────────
+	logger.Info("action created",
+		"action_id", actionID,
+		"policy_id", req.PolicyID,
+		"decision", string(req.Decision),
+		"confidence", req.Confidence,
+		"tenant_id", req.TenantID,
+		"contract_status", string(contractStatus),
+		"policy_family", string(req.PolicyFamily),
+		"severity", req.Severity,
+		"needs_approval", needsApproval,
+		"needs_outbox", needsOutbox,
+	)
+
+	return nil
+}
+
+// ApproveAction transitions a PENDING_APPROVAL contract to APPROVED and
+// inserts its outbox entry so the outbox_worker can deliver it to Kafka.
+//
+// PHASE 5: This is the "human approved it" path.
+//
+// Returns (true, nil)  → approved successfully, outbox entry created
+// Returns (false, nil) → action not found or not in PENDING_APPROVAL state
+// Returns (false, err) → database error
+func (s *ActionService) ApproveAction(
+	ctx context.Context,
+	tenantID, actionID string,
+	actor ActorInfo,
+) (approved bool, err error) {
+	// Fetch the current contract to get the decision type and payload
+	contract, err := s.actionRepo.GetByID(ctx, actionID)
+	if err != nil {
+		return false, fmt.Errorf("action_service.ApproveAction GetByID action=%s: %w", actionID, err)
+	}
+	if contract == nil {
+		return false, nil // not found
+	}
+	if contract.TenantID != tenantID {
+		return false, nil // wrong tenant — treat as not found (security)
+	}
+	if contract.ContractStatus != models.ContractStatusPendingApproval {
+		return false, nil // already resolved or active
+	}
+
+	// Open a transaction: status update + outbox insert must be atomic.
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("action_service.ApproveAction begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Transition to APPROVED. Uses UpdateStatusTx (not UpdateStatus) so the
+	// status change is actually part of this transaction, atomic with the
+	// outbox insert and audit decision row below — previously this called
+	// the non-tx UpdateStatus here, so a later failure/rollback in this same
+	// tx could leave contract_status=APPROVED with no outbox entry.
+	updated, err := s.actionRepo.UpdateStatusTx(ctx, tx, actionID, models.ContractStatusApproved)
+	if err != nil {
+		return false, fmt.Errorf("action_service.ApproveAction UpdateStatus action=%s: %w", actionID, err)
+	}
+	if !updated {
+		// Race condition: another goroutine already processed this approval
+		return false, nil
+	}
+
+	// Insert outbox entry now that approval is confirmed.
+	// Build a synthetic CreateActionRequest just for buildOutboxPayload.
+	req := CreateActionRequest{
+		TenantID:      contract.TenantID,
+		PolicyID:      contract.PolicyID,
+		PolicyVersion: contract.PolicyVersion,
+		ScopeRefs:     contract.ScopeRefs,
+		Decision:      contract.Decision,
+		PayloadJSON:   contract.PayloadJSON,
+	}
+	now := time.Now().UTC()
+	outboxPayload := buildOutboxPayload(req, actionID)
+	outboxEntry := models.ActuationOutbox{
+		EventID:     "evt_" + uuid.New().String(),
+		ActionID:    actionID,
+		EventType:   string(contract.Decision),
+		Payload:     outboxPayload,
+		Status:      models.OutboxStatusPending,
+		Attempts:    0,
+		NextRetryAt: now,
+		CreatedAt:   now,
+		// PHASE 5 (refactor): denormalized from the parent contract, same as
+		// the CreateAction outbox insert above.
+		TenantID:             contract.TenantID,
+		ScopeType:            contract.ScopeType,
+		ScopeRef:             contract.ScopeRef,
+		PayloadHash:          fmt.Sprintf("%x", sha256.Sum256([]byte(outboxPayload))),
+		PayloadSchemaVersion: "legacy",
+	}
+	if err := s.outboxRepo.InsertTx(ctx, tx, outboxEntry); err != nil {
+		return false, fmt.Errorf("action_service.ApproveAction insert outbox: %w", err)
+	}
+
+	if err := s.actionRepo.RecordDecisionTx(ctx, tx, models.ActionContractDecision{
+		ActionID:             actionID,
+		TenantID:             contract.TenantID,
+		Decision:             "APPROVED",
+		ActorSubjectID:       actor.SubjectID,
+		ActorRoles:           strings.Join(actor.Roles, ","),
+		Reason:               actor.Reason,
+		PriorContractStatus:  string(contract.ContractStatus),
+		PriorIntegrityDigest: contract.IntegrityDigest,
+	}); err != nil {
+		return false, fmt.Errorf("action_service.ApproveAction record decision: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("action_service.ApproveAction commit: %w", err)
+	}
+
+	logger.Info("action approved",
+		"action_id", actionID,
+		"tenant_id", tenantID,
+		"decision", string(contract.Decision),
+	)
+	return true, nil
+}
+
+// DismissAction transitions a PENDING_APPROVAL contract to DISMISSED.
+// No outbox entry is created — the decision is permanently abandoned.
+//
+// Returns (true, nil)  → dismissed successfully
+// Returns (false, nil) → action not found or not in PENDING_APPROVAL state
+func (s *ActionService) DismissAction(
+	ctx context.Context,
+	tenantID, actionID string,
+	actor ActorInfo,
+) (dismissed bool, err error) {
+	contract, err := s.actionRepo.GetByID(ctx, actionID)
+	if err != nil {
+		return false, fmt.Errorf("action_service.DismissAction GetByID action=%s: %w", actionID, err)
+	}
+	if contract == nil || contract.TenantID != tenantID {
+		return false, nil
+	}
+	if contract.ContractStatus != models.ContractStatusPendingApproval {
+		return false, nil
+	}
+
+	// Open a transaction: status update + audit decision row must be atomic
+	// (INTEL-02) — previously this called UpdateStatus with no transaction
+	// at all.
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("action_service.DismissAction begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	updated, err := s.actionRepo.UpdateStatusTx(ctx, tx, actionID, models.ContractStatusDismissed)
+	if err != nil {
+		return false, fmt.Errorf("action_service.DismissAction UpdateStatus action=%s: %w", actionID, err)
+	}
+	if !updated {
+		// Race condition: another goroutine already processed this dismissal
+		return false, nil
+	}
+
+	if err := s.actionRepo.RecordDecisionTx(ctx, tx, models.ActionContractDecision{
+		ActionID:             actionID,
+		TenantID:             contract.TenantID,
+		Decision:             "DISMISSED",
+		ActorSubjectID:       actor.SubjectID,
+		ActorRoles:           strings.Join(actor.Roles, ","),
+		Reason:               actor.Reason,
+		PriorContractStatus:  string(contract.ContractStatus),
+		PriorIntegrityDigest: contract.IntegrityDigest,
+	}); err != nil {
+		return false, fmt.Errorf("action_service.DismissAction record decision: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("action_service.DismissAction commit: %w", err)
+	}
+
+	logger.Info("action dismissed",
+		"action_id", actionID,
+		"tenant_id", tenantID,
+		"decision", string(contract.Decision),
+	)
+	return true, nil
+}
+
+// ── Private helpers ────────────────────────────────────────────────────────────
+
+// canonicalFactsHashVersion is INTEL-10's version marker for the
+// input_facts_hash/payload_hash contract, stored per-row in the existing
+// ActionContract.PayloadSchemaVersion column (no migration needed — this
+// column already exists and was never branched on elsewhere, so it doubles
+// as "which hashing contract produced this row's hashes": "legacy" means
+// the old raw sha256.Sum256([]byte(rawJSON)) hash; canonicalFactsHashVersion
+// means canonicalJSONHash (canonical.go) — parse, sort flat scalar arrays,
+// re-marshal, then hash. ActionContract rows are immutable audit records, so
+// this is forward-only: existing rows keep "legacy", never backfilled.
+const canonicalFactsHashVersion = "canonical_v1"
+
+// canonicalActionIdentity is the exact set of fields corrective-action-report
+// P1-05 requires bound into an action's idempotency key: tenant, complete
+// policy definition identity, the FULL scope (as a hash — P1-06), trigger
+// event identity/version, the complete input-fact set (P1-05 flagged
+// input_facts_hash as present on the contract but never fed into the key
+// before), and the canonical action payload hash. Field order here is fixed
+// by struct declaration, which is what makes canonicalHash deterministic —
+// see canonical.go.
+type canonicalActionIdentity struct {
+	TenantID            string `json:"tenant_id"`
+	PolicyID            string `json:"policy_id"`
+	PolicyVersion       int    `json:"policy_version"`
+	PolicySource        string `json:"policy_source"`
+	PolicyDigest        string `json:"policy_digest"`
+	ScopeRefsHash       string `json:"scope_refs_hash"`
+	TriggerEventID      string `json:"trigger_event_id"`
+	TriggerEventVersion string `json:"trigger_event_version"`
+	InputFactsHash      string `json:"input_facts_hash"`
+	PayloadHash         string `json:"payload_hash"`
+}
+
+// buildIdempotencyKey creates a stable SHA-256 key identifying "the same
+// decision, for the same reason, on the same data" — adapted from blueprint
+// §6's 12-input formula (tenant_id, policy_key, policy_version,
+// policy_source, policy_digest, scope_type, scope_ref, trigger_event_id,
+// trigger_event_version, projection_source, projection_version,
+// payload_hash). projection_source/projection_version are DROPPED here:
+// this codebase's DSL can read several projection metrics in one WHEN
+// clause (buildEvalContext in policy_service.go), so there is no single
+// projection row whose source/version could stand in for "the" projection
+// that fed the decision — hashing an arbitrary pick would misrepresent the
+// data more than honestly omitting it. Every other field is genuinely
+// available and hashed.
+//
+// P1-05/P1-06 (corrective-action-report): scope_type/scope_ref (the single
+// precedence-selected primary scope) is replaced with scopeRefsHash (a hash
+// of the FULL ScopeRefs object), and input_facts_hash — previously computed
+// but never bound into this key — is now included. Hashing is via
+// canonicalHash (JSON, not pipe-delimited concatenation): a delimiter
+// character embedded in any value can no longer make two distinct inputs
+// collide into the same key. Same inputs always produce the same key —
+// duplicate events are silently skipped via the idempotency_key UNIQUE
+// constraint.
+func buildIdempotencyKey(
+	tenantID, policyID string, policyVersion int, policySource, policyDigest,
+	scopeRefsHash, triggerEventID, triggerEventVersion, inputFactsHash, payloadHash string,
+) (string, error) {
+	return canonicalHash(canonicalActionIdentity{
+		TenantID:            tenantID,
+		PolicyID:            policyID,
+		PolicyVersion:       policyVersion,
+		PolicySource:        policySource,
+		PolicyDigest:        policyDigest,
+		ScopeRefsHash:       scopeRefsHash,
+		TriggerEventID:      triggerEventID,
+		TriggerEventVersion: triggerEventVersion,
+		InputFactsHash:      inputFactsHash,
+		PayloadHash:         payloadHash,
+	})
+}
+
+// deriveScope classifies an ActionContract's primary scope from its
+// ScopeRefs, precedence BATCH > INTENT > CONTRACT > CORRIDOR > TENANT — same
+// "honest fallback" idiom as Phase 3's keyToProjectionMeta. Mirrored exactly
+// by migration 012's SQL backfill for pre-Phase-5 rows.
+//
+// Ordering rationale: BATCH ranks highest per this refactor's own precedent
+// of first-class batch treatment (Phase 2/3). INTENT and CONTRACT rank above
+// CORRIDOR because policy_registry.scope_type's own vocabulary already
+// treats 'contract' as the narrowest granularity ("contract → evaluates
+// once per individual contract") with 'corridor' broader — a single intent
+// or contract is a more specific reference than "some corridor", so when
+// e.g. sla_worker.go's breach action sets both IntentID and CorridorID, the
+// action classifies as INTENT-scoped (corridor stays available via
+// ScopeRefs for correlation, it just isn't the *primary* classifier).
+// CONTRACT is a ZPI addition (this codebase's own scope_refs.contract_id
+// concept), same as Phase 3 added ScopeBank for pattern.bank.* rows that fit
+// none of the blueprint's six.
+func deriveScope(refs models.ScopeRefs, tenantID string) (scopeType, scopeRef string) {
+	switch {
+	case refs.BatchID != "":
+		return "BATCH", refs.BatchID
+	case refs.IntentID != "":
+		return "INTENT", refs.IntentID
+	case refs.ContractID != "":
+		return "CONTRACT", refs.ContractID
+	case refs.CorridorID != "":
+		return "CORRIDOR", refs.CorridorID
+	default:
+		return "TENANT", tenantID
+	}
+}
+
+// canonicalSignaturePayload mirrors canonicalActionIdentity's P1-05/P1-06
+// correction: scope_type/scope_ref (primary scope only) is replaced with
+// ScopeRefsHash (the full scope), and encoding is canonical JSON rather than
+// pipe-delimited concatenation.
+type canonicalSignaturePayload struct {
+	TenantID       string  `json:"tenant_id"`
+	ActionID       string  `json:"action_id"`
+	PolicyID       string  `json:"policy_id"`
+	PolicyVersion  int     `json:"policy_version"`
+	PolicySource   string  `json:"policy_source"`
+	PolicyDigest   string  `json:"policy_digest"`
+	ScopeRefsHash  string  `json:"scope_refs_hash"`
+	InputFactsHash string  `json:"input_facts_hash"`
+	PayloadHash    string  `json:"payload_hash"`
+	Decision       string  `json:"decision"`
+	Confidence     float64 `json:"confidence"`
+	CreatedAt      string  `json:"created_at"`
+}
+
+// buildSignaturePayloadHash returns the canonical hash to sign — clarification
+// §5's field list (tenant_id, action_id, policy_key, policy_version,
+// policy_source, policy_digest, input_facts_hash, payload_hash, decision,
+// confidence, created_at), with scope_type/scope_ref widened to the full
+// scope_refs_hash per P1-06. Never sign raw mutable JSON — this replaces the
+// old signContract() placeholder, which signed an ad hoc field subset with
+// plain sha256 and no algorithm/key metadata.
+func buildSignaturePayloadHash(ac models.ActionContract) (string, error) {
+	return canonicalHash(canonicalSignaturePayload{
+		TenantID:       ac.TenantID,
+		ActionID:       ac.ActionID,
+		PolicyID:       ac.PolicyID,
+		PolicyVersion:  ac.PolicyVersion,
+		PolicySource:   ac.PolicySource,
+		PolicyDigest:   ac.PolicyDigest,
+		ScopeRefsHash:  ac.ScopeRefsHash,
+		InputFactsHash: ac.InputFactsHash,
+		PayloadHash:    ac.PayloadHash,
+		Decision:       string(ac.Decision),
+		Confidence:     ac.Confidence,
+		CreatedAt:      ac.CreatedAt.Format(time.RFC3339Nano),
+	})
+}
+
+// resolveSignature decides how to sign (or not sign) an ActionContract.
+//
+// INTEL-09 (P1): the fail-closed gate for actuation. mayActuate is true for
+// any decision that could ever cause a money/ops-impacting Kafka publish
+// (immediately, or later via human approval — see mayActuate's computation
+// in CreateAction). Four cases:
+//
+//	mayActuate=true,  signer!=nil → sign for real (unchanged pre-INTEL-09 behavior)
+//	mayActuate=true,  signer==nil → FAIL CLOSED: return an error, no contract
+//	                                 or outbox row gets written at all
+//	mayActuate=false, signer!=nil → sign for real (unchanged pre-INTEL-09 behavior)
+//	mayActuate=false, signer==nil → advisory/audit-only contract still gets
+//	                                 created, with a clearly-labeled
+//	                                 non-cryptographic placeholder digest
+//	                                 (UNSIGNED_NO_SIGNER) — recommendations
+//	                                 must keep working with no signer at all.
+func resolveSignature(ctx context.Context, signer Signer, mayActuate bool, payloadHash string) (SignatureResult, error) {
+	if signer == nil {
+		if mayActuate {
+			return SignatureResult{}, fmt.Errorf(
+				"no signer configured — refusing to create an action that may " +
+					"publish a money-impacting actuation (%w)", ErrNoProductionSigner)
+		}
+		return unsignedIntegrityDigest(payloadHash), nil
+	}
+	return signer.Sign(ctx, payloadHash)
+}
+
+// needsActuation returns true when the decision should produce a Kafka message.
+//
+// PHASE 5: Extended to include all new decision types that need delivery.
+//
+// DESIGN:
+//   - Safe advisory decisions (ADVISORY_RECOMMENDATION, ALLOW) → no Kafka message
+//   - PENDING_APPROVAL decisions → no outbox at create time (added on approval)
+//   - Everything else that ops needs to act on → outbox entry needed
+func needsActuation(d models.Decision) bool {
+	switch d {
+	// ── Original decisions that produce Kafka messages ────────────────────
+	case models.DecisionEscalate,
+		models.DecisionNotify,
+		models.DecisionOpenOpsIncident,
+		models.DecisionGenerateEvidence,
+		models.DecisionHold,
+		models.DecisionRetry:
+		return true
+
+	// ── PHASE 5: New decisions that produce Kafka messages ─────────────────
+	// These all route to specific Kafka topics in outbox_worker.topicForEventType.
+
+	// REVIEW_AMBIGUOUS_BATCH: ops must review the batch before it proceeds.
+	// Goes to alert topic — a structured review request.
+	case models.DecisionReviewAmbiguousBatch:
+		return true
+
+	// REQUEST_SOURCE_PATCH: structured patch request to source system ops team.
+	// Goes to batch_patch topic.
+	case models.DecisionRequestSourcePatch:
+		return true
+
+	// REGENERATE_EVIDENCE: ask Service 6 to rebuild a weak evidence pack.
+	// Goes to evidence topic.
+	case models.DecisionRegenerateEvidence:
+		return true
+
+	// PREPARE_AND_SIGN_RECOMMENDED: commercial upsell signal to ops dashboard.
+	// Goes to alert topic — advisory card in the dashboard.
+	case models.DecisionPrepareAndSignRecommended:
+		return true
+
+	// DISPATCH_MODE_RECOMMENDED: another commercial upsell signal.
+	case models.DecisionDispatchModeRecommended:
+		return true
+
+	// REQUEST_STRONGER_CARRIER_CONTRACT: ops advisory to renegotiate PSP contract.
+	case models.DecisionRequestStrongerCarrierContract:
+		return true
+
+	// ── Decisions that do NOT produce Kafka messages ───────────────────────
+	// ALLOW: recorded for audit trail only. No downstream effect.
+	// ADVISORY_RECOMMENDATION: pure advisory — shown in dashboard only.
+	// default: any unknown future decision type defaults to no actuation (safe).
+	default:
+		return false
+	}
+}
+
+// buildOutboxPayload constructs the JSON payload written to actuation_outbox.payload.
+// This payload is published verbatim to the Kafka topic.
+// MUST NOT contain PII — only IDs, references, and operational data.
+func buildOutboxPayload(req CreateActionRequest, actionID string) string {
+	payload := map[string]any{
+		"action_id":      actionID,
+		"tenant_id":      req.TenantID,
+		"policy_id":      req.PolicyID,
+		"policy_version": req.PolicyVersion,
+		"decision":       string(req.Decision),
+		"scope_refs":     req.ScopeRefs,
+		"payload":        req.PayloadJSON,
+		"created_at":     time.Now().UTC(),
+	}
+	b, _ := json.Marshal(payload)
+	return string(b)
+}

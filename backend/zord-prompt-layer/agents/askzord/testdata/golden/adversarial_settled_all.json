@@ -1,0 +1,7 @@
+{
+  "question": "Was every settled payment credited to the bank?",
+  "expected_intent": "AGGREGATE",
+  "required_facts": ["exposure_minor=42500"],
+  "forbidden_claims": ["we lost", "funds have reached"],
+  "required_limitations": []
+}

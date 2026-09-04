@@ -1,0 +1,104 @@
+{
+  "TALLY": {
+    "profile_id": "system-tally-v1",
+    "source_type": "TALLY",
+    "parser_class": "generic",
+    "signatures": ["amt", "ledger name", "voucher type", "vch no", "voucher no"],
+    "signature_threshold": 2,
+    "column_map": {
+      "amount.value": "Amt",
+      "beneficiary.name": "Ledger Name",
+      "beneficiary.instrument.ifsc": "IFSC",
+      "account_number": "Account No",
+      "beneficiary.instrument.kind": "BANK_ACCOUNT",
+      "client_payout_ref": "Vch No",
+      "intended_execution_at": "Date",
+      "purpose_code": "Voucher Type",
+      "idempotency_key": "Vch No"
+    },
+    "amount_format": "DECIMAL",
+    "date_format": "02-01-2006",
+    "required_fields": ["amount.value", "account_number"]
+  },
+  "SAP": {
+    "profile_id": "system-sap-v1",
+    "source_type": "SAP",
+    "parser_class": "generic",
+    "signatures": ["posting amount", "cost center", "g/l account", "gl account", "document no", "document number", "company code"],
+    "signature_threshold": 2,
+    "column_map": {
+      "amount.value": "Posting Amount",
+      "beneficiary.name": "Vendor Name",
+      "beneficiary.instrument.ifsc": "IFSC Code",
+      "account_number": "Bank Account",
+      "beneficiary.instrument.kind": "BANK_ACCOUNT",
+      "client_payout_ref": "Document No",
+      "intended_execution_at": "Posting Date",
+      "purpose_code": "Text",
+      "idempotency_key": "Document No"
+    },
+    "amount_format": "DECIMAL",
+    "date_format": "2006-01-02",
+    "required_fields": ["amount.value", "account_number"]
+  },
+  "QUICKBOOKS": {
+    "profile_id": "system-quickbooks-v1",
+    "source_type": "QUICKBOOKS",
+    "parser_class": "generic",
+    "signatures": ["memo", "debit amount", "credit amount", "payee"],
+    "signature_threshold": 2,
+    "column_map": {
+      "amount.value": "debit amount",
+      "beneficiary.name": "payee",
+      "purpose_code": "memo"
+    },
+    "amount_format": "DECIMAL",
+    "date_format": "2006-01-02",
+    "required_fields": ["amount.value"]
+  },
+  "ERP": {
+    "profile_id": "system-erp-v1",
+    "source_type": "ERP",
+    "parser_class": "generic",
+    "signatures": [],
+    "signature_threshold": 0,
+    "column_map": {
+      "amount.value": "amount",
+      "beneficiary.name": "beneficiary_name",
+      "account_number": "account_number"
+    },
+    "amount_format": "DECIMAL",
+    "date_format": "2006-01-02",
+    "required_fields": ["amount.value"]
+  },
+  "ZORD_RAW": {
+    "profile_id": "system-zord-raw-v1",
+    "source_type": "ZORD_RAW",
+    "parser_class": "generic",
+    "signatures": ["schema_version", "intent_type"],
+    "signature_threshold": 2,
+    "column_map": {
+      "amount.value": "amount.value",
+      "amount.currency": "amount.currency",
+      "beneficiary.name": "beneficiary.name",
+      "account_number": "account_number",
+      "beneficiary.instrument.kind": "beneficiary.instrument.kind",
+      "beneficiary.instrument.ifsc": "beneficiary.instrument.ifsc",
+      "beneficiary.instrument.account_number": "beneficiary.instrument.account_number",
+      "remitter.phone": "remitter.phone",
+      "remitter.email": "remitter.email",
+      "purpose_code": "purpose_code",
+      "client_payout_ref": "client_payout_ref",
+      "intended_execution_at": "intended_execution_at",
+      "idempotency_key": "client_payout_ref",
+      "source": "source",
+      "source_system": "source_system",
+      "provider_hint": "provider_hint",
+      "schema_version": "schema_version",
+      "intent_type": "intent_type"
+    },
+    "amount_format": "DECIMAL",
+    "date_format": "2006-01-02",
+    "required_fields": ["amount.value", "account_number"]
+  }
+}
