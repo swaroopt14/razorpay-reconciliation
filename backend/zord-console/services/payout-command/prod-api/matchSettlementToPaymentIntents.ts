@@ -1,5 +1,9 @@
-import type { IntentJournalPaymentIntentItem } from './intentJournalTypes'
 import type { SettlementObservationTableRow } from './settlementObservations'
+
+type PaymentIntentMatchSource = {
+  intent_id?: string
+  client_payout_ref?: string
+}
 
 function norm(value: string | null | undefined): string {
   return (value ?? '').trim()
@@ -12,7 +16,7 @@ function isPresent(value: string): boolean {
 /** Resolve payment intent id for one settlement row (console-only; no outcome-engine field). */
 export function resolveMatchedPaymentIntentId(
   row: Pick<SettlementObservationTableRow, 'observationId' | 'clientRef' | 'matchedIntentId'>,
-  intents: IntentJournalPaymentIntentItem[],
+  intents: PaymentIntentMatchSource[],
 ): string | null {
   const fromApi = norm(row.matchedIntentId)
   if (isPresent(fromApi)) return fromApi
@@ -35,7 +39,7 @@ export function resolveMatchedPaymentIntentId(
 /** Enrich settlement rows with matched intent ids from payment-intents API. */
 export function enrichSettlementRowsWithPaymentIntentMatches(
   rows: SettlementObservationTableRow[],
-  intents: IntentJournalPaymentIntentItem[],
+  intents: PaymentIntentMatchSource[],
 ): SettlementObservationTableRow[] {
   if (!rows.length || !intents.length) return rows
 

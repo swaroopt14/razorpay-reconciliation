@@ -126,7 +126,7 @@ export function OperationsOverviewSurface() {
     const settledMinor = payout.processedAmount
     const unresolvedMinor = payout.reviewAmount + payout.failedAmount
     const scored = payout.scoredCount || summary?.scored_count || results.length || 100
-    const matched = payout.processedCount || summary?.matched_count
+    const matched = payout.processedCount || summary?.matched_count || 0
     const reconPct = scored > 0 ? (matched / scored) * 100 : 0
     const counts = summary?.result_counts ?? {
       MATCHED: matched,
