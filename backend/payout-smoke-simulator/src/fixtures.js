@@ -55,7 +55,11 @@ const PROVIDERS = ['razorpay', 'cashfree']
 function batchesFromReadyIds(readyIds) {
   if (readyIds === null) return BATCHES
   if (readyIds.length === 0) return []
-  return readyIds.map((id) => batchMeta(id))
+  // Keep the uploaded batch id — batchMeta must not replace it with a catalogue id.
+  return readyIds.map((id) => {
+    const meta = batchMeta(id)
+    return { ...meta, id: String(id).trim() || meta.id }
+  })
 }
 
 /** Batches with obligation upload — Intent Journal / pre-settlement lists. */
@@ -83,9 +87,28 @@ function batchMeta(batchId) {
     const fromList = BATCHES.find((b) => b.id === UPLOAD_DEMO_BATCH_ID)
     if (fromList) return fromList
     const evidence = ALL_BATCHES.find((b) => b.id === EVIDENCE_BATCH) ?? ALL_BATCHES[0]
-    return { ...evidence, id: UPLOAD_DEMO_BATCH_ID, label: 'Batch 001' }
+    return {
+      ...evidence,
+      id: UPLOAD_DEMO_BATCH_ID,
+      label: 'Batch 001',
+      intentCount: 100,
+      intentTotalRupees: 1_237_786_756,
+      observationCount: 100,
+    }
   }
-  return ALL_BATCHES.find((b) => b.id === batchId) ?? BATCHES.find((b) => b.id === batchId) ?? ALL_BATCHES[0]
+  const known = ALL_BATCHES.find((b) => b.id === batchId) ?? BATCHES.find((b) => b.id === batchId)
+  if (known) return known
+  // Any other uploaded batch id → full 100-payout demo spine (hackathon sandbox).
+  const evidence = ALL_BATCHES.find((b) => b.id === EVIDENCE_BATCH) ?? ALL_BATCHES[0]
+  return {
+    ...evidence,
+    id,
+    label: id,
+    intentCount: 100,
+    intentTotalRupees: 1_237_786_756,
+    observationCount: 100,
+    settlementTotalRupees: 1_237_786_756,
+  }
 }
 
 /**
@@ -210,29 +233,126 @@ export function buildPaymentIntents(batchId, request) {
     ? DEMO_PAYOUT_AMOUNTS_INR.slice(0, count)
     : distributeAmounts(total, count)
   const day = meta.date ?? '2026-06-12'
+  const statusCycle = [
+    ...Array.from({ length: 70 }, () => 'processed'),
+    'failed',
+    'failed',
+    'failed',
+    'failed',
+    'failed',
+    'failed',
+    'failed',
+    'failed',
+    'failed',
+    'failed',
+    'reversed',
+    'reversed',
+    'failed',
+    'failed',
+    'failed',
+    'failed',
+    'failed',
+    'failed',
+    'processing',
+    'processing',
+    'processing',
+    'processing',
+    'processing',
+    'pending',
+    'pending',
+    'pending',
+    'pending',
+    'queued',
+    'queued',
+    'queued',
+  ]
   const items = []
+  const modes = ['IMPS', 'NEFT', 'RTGS', 'UPI']
+  const statusDetailByStatus = {
+    failed: {
+      reason: 'beneficiary_bank_failure',
+      source: 'beneficiary_bank',
+      description: 'Payout failed at the beneficiary bank due to a technical issue. Please retry after 30 min.',
+    },
+    reversed: {
+      reason: 'beneficiary_bank_rejected',
+      source: 'beneficiary_bank',
+      description: 'Payout rejected by the beneficiary bank. Please contact the beneficiary bank.',
+    },
+    processing: {
+      reason: 'payout_bank_processing',
+      source: 'gateway',
+      description: 'Payout is being processed by the partner bank.',
+    },
+    pending: {
+      reason: 'pending_approval',
+      source: 'business',
+      description: 'Workflow for the payout is pending approval from the approver(s).',
+    },
+    queued: {
+      reason: 'low_balance',
+      source: 'business',
+      description: 'Payout is queued as there is insufficient balance in your account to process the payout.',
+    },
+  }
   for (let i = 0; i < count; i += 1) {
     const payee = useCanonical ? demoPayeeLabel(i) : undefined
+    const status = useCanonical ? statusCycle[i % statusCycle.length] : i % 7 === 0 ? 'failed' : 'processed'
+    const payoutId = `pout_${String(i + 1).padStart(14, '0')}`
+    const fundAccountId = `fa_${String(i + 1).padStart(14, '0')}`
+    const amountMajor = Number(amounts[i]) || 0
+    const amountPaise = Math.round(amountMajor * 100)
+    const mode = modes[i % modes.length]
+    const utr =
+      status === 'processed' || status === 'reversed' || status === 'processing'
+        ? `UTR${String(88000000 + i)}`
+        : null
+    const detail = statusDetailByStatus[status]
     items.push({
       tenant_id: TENANT_ID,
       intent_id: intentId(batchId, i),
       batch_id: batchId,
       batchid: batchId,
       client_batch_ref: batchId,
-      client_payout_ref: useCanonical ? demoPayoutRef(i) : payoutRef(batchId, i),
-      amount: amounts[i],
+      client_payout_ref: useCanonical ? payoutId : payoutRef(batchId, i),
+      payout_id: payoutId,
+      entity: 'payout',
+      fund_account_id: fundAccountId,
+      amount: amountMajor,
+      amount_paise: amountPaise,
       currency: 'INR',
+      status,
+      utr,
+      mode,
+      fees: status === 'processed' ? Math.round(amountPaise * 0.002) : 0,
+      tax: status === 'processed' ? Math.round(amountPaise * 0.00036) : 0,
+      fee_type: null,
+      purpose: 'payout',
+      created_at: Math.floor(Date.parse(`${day}T09:00:00Z`) / 1000) + i * 47,
+      notes: {
+        notes_key_1: payee || 'Payout',
+        notes_key_2: `Tea, Earl Grey, Hot · row ${i + 1}`,
+        batch: batchId,
+      },
+      status_details: detail
+        ? { reason: detail.reason, source: detail.source, description: detail.description }
+        : null,
       provider_hint: meta.partner,
+      payment_provider: useCanonical
+        ? ['razorpay', 'paytm', 'phonepe', 'cashfree', 'payu'][i % 5]
+        : meta.partner || 'razorpay',
       beneficiary_type: i % 4 === 0 ? 'UPI' : 'BANK_TRANSFER',
       beneficiary_name: payee,
-      intent_quality_score: 0.72 + (i % 5) * 0.04,
+      intent_quality_score: status === 'failed' || status === 'reversed' ? 0.42 + (i % 5) * 0.03 : 0.78 + (i % 5) * 0.04,
       aggregate_confidence_score: meta.matchConfidence ?? 0.81,
-      confidence_score: 0.79,
+      confidence_score: status === 'processed' ? 0.91 : 0.55,
       source_row_num: i + 1,
       intended_execution_at: `${day}T09:00:00Z`,
+      business_state: status === 'processing' || status === 'pending' || status === 'queued' ? 'PROCESSING' : undefined,
+      governance_state: status === 'failed' || status === 'reversed' ? 'FLAGGED' : undefined,
       beneficiary: {
         name: payee,
-        instrument: { kind: i % 4 === 0 ? 'UPI' : 'NEFT' },
+        instrument: { kind: i % 4 === 0 ? 'UPI' : mode },
       },
     })
   }
@@ -242,18 +362,19 @@ export function buildPaymentIntents(batchId, request) {
 /** Mirrors intent-engine GET /api/prod/intents/batch-ids (`total_amount` = SUM(amount) per batch). */
 export function buildBatchIdsList(request) {
   return {
-    items: activeIntentBatches(request).map((b) => {
-      const { items } = buildPaymentIntents(b.id, request)
-      const total_amount = Math.round(
-        items.reduce((sum, row) => sum + (Number(row.amount) || 0), 0) * 100,
-      ) / 100
-      return {
-        batch_id: b.id,
-        total_amount,
-        total_count: items.length,
-        intent_count: items.length,
-      }
-    }),
+    items: activeIntentBatches(request)
+      .map((b) => {
+        const { items } = buildPaymentIntents(b.id, request)
+        const total_amount =
+          Math.round(items.reduce((sum, row) => sum + (Number(row.amount) || 0), 0) * 100) / 100
+        return {
+          batch_id: b.id,
+          total_amount,
+          total_count: items.length,
+          intent_count: items.length,
+        }
+      })
+      .filter((row) => row.total_count > 0),
   }
 }
 

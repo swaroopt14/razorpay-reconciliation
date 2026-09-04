@@ -57,7 +57,7 @@ import {
   verifyLogin,
 } from './loginGate.js'
 import { handleProtocolRequest } from './protocol/routes.js'
-import { handleFinanceRequest } from './finance.js'
+import { handleFinanceRequest, listRazorpaySettlements, listSettlementReconCombined } from './finance.js'
 
 const LATENCY_MS = Number.parseInt(process.env.SMOKE_LATENCY_MS ?? '120', 10) || 0
 
@@ -187,8 +187,8 @@ export async function handleRequest(request) {
       return jsonResponse({ error: gate.code, message: gate.message }, status)
     }
 
-    // Clear only this user's upload readiness on re-login (not everyone's).
-    resetUploadReadiness(request)
+    // Keep uploaded batches across re-login — readiness is keyed by tenant and persisted.
+    // Explicit wipe: POST /v1/smoke/reset-uploads
 
     const userTenant = tenantForEmail(gate.user.email)
     const envelope = authEnvelope({
@@ -345,6 +345,16 @@ export async function handleRequest(request) {
     }
     const result = handleFinanceRequest(method, pathname, url, body)
     if (result) return jsonResponse(result.body, result.status)
+  }
+
+  // ── Razorpay settlements (list + combined recon) ─────────────────────────
+  if (method === 'GET' && pathname === '/v1/settlements') {
+    const status = url.searchParams.get('status')?.trim() || ''
+    return jsonResponse(listRazorpaySettlements({ status }))
+  }
+  if (method === 'GET' && pathname === '/v1/settlements/recon/combined') {
+    const settlementId = url.searchParams.get('settlement_id')?.trim() || ''
+    return jsonResponse(listSettlementReconCombined({ settlementId }))
   }
 
   // ── zord-outcome-engine (settlement) ─────────────────────────────────────

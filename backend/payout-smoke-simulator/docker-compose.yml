@@ -41,6 +41,9 @@ services:
       ZORD_DEMO_LOGIN_ENABLED: "${ZORD_DEMO_LOGIN_ENABLED:-0}"
       ZORD_LOGIN_USERS: "${ZORD_LOGIN_USERS:-blank@company.com:YourLongPassword;demo@test123:Test@12344;demo@company.com:YourLongPassword}"
       DATABASE_URL: postgres://smoke:eXDQTEFNyzogVqq4fkgPSMbqJWWoUGPv@smoke-postgres:5432/smoke_audit
+      SMOKE_DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data
     depends_on:
       smoke-postgres:
         condition: service_healthy

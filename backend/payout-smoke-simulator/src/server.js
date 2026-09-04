@@ -3,6 +3,7 @@ import { TENANT_ID } from './constants.js'
 import { initLoginAudit } from './loginAudit.js'
 import { initLoginGate } from './loginGate.js'
 import { handleRequest } from './router.js'
+import { seedDemoBatchReadiness } from './uploadReadiness.js'
 
 const port = Number.parseInt(process.env.PORT ?? '8099', 10)
 
@@ -12,6 +13,7 @@ await initLoginAudit().catch((err) => {
 await initLoginGate().catch((err) => {
   console.error('[payout-smoke-simulator] login gate init error:', err)
 })
+seedDemoBatchReadiness()
 
 const server = http.createServer(async (req, res) => {
   try {
