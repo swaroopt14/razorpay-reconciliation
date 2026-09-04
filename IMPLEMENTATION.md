@@ -373,13 +373,7 @@ zord-outcome-engine/services/
 
 ### What's Built
 
-- [x] Kubernetes manifests (`kubernetes/eks/`)
-- [x] Kong API Gateway (`kubernetes/api-gateway/`)
-- [x] Argo CD GitOps (`kubernetes/argocd/`)
-- [x] Prometheus + Grafana monitoring (`kubernetes/monitoring/`)
-- [x] EFK logging stack (`kubernetes/logging/`)
-- [x] OpenTelemetry + Jaeger tracing (`kubernetes/tracing/`)
-- [x] Jenkins CI/CD pipelines (`jenkins/`)
+- [x] Razorpay connector, webhooks, settlement recon, and finance close loop
 - [x] Airflow DAGs: `intent_transform_dag.py` + `intent_normalization_quality_dag.py`
 - [x] Docker Compose for local development
 - [x] Multi-stage Dockerfiles for all services

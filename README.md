@@ -27,6 +27,7 @@ A verifiable payment lifecycle platform. Ingestion, canonicalization, settlement
 - [Why Existing Systems Fail](#why-existing-systems-fail)
 - [Solution](#solution)
 - [Key Features](#key-features)
+- [Intelligence and Agents](#intelligence-and-agents)
 - [System Architecture](#system-architecture)
 - [Repository Structure](#repository-structure)
 - [Tech Stack](#tech-stack)
@@ -38,11 +39,8 @@ A verifiable payment lifecycle platform. Ingestion, canonicalization, settlement
 - [Workflow](#workflow)
 - [Performance](#performance)
 - [Security](#security)
-- [Deployment](#deployment)
-- [CI/CD](#cicd)
 - [Testing](#testing)
 - [Roadmap](#roadmap)
-- [Contributing](#contributing)
 - [License](#license)
 - [Contact](#contact)
 
@@ -93,13 +91,67 @@ Instead of asking finance teams to trust a single system's view, Zord constructs
 - **Canonical Intent Engine** — Normalizes heterogeneous payment formats into a single, queryable schema
 - **Automated Reconciliation** — Attachment engine matches intents to settlements with confidence scoring and variance analysis
 - **Evidence Packaging** — Merkle-tree signed evidence packs with cryptographic verification and selective disclosure
-- **Predictive Intelligence** — ML-powered leakage prediction, ambiguity detection, and SLA breach forecasting
+- **Predictive Intelligence** — ML-powered leakage prediction, ambiguity detection, and SLA breach forecasting across the ZPI families (leakage, ambiguity, defensibility, RCA, pattern, recommendation, SLA)
+- **Ask Zord** — Finance Q&A agent that explains Phase 6/7 truth with cited tools. It copies amounts from APIs; it does not invent rupees or re-run matching
+- **Investigation Agent** — Hypothesis loop over exceptions: plan → HTTP tools → confirm/eliminate → evidence-backed report. Never force `MATCHED`
+- **Finance Investigator** — Deterministic prompt-layer graph (`agents/finance`) that walks payment, payout, settlement, bank, and exception records
+- **Close Briefing Agent** — Turns a batch close report (match rate, exceptions, exposure) into a controller briefing without adding numbers
 - **Policy Engine** — DSL-based IF-THEN rules with 20+ seeded policies and immutable action contracts
 - **Multi-Tenant Isolation** — Per-tenant databases, API keys, and connector configurations
 - **Dead Letter Queue Management** — Structured DLQ with replay, retry, and investigation workflows
 - **PII Tokenization** — Format-preserving encryption boundary for GDPR/PCI DSS compliance
 - **Real-Time Dashboards** — Operator, customer, and admin views with role-based access control
 - **Razorpay Connector** — Test/Live client, signed webhooks, payment API backfill, and canonical payment truth (Phases 1–4). Razorpay `settled` is never `bank_credited`
+
+---
+
+## Intelligence and Agents
+
+Deterministic recon owns the numbers. Intelligence projects them. Agents explain and investigate — they do not become a second matcher.
+
+```text
+Phase 6 determines financial truth.     →  what doesn't match
+Phase 7 proves financial truth.         →  what the evidence pack shows
+Phase 8 Ask Zord explains it.           →  cited Q&A, no invented amounts
+Phase 9 Investigation Agent walks it.   →  hypothesis loop on exceptions
+ZPI + ml-service watch the batch.       →  leakage, ambiguity, SLA, patterns
+```
+
+### zord-intelligence (ZPI)
+
+Projection engine over Kafka events. Each family writes snapshots and immutable action contracts.
+
+| Family | What it answers |
+|---|---|
+| **Leakage** | Unmatched intents, orphan settlements, under-settlement vs intended amount |
+| **Ambiguity** | Records the matcher will not force to `MATCHED` (duplicate UTR, split settlement) |
+| **Defensibility** | Whether an exception has evidence-pack coverage a controller can stand behind |
+| **RCA** | Clusters of the same break (missing bank CREDIT, fee-only lines, open authorized) |
+| **Pattern** | Batch quality: duplicate risk, source mix, variance by provider/bank |
+| **Recommendation** | Next bounded action (replay, request UTR, escalate) — never auto-settle |
+| **SLA** | Open authorized/created past 72h, payouts past 15m, still using Razorpay status names |
+
+ML inference (`ml-service`): CatBoost leakage, isolation-forest / z-score anomalies, HDBSCAN clustering. Features come from the same projections; the LLM never computes the score.
+
+### Prompt-layer agents
+
+All agents live in `backend/zord-prompt-layer/agents/`. No extra microservice, no LangGraph, no live MCP. Tools are HTTP calls to outcome-engine and zord-evidence.
+
+| Agent | Path | Job | Must not do |
+|---|---|---|---|
+| **Finance investigator** | `agents/finance` | Walk one payment/payout through recon + evidence tools and draft a structured note | Re-score UTR, rename Razorpay status |
+| **Ask Zord** | `agents/askzord` | Route a finance question (record / aggregate / explanation / glossary), copy tool JSON, cite evidence, reject hallucinations | SUM in the model, invent evidence IDs |
+| **Investigation agent** | `agents/investigate` | Observe → reason → pick next tool → update hypotheses → stop on proof, exhaustion, or budget | Force `MATCHED`, assign `PROVEN` itself |
+| **Close briefing** | `agents/briefing` | Rewrite a close report (match rate, exceptions, exposure, throughput) in prose | Add any number not already in the report |
+
+Hard rules the agents share:
+
+- Razorpay `settled` is never `bank_credited`
+- `MATCHED` is not `fully_reconciled`
+- `UNKNOWN` is first-class; AMBIGUOUS is never coerced
+- `get_ledger_entry` stays stubbed until a real ledger exists
+
+Console surfaces: **Ask Zord** (`/ask`) and **Investigations** (`/investigations`).
 
 ---
 
@@ -115,10 +167,10 @@ flowchart LR
     Kafka["Apache Kafka<br/>KRaft"]
     Outcome["zord-outcome-engine<br/>Settlement"]
     Evidence["zord-evidence<br/>Proof Packs"]
-    Intel["zord-intelligence<br/>ZPI"]
+    Intel["zord-intelligence<br/>ZPI families"]
     ML["ml-service<br/>Inference"]
     Console["zord-console<br/>Next.js"]
-    Prompt["zord-prompt-layer<br/>LLM Query"]
+    Prompt["zord-prompt-layer<br/>Ask Zord + Investigate"]
     Token["zord-token-enclave<br/>PII Vault"]
 
     Client --> Kong
@@ -151,8 +203,9 @@ Arealis-Zord/
 │   │   ├── internal/observe/       # Webhook observation → payment truth (Phase 2+)
 │   │   └── internal/paymenttruth/  # Canonical payment reducer (Phase 4)
 │   ├── zord-evidence/              # Evidence pack generation (Go)
-│   ├── zord-intelligence/          # ZPI — projections, policies, SLA (Go)
-│   ├── zord-prompt-layer/          # LLM-assisted query (Go)
+│   ├── zord-intelligence/          # ZPI — leakage, ambiguity, RCA, SLA, patterns (Go)
+│   ├── zord-prompt-layer/          # Ask Zord, investigation agent, finance graph (Go)
+│   │   └── agents/                 # askzord / investigate / finance / briefing
 │   ├── zord-token-enclave/         # PII tokenization boundary (Go)
 │   ├── zord-console/               # Next.js 14 full-stack UI (port 3000)
 │   ├── ml-service/                 # ML inference via Kafka (Python/FastAPI)
@@ -160,21 +213,12 @@ Arealis-Zord/
 │   ├── payout-smoke-simulator/     # Payout testing tool (Node.js)
 │   ├── shared/                     # Event contracts and fixtures
 │   └── generated/                  # Pre-trained ML model artifacts
-├── kubernetes/
-│   ├── api-gateway/                # Kong API Gateway manifests
-│   ├── eks/                        # Core EKS Kustomize manifests
-│   ├── argocd/                     # Argo CD GitOps
-│   ├── monitoring/                 # Prometheus + Grafana
-│   ├── logging/                    # EFK stack
-│   └── tracing/                    # OpenTelemetry + Jaeger
-├── jenkins/                        # CI/CD pipeline assets
 ├── functional-tests/               # End-to-end functional tests
 ├── performance-tests/              # Load and performance testing
 ├── docs/
 │   └── razorpay/                   # Razorpay integration docs
 │       ├── phase1-implementation-plan.md
 │       └── test-mode-runbook.md
-├── CONTRIBUTING.md
 ├── SECURITY.md
 └── LICENSE
 ```
@@ -190,14 +234,11 @@ Arealis-Zord/
 | **Database** | PostgreSQL 16 (7 per-service databases) |
 | **Message Queue** | Apache Kafka (KRaft mode, no ZooKeeper) |
 | **Cache** | Redis |
-| **Object Storage** | AWS S3 (encrypted) |
+| **Object Storage** | File storage for settlement and bank uploads |
 | **Frontend** | TailwindCSS, Framer Motion, Three.js, Recharts |
-| **AI/ML** | scikit-learn, CatBoost, HDBSCAN, Gemini API |
+| **AI/ML** | scikit-learn, CatBoost, HDBSCAN, Gemini API (wording only — numbers come from tools) |
 | **Observability** | OpenTelemetry, Prometheus, Grafana, Jaeger |
-| **Orchestration** | Kubernetes (AWS EKS), Docker Compose |
-| **API Gateway** | Kong (DB-less, declarative YAML) |
-| **CI/CD** | Jenkins, Argo CD, SonarQube |
-| **Secrets** | AWS Secrets Manager, External Secrets Operator |
+| **Local run** | Docker Compose |
 | **Auth** | JWT (HS256), API keys, ed25519 signing |
 | **Compliance** | Format-preserving encryption, GDPR/PCI DSS tokenization |
 | **PSP Integration** | Razorpay (Test/Live mode, Basic Auth, webhook-ready) |
@@ -267,7 +308,7 @@ Each service reads configuration from environment variables. Copy `.env.example`
 
 | Variable | Required | Description |
 |---|---|---|
-| `JWT_SIGNING_SECRET` | Yes | JWT signing key (change in production) |
+| `JWT_SIGNING_SECRET` | Yes | JWT signing key |
 | `ZORD_VAULT_KEY` | Yes | Base64-encoded vault encryption key |
 | `S3_BUCKET` | Yes | AWS S3 bucket for file storage |
 | `AWS_REGION` | Yes | AWS region (default: `ap-south-1`) |
@@ -645,11 +686,19 @@ curl -X POST http://localhost:8080/v1/ingest \
 | Method | Endpoint | Description |
 |---|---|---|
 | `GET` | `/v1/health` | Health check |
+| `GET` | `/v1/intelligence/kpis` | Workspace KPIs |
+| `GET` | `/v1/intelligence/leakage` | Leakage family snapshot |
+| `GET` | `/v1/intelligence/ambiguity` | Ambiguity family snapshot |
+| `GET` | `/v1/intelligence/defensibility` | Evidence coverage / defensibility |
+| `GET` | `/v1/intelligence/rca/clusters` | Root-cause clusters |
+| `GET` | `/v1/intelligence/pattern` | Batch quality / duplicate-risk pattern |
+| `GET` | `/v1/intelligence/sla` | SLA timers (Razorpay status names kept) |
+| `GET` | `/v1/intelligence/ml/anomaly` | Z-score / isolation-forest anomaly |
 | `GET` | `/v1/projection` | Current projection state |
 | `GET` | `/v1/policies` | List active policies |
 | `GET` | `/v1/batch/:batchID` | Batch intelligence snapshot |
 
-### zord-prompt-layer — LLM Query
+### zord-prompt-layer — Agents
 
 | Method | Endpoint | Description |
 |---|---|---|
@@ -739,59 +788,12 @@ erDiagram
 | **Authentication** | JWT (HS256) with MFA OTP via AWS SES |
 | **Authorization** | Per-tenant API keys, role-based access (admin/ops/customer) |
 | **Encryption at Rest** | AES-256 for S3 objects, format-preserving encryption for PII |
-| **Encryption in Transit** | TLS 1.3 enforced via Kong gateway |
+| **Encryption in Transit** | TLS on service ports |
 | **PII Protection** | Dedicated token enclave with format-preserving tokenization |
 | **Integrity** | ed25519 signing on evidence packs, Merkle inclusion proofs |
-| **Secrets Management** | AWS Secrets Manager with External Secrets Operator |
 | **Connector Security** | Secrets stored by reference only, Basic Auth, redacted logging |
-| **Rate Limiting** | Kong gateway rate limits per tenant and endpoint |
+| **Rate Limiting** | Per tenant and endpoint |
 | **Audit Trail** | Immutable action contracts, version history, DLQ tracking |
-
-> Read [SECURITY.md](./SECURITY.md) before deploying to any shared or production environment.
-
----
-
-## Deployment
-
-### Local Development
-
-```bash
-docker-compose up -d --build
-```
-
-### Kubernetes (AWS EKS)
-
-Full manifests in `kubernetes/`:
-
-```bash
-kubectl apply -k kubernetes/eks/
-kubectl apply -f kubernetes/api-gateway/
-kubectl apply -f kubernetes/monitoring/
-```
-
-### AWS Deployment
-
-- ECR registry: `522189039032.dkr.ecr.ap-south-1.amazonaws.com/zord/`
-- Domain: `*.zordnet.com` via wildcard ACM certificate
-- EKS with gp2 default StorageClass
-- HPA on all services (CPU-based, 70% threshold)
-
----
-
-## CI/CD
-
-### Jenkins
-
-| Pipeline | Purpose |
-|---|---|
-| `Jenkinsfile.all-services-ecr` | Full rebuild — builds and pushes all services |
-| `Jenkinsfile.service-ecr` | Single service — builds and pushes one service |
-
-### Pre-commit Hooks
-
-```bash
-pre-commit install
-```
 
 ---
 
@@ -860,16 +862,8 @@ npx playwright test
 - [ ] Live console proof chips
 - [x] Batch settlement file scheduling via Airflow (DAGs already in tree)
 - [ ] Real-time streaming dashboard (WebSocket)
-- [ ] Multi-region EKS deployment
 - [ ] Custom evidence pack templates
 - [ ] SLA breach automated escalation workflows
-- [ ] Terraform modules for AWS infrastructure
-
----
-
-## Contributing
-
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
 
 ---
 
