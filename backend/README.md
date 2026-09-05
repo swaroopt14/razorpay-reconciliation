@@ -1,28 +1,28 @@
-# 🚀 Zord Backend - Microservices Platform
+# 🚀 Backend - Microservices Platform
 
 A comprehensive Go-based microservices platform for secure financial transaction processing, ingestion, and compliance management.
 
 ## 🏗️ Architecture Overview
 
-The Zord backend consists of 7 specialized microservices that work together to provide a complete financial transaction processing platform:
+The backend consists of 7 specialized microservices that work together to provide a complete financial transaction processing platform:
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   zord-edge     │────│ zord-vault-     │────│ zord-intent-    │
-│   (Port 8080)   │    │ journal         │    │ engine          │
-│   API Gateway   │    │ (Port 8081)     │    │ (Port 8083)     │
+│      edge       │────│      recon      │────│     intents     │
+│   (Port 8080)   │    │ (Port 8081)     │    │ (Port 8083)     │
+│   API Gateway   │    │                 │    │                 │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
          │                       │                       │
          ▼                       ▼                       ▼
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   zord-relay    │    │ zord-contracts  │    │ zord-pii-       │
-│   (Port 8082)   │    │ (Port 8084)     │    │ enclave         │
-│   Message Relay │    │ Contract Gen    │    │ (Port 8085)     │
+│      relay      │    │    evidence     │    │      vault      │
+│   (Port 8082)   │    │ (Port 8084)     │    │ (Port 8085)     │
+│   Message Relay │    │ Contract Gen    │    │                 │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
          │
          ▼
 ┌─────────────────┐
-│   zord-console  │
+│     console     │
 │   (Port 3000)   │
 │   Web Dashboard │
 └─────────────────┘
@@ -30,43 +30,43 @@ The Zord backend consists of 7 specialized microservices that work together to p
 
 ## 🎯 Microservices Overview
 
-### 🌐 [zord-edge](./edge/) - API Gateway & Ingestion
+### 🌐 [edge](./edge/) - API Gateway & Ingestion
 - **Port**: 8080
 - **Purpose**: Request ingestion, authentication, and routing
 - **Tech**: Go + Gin + PostgreSQL + OpenTelemetry
 - **Features**: Rate limiting, JWT auth, request tracing, tenant isolation
 
-### 🔐 [zord-vault-journal](./zord-vault-journal/) - Secure Storage
+### 🔐 [recon](./recon/) - Secure Storage
 - **Port**: 8081
 - **Purpose**: Encrypted data storage and audit trails
 - **Tech**: Go + PostgreSQL + Redis + AWS S3 + AES-256
 - **Features**: Encryption at rest, message queues, audit logging
 
-### 🧠 [zord-intent-engine](./intents/) - Intent Processing
+### 🧠 [intents](./intents/) - Intent Processing
 - **Port**: 8083
 - **Purpose**: Intent validation, canonicalization, and processing
 - **Tech**: Go + PostgreSQL + Redis + OpenTelemetry
 - **Features**: Schema validation, business rules, idempotency
 
-### 📡 [zord-relay](./relay/) - Message Broker
+### 📡 [relay](./relay/) - Message Broker
 - **Port**: 8082
 - **Purpose**: Message routing and reliable delivery
 - **Tech**: Go + Apache Kafka (KRaft) + PostgreSQL + Outbox Pattern
 - **Features**: Transactional messaging, high throughput, guaranteed delivery
 
-### 📄 [zord-contracts](./zord-contracts/) - Contract Generation
+### 📄 [evidence](./evidence/) - Contract Generation
 - **Port**: 8084
 - **Purpose**: Contract generation, evidence packaging, digital signing
 - **Tech**: Go + PostgreSQL + S3 + Digital Signatures
 - **Features**: Template engine, multi-format output, compliance reporting
 
-### 🔒 [zord-pii-enclave](./zord-pii-enclave/) - PII Protection
+### 🔒 [vault](./vault/) - PII Protection
 - **Port**: 8085
 - **Purpose**: PII tokenization, detection, and policy enforcement
 - **Tech**: Go + HSM + Format-Preserving Encryption
 - **Features**: GDPR compliance, PCI DSS, secure tokenization
 
-### 🖥️ [zord-console](./console/) - Web Dashboard
+### 🖥️ [console](./console/) - Web Dashboard
 - **Port**: 3000
 - **Purpose**: Multi-tenant web interface and monitoring
 - **Tech**: Next.js 14 + TypeScript + Tailwind CSS
@@ -77,7 +77,7 @@ The Zord backend consists of 7 specialized microservices that work together to p
 ### Prerequisites
 - **Docker Desktop** installed and running
 - **Go 1.24.1+** (for local development)
-- **Node.js 18+** (for zord-console)
+- **Node.js 18+** (for console)
 - **PostgreSQL 16+** (for local development)
 
 ### 🐳 Docker Deployment (Recommended)
@@ -105,7 +105,7 @@ cd backend/edge
 docker-compose up -d --build
 
 # Or use the service-specific commands
-cd backend/zord-vault-journal
+cd backend/recon
 docker-compose up -d --build
 ```
 
@@ -114,7 +114,7 @@ docker-compose up -d --build
 #### Setup Development Environment
 ```bash
 # Install Go dependencies for all services
-for service in zord-edge zord-vault-journal zord-intent-engine zord-relay; do
+for service in edge recon intents relay; do
   cd backend/$service
   go mod download
   cd ../..
@@ -130,7 +130,7 @@ cd ../..
 ```bash
 # Start each service in separate terminals
 cd backend/edge && go run ./cmd/main.go
-cd backend/zord-vault-journal && go run ./cmd/main.go
+cd backend/recon && go run ./cmd/main.go
 cd backend/intents && go run ./cmd/main.go
 cd backend/relay && go run ./cmd/main.go
 cd backend/console && npm run dev
@@ -140,13 +140,13 @@ cd backend/console && npm run dev
 
 | Service | Port | Health Check | Purpose |
 |---------|------|--------------|---------|
-| **zord-edge** | 8080 | `/health` | API Gateway & Request Ingestion |
-| **zord-vault-journal** | 8081 | `/v1/health` | Secure Data Storage & Audit |
-| **zord-relay** | 8082 | `/health` | Message Broker & Routing |
-| **zord-intent-engine** | 8083 | `/health` | Intent Processing & Validation |
-| **zord-contracts** | 8084 | `/health` | Contract Generation & Signing |
-| **zord-pii-enclave** | 8085 | `/health` | PII Tokenization & Protection |
-| **zord-console** | 3000 | `/api/health` | Web Dashboard & Monitoring |
+| **edge** | 8080 | `/health` | API Gateway & Request Ingestion |
+| **recon** | 8081 | `/v1/health` | Secure Data Storage & Audit |
+| **relay** | 8082 | `/health` | Message Broker & Routing |
+| **intents** | 8083 | `/health` | Intent Processing & Validation |
+| **evidence** | 8084 | `/health` | Contract Generation & Signing |
+| **vault** | 8085 | `/health` | PII Tokenization & Protection |
+| **console** | 3000 | `/api/health` | Web Dashboard & Monitoring |
 
 ## 📊 Observability & Monitoring
 
@@ -246,7 +246,7 @@ gosec ./...
 ### Building & Testing
 ```bash
 # Build all services
-for service in zord-edge zord-vault-journal zord-intent-engine zord-relay; do
+for service in edge recon intents relay; do
   cd backend/$service
   go build -o $service ./cmd/main.go
   cd ../..
@@ -298,7 +298,7 @@ backend/
 ### Development Environment
 ```bash
 # Start core services only
-docker-compose up -d zord-edge zord-vault-journal zord-console
+docker-compose up -d edge recon console
 
 # Start with observability
 cd observability && docker-compose up -d
@@ -325,21 +325,21 @@ kubectl apply -f k8s/
 
 ### Request Processing Flow
 ```
-Client Request → zord-edge → zord-vault-journal → zord-intent-engine
+Client Request → edge → recon → intents
                      ↓              ↓                    ↓
-                zord-relay ← Redis Queues ← Message Processing
+                relay ← Redis Queues ← Message Processing
                      ↓
             Kafka Topics → Downstream Services
 ```
 
 ### Data Flow
-1. **Ingestion**: Client requests enter through zord-edge
-2. **Storage**: Raw data encrypted and stored in zord-vault-journal
-3. **Processing**: Intents processed and validated in zord-intent-engine
-4. **Routing**: Messages routed through zord-relay to appropriate services
-5. **Contracts**: Legal documents generated in zord-contracts
-6. **PII Protection**: Sensitive data tokenized in zord-pii-enclave
-7. **Monitoring**: All activities tracked in zord-console
+1. **Ingestion**: Client requests enter through edge
+2. **Storage**: Raw data encrypted and stored in recon
+3. **Processing**: Intents processed and validated in intents
+4. **Routing**: Messages routed through relay to appropriate services
+5. **Contracts**: Legal documents generated in evidence
+6. **PII Protection**: Sensitive data tokenized in vault
+7. **Monitoring**: All activities tracked in console
 
 ## 🧪 Testing & Quality Assurance
 
@@ -359,11 +359,11 @@ cd observability
 ### Health Checks
 ```bash
 # Check all service health
-curl http://localhost:8080/health      # zord-edge
-curl http://localhost:8081/v1/health   # zord-vault-journal
-curl http://localhost:8082/health      # zord-relay
-curl http://localhost:8083/health      # zord-intent-engine
-curl http://localhost:3000/api/health  # zord-console
+curl http://localhost:8080/health      # edge
+curl http://localhost:8081/v1/health   # recon
+curl http://localhost:8082/health      # relay
+curl http://localhost:8083/health      # intents
+curl http://localhost:3000/api/health  # console
 ```
 
 ### Performance Testing
@@ -388,13 +388,13 @@ Each service uses environment-specific configuration:
 ## 📚 Documentation
 
 ### Service-Specific Documentation
-- [zord-edge README](./edge/README.md) - API Gateway documentation
-- [zord-vault-journal README](./zord-vault-journal/README.md) - Storage service docs
-- [zord-intent-engine README](./intents/README.md) - Processing engine docs
-- [zord-relay README](./relay/README.md) - Message broker documentation
-- [zord-contracts README](./zord-contracts/README.md) - Contract service docs
-- [zord-pii-enclave README](./zord-pii-enclave/README.md) - PII protection docs
-- [zord-console README](./console/README.md) - Web dashboard docs
+- [edge README](./edge/README.md) - API Gateway documentation
+- [recon README](./recon/README.md) - Storage service docs
+- [intents README](./intents/README.md) - Processing engine docs
+- [relay README](./relay/README.md) - Message broker documentation
+- [evidence README](./evidence/README.md) - Contract service docs
+- [vault README](./vault/README.md) - PII protection docs
+- [console README](./console/README.md) - Web dashboard docs
 
 ### Observability Documentation
 - [Complete Observability Guide](../observability/ZORD-OBSERVABILITY-COMPLETE-GUIDE.md)
