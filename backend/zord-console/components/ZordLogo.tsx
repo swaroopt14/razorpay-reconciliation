@@ -11,7 +11,7 @@ interface ZordLogoProps {
   fitToHeight?: boolean
   /** Inside a dark chrome bar - skip extra logo capsule. */
   embedded?: boolean
-  /** Mark + upright ZORD wordmark (original Zord lockup - not an italic vendor clone). */
+  /** Mark + upright Console wordmark. */
   withWordmark?: boolean
 }
 
@@ -49,7 +49,7 @@ export function ZordLogo({
 
   if (!withWordmark) {
     return (
-      <div className={`flex shrink-0 items-center justify-start ${className}`} aria-label="Zord">
+      <div className={`flex shrink-0 items-center justify-start ${className}`} aria-label="Console">
         <ZordMark
           className={`block w-auto shrink-0 ${
             fitToHeight ? 'h-8 sm:h-9' : MARK_HEIGHT[size === 'sm' ? 'md' : size]
@@ -62,7 +62,7 @@ export function ZordLogo({
   return (
     <div
       className={`flex shrink-0 items-center justify-start gap-3.5 sm:gap-4 ${className}`}
-      aria-label="Zord"
+      aria-label="Console"
     >
       <span
         className={`inline-flex shrink-0 items-center justify-center rounded-none bg-black ${TILE_SIZE[size]}`}
@@ -75,7 +75,7 @@ export function ZordLogo({
           onDarkBackground ? 'text-white' : 'text-[#0F172A]'
         }`}
       >
-        Zord
+        Console
       </span>
     </div>
   )

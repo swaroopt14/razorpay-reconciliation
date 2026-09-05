@@ -51,7 +51,9 @@ This project closes one loop on a batch of records:
 
 ## System Architecture
 
-Razorpay is a first-class source, not a sidecar. Webhooks and the Payments API land as observations. Outcome-engine reduces them to canonical payments, matches settlement lines to bank rows, then runs payment-first financial recon. Intelligence projects the batch. Agents read those APIs — they do not re-score UTR or rename Razorpay status.
+Razorpay is a first-class source. Webhooks and the Payments API land as observations. **recon** reduces them to canonical payments, matches settlement lines to bank rows, then runs payment-first financial recon. **intel** projects the batch. **agents** read those APIs — they do not re-score UTR or rename Razorpay status.
+
+Names below are what each piece **does**. Folders are unchanged (`zord-*`). **recon** is only the matching engine.
 
 ```mermaid
 flowchart TB
@@ -62,37 +64,54 @@ flowchart TB
     end
 
     subgraph ingest [Ingestion]
-        Edge["zord-edge<br/>HMAC webhooks, bank upload"]
-        OutcomePoll["zord-outcome-engine<br/>Razorpay client + backfill"]
+        Edge["edge<br/>HMAC webhooks, bank upload"]
+        ReconIn["recon<br/>Razorpay client + backfill"]
     end
 
-    subgraph recon [Reconciliation]
+    subgraph match [Reconciliation]
         Canonical["Canonical payments and payouts"]
         SettleBank["Settlement ↔ bank candidates"]
-        Finance["Financial recon<br/>MATCHED / AMBIGUOUS / UNRESOLVED"]
+        Finance["MATCHED / AMBIGUOUS / UNRESOLVED"]
     end
 
-    subgraph prove [Proof and agents]
-        Evidence["zord-evidence<br/>decision traces, SHA-256 packs"]
-        Prompt["zord-prompt-layer<br/>Ask Zord · Investigate · Briefing"]
-        Intel["zord-intelligence + ml-service<br/>leakage, ambiguity, SLA"]
-        Console["zord-console"]
+    subgraph prove [Proof]
+        Evidence["evidence<br/>decision traces, SHA-256 packs"]
+        Agents["agents<br/>Ask · Investigate · Briefing"]
+        Intel["intel + ml<br/>leakage, ambiguity, SLA"]
+        Console["console"]
+        Relay["relay<br/>Kafka"]
     end
 
-    API --> OutcomePoll
+    API --> ReconIn
     WH --> Edge
     Files --> Edge
     Edge --> Canonical
-    OutcomePoll --> Canonical
+    ReconIn --> Canonical
     Canonical --> SettleBank
     SettleBank --> Finance
     Finance --> Evidence
-    Finance --> Prompt
+    Finance --> Agents
     Finance --> Intel
     Intel --> Console
-    Prompt --> Console
+    Agents --> Console
     Evidence --> Console
+    Relay -.-> Edge
+    Relay -.-> ReconIn
 ```
+
+| Name | Folder | Job |
+|---|---|---|
+| **console** | `zord-console` | Frontend |
+| **edge** | `zord-edge` | Webhooks, file upload |
+| **relay** | `zord-relay` | Kafka |
+| **intents** | `zord-intent-engine` | Canonical instructions |
+| **recon** | `zord-outcome-engine` | Razorpay client, match, exceptions |
+| **evidence** | `zord-evidence` | Proof packs |
+| **intel** | `zord-intelligence` | Leakage, ambiguity, SLA |
+| **ml** | `ml-service` | Anomaly / leakage scores |
+| **agents** | `zord-prompt-layer` | Ask, investigate, briefing |
+| **vault** | `zord-token-enclave` | PII tokens |
+| **scheduler** | `zord-airflow` | Backfill jobs |
 
 **Data path**
 
@@ -101,7 +120,7 @@ flowchart TB
 3. **Canonicalize** — one current `canonical_payments` row; status never walks backwards (`captured` is not overwritten by a late `authorized`)
 4. **Match settlement to bank** — candidates only (`EXACT_MATCH` … `ORPHAN_BANK`); this step does not mark cash received
 5. **Reconcile** — `POST /v1/reconciliation/run` on payments and payouts; exceptions stay honest
-6. **Explain** — Ask Zord copies numbers from APIs; the investigation agent walks exceptions with a tool budget
+6. **Explain** — Ask copies numbers from APIs; the investigation agent walks exceptions with a tool budget
 
 ---
 
@@ -111,11 +130,11 @@ Deterministic recon owns the numbers. The model only writes prose.
 
 | Capability | Where | Role |
 |---|---|---|
-| Leakage, ambiguity, defensibility, RCA, pattern, SLA | `zord-intelligence` + `ml-service` | Project the batch; CatBoost / z-score / HDBSCAN never invent a match |
-| Ask Zord | `agents/askzord` | Finance Q&A with citations. Rejects numeric and status hallucinations |
-| Investigation agent | `agents/investigate` | Hypothesis loop on exceptions. Cannot force `MATCHED` or assign `PROVEN` |
-| Finance investigator | `agents/finance` | Walk one payment or payout through recon + evidence tools |
-| Close briefing | `agents/briefing` | Rewrite match rate, exceptions, and exposure without adding figures |
+| Leakage, ambiguity, defensibility, RCA, pattern, SLA | intel + ml | Project the batch; CatBoost / z-score / HDBSCAN never invent a match |
+| Ask | agents | Finance Q&A with citations. Rejects numeric and status hallucinations |
+| Investigation | agents | Hypothesis loop on exceptions. Cannot force `MATCHED` or assign `PROVEN` |
+| Finance investigator | agents | Walk one payment or payout through recon + evidence tools |
+| Close briefing | agents | Rewrite match rate, exceptions, and exposure without adding figures |
 
 Hard rules: `settled` ≠ `bank_credited`. `UNKNOWN` is first-class. `AMBIGUOUS` is never coerced.
 
@@ -130,7 +149,7 @@ Console: `/ask` and `/investigations`.
 - Settlement and bank file ingest with duplicate-file detection
 - Payment-first recon with match rate, exception list, and evaluation on 100+ labeled records
 - Evidence packs with decision / calculation traces
-- Ask Zord and investigation agents over HTTP tools (no second matcher)
+- Ask and investigation agents over HTTP tools (no second matcher)
 - Multi-tenant isolation, DLQ, and PII tokenization
 
 ---
@@ -140,17 +159,17 @@ Console: `/ask` and `/investigations`.
 ```
 razorpay-reconciliation/
 ├── backend/
-│   ├── zord-edge/               # Webhooks, bank upload, connectors
-│   ├── zord-intent-engine/      # Canonical intents
-│   ├── zord-relay/              # Event dispatch
-│   ├── zord-outcome-engine/     # Razorpay client, canonical payments, recon
-│   ├── zord-evidence/           # Finance evidence packs
-│   ├── zord-intelligence/       # Batch projections
-│   ├── zord-prompt-layer/       # Ask Zord, investigate, briefing
-│   ├── zord-token-enclave/      # PII boundary
-│   ├── zord-console/            # Next.js console
-│   ├── ml-service/              # Leakage / anomaly inference
-│   └── zord-airflow/            # Backfill scheduling
+│   ├── zord-console/            # console — frontend
+│   ├── zord-edge/               # edge — webhooks, bank upload
+│   ├── zord-relay/              # relay — Kafka
+│   ├── zord-intent-engine/      # intents — canonical instructions
+│   ├── zord-outcome-engine/     # recon — Razorpay client, match, exceptions
+│   ├── zord-evidence/           # evidence — proof packs
+│   ├── zord-intelligence/       # intel — batch projections
+│   ├── zord-prompt-layer/       # agents — Ask, investigate, briefing
+│   ├── zord-token-enclave/      # vault — PII
+│   ├── ml-service/              # ml — leakage / anomaly scores
+│   └── zord-airflow/            # scheduler — backfill jobs
 ├── testdata/razorpay/           # Settlement and bank fixtures
 ├── docs/                        # Implementation notes
 ├── functional-tests/

@@ -70,7 +70,7 @@ export const SANDBOX_DOCK_DISPLAY_LABELS: Partial<Record<DockId, string>> = {
   settlement: 'Settlement',
   ambiguity: 'Outcome Review',
   proof: 'Proof',
-  workspace: 'Ask Zord',
+  workspace: 'Ask',
   billing: 'Billing',
 }
 export type WorkspaceTab =
@@ -230,9 +230,9 @@ export const dockItems = [
   {
     id: 'workspace',
     label: 'Ask',
-    navLabel: 'Ask Zord',
-    title: 'Ask Zord',
-    breadcrumbLabel: 'Ask Zord',
+    navLabel: 'Ask',
+    title: 'Ask',
+    breadcrumbLabel: 'Ask',
     summary:
       'Investigate payouts, build safe workflows, and navigate the product - AI on top of cryptographic truth.',
     icon: 'folder',

@@ -578,11 +578,11 @@ export function DockNav({
       },
       {
         id: 'ask',
-        label: 'Ask Zord',
+        label: 'Ask',
         icon: 'terminal',
         href: scopeHref('/ask'),
         match: onAskZord,
-        ariaLabel: 'Ask Zord. Investigate and navigate with citations.',
+        ariaLabel: 'Ask. Investigate and navigate with citations.',
       },
       {
         id: 'billing',
@@ -738,11 +738,11 @@ export function DockNav({
       },
       {
         id: 'ask',
-        label: 'Ask Zord',
+        label: 'Ask',
         icon: 'terminal',
         href: scopeHref('/ask'),
         match: onAskZord,
-        ariaLabel: 'Ask Zord. Finance operations copilot.',
+        ariaLabel: 'Ask. Finance operations copilot.',
       },
     ],
     [scopeHref, onCashPosition, onInvestigations, onProofCenter, onAskZord],
@@ -1116,7 +1116,7 @@ export function DockNav({
           <Link
             href="/"
             className="flex shrink-0 items-center focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/40"
-            aria-label="Zord home"
+            aria-label="Console home"
           >
             <ZordLogo size="lg" variant="dark" withWordmark />
           </Link>
