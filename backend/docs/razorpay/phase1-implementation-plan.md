@@ -21,7 +21,7 @@ Implement a secure, reusable Razorpay connector that can:
 
 ### Existing `connectors` table (already migrated)
 ```sql
--- backend/zord-edge/db/migrations/20260703063716_create_connectors.sql
+-- backend/edge/db/migrations/20260703063716_create_connectors.sql
 CREATE TABLE IF NOT EXISTS "connectors" (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
@@ -40,8 +40,8 @@ CREATE TABLE IF NOT EXISTS "connectors" (
 **Gap:** No `provider_mode`, no health-check columns, no mode constraint, no unique index per mode.
 
 ### Existing env files updated
-- `backend/zord-console/.env.local` ✅ — has `RZP_KEY_ID`, `RZP_KEY_SECRET`
-- `backend/zord-edge/.env` ✅ — has full Razorpay config block
+- `backend/console/.env.local` ✅ — has `RZP_KEY_ID`, `RZP_KEY_SECRET`
+- `backend/edge/.env` ✅ — has full Razorpay config block
 
 ### Existing extension points to reuse
 | What exists | Where |
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS "connectors" (
 
 ### STEP 1: Database Migration — Extend `connectors` Table
 
-**File:** `backend/zord-edge/db/migrations/20260826_add_razorpay_connector_fields.sql`
+**File:** `backend/edge/db/migrations/20260826_add_razorpay_connector_fields.sql`
 
 ```sql
 -- +goose Up
@@ -93,8 +93,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS connectors_tenant_provider_mode_uq
 
 **Files to create:**
 ```
-backend/zord-outcome-engine/.env              # with Razorpay keys
-backend/zord-outcome-engine/internal/poll/providers/razorpay/config.go
+backend/recon/.env              # with Razorpay keys
+backend/recon/internal/poll/providers/razorpay/config.go
 ```
 
 **Config struct:**
@@ -122,7 +122,7 @@ type Config struct {
 
 ### STEP 3: Provider-Neutral Interface
 
-**File:** `backend/zord-outcome-engine/internal/poll/provider.go`
+**File:** `backend/recon/internal/poll/provider.go`
 
 ```go
 type OutcomeProvider interface {
@@ -138,7 +138,7 @@ type OutcomeProvider interface {
 
 ### STEP 4: Razorpay HTTP Client
 
-**File:** `backend/zord-outcome-engine/internal/poll/providers/razorpay/client.go`
+**File:** `backend/recon/internal/poll/providers/razorpay/client.go`
 
 Request pipeline:
 ```
@@ -168,7 +168,7 @@ req.SetBasicAuth(c.keyID, c.keySecret)
 
 ### STEP 5: Error Classification
 
-**File:** `backend/zord-outcome-engine/internal/poll/providers/razorpay/errors.go`
+**File:** `backend/recon/internal/poll/providers/razorpay/errors.go`
 
 | HTTP Status | ErrorKind | Retryable |
 |---|---|---|
@@ -187,7 +187,7 @@ req.SetBasicAuth(c.keyID, c.keySecret)
 
 ### STEP 6: Pagination
 
-**File:** `backend/zord-outcome-engine/internal/poll/providers/razorpay/pagination.go`
+**File:** `backend/recon/internal/poll/providers/razorpay/pagination.go`
 
 Bounded iterator pattern:
 ```go
@@ -205,7 +205,7 @@ Stops when:
 
 ### STEP 7: Typed Provider Models
 
-**File:** `backend/zord-outcome-engine/internal/poll/providers/razorpay/types.go`
+**File:** `backend/recon/internal/poll/providers/razorpay/types.go`
 
 Razorpay-specific DTOs (NOT used by frontend or DB):
 ```go
@@ -232,7 +232,7 @@ type ListResponse[T any] struct {
 
 ### STEP 8: Health Check (Connection Test)
 
-**File:** `backend/zord-outcome-engine/internal/poll/providers/razorpay/health.go`
+**File:** `backend/recon/internal/poll/providers/razorpay/health.go`
 
 Calls a safe read-only Razorpay endpoint to verify credentials.
 
@@ -263,7 +263,7 @@ Failure response:
 
 ### STEP 9: Redaction Helpers
 
-**File:** `backend/zord-outcome-engine/internal/poll/providers/razorpay/redact.go`
+**File:** `backend/recon/internal/poll/providers/razorpay/redact.go`
 
 NEVER log:
 - Authorization header
@@ -279,7 +279,7 @@ Safe to log:
 
 ### STEP 10: Edge Connector API Endpoints
 
-**File:** `backend/zord-edge/handler/connector_handler.go`
+**File:** `backend/edge/handler/connector_handler.go`
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -302,7 +302,7 @@ Safe to log:
 
 ### STEP 11: Edge Connector Service
 
-**File:** `backend/zord-edge/services/connector_service.go`
+**File:** `backend/edge/services/connector_service.go`
 
 - Create/update connector records
 - Resolve secret references (env vars for local, vault for prod)
@@ -313,7 +313,7 @@ Safe to log:
 
 ### STEP 12: Edge Connector Model
 
-**File:** `backend/zord-edge/model/connector.go`
+**File:** `backend/edge/model/connector.go`
 
 ```go
 type Connector struct {
@@ -339,7 +339,7 @@ type Connector struct {
 
 ### STEP 13: Internal Health Endpoint (Outcome Engine)
 
-**File:** `backend/zord-outcome-engine/internal/handler/connector_health_handler.go`
+**File:** `backend/recon/internal/handler/connector_health_handler.go`
 
 Internal HTTP endpoint that edge calls to trigger connection test:
 ```
@@ -367,7 +367,7 @@ All tests use `httptest.Server` — never real Razorpay API.
 
 ### STEP 15: Integration Test
 
-**File:** `backend/zord-outcome-engine/docker-compose.test.yml`
+**File:** `backend/recon/docker-compose.test.yml`
 
 ```
 1. Start Postgres + Kafka + Redis + edge + outcome-engine

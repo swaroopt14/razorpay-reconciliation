@@ -43,7 +43,7 @@ Hierarchy: exact `payment_id` / `payment_link` / Phase 5 `EXACT_MATCH` → `HIGH
 
 Amount math, UTR equality, record existence, and age stay deterministic (no LLM).
 
-Migration: `backend/zord-outcome-engine/db/migrations/20260902200000_phase6_reconciliation.sql`
+Migration: `backend/recon/db/migrations/20260902200000_phase6_reconciliation.sql`
 
 Outbox: `reconciliation.decision.v1`. Trigger: `POST /v1/reconciliation/run` and after bank ingest `Match()` **outside** `imports.Commit`.
 
@@ -67,7 +67,7 @@ Tables (migration `20260903010000_phase6b_canonical_payouts.sql`): `canonical_pa
 
 APIs: `GET /v1/reconciliation/payouts/:id` `{ status, reconciliation, evidence_refs }`, `GET /internal/payouts/:id`, `GET /v1/reconciliation/sla-policy`. `POST /v1/reconciliation/run` loads payments and payouts.
 
-Investigator (`backend/zord-prompt-layer/agents/finance/`): Classify → LoadPrimary → LoadLifecycle → LoadFinancialLinks → LoadBankSettlement → CheckSLA → VerifyEvidence → Draft.
+Investigator (`backend/agents/agents/finance/`): Classify → LoadPrimary → LoadLifecycle → LoadFinancialLinks → LoadBankSettlement → CheckSLA → VerifyEvidence → Draft.
 
 HTTP tools: `get_payout`, `get_payout_events`, `get_sla_policy`, `get_similar_cases`, plus existing payment/settlement/bank/recon/exception/evidence. `get_ledger_entry` stays `source_not_in_this_phase`.
 
@@ -80,11 +80,11 @@ Batch: list exceptions `entity_type=payout`, group by reason, investigate **exce
 ## Tests
 
 ```bash
-cd backend/zord-outcome-engine
+cd backend/recon
 go test ./internal/recon/ ./internal/payouttruth/ ./internal/observe/ ./internal/poll/providers/razorpay/ ./handlers/ -count=1
 DATABASE_URL='postgres://postgres@127.0.0.1:5433/zord_outcome_phase3?sslmode=disable' \
   go test -tags=integration ./internal/persistence/ -count=1
-cd backend/zord-prompt-layer && go test ./tools/ ./agents/finance/ -count=1
+cd backend/agents && go test ./tools/ ./agents/finance/ -count=1
 ```
 
 PAY-001..008 and PAYO-001..004 are unit tests in `internal/recon`. Prompt-layer tests do not require live Gemini.

@@ -49,7 +49,7 @@ false_match_rate = 0.203
 
 **Why first:** every downstream metric inherits this. Fixing it moves false-match from 0.203 toward 0 *honestly*.
 
-**Directory:** `backend/zord-outcome-engine/internal/recon/`
+**Directory:** `backend/recon/internal/recon/`
 
 | File | Change |
 |---|---|
@@ -79,7 +79,7 @@ PAY-010  captured + >1 payment-type settlement line for same payment_id
 
 **Why:** this is the single biggest blocker. Nothing else in the demo can run without rows in the database.
 
-**Directory:** `backend/zord-outcome-engine/internal/recon/dataset/` + `backend/zord-outcome-engine/cmd/finance-seed/`
+**Directory:** `backend/recon/internal/recon/dataset/` + `backend/recon/cmd/finance-seed/`
 
 | File | Functionality |
 |---|---|
@@ -120,7 +120,7 @@ go run ./cmd/finance-seed --count 120 --seed 42
 
 **Why:** the judge should run **one** command and see the whole loop.
 
-**Directory:** `backend/zord-outcome-engine/internal/close/` + handler
+**Directory:** `backend/recon/internal/close/` + handler
 
 | File | Functionality |
 |---|---|
@@ -164,7 +164,7 @@ go run ./cmd/finance-seed --count 120 --seed 42
 
 **Why:** the bar says *measured accuracy*, not "our engine says 92%". Because the batch is synthetic and labeled, we can score the **live DB run** against ground truth.
 
-**Directory:** `backend/zord-outcome-engine/internal/close/`
+**Directory:** `backend/recon/internal/close/`
 
 | File | Functionality |
 |---|---|
@@ -194,7 +194,7 @@ throughput, p50 / p95 latency
 
 **Why:** the track is literally *"run the books **and the cash position**"*. Right now `CASH_POSITION` in Ask Zord just re-prints exception exposure.
 
-**Directory:** `backend/zord-outcome-engine/internal/recon/`
+**Directory:** `backend/recon/internal/recon/`
 
 | File | Functionality |
 |---|---|
@@ -246,7 +246,7 @@ Currently refunds only exist as settlement `line_type=refund`. `refund.*` webhoo
 
 ## 8. Phase 18 — End-to-end acceptance
 
-**Directory:** `backend/zord-outcome-engine/testing/e2e/` + repo root
+**Directory:** `backend/recon/testing/e2e/` + repo root
 
 | File | Functionality |
 |---|---|

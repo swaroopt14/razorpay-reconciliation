@@ -82,7 +82,7 @@ npm start
 ## 📁 Project Structure
 
 ```
-zord-console/
+console/
 ├── app/                    # Next.js App Router pages
 │   ├── console/           # Customer console routes
 │   ├── ops/               # Operations console routes
@@ -208,7 +208,7 @@ npm run dev:fresh
 
 Notes:
 - Avoid running two `next dev` processes from the same repo at once.
-- Use `npm run dev` (or `npm run dev:fresh`) from `backend/zord-console`.
+- Use `npm run dev` (or `npm run dev:fresh`) from `backend/console`.
 - Confirm the active URL with `npm run dev:url` and open exactly that port.
 - If your browser tab still references old chunks, do a hard reload (`Cmd/Ctrl + Shift + R`).
 ## 📈 Scaling

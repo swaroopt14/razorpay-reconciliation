@@ -22,12 +22,12 @@ Zord Evidence Service (Service 6) builds cryptographically verifiable evidence p
 ## Run
 
 ```bash
-cd backend/zord-evidence
+cd backend/evidence
 go mod tidy
 go run ./cmd
 ```
 
 ## Important Notes
 
-- `zord-outcome-engine` is untouched; this service consumes references and hashes, not plaintext PII.
+- `recon` is untouched; this service consumes references and hashes, not plaintext PII.
 - Current S3 adapter is an interface-backed in-memory implementation for v1 integration speed; replace with AWS SDK implementation when ready.

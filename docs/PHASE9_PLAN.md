@@ -1,6 +1,6 @@
 # Phase 9 — Investigation Agent
 
-**Status:** implemented in `backend/zord-prompt-layer/agents/investigate/`. No `zord-agent-service`, no LangGraph, no live MCP. Gemini plan reorder is off.
+**Status:** implemented in `backend/agents/agents/investigate/`. No `zord-agent-service`, no LangGraph, no live MCP. Gemini plan reorder is off.
 
 **Locked definition:** Build an autonomous, **hypothesis-driven investigation loop** that takes a Phase 6 exception, walks HTTP finance tools, confirms or eliminates hypotheses, copies structured impact, and emits an evidence-backed report. The agent decides **which tool to call next**. It does **not** reconcile, re-score UTR, rewrite Razorpay status, invent evidence, or execute refunds/ledger mutations.
 
@@ -11,7 +11,7 @@ Phase 8 explains financial truth.       → "Ask Zord."
 Phase 9 investigates complex exceptions → "What actually happened — and what is still UNKNOWN?"
 ```
 
-This clone only. **`backend/zord-agent-service` does not exist — do not create it.** Reuse [`backend/zord-prompt-layer/`](backend/zord-prompt-layer/) beside `agents/finance` and `agents/askzord`. No new microservice. No Python LangGraph. **No live MCP server** (an in-process tool registry with MCP-shaped schemas is enough). Tools stay HTTP to outcome-engine / zord-evidence. Ledger and refund APIs stay stubbed. Do not fold this into Ask Zord. Do not turn it into a Finance Controller UI.
+This clone only. **`backend/zord-agent-service` does not exist — do not create it.** Reuse [`backend/agents/`](backend/agents/) beside `agents/finance` and `agents/askzord`. No new microservice. No Python LangGraph. **No live MCP server** (an in-process tool registry with MCP-shaped schemas is enough). Tools stay HTTP to outcome-engine / zord-evidence. Ledger and refund APIs stay stubbed. Do not fold this into Ask Zord. Do not turn it into a Finance Controller UI.
 
 ---
 
@@ -97,7 +97,7 @@ No DB credentials in the agent. No arbitrary URLs. No SQL.
 ## Where the code lives
 
 ```text
-backend/zord-prompt-layer/
+backend/agents/
   agents/investigate/              # new — not askzord, not finance.Draft
     state.go
     plan.go
@@ -112,7 +112,7 @@ backend/zord-prompt-layer/
     investigate_test.go
     testdata/cases/*.json          # ~15 focused fixtures (not 50)
 
-backend/zord-outcome-engine/
+backend/recon/
   # optional thin fields on investigation_records if needed
   # reuse POST /v1/reconciliation/investigations as the persist API
   # do not add a second recon matcher

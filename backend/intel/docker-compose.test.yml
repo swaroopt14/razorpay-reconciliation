@@ -40,7 +40,7 @@ services:
   # ── Python ML Service ────────────────────────────────────────────────────────
   ml-service:
     build:
-      context: ../ml-service
+      context: ../ml
       dockerfile: Dockerfile
     container_name: zord-ml-service
     environment:

@@ -19,8 +19,8 @@ backend/.env*
 # --- Personal/Development folders ---
 .yaswanth
 yaswanth/
-backend/zord-prompt-layer/assets/models/bge-small-en-v1.5/model.onnx
-backend/zord-prompt-layer/.env
+backend/agents/assets/models/bge-small-en-v1.5/model.onnx
+backend/agents/.env
 
 # --- Production deploy secrets ---
 k8s-file/production/env/*.env

@@ -76,7 +76,7 @@ Not created on purpose: `zord-razorpay`, `zord-webhook-service`, `razorpay_conne
 
 **Purpose:** communicate with Razorpay safely.
 
-**Where:** `backend/zord-outcome-engine/internal/poll/providers/razorpay/`
+**Where:** `backend/recon/internal/poll/providers/razorpay/`
 
 | File | Role |
 | --- | --- |
@@ -98,13 +98,13 @@ Not created on purpose: `zord-razorpay`, `zord-webhook-service`, `razorpay_conne
 - `GET /v1/connectors/razorpay/status`
 - `GET /v1/connectors`
 
-Migration: `backend/zord-edge/db/migrations/20260826_add_razorpay_connector_fields.sql`  
+Migration: `backend/edge/db/migrations/20260826_add_razorpay_connector_fields.sql`  
 Extends existing `connectors` (`provider_mode`, `api_key_ref`, `webhook_secret_ref`, health columns).
 
 **Tests:** 47 top-level tests in the four Phase 1 files (`client` 22, `config` 14, `pagination` 6, `redaction` 5). Older notes said 45.
 
 ```bash
-cd backend/zord-outcome-engine
+cd backend/recon
 go test ./internal/poll/providers/razorpay/
 ```
 
@@ -120,7 +120,7 @@ go test ./internal/poll/providers/razorpay/
 
 **Purpose:** prove Razorpay sent a legitimate webhook, persist it, emit an observation. Not payment finality.
 
-**Where:** `backend/zord-edge/`
+**Where:** `backend/edge/`
 
 | Piece | Path |
 | --- | --- |
@@ -162,7 +162,7 @@ This is **durable idempotent receipt + transactional outbox**, not “exactly-on
 **Tests**
 
 ```bash
-cd backend/zord-edge
+cd backend/edge
 go test ./validator ./services ./handler
 ```
 
@@ -171,7 +171,7 @@ Includes signature tests, service persist/outbox/duplicate/conflict/rollback, ha
 Postgres end-to-end (optional):
 
 ```bash
-cd backend/zord-edge
+cd backend/edge
 DATABASE_URL=postgres://... go test -tags=integration ./testing -count=1
 ```
 
@@ -188,7 +188,7 @@ DATABASE_URL=postgres://... go test -tags=integration ./testing -count=1
 
 **Purpose:** turn a legitimate webhook observation into a canonical **payment observation**. Still not recon, refunds, or bank credit.
 
-**Where:** `backend/zord-outcome-engine/internal/observe/`
+**Where:** `backend/recon/internal/observe/`
 
 ```
 provider.observation.received
@@ -207,7 +207,7 @@ provider.observation.received
 **Kafka:** consumer group `outcome-engine-observation-group` on `payments.ledger.events.v1` (`KAFKA_OBSERVATION_TOPIC` override).
 
 ```bash
-cd backend/zord-outcome-engine
+cd backend/recon
 go test ./internal/observe ./handlers -run Observation
 ```
 
@@ -241,7 +241,7 @@ These were already present on `feat/new-feature` and stay in scope as later surf
 
 **Purpose:** one current payment row, many immutable observations, no last-write-wins regression.
 
-**Where:** `backend/zord-outcome-engine/internal/paymenttruth/`
+**Where:** `backend/recon/internal/paymenttruth/`
 
 | Piece | Role |
 | --- | --- |
@@ -265,7 +265,7 @@ Applied on local Postgres `127.0.0.1:5433` database `zord_outcome_phase3`.
 
 **5B** Edge `POST /v1/bank-statements` hashes the file, stores it, writes `bank_ingest_runs`, emits `bank.statement.received` once. Outcome-engine `POST /internal/bank-statements/ingest` parses with `internal/imports` (not Edge payout parser). `MatchSettlementBank` writes `settlement_bank_match_decisions` and `bank.match.completed.v1`. No `payment_proof_subjects` / `fully_reconciled`.
 
-Migrations: `backend/zord-outcome-engine/db/migrations/20260902100000_phase5_settlement_bank_truth.sql`, `backend/zord-edge/db/migrations/20260902100000_create_bank_ingest_runs.sql`.
+Migrations: `backend/recon/db/migrations/20260902100000_phase5_settlement_bank_truth.sql`, `backend/edge/db/migrations/20260902100000_create_bank_ingest_runs.sql`.
 
 ---
 
@@ -277,7 +277,7 @@ Failed + no settlement + no bank → `MATCHED` with **no** exception and `bank_c
 
 APIs under `/v1/reconciliation/*`. Outbox `reconciliation.decision.v1`. Investigator is `zord-prompt-layer` HTTP tools; `get_ledger_entry` returns `source_not_in_this_phase`.
 
-Migration: `backend/zord-outcome-engine/db/migrations/20260902200000_phase6_reconciliation.sql`. Plan: [PHASE6_PLAN.md](./PHASE6_PLAN.md).
+Migration: `backend/recon/db/migrations/20260902200000_phase6_reconciliation.sql`. Plan: [PHASE6_PLAN.md](./PHASE6_PLAN.md).
 
 ---
 
@@ -293,7 +293,7 @@ Observe: `payout.*` webhooks reuse `provider.observation.received`. APIs: `GET /
 
 Investigator graph: Classify → LoadPrimary → LoadLifecycle → LoadFinancialLinks → LoadBankSettlement → CheckSLA → VerifyEvidence → Draft. Tools: `get_payout`, `get_payout_events`, `get_sla_policy`, `get_similar_cases`. Ledger stays stubbed.
 
-Migration: `backend/zord-outcome-engine/db/migrations/20260903010000_phase6b_canonical_payouts.sql`.
+Migration: `backend/recon/db/migrations/20260903010000_phase6b_canonical_payouts.sql`.
 
 ---
 
@@ -301,11 +301,11 @@ Migration: `backend/zord-outcome-engine/db/migrations/20260903010000_phase6b_can
 
 **Purpose:** prove the Phase 6 conclusion. Phase 6 finds the break; Phase 7 proves it.
 
-Reuse `backend/zord-evidence/internal/finance/` (new tables prefixed `finance_`). Do **not** copy full canonical rows; store pointer + minimal snapshot + SHA-256. Do **not** wire finance packs through `RequiredLeafTypes` / 14-leaf Merkle / ed25519.
+Reuse `backend/evidence/internal/finance/` (new tables prefixed `finance_`). Do **not** copy full canonical rows; store pointer + minimal snapshot + SHA-256. Do **not** wire finance packs through `RequiredLeafTypes` / 14-leaf Merkle / ed25519.
 
 Consumes `reconciliation.decision.v1` and `investigation.completed.v1` (Kafka + `POST /internal/finance-evidence/ingest`). Rejected AMBIGUOUS candidates stay on the decision trace. Failed + bank movement cannot be sealed as `PROVEN`. Tenant isolation is enforced in the store. Prompt-layer tools: `get_evidence_pack`, `get_decision_trace`, `get_calculation_trace`, `get_audit_trail`, `verify_evidence`, `get_source_snapshot`. Ledger stays stubbed.
 
-Migration: `backend/zord-evidence/db/migrations/20260903020000_phase7_finance_evidence.sql`. Plan: [PHASE7_PLAN.md](./PHASE7_PLAN.md).
+Migration: `backend/evidence/db/migrations/20260903020000_phase7_finance_evidence.sql`. Plan: [PHASE7_PLAN.md](./PHASE7_PLAN.md).
 
 ---
 
@@ -313,32 +313,32 @@ Migration: `backend/zord-evidence/db/migrations/20260903020000_phase7_finance_ev
 
 ```bash
 # Phase 1
-cd backend/zord-outcome-engine && go test ./internal/poll/providers/razorpay/
+cd backend/recon && go test ./internal/poll/providers/razorpay/
 
 # Phase 2 + bank ingress
-cd backend/zord-edge && go test ./validator ./services ./handler
+cd backend/edge && go test ./validator ./services ./handler
 
 # Observation processor + canonical truth + Phase 5 matcher
-cd backend/zord-outcome-engine && go test ./internal/paymenttruth/ ./internal/payouttruth/ ./internal/poll/ ./internal/observe/ ./internal/imports/ ./internal/recon/ ./internal/bankingest/ ./handlers/ -count=1
+cd backend/recon && go test ./internal/paymenttruth/ ./internal/payouttruth/ ./internal/poll/ ./internal/observe/ ./internal/imports/ ./internal/recon/ ./internal/bankingest/ ./handlers/ -count=1
 
 # Postgres (Phase 3 provenance + Phase 4 canonical + Phase 5 chain + Phase 6/6B recon)
 DATABASE_URL='postgres://postgres@127.0.0.1:5433/zord_outcome_phase3?sslmode=disable' \
   go test -tags=integration ./internal/persistence/ -count=1
 
 # Prompt-layer investigation graph (no live Gemini)
-cd backend/zord-prompt-layer && go test ./tools/ ./agents/finance/ -count=1
+cd backend/agents && go test ./tools/ ./agents/finance/ -count=1
 
 # Phase 7 finance evidence (in-memory; no Merkle)
-cd backend/zord-evidence && go test ./internal/finance/ -count=1
+cd backend/evidence && go test ./internal/finance/ -count=1
 
 # Phase 8 Ask Zord (no live Gemini)
-cd backend/zord-prompt-layer && go test ./agents/askzord/ ./tools/ ./agents/finance/ -count=1
+cd backend/agents && go test ./agents/askzord/ ./tools/ ./agents/finance/ -count=1
 
 # Phase 9 investigation loop (fixture HTTP; no live Gemini)
-cd backend/zord-prompt-layer && go test ./agents/investigate/ -count=1
+cd backend/agents && go test ./agents/investigate/ -count=1
 
 # Phase 11 evaluation harness
-cd backend/zord-outcome-engine && go test ./internal/recon/eval/ -count=1
+cd backend/recon && go test ./internal/recon/eval/ -count=1
 ```
 
 ---
@@ -366,7 +366,7 @@ Go loop in `agents/investigate/`: plan → HTTP tools → hypotheses → stop. E
 `internal/recon/eval` builds 153 fixtures across the locked families. **Regression** vs the engine oracle is 1.0. **Quality** vs controller truth reports Precision / Recall / F1 / false-match / capture / variance / amount-weighted / evidence / latency. ROC-AUC is omitted. Known quality gaps: partial and duplicate settlement still MATCHED when an EXACT bank row exists.
 
 ```bash
-cd backend/zord-outcome-engine && go run ./cmd/phase11-eval
+cd backend/recon && go run ./cmd/phase11-eval
 ```
 
 ---

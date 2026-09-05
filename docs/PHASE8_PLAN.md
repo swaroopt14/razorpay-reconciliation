@@ -1,6 +1,6 @@
 # Phase 8 — Ask Zord / Finance RAG
 
-**Status:** implemented in `backend/zord-prompt-layer/agents/askzord/` plus `GET /v1/reconciliation/summary`. MCP / Gemini wording were not required for correctness.
+**Status:** implemented in `backend/agents/agents/askzord/` plus `GET /v1/reconciliation/summary`. MCP / Gemini wording were not required for correctness.
 
 **Locked definition:** Build a finance-aware explanation and retrieval layer so a Finance Controller can ask questions about Phase 6 truth and Phase 7 proof. Ask Zord retrieves, copies deterministic numbers, explains, cites, and surfaces uncertainty. It does **not** reconcile, re-score UTR, invent amounts, or become a second investigation agent.
 
@@ -11,7 +11,7 @@ Phase 8 explains financial truth.
 The LLM is not the calculator, the ledger, or the matcher.
 ```
 
-This clone only. Reuse [`backend/zord-prompt-layer/`](backend/zord-prompt-layer/). No new microservice. No LangGraph. **No MCP** (that stays Phase 9). Tools stay HTTP (same pattern as Phase 6B/7). Do not rewrite `DefaultRAGService` / intent SQL RAG. Do not turn this into a Finance Controller UI, a cash ledger, or Phase 9’s observe→reason→tool loop.
+This clone only. Reuse [`backend/agents/`](backend/agents/). No new microservice. No LangGraph. **No MCP** (that stays Phase 9). Tools stay HTTP (same pattern as Phase 6B/7). Do not rewrite `DefaultRAGService` / intent SQL RAG. Do not turn this into a Finance Controller UI, a cash ledger, or Phase 9’s observe→reason→tool loop.
 
 ---
 
@@ -107,7 +107,7 @@ Four question classes (router must hit these; extra labels are aliases):
 Reuse `zord-prompt-layer`. Add an **askzord** package **beside** `agents/finance`, not a second RAG service and not a copy of `DefaultRAGService`.
 
 ```text
-backend/zord-prompt-layer/
+backend/agents/
   agents/askzord/                 # new
     router.go                     # deterministic classify
     plan.go                       # QueryPlan
@@ -234,7 +234,7 @@ Use RAG **only** when intent is `KNOWLEDGE`, or as a short glossary footnote aft
 Reuse `HybridEvidenceRetriever` if a finance knowledge collection exists; otherwise seed **in-repo markdown** (no CMS, no live Razorpay docs crawl this phase):
 
 ```text
-backend/zord-prompt-layer/agents/askzord/testdata/knowledge/
+backend/agents/agents/askzord/testdata/knowledge/
   settlement_vs_bank_credit.md
   matched_vs_fully_reconciled.md
   failed_no_movement.md

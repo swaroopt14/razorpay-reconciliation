@@ -518,15 +518,15 @@ The ML foundation is ready. What's missing is the execution layer.
 
 ```bash
 # Phase 1 — Razorpay client (45 tests)
-cd backend/zord-outcome-engine
+cd backend/recon
 go test ./internal/poll/providers/razorpay/... -v -count=1
 
 # Phase 2 — Signature verifier (9 tests)
-cd backend/zord-edge
+cd backend/edge
 go test ./validator/... -v -count=1
 
 # Phase 3 — Settlement pipeline (52 tests)
-cd backend/zord-outcome-engine
+cd backend/recon
 go test ./services/... -v -count=1
 go test ./models/... -v -count=1
 
@@ -544,20 +544,20 @@ done
 
 | # | File | Purpose |
 |---|------|---------|
-| 1 | `backend/zord-edge/db/migrations/20260829_create_provider_webhook_receipts.sql` | Receipt table |
-| 2 | `backend/zord-edge/validator/razorpay_signature_verifier.go` | HMAC-SHA256 verify |
-| 3 | `backend/zord-edge/validator/razorpay_signature_verifier_test.go` | 9 tests |
-| 4 | `backend/zord-edge/model/razorpay_webhook_event.go` | Event models |
-| 5 | `backend/zord-edge/model/provider_webhook_receipt.go` | Receipt model |
-| 6 | `backend/zord-edge/services/razorpay_webhook_service.go` | Webhook pipeline |
-| 7 | `backend/zord-edge/handler/razorpay_webhook_handler.go` | HTTP handler |
-| 8 | `backend/zord-outcome-engine/services/razorpay_parser_test.go` | 18 tests |
-| 9 | `backend/zord-outcome-engine/services/cashfree_parser_test.go` | 12 tests |
-| 10 | `backend/zord-outcome-engine/services/attachment_scoring_test.go` | 30 tests |
-| 11 | `backend/zord-outcome-engine/services/parser_registry_test.go` | 4 tests |
-| 12 | `backend/zord-outcome-engine/models/mapping_profile_test.go` | 7 tests |
-| 13 | `backend/zord-outcome-engine/services/attachment_engine_test.go` | 40 tests |
-| 14 | `backend/zord-outcome-engine/services/cashfree_parser.go` | Bug fix: FieldsPerRecord = -1 |
+| 1 | `backend/edge/db/migrations/20260829_create_provider_webhook_receipts.sql` | Receipt table |
+| 2 | `backend/edge/validator/razorpay_signature_verifier.go` | HMAC-SHA256 verify |
+| 3 | `backend/edge/validator/razorpay_signature_verifier_test.go` | 9 tests |
+| 4 | `backend/edge/model/razorpay_webhook_event.go` | Event models |
+| 5 | `backend/edge/model/provider_webhook_receipt.go` | Receipt model |
+| 6 | `backend/edge/services/razorpay_webhook_service.go` | Webhook pipeline |
+| 7 | `backend/edge/handler/razorpay_webhook_handler.go` | HTTP handler |
+| 8 | `backend/recon/services/razorpay_parser_test.go` | 18 tests |
+| 9 | `backend/recon/services/cashfree_parser_test.go` | 12 tests |
+| 10 | `backend/recon/services/attachment_scoring_test.go` | 30 tests |
+| 11 | `backend/recon/services/parser_registry_test.go` | 4 tests |
+| 12 | `backend/recon/models/mapping_profile_test.go` | 7 tests |
+| 13 | `backend/recon/services/attachment_engine_test.go` | 40 tests |
+| 14 | `backend/recon/services/cashfree_parser.go` | Bug fix: FieldsPerRecord = -1 |
 
 ---
 

@@ -15,7 +15,7 @@ Outputs:
   - training_summary.json
 
 Example:
-    python backend/ml-service/scripts/train_leakage_model.py
+    python backend/ml/scripts/train_leakage_model.py
 """
 
 from __future__ import annotations

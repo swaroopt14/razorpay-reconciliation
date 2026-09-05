@@ -127,7 +127,7 @@ Cursor's final message should look something like this:
 
 - [ ] `docs/next-iteration-gaps.md §I.5` - the 5 fields + their semantic meaning
 - [ ] Where the intelligence service lives - find the Go handler that returns the ambiguity
-      dashboard. It's likely under `backend/zord-intelligence/` or wherever the `:8089` service
+      dashboard. It's likely under `backend/intel/` or wherever the `:8089` service
       is implemented (Cursor will need to find this).
 - [ ] `services/payout-command/prod-api/intelligenceTypes.ts` - `AmbiguityKpiResolved` type
 - [ ] `app/api/prod/intelligence/ambiguity/route.ts` - proxy (no change needed unless type

@@ -30,7 +30,7 @@ The Zord backend consists of 7 specialized microservices that work together to p
 
 ## 🎯 Microservices Overview
 
-### 🌐 [zord-edge](./zord-edge/) - API Gateway & Ingestion
+### 🌐 [zord-edge](./edge/) - API Gateway & Ingestion
 - **Port**: 8080
 - **Purpose**: Request ingestion, authentication, and routing
 - **Tech**: Go + Gin + PostgreSQL + OpenTelemetry
@@ -42,13 +42,13 @@ The Zord backend consists of 7 specialized microservices that work together to p
 - **Tech**: Go + PostgreSQL + Redis + AWS S3 + AES-256
 - **Features**: Encryption at rest, message queues, audit logging
 
-### 🧠 [zord-intent-engine](./zord-intent-engine/) - Intent Processing
+### 🧠 [zord-intent-engine](./intents/) - Intent Processing
 - **Port**: 8083
 - **Purpose**: Intent validation, canonicalization, and processing
 - **Tech**: Go + PostgreSQL + Redis + OpenTelemetry
 - **Features**: Schema validation, business rules, idempotency
 
-### 📡 [zord-relay](./zord-relay/) - Message Broker
+### 📡 [zord-relay](./relay/) - Message Broker
 - **Port**: 8082
 - **Purpose**: Message routing and reliable delivery
 - **Tech**: Go + Apache Kafka (KRaft) + PostgreSQL + Outbox Pattern
@@ -66,7 +66,7 @@ The Zord backend consists of 7 specialized microservices that work together to p
 - **Tech**: Go + HSM + Format-Preserving Encryption
 - **Features**: GDPR compliance, PCI DSS, secure tokenization
 
-### 🖥️ [zord-console](./zord-console/) - Web Dashboard
+### 🖥️ [zord-console](./console/) - Web Dashboard
 - **Port**: 3000
 - **Purpose**: Multi-tenant web interface and monitoring
 - **Tech**: Next.js 14 + TypeScript + Tailwind CSS
@@ -101,7 +101,7 @@ docker-compose logs -f
 #### Individual Service Deployment
 ```bash
 # Start specific service
-cd backend/zord-edge
+cd backend/edge
 docker-compose up -d --build
 
 # Or use the service-specific commands
@@ -121,7 +121,7 @@ for service in zord-edge zord-vault-journal zord-intent-engine zord-relay; do
 done
 
 # Install Node.js dependencies for console
-cd backend/zord-console
+cd backend/console
 npm install
 cd ../..
 ```
@@ -129,11 +129,11 @@ cd ../..
 #### Start Services Locally
 ```bash
 # Start each service in separate terminals
-cd backend/zord-edge && go run ./cmd/main.go
+cd backend/edge && go run ./cmd/main.go
 cd backend/zord-vault-journal && go run ./cmd/main.go
-cd backend/zord-intent-engine && go run ./cmd/main.go
-cd backend/zord-relay && go run ./cmd/main.go
-cd backend/zord-console && npm run dev
+cd backend/intents && go run ./cmd/main.go
+cd backend/relay && go run ./cmd/main.go
+cd backend/console && npm run dev
 ```
 
 ## 🌐 Service Endpoints
@@ -279,16 +279,18 @@ docker-compose down -v
 
 ```
 backend/
-├── zord-edge/              # API Gateway & Ingestion Service
-├── zord-vault-journal/     # Secure Storage & Audit Service
-├── zord-intent-engine/     # Intent Processing Service
-├── zord-relay/             # Message Broker Service
-├── zord-contracts/         # Contract Generation Service
-├── zord-pii-enclave/       # PII Protection Service
-├── zord-console/           # Web Dashboard Application
-├── observability/          # Monitoring & Observability Stack
-├── docker-compose.yml      # Multi-service orchestration
-└── README.md              # This file
+├── console/                # Frontend
+├── edge/                   # Webhooks, file upload
+├── relay/                  # Kafka + KRaft bus
+├── intents/                # Canonical instructions
+├── recon/                  # Razorpay match + exceptions
+├── evidence/               # Cryptographic proof packs
+├── intel/                  # Leakage, ambiguity, SLA
+├── agents/                 # Ask, investigate, briefing
+├── vault/                  # PII tokens
+├── ml/                     # Anomaly / leakage scores
+├── scheduler/              # Backfill jobs
+└── README.md
 ```
 
 ## 🚀 Deployment Options
@@ -386,13 +388,13 @@ Each service uses environment-specific configuration:
 ## 📚 Documentation
 
 ### Service-Specific Documentation
-- [zord-edge README](./zord-edge/README.md) - API Gateway documentation
+- [zord-edge README](./edge/README.md) - API Gateway documentation
 - [zord-vault-journal README](./zord-vault-journal/README.md) - Storage service docs
-- [zord-intent-engine README](./zord-intent-engine/README.md) - Processing engine docs
-- [zord-relay README](./zord-relay/README.md) - Message broker documentation
+- [zord-intent-engine README](./intents/README.md) - Processing engine docs
+- [zord-relay README](./relay/README.md) - Message broker documentation
 - [zord-contracts README](./zord-contracts/README.md) - Contract service docs
 - [zord-pii-enclave README](./zord-pii-enclave/README.md) - PII protection docs
-- [zord-console README](./zord-console/README.md) - Web dashboard docs
+- [zord-console README](./console/README.md) - Web dashboard docs
 
 ### Observability Documentation
 - [Complete Observability Guide](../observability/ZORD-OBSERVABILITY-COMPLETE-GUIDE.md)

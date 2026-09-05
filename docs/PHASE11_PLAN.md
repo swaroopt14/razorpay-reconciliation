@@ -1,6 +1,6 @@
 # Phase 11 — Evaluation Harness
 
-**Status:** implemented in `backend/zord-outcome-engine/internal/recon/eval/`.
+**Status:** implemented in `backend/recon/internal/recon/eval/`.
 
 **Locked definition:** A **controlled, labeled ground-truth corpus** (100+ records) plus a **real metrics runner** against Phase 6 `ReconcilePayment` / `ReconcilePayout` / `OrphanBankResult`. This is a product phase, not leftover unit tests.
 
@@ -105,7 +105,7 @@ Regression accuracy = exact match of `result` + `exception?` + `reason` to `orac
 ## Where the code lives
 
 ```text
-backend/zord-outcome-engine/
+backend/recon/
   internal/recon/eval/
     case.go
     corpus.go
@@ -116,7 +116,7 @@ backend/zord-outcome-engine/
 ```
 
 ```bash
-cd backend/zord-outcome-engine && go test ./internal/recon/eval/ -count=1
+cd backend/recon && go test ./internal/recon/eval/ -count=1
 go run ./cmd/phase11-eval
 ```
 

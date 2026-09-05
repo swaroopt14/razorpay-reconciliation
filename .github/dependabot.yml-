@@ -16,7 +16,7 @@ updates:
       prefix: "ci"
 
   - package-ecosystem: "npm"
-    directory: "/backend/zord-console"
+    directory: "/backend/console"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -30,7 +30,7 @@ updates:
       prefix: "frontend"
 
   - package-ecosystem: "gomod"
-    directory: "/backend/zord-edge"
+    directory: "/backend/edge"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -44,7 +44,7 @@ updates:
       prefix: "backend"
 
   - package-ecosystem: "gomod"
-    directory: "/backend/zord-intent-engine"
+    directory: "/backend/intents"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -58,7 +58,7 @@ updates:
       prefix: "backend"
 
   - package-ecosystem: "gomod"
-    directory: "/backend/zord-token-enclave"
+    directory: "/backend/vault"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -72,7 +72,7 @@ updates:
       prefix: "backend"
 
   - package-ecosystem: "gomod"
-    directory: "/backend/zord-intelligence"
+    directory: "/backend/intel"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -86,7 +86,7 @@ updates:
       prefix: "backend"
 
   - package-ecosystem: "gomod"
-    directory: "/backend/zord-prompt-layer"
+    directory: "/backend/agents"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -100,7 +100,7 @@ updates:
       prefix: "backend"
 
   - package-ecosystem: "gomod"
-    directory: "/backend/zord-evidence"
+    directory: "/backend/evidence"
     schedule:
       interval: "weekly"
       day: "monday"

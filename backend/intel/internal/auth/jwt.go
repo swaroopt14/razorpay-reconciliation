@@ -10,7 +10,7 @@ import (
 )
 
 // AccessClaims mirrors the access-token shape zord-edge issues
-// (backend/zord-edge/services/jwt_service.go's AccessClaims) and Kong
+// (backend/edge/services/jwt_service.go's AccessClaims) and Kong
 // validates at the gateway (iss + exp, HS256). zord-intelligence performs
 // its own independent verification rather than trusting a claim Kong might
 // pass through, since Kong's OSS jwt plugin does not forward decoded claims

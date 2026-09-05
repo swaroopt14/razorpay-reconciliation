@@ -53,7 +53,7 @@ This project closes one loop on a batch of records:
 
 Razorpay is a first-class source. Webhooks and the Payments API land as observations. **relay** moves those events between services. **recon** reduces them to canonical payments, matches settlement lines to bank rows, then runs payment-first financial recon. **evidence** hashes the decision. **intel** projects the batch. **agents** read those APIs — they do not re-score UTR or rename Razorpay status.
 
-Names below are what each piece **does**. Folders are unchanged (`zord-*`). **recon** is only the matching engine. **relay** is communication. **evidence** is cryptographic proof.
+Folders match the job names. **recon** is only the matching engine. **relay** is communication. **evidence** is cryptographic proof.
 
 ```mermaid
 flowchart TB
@@ -108,19 +108,19 @@ flowchart TB
 
 **Evidence is proof.** After recon decides `MATCHED` / `AMBIGUOUS` / `UNRESOLVED`, evidence builds a pack: SHA-256 over each item, a Merkle root over those hashes, then an ed25519 signature over `pack_id + merkle_root + …`. Replay regenerates the pack and checks it still matches.
 
-| Name | Folder | Job |
-|---|---|---|
-| **console** | `zord-console` | Frontend |
-| **edge** | `zord-edge` | Webhooks, file upload |
-| **relay** | `zord-relay` | Kafka + KRaft communication |
-| **intents** | `zord-intent-engine` | Canonical instructions |
-| **recon** | `zord-outcome-engine` | Razorpay client, match, exceptions |
-| **evidence** | `zord-evidence` | Cryptographic proof packs |
-| **intel** | `zord-intelligence` | Leakage, ambiguity, SLA |
-| **ml** | `ml-service` | Anomaly / leakage scores |
-| **agents** | `zord-prompt-layer` | Ask, investigate, briefing |
-| **vault** | `zord-token-enclave` | PII tokens |
-| **scheduler** | `zord-airflow` | Backfill jobs |
+| Folder | Job |
+|---|---|
+| **console** | Frontend |
+| **edge** | Webhooks, file upload |
+| **relay** | Kafka + KRaft communication |
+| **intents** | Canonical instructions |
+| **recon** | Razorpay client, match, exceptions |
+| **evidence** | Cryptographic proof packs |
+| **intel** | Leakage, ambiguity, SLA |
+| **ml** | Anomaly / leakage scores |
+| **agents** | Ask, investigate, briefing |
+| **vault** | PII tokens |
+| **scheduler** | Backfill jobs |
 
 **Data path**
 
@@ -168,17 +168,17 @@ Console: `/ask` and `/investigations`.
 ```
 razorpay-reconciliation/
 ├── backend/
-│   ├── zord-console/            # console — frontend
-│   ├── zord-edge/               # edge — webhooks, bank upload
-│   ├── zord-relay/              # relay — Kafka + KRaft bus
-│   ├── zord-intent-engine/      # intents — canonical instructions
-│   ├── zord-outcome-engine/     # recon — Razorpay client, match, exceptions
-│   ├── zord-evidence/           # evidence — SHA-256 / Merkle / ed25519 packs
-│   ├── zord-intelligence/       # intel — batch projections
-│   ├── zord-prompt-layer/       # agents — Ask, investigate, briefing
-│   ├── zord-token-enclave/      # vault — PII
-│   ├── ml-service/              # ml — leakage / anomaly scores
-│   └── zord-airflow/            # scheduler — backfill jobs
+│   ├── console/                 # frontend
+│   ├── edge/                    # webhooks, bank upload
+│   ├── relay/                   # Kafka + KRaft bus
+│   ├── intents/                 # canonical instructions
+│   ├── recon/                   # Razorpay client, match, exceptions
+│   ├── evidence/                # SHA-256 / Merkle / ed25519 packs
+│   ├── intel/                   # batch projections
+│   ├── agents/                  # Ask, investigate, briefing
+│   ├── vault/                   # PII tokens
+│   ├── ml/                      # leakage / anomaly scores
+│   └── scheduler/               # backfill jobs
 ├── testdata/razorpay/           # Settlement and bank fixtures
 ├── docs/                        # Implementation notes
 ├── functional-tests/
@@ -214,7 +214,7 @@ cd razorpay-reconciliation
 ### Console
 
 ```bash
-cd backend/zord-console
+cd backend/console
 npm install
 npm run dev
 ```
@@ -224,21 +224,21 @@ Open http://localhost:3000
 ### Razorpay engine tests
 
 ```bash
-cd backend/zord-outcome-engine
+cd backend/recon
 go test ./internal/poll/providers/razorpay/ ./internal/paymenttruth/ \
   ./internal/poll/ ./internal/observe/ ./internal/recon/ ./handlers/ -count=1
 
-cd backend/zord-edge
+cd backend/edge
 go test ./validator ./services ./handler -count=1
 
-cd backend/zord-prompt-layer
+cd backend/agents
 go test ./agents/askzord/ ./agents/investigate/ ./agents/finance/ ./tools/ -count=1
 ```
 
 ### Evaluation harness
 
 ```bash
-cd backend/zord-outcome-engine
+cd backend/recon
 go test ./internal/recon/eval/ -count=1
 go run ./cmd/phase11-eval
 ```

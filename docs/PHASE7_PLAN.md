@@ -1,6 +1,6 @@
 # Phase 7 — Evidence, Provenance & Auditability
 
-**Status:** implemented in `backend/zord-evidence/internal/finance/`, outcome-engine emit, and prompt-layer HTTP tools. Merkle/ed25519 intent packs were not reused.
+**Status:** implemented in `backend/evidence/internal/finance/`, outcome-engine emit, and prompt-layer HTTP tools. Merkle/ed25519 intent packs were not reused.
 
 **Locked definition:** Build an immutable, provenance-aware evidence layer that captures the authoritative source records, financial links, deterministic calculations, reconciliation decisions, agent findings, and system actions behind every exception and investigation. Generate a reproducible **Evidence Pack** for each investigation, enforce evidence-backed agent conclusions, preserve `UNKNOWN` when the evidence is insufficient, and provide integrity and tenant-isolation verification.
 
@@ -12,7 +12,7 @@ Phase 7 proves financial truth.
 Agent investigates / narrates. It cannot become the calculator or the ledger.
 ```
 
-This clone only. Reuse [`backend/zord-evidence/`](backend/zord-evidence/). No new microservice. No LangGraph / MCP. Tools stay HTTP (same pattern as Phase 6B). Do not rebuild the existing intent Merkle / ed25519 pack path; do not turn this phase into blockchain, PDF dispute, or a Finance Controller UI.
+This clone only. Reuse [`backend/evidence/`](backend/evidence/). No new microservice. No LangGraph / MCP. Tools stay HTTP (same pattern as Phase 6B). Do not rebuild the existing intent Merkle / ed25519 pack path; do not turn this phase into blockchain, PDF dispute, or a Finance Controller UI.
 
 ---
 
@@ -260,7 +260,7 @@ Tenant isolation is enforced in the repository (`tenant_id` + `entity_id`). Prom
 Reuse `zord-evidence`. Add a **finance** package beside the existing intent-pack code. Do not invent a second deployable. Do not rewrite `RequiredLeafTypes` / 14-leaf intent packs.
 
 ```text
-backend/zord-evidence/
+backend/evidence/
   internal/finance/          # new
     models, repository, service, handlers, consumers
   db/migrations/

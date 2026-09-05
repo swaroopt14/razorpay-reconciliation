@@ -7,7 +7,7 @@ import { test, expect, type Page } from '@playwright/test'
  *
  * Prerequisites:
  *   npm run dev  (port 3000)
- *   cd backend/zord-edge && docker compose up -d
+ *   cd backend/edge && docker compose up -d
  *
  * Run with your credentials:
  *   SMOKE_SIGNUP_EMAIL=jainamoswal1811@gmail.com \

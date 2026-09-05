@@ -214,7 +214,7 @@ Frontend already derives this approximately - adding the real field upgrades acc
 ##### Concrete handoff to the backend team
 
 File to edit (zord-intelligence):
-`backend/zord-intelligence/internal/handlers/dashboard_ambiguity_handler.go`
+`backend/intel/internal/handlers/dashboard_ambiguity_handler.go`
 
 The `AmbiguitySnapshot` (in `internal/services/ambiguity_intelligence_service.go`) already
 carries `AmbiguousAmountMinor`, `TotalDecisions`, `ProviderRefMissingRate` - so 3 of the 5

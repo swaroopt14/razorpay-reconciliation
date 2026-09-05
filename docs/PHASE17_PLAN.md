@@ -78,7 +78,7 @@ That is the 2026 bet in the PS: **verification capacity**, not generation speed.
 
 **Why first:** you asked to prove every finance endpoint sends correct JSON, and that new work does not break old APIs. Today `FinancialHandler` and `CloseHandler` have **no httptest**.
 
-**Directory:** `backend/zord-outcome-engine/handlers/`
+**Directory:** `backend/recon/handlers/`
 
 | File | What it tests |
 |---|---|
@@ -134,7 +134,7 @@ POST /v1/finance-close/run
 
 ### B. Refunds as first-class money movement
 
-**Directory:** `backend/zord-outcome-engine/`
+**Directory:** `backend/recon/`
 
 | File | Function |
 |---|---|
@@ -171,7 +171,7 @@ If none: `{ "refunds": [], "error": "not_found" }` — never invent a refund.
 
 ### C. Derived cash ledger (replace the stub, do not fake a GL)
 
-**Directory:** `backend/zord-outcome-engine/internal/recon/ledger.go`
+**Directory:** `backend/recon/internal/recon/ledger.go`
 
 `get_ledger_entry` today returns `source_not_in_this_phase`. That was correct when we had nothing. Now we can derive a **cash ledger** from sources we already trust:
 
@@ -280,7 +280,7 @@ That is the **tax-line matcher** for a Razorpay merchant.
 Test Mode **does** give: payments API, webhooks, payouts.  
 Test Mode **does not** give: a 50+ labeled settlement+bank batch.
 
-**Directory:** `backend/zord-outcome-engine/cmd/finance-e2e/` + `testing/e2e/live_payment_test.go`
+**Directory:** `backend/recon/cmd/finance-e2e/` + `testing/e2e/live_payment_test.go`
 
 ```text
 Step 1  razorpay-smoke (existing)     Test Mode FetchPayments
@@ -312,7 +312,7 @@ That sentence in `limitations` is the credibility win. Do not claim Test Mode pr
 
 ### G. Controller Briefing Agent (the AI piece judges will remember)
 
-**Directory:** `backend/zord-prompt-layer/agents/briefing/`
+**Directory:** `backend/agents/agents/briefing/`
 
 ```text
 POST /v1/finance/briefing
@@ -367,10 +367,10 @@ Frontend stays **after** step 9. Report shape should be stable.
 ## 4. Test gate (nothing merging if this fails)
 
 ```bash
-cd backend/zord-outcome-engine
+cd backend/recon
 go test ./internal/recon/... ./internal/recon/eval/... ./handlers/... ./internal/close/... ./internal/dataset/... ./internal/observe/...
 
-cd backend/zord-prompt-layer
+cd backend/agents
 go test ./agents/askzord/... ./agents/investigate/... ./tools/...
 
 go run ./cmd/phase11-eval   # must stay P=1 R=1 F1=1 false_match=0

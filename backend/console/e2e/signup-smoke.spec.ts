@@ -4,8 +4,8 @@ import { test, expect } from '@playwright/test'
  * Live signup smoke - creates a real tenant + admin via zord-edge (not mocked).
  *
  * Prerequisites:
- *   1. `npm run dev` in zord-console (port 3000)
- *   2. zord-edge up: `cd backend/zord-edge && docker compose up -d`
+ *   1. `npm run dev` in console (port 3000)
+ *   2. zord-edge up: `cd backend/edge && docker compose up -d`
  *
  * Run:
  *   npm run test:e2e -- e2e/signup-smoke.spec.ts
@@ -30,7 +30,7 @@ test.describe('signup smoke (live zord-edge)', () => {
   })
 
   test('creates workspace through /signup UI and lands in sandbox', async ({ page }) => {
-    test.skip(!edgeHealthy, `zord-edge not reachable at ${EDGE_URL} - run: cd backend/zord-edge && docker compose up -d`)
+    test.skip(!edgeHealthy, `zord-edge not reachable at ${EDGE_URL} - run: cd backend/edge && docker compose up -d`)
 
     const stamp = Date.now()
     const email =

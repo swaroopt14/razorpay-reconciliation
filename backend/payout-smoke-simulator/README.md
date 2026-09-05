@@ -35,7 +35,7 @@ cd backend/payout-smoke-simulator
 docker compose up -d --build
 
 # 2. Wire the console to the simulator
-cd ../zord-console
+cd ../console
 # Point every ZORD_*_URL + PROMPT_LAYER_URL at http://localhost:8099 in .env.local
 # (see Console env below). Do not commit .env.local.
 npm install
