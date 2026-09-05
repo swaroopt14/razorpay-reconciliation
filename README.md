@@ -53,7 +53,7 @@ This project closes one loop on a batch of records:
 
 Razorpay is a first-class source. Webhooks and the Payments API land as observations. **relay** moves those events between services. **recon** reduces them to canonical payments, matches settlement lines to bank rows, then runs payment-first financial recon. **evidence** hashes the decision. **intel** projects the batch. **agents** read those APIs — they do not re-score UTR or rename Razorpay status.
 
-Folders match the job names. **recon** is only the matching engine. **relay** is communication. **evidence** is cryptographic proof.
+Folders stay short (`console`, `recon`, `agents`). The table uses the full service name. The Reconciliation Engine is the matching engine. The Event Relay is communication. The Evidence Service is cryptographic proof.
 
 ```mermaid
 flowchart TB
@@ -106,19 +106,19 @@ flowchart TB
 
 
 
-| Folder | Job |
-|---|---|
-| **console** | Frontend |
-| **edge** | Webhooks, file upload |
-| **relay** | Kafka + KRaft communication |
-| **intents** | Canonical instructions |
-| **recon** | Razorpay client, match, exceptions |
-| **evidence** | Cryptographic proof packs |
-| **intel** | Leakage, ambiguity, SLA |
-| **ml** | Anomaly / leakage scores |
-| **agents** | Ask, investigate, briefing |
-| **vault** | PII tokens |
-| **scheduler** | Backfill jobs |
+| Service | Folder | Job |
+|---|---|---|
+| **Web Console** | `console` | Operator dashboard for recon, exceptions, Ask, and investigations |
+| **Edge Ingestion Service** | `edge` | Signed Razorpay webhooks, settlement and bank file upload |
+| **Event Relay** | `relay` | Kafka + KRaft event bus between services. Not proof of a match |
+| **Intent Engine** | `intents` | Validate and canonicalize incoming instructions |
+| **Reconciliation Engine** | `recon` | Razorpay client, settlement ↔ bank match, exceptions |
+| **Evidence Service** | `evidence` | Cryptographic proof packs (SHA-256, Merkle root, ed25519) |
+| **Intelligence Service** | `intel` | Leakage, ambiguity, defensibility, RCA, SLA |
+| **Machine Learning Service** | `ml` | Anomaly and leakage scores. Never writes a match |
+| **Agent Service** | `agents` | Router, Ask, investigation, finance investigator, close briefing |
+| **PII Token Vault** | `vault` | Tokenize sensitive fields so other services never store raw PII |
+| **Airflow Scheduler** | `scheduler` | Bounded Razorpay payment backfill jobs |
 
 **Data path**
 
@@ -133,19 +133,20 @@ flowchart TB
 
 ## Intelligence and agents
 
-Deterministic recon owns the numbers. The model only writes prose.
+The Reconciliation Engine owns the numbers. The Agent Service only writes prose.
 
 | Capability | Where | Role |
 |---|---|---|
-| Leakage, ambiguity, defensibility, RCA, pattern, SLA | intel + ml | Project the batch; CatBoost / z-score / HDBSCAN never invent a match |
-| Ask | agents | Finance Q&A with citations. Rejects numeric and status hallucinations |
-| Investigation | agents | Hypothesis loop on exceptions. Cannot force `MATCHED` or assign `PROVEN` |
-| Finance investigator | agents | Walk one payment or payout through recon + evidence tools |
-| Close briefing | agents | Rewrite match rate, exceptions, and exposure without adding figures |
+| Leakage, ambiguity, defensibility, RCA, pattern, SLA | Intelligence Service + Machine Learning Service | Score the batch. CatBoost / z-score / HDBSCAN never invent a match |
+| Router | Agent Service | Classify the question (knowledge, cash, recon rate, one record, investigation) and pick tools. Does not invent amounts |
+| Ask | Agent Service | Finance Q&A with citations. Rejects numeric and status hallucinations |
+| Investigation | Agent Service | Hypothesis loop on exceptions. Cannot force `MATCHED` or assign `PROVEN` |
+| Finance investigator | Agent Service | Walk one payment or payout through Reconciliation Engine and Evidence Service tools |
+| Close briefing | Agent Service | Rewrite match rate, exceptions, and exposure without adding figures |
 
 Hard rules: `settled` ≠ `bank_credited`. `UNKNOWN` is first-class. `AMBIGUOUS` is never coerced.
 
-Console: `/ask` and `/investigations`.
+Web Console: `/ask` and `/investigations`.
 
 ---
 
