@@ -51,9 +51,9 @@ This project closes one loop on a batch of records:
 
 ## System Architecture
 
-Razorpay is a first-class source. Webhooks and the Payments API land as observations. **recon** reduces them to canonical payments, matches settlement lines to bank rows, then runs payment-first financial recon. **intel** projects the batch. **agents** read those APIs — they do not re-score UTR or rename Razorpay status.
+Razorpay is a first-class source. Webhooks and the Payments API land as observations. **relay** moves those events between services. **recon** reduces them to canonical payments, matches settlement lines to bank rows, then runs payment-first financial recon. **evidence** hashes the decision. **intel** projects the batch. **agents** read those APIs — they do not re-score UTR or rename Razorpay status.
 
-Names below are what each piece **does**. Folders are unchanged (`zord-*`). **recon** is only the matching engine.
+Names below are what each piece **does**. Folders are unchanged (`zord-*`). **recon** is only the matching engine. **relay** is communication. **evidence** is cryptographic proof.
 
 ```mermaid
 flowchart TB
@@ -68,45 +68,54 @@ flowchart TB
         ReconIn["recon<br/>Razorpay client + backfill"]
     end
 
+    subgraph bus [Communication]
+        Relay["relay<br/>Kafka topics + KRaft quorum<br/>no ZooKeeper"]
+    end
+
     subgraph match [Reconciliation]
         Canonical["Canonical payments and payouts"]
         SettleBank["Settlement ↔ bank candidates"]
         Finance["MATCHED / AMBIGUOUS / UNRESOLVED"]
     end
 
-    subgraph prove [Proof]
-        Evidence["evidence<br/>decision traces, SHA-256 packs"]
-        Agents["agents<br/>Ask · Investigate · Briefing"]
+    subgraph proof [Proof]
+        Evidence["evidence<br/>SHA-256 item hashes<br/>Merkle root + ed25519 signature"]
+    end
+
+    subgraph explain [Explain]
         Intel["intel + ml<br/>leakage, ambiguity, SLA"]
+        Agents["agents<br/>Ask · Investigate · Briefing"]
         Console["console"]
-        Relay["relay<br/>Kafka"]
     end
 
     API --> ReconIn
     WH --> Edge
     Files --> Edge
-    Edge --> Canonical
-    ReconIn --> Canonical
+    Edge --> Relay
+    ReconIn --> Relay
+    Relay --> Canonical
     Canonical --> SettleBank
     SettleBank --> Finance
     Finance --> Evidence
-    Finance --> Agents
     Finance --> Intel
+    Finance --> Agents
+    Evidence --> Console
     Intel --> Console
     Agents --> Console
-    Evidence --> Console
-    Relay -.-> Edge
-    Relay -.-> ReconIn
 ```
+
+**Relay is not proof.** It is the event bus: Kafka topics, three KRaft brokers (each node is broker + controller, no ZooKeeper). Services publish and consume; a Kafka offset is not a match receipt.
+
+**Evidence is proof.** After recon decides `MATCHED` / `AMBIGUOUS` / `UNRESOLVED`, evidence builds a pack: SHA-256 over each item, a Merkle root over those hashes, then an ed25519 signature over `pack_id + merkle_root + …`. Replay regenerates the pack and checks it still matches.
 
 | Name | Folder | Job |
 |---|---|---|
 | **console** | `zord-console` | Frontend |
 | **edge** | `zord-edge` | Webhooks, file upload |
-| **relay** | `zord-relay` | Kafka |
+| **relay** | `zord-relay` | Kafka + KRaft communication |
 | **intents** | `zord-intent-engine` | Canonical instructions |
 | **recon** | `zord-outcome-engine` | Razorpay client, match, exceptions |
-| **evidence** | `zord-evidence` | Proof packs |
+| **evidence** | `zord-evidence` | Cryptographic proof packs |
 | **intel** | `zord-intelligence` | Leakage, ambiguity, SLA |
 | **ml** | `ml-service` | Anomaly / leakage scores |
 | **agents** | `zord-prompt-layer` | Ask, investigate, briefing |
@@ -116,7 +125,7 @@ flowchart TB
 **Data path**
 
 1. **Connect** — Razorpay Test Mode key, HMAC webhook, optional payments API backfill
-2. **Observe** — immutable `provider.observation.received` events; Razorpay status stored as `provider_status`
+2. **Observe** — immutable `provider.observation.received` events on **relay** (Kafka + KRaft); Razorpay status stored as `provider_status`
 3. **Canonicalize** — one current `canonical_payments` row; status never walks backwards (`captured` is not overwritten by a late `authorized`)
 4. **Match settlement to bank** — candidates only (`EXACT_MATCH` … `ORPHAN_BANK`); this step does not mark cash received
 5. **Reconcile** — `POST /v1/reconciliation/run` on payments and payouts; exceptions stay honest
@@ -148,7 +157,7 @@ Console: `/ask` and `/investigations`.
 - Canonical payment and payout truth that preserves native Razorpay status names
 - Settlement and bank file ingest with duplicate-file detection
 - Payment-first recon with match rate, exception list, and evaluation on 100+ labeled records
-- Evidence packs with decision / calculation traces
+- Evidence packs: SHA-256 item hashes, Merkle root, ed25519 signature, replay check
 - Ask and investigation agents over HTTP tools (no second matcher)
 - Multi-tenant isolation, DLQ, and PII tokenization
 
@@ -161,10 +170,10 @@ razorpay-reconciliation/
 ├── backend/
 │   ├── zord-console/            # console — frontend
 │   ├── zord-edge/               # edge — webhooks, bank upload
-│   ├── zord-relay/              # relay — Kafka
+│   ├── zord-relay/              # relay — Kafka + KRaft bus
 │   ├── zord-intent-engine/      # intents — canonical instructions
 │   ├── zord-outcome-engine/     # recon — Razorpay client, match, exceptions
-│   ├── zord-evidence/           # evidence — proof packs
+│   ├── zord-evidence/           # evidence — SHA-256 / Merkle / ed25519 packs
 │   ├── zord-intelligence/       # intel — batch projections
 │   ├── zord-prompt-layer/       # agents — Ask, investigate, briefing
 │   ├── zord-token-enclave/      # vault — PII
@@ -184,7 +193,7 @@ razorpay-reconciliation/
 |---|---|
 | Language | Go 1.24, TypeScript, Python 3.11 |
 | APIs | Gin, Next.js 14, FastAPI |
-| Data | PostgreSQL 16, Kafka, Redis |
+| Data | PostgreSQL 16, Kafka (KRaft), Redis |
 | Razorpay | Test Mode REST + webhook HMAC |
 | Agents | Go HTTP tools; Gemini for wording only |
 | ML | scikit-learn, CatBoost, HDBSCAN |
