@@ -104,9 +104,7 @@ flowchart TB
     Agents --> Console
 ```
 
-**Relay is not proof.** It is the event bus: Kafka topics, three KRaft brokers (each node is broker + controller, no ZooKeeper). Services publish and consume; a Kafka offset is not a match receipt.
 
-**Evidence is proof.** After recon decides `MATCHED` / `AMBIGUOUS` / `UNRESOLVED`, evidence builds a pack: SHA-256 over each item, a Merkle root over those hashes, then an ed25519 signature over `pack_id + merkle_root + …`. Replay regenerates the pack and checks it still matches.
 
 | Folder | Job |
 |---|---|
