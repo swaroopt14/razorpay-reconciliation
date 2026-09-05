@@ -30,47 +30,71 @@ The backend consists of 7 specialized microservices that work together to provid
 
 ## 🎯 Microservices Overview
 
-### 🌐 [edge](./edge/) - API Gateway & Ingestion
+### 🌐 [edge](./edge/) - Webhooks & file upload
 - **Port**: 8080
-- **Purpose**: Request ingestion, authentication, and routing
+- **Purpose**: HMAC Razorpay webhooks, settlement and bank file ingest, JWT auth
 - **Tech**: Go + Gin + PostgreSQL + OpenTelemetry
-- **Features**: Rate limiting, JWT auth, request tracing, tenant isolation
+- **Features**: Signature verify, duplicate-file detection, tenant isolation, rate limiting
 
-### 🔐 [recon](./recon/) - Secure Storage
+### ⚙️ [recon](./recon/) - Razorpay match & exceptions
 - **Port**: 8081
-- **Purpose**: Encrypted data storage and audit trails
-- **Tech**: Go + PostgreSQL + Redis + AWS S3 + AES-256
-- **Features**: Encryption at rest, message queues, audit logging
+- **Purpose**: Razorpay client, canonical payments/payouts, settlement ↔ bank match
+- **Tech**: Go + Gin + PostgreSQL
+- **Features**: `MATCHED` / `AMBIGUOUS` / `UNRESOLVED`, honest exceptions, payments API backfill
 
-### 🧠 [intents](./intents/) - Intent Processing
+### 🧠 [intents](./intents/) - Canonical instructions
 - **Port**: 8083
-- **Purpose**: Intent validation, canonicalization, and processing
+- **Purpose**: Validate and canonicalize incoming instructions before they hit the bus
 - **Tech**: Go + PostgreSQL + Redis + OpenTelemetry
-- **Features**: Schema validation, business rules, idempotency
+- **Features**: Schema validation, idempotency, DLQ, business rules
 
-### 📡 [relay](./relay/) - Message Broker
+### 📡 [relay](./relay/) - Kafka + KRaft communication
 - **Port**: 8082
-- **Purpose**: Message routing and reliable delivery
-- **Tech**: Go + Apache Kafka (KRaft) + PostgreSQL + Outbox Pattern
-- **Features**: Transactional messaging, high throughput, guaranteed delivery
+- **Purpose**: Event bus between services. Not proof of a match
+- **Tech**: Go + Apache Kafka (KRaft, no ZooKeeper) + PostgreSQL + Outbox
+- **Features**: Topic publish/consume, transactional outbox, DLQ, guaranteed delivery
 
-### 📄 [evidence](./evidence/) - Contract Generation
-- **Port**: 8084
-- **Purpose**: Contract generation, evidence packaging, digital signing
-- **Tech**: Go + PostgreSQL + S3 + Digital Signatures
-- **Features**: Template engine, multi-format output, compliance reporting
+### 📄 [evidence](./evidence/) - Cryptographic proof
+- **Port**: 8088
+- **Purpose**: Proof packs for recon decisions. SHA-256 hashes, Merkle root, ed25519 signature
+- **Tech**: Go + PostgreSQL + S3 references
+- **Features**: Replay check, decision traces, no plaintext PII
 
-### 🔒 [vault](./vault/) - PII Protection
-- **Port**: 8085
-- **Purpose**: PII tokenization, detection, and policy enforcement
-- **Tech**: Go + HSM + Format-Preserving Encryption
-- **Features**: GDPR compliance, PCI DSS, secure tokenization
+### 🔒 [vault](./vault/) - PII tokens
+- **Port**: 8087
+- **Purpose**: Tokenize and detokenize sensitive fields for other services
+- **Tech**: Go + PostgreSQL
+- **Features**: Format-preserving tokens, scoped access, no raw PII in recon or evidence
 
-### 🖥️ [console](./console/) - Web Dashboard
+### 🖥️ [console](./console/) - Frontend
 - **Port**: 3000
-- **Purpose**: Multi-tenant web interface and monitoring
+- **Purpose**: Dashboard for recon, exceptions, Ask, and investigations
 - **Tech**: Next.js 14 + TypeScript + Tailwind CSS
-- **Features**: Role-based dashboards, real-time updates, evidence trails
+- **Features**: Razorpay connect, match rate, exception list, evidence chips
+
+### 📊 [intel](./intel/) - Leakage, ambiguity, SLA
+- **Port**: 8089
+- **Purpose**: Project the batch. Scores never invent a `MATCHED` row
+- **Tech**: Go + PostgreSQL + Kafka
+- **Features**: Leakage, ambiguity, defensibility, RCA, SLA timers
+
+### 🤖 [ml](./ml/) - Anomaly / leakage scores
+- **Port**: Kafka worker (no public HTTP)
+- **Purpose**: CatBoost / z-score / HDBSCAN over intel features
+- **Tech**: Python 3.12 + scikit-learn + CatBoost
+- **Features**: Leakage prediction, anomaly flags, retrain thresholds
+
+### 💬 [agents](./agents/) - Ask, investigate, briefing
+- **Port**: 8086
+- **Purpose**: Finance Q&A and exception walkthroughs. Model writes prose only
+- **Tech**: Go HTTP tools + Gemini for wording
+- **Features**: Citations, tool budget, cannot coerce `AMBIGUOUS` → `MATCHED`
+
+### ⏰ [scheduler](./scheduler/) - Backfill jobs
+- **Port**: 8091
+- **Purpose**: Airflow DAGs that call recon for bounded Razorpay payment windows
+- **Tech**: Apache Airflow
+- **Features**: Overlapping backfill, freshness check, never talks to Razorpay directly
 
 ## 🚀 Quick Start
 
