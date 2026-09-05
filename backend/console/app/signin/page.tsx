@@ -15,7 +15,7 @@ import {
 
 function SignInFormFallback() {
   return (
-    <AuthSplitLayout variant="signin" eyebrow="Welcome to Arealis Zord" title="Sign in" subtitle="Loading…">
+    <AuthSplitLayout variant="signin" eyebrow="Welcome to Console" title="Sign in" subtitle="Loading…">
       <div className="animate-pulse space-y-4">
         <div className="h-10 rounded-lg bg-slate-100" />
         <div className="h-10 rounded-lg bg-slate-100" />
@@ -88,7 +88,7 @@ function SignInForm() {
   return (
     <AuthSplitLayout
       variant="signin"
-      eyebrow="Welcome to Arealis Zord"
+      eyebrow="Welcome to Console"
       title="Sign in to your workspace"
       subtitle="Enter your company name, then the allowed email and password."
       footer={
@@ -168,8 +168,7 @@ function SignInForm() {
             className="mt-0.5 h-4 w-4 rounded border-slate-300 text-[#2B55E8] focus:ring-[#2B55E8]"
           />
           <span className="text-[13px] leading-snug text-slate-600">
-            <span className="font-semibold text-slate-900">Open in sandbox</span> - safe test workspace instead of live
-            payout command.
+            <span className="font-semibold text-slate-900">Open in sandbox</span> - safe test workspace instead of live.
           </span>
         </label>
 

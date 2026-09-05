@@ -17,10 +17,6 @@ import {
     type ProofPack,
 } from '@/services/payout-command/demo/proofCenterDemo'
 import {
-    useBatchDispatched,
-    useDemoBatchReady,
-} from '@/services/payout-command/demo/demoBatchReadiness'
-import {
     downloadAuditPackHtml,
     downloadFinanceSummaryHtml,
     downloadProofPackJson,
@@ -28,13 +24,14 @@ import {
 import { withDemoBatchScope } from '@/services/payout-command/demo/ycDemoConstants'
 import { INDIA_CASE } from '@/services/payout-command/demo/indiaBulkCaseStudy'
 import { formatDemoInr } from '@/services/payout-command/demo/demoPayoutAmounts'
-import { AwaitingUploadsEmptyState } from '../demo/AwaitingUploadsEmptyState'
 import { PageExplainerBanner } from '../demo/PageExplainerBanner'
 import { DemoTablePager, type DemoTablePageSize } from '../demo/DemoTablePager'
 import { LifecycleSummaryStrip } from '../shared/LifecycleSummaryStrip'
+import { UnderlineTabs } from '../finance-ops/razorpayChrome'
 import { ProofGraphPanel } from './ProofGraphPanel'
 
 type TabId = 'summary' | 'timeline' | 'evidence' | 'graph' | 'verify' | 'export'
+type ListFilter = 'processed' | 'review'
 
 const TABS: { id: TabId; label: string }[] = [
     { id: 'summary', label: 'Summary' },
@@ -78,6 +75,12 @@ function StatusChip({ label, value, className }: { label: string; value: string;
   )
 }
 
+function sourceFlag(v: 'yes' | 'no' | 'na') {
+    if (v === 'yes') return 'Yes'
+    if (v === 'no') return 'No'
+    return '—'
+}
+
 function CoverageLadder({ current }: { current: CoverageLevel }) {
     const currentRank = COVERAGE_LADDER.find((c) => c.level === current)?.rank ?? 0
     return (
@@ -116,6 +119,11 @@ function CoverageLadder({ current }: { current: CoverageLevel }) {
 function tabFromSearch(raw: string | null): TabId {
     if (raw && TABS.some((t) => t.id === raw)) return raw as TabId
     return 'summary'
+}
+
+function listFilterFromSearch(raw: string | null): ListFilter {
+    if (raw === 'review' || raw === 'need-review' || raw === 'need_review') return 'review'
+    return 'processed'
 }
 
 function BatchSelectionList({
@@ -173,8 +181,6 @@ function BatchSelectionList({
 export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }) {
     const router = useRouter()
     const searchParams = useSearchParams()
-    const { ready, readiness, require } = useDemoBatchReady(undefined, { require: 'both' })
-    const batchDispatched = useBatchDispatched()
     /** Deep link `/proof/:id` opens pack detail; `/proof` always lands on batch selection. */
     const [selectedId, setSelectedId] = useState<string | null>(() => initialPackId ?? null)
     const [openBatchId, setOpenBatchId] = useState<string | null>(() => {
@@ -182,6 +188,9 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
         return null
     })
     const [tab, setTab] = useState<TabId>(() => tabFromSearch(searchParams.get('tab')))
+    const [listFilter, setListFilter] = useState<ListFilter>(() =>
+        listFilterFromSearch(searchParams.get('filter')),
+    )
     const [verifyResult, setVerifyResult] = useState<string | null>(null)
     const [toast, setToast] = useState<string | null>(null)
     const [page, setPage] = useState(1)
@@ -202,6 +211,7 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
             }
         }
         setTab(tabFromSearch(searchParams.get('tab')))
+        setListFilter(listFilterFromSearch(searchParams.get('filter')))
     }, [initialPackId, searchParams])
 
     const packs = DEMO_PROOF_PACKS
@@ -210,9 +220,18 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
         () => (openBatchId ? packsForBatch(packs, openBatchId) : []),
         [packs, openBatchId],
     )
-    const packTotalPages = Math.max(1, Math.ceil(batchPacks.length / pageSize))
+    const processedPacks = useMemo(
+        () => batchPacks.filter((p) => p.businessOutcome === 'Exact'),
+        [batchPacks],
+    )
+    const reviewPacks = useMemo(
+        () => batchPacks.filter((p) => p.businessOutcome === 'Need review'),
+        [batchPacks],
+    )
+    const filteredPacks = listFilter === 'review' ? reviewPacks : processedPacks
+    const packTotalPages = Math.max(1, Math.ceil(filteredPacks.length / pageSize))
     const safePackPage = Math.min(page, packTotalPages)
-    const pagePacks = batchPacks.slice((safePackPage - 1) * pageSize, safePackPage * pageSize)
+    const pagePacks = filteredPacks.slice((safePackPage - 1) * pageSize, safePackPage * pageSize)
     const activeBatch = openBatchId ? (batches.find((b) => b.batchId === openBatchId) ?? null) : null
     const stats = useMemo(
         () => proofCenterStats(activeBatch ? batchPacks : packs),
@@ -220,12 +239,29 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
     )
     const selected = selectedId ? getProofPack(selectedId) ?? null : null
 
-    function openBatch(batchId: string) {
+    function listHref(batchId: string, filter: ListFilter) {
+        return `/proof?demo=sandbox&batch_id=${encodeURIComponent(batchId)}&filter=${filter}`
+    }
+
+    function packHref(id: string, nextTab: TabId, filter: ListFilter) {
+        return `/proof/${id}?demo=sandbox&tab=${nextTab}&filter=${filter}`
+    }
+
+    function openBatch(batchId: string, filter: ListFilter = 'processed') {
         setOpenBatchId(batchId)
         setSelectedId(null)
         setVerifyResult(null)
+        setListFilter(filter)
         setPage(1)
-        router.replace(`/proof?demo=sandbox&batch_id=${encodeURIComponent(batchId)}`, { scroll: false })
+        router.replace(listHref(batchId, filter), { scroll: false })
+    }
+
+    function changeListFilter(next: ListFilter) {
+        setListFilter(next)
+        setPage(1)
+        if (openBatchId) {
+            router.replace(listHref(openBatchId, next), { scroll: false })
+        }
     }
 
     function openPack(id: string, nextTab: TabId = 'summary') {
@@ -234,14 +270,16 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
         setSelectedId(id)
         setTab(nextTab)
         setVerifyResult(null)
-        router.replace(`/proof/${id}?demo=sandbox&tab=${nextTab}`, { scroll: false })
+        const filter = pack?.businessOutcome === 'Need review' ? 'review' : listFilter
+        setListFilter(filter)
+        router.replace(packHref(id, nextTab, filter), { scroll: false })
     }
 
     function backToBatchPacks() {
         setSelectedId(null)
         setVerifyResult(null)
         if (openBatchId) {
-            router.replace(`/proof?demo=sandbox&batch_id=${encodeURIComponent(openBatchId)}`, { scroll: false })
+            router.replace(listHref(openBatchId, listFilter), { scroll: false })
         } else {
             router.replace('/proof?demo=sandbox', { scroll: false })
         }
@@ -256,14 +294,12 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
     }
 
     function runVerify(pack: ProofPack) {
-        if (pack.integrity === 'Pending' || pack.packHash === '-') {
-            setVerifyResult(
-                'Cannot verify - pack incomplete. Capture and seal required artefacts before integrity verification.',
-            )
-            return
-        }
+        const reviewNote =
+            pack.businessOutcome === 'Need review'
+                ? ` Business outcome remains Need review (${pack.outcomeDetail}) — not failed.`
+                : ' Transaction processed successfully.'
         setVerifyResult(
-            `Integrity verified against this evidence pack · ${pack.packHash} · merkle ${pack.merkleRoot}. Re-run anytime for the same digest. This does not independently attest upstream bank/ERP truthfulness.`,
+            `Integrity verified against this evidence pack · ${pack.packHash} · merkle ${pack.merkleRoot}.${reviewNote} This does not independently attest upstream bank/ERP truthfulness.`,
         )
     }
 
@@ -283,61 +319,6 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
             setToast('Export failed - try again')
         }
         window.setTimeout(() => setToast(null), 2800)
-    }
-
-    if (!ready) {
-        return (
-            <div className="min-h-0 flex-1 overflow-y-auto bg-[#F4F6F9]">
-                <div className="mx-auto w-full max-w-[1280px] space-y-5">
-                    <PageExplainerBanner page="proof" />
-                    <div>
-                        <h1 className="text-[22px] font-semibold tracking-[-0.02em] text-[#1A1A1A]">
-                            {PROOF_CENTER_HEADER.title}
-                        </h1>
-                        <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-[#6B6B6B]">
-                            {PROOF_CENTER_HEADER.subtitle}
-                        </p>
-                    </div>
-                    <AwaitingUploadsEmptyState
-                      title="No evidence packs yet"
-                      readiness={readiness}
-                      require={require}
-                    />
-                </div>
-            </div>
-        )
-    }
-
-    /* Proof follows the flow - evidence packs populate only after the batch is dispatched. */
-    if (!batchDispatched) {
-        return (
-            <div className="min-h-0 flex-1 overflow-y-auto bg-[#F4F6F9]">
-                <div className="mx-auto w-full max-w-[1280px] space-y-5">
-                    <PageExplainerBanner page="proof" />
-                    <div>
-                        <h1 className="text-[22px] font-semibold tracking-[-0.02em] text-[#1A1A1A]">
-                            {PROOF_CENTER_HEADER.title}
-                        </h1>
-                        <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-[#6B6B6B]">
-                            {PROOF_CENTER_HEADER.subtitle}
-                        </p>
-                    </div>
-                    <div className="mx-auto max-w-[560px] border border-[#E5E7EB] bg-white px-6 py-10 text-center">
-                        <p className="text-[15px] font-semibold text-[#0B1324]">No evidence packs yet</p>
-                        <p className="mx-auto mt-1.5 max-w-sm text-[13px] leading-relaxed text-[#6B6B6B]">
-                            Evidence packs assemble after you approve &amp; dispatch from Payouts (AI route → provider
-                            processing → bank outcomes).
-                        </p>
-                        <Link
-                            href={withDemoBatchScope('/payouts')}
-                            className="mt-4 inline-flex h-9 items-center bg-[#2E5BFF] px-4 text-[13px] font-semibold text-white hover:bg-[#2448D4]"
-                        >
-                            Open Payouts
-                        </Link>
-                    </div>
-                </div>
-            </div>
-        )
     }
 
     /* ── Batch selection ── */
@@ -393,8 +374,9 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
                         <BatchSelectionList batches={batches} onOpen={openBatch} />
                     </div>
                     <p className="mt-3 text-[11px] text-[#8C8C8C]">
-                        Evidence coverage is a ladder (P0-P5), not a Proof Score. Integrity can verify while business
-                        outcome is an exception.
+                        Evidence coverage is a ladder (P0-P5), not a Proof Score. Processed packs are Exact / P5.
+                        Exception packs are Need review — not failed, not “not processed” — with the webhooks and
+                        sources that actually gathered.
                     </p>
                 </div>
                 {toast ? (
@@ -435,18 +417,36 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
                         </div>
                         <div className="flex flex-wrap gap-3 text-[12px] text-[#6B6B6B]">
                             <span>
-                                <span className="font-semibold text-[#1A1A1A]">{stats.total}</span> packs
+                                <span className="font-semibold text-[#1A1A1A]">{batchPacks.length}</span> packs
                             </span>
-                            <span>
-                                <span className="font-semibold text-[#0B1324]">{stats.verified}</span> integrity verified
-                            </span>
-                            <span>
-                                <span className="font-semibold text-[#1A1A1A]">{stats.p5}</span> P5 complete
-                            </span>
+                            <button
+                                type="button"
+                                onClick={() => changeListFilter('processed')}
+                                className={`font-semibold ${listFilter === 'processed' ? 'text-[#1A1A1A] underline' : 'text-[#0B1324] hover:underline'}`}
+                            >
+                                {processedPacks.length} processed
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => changeListFilter('review')}
+                                className={`font-semibold ${listFilter === 'review' ? 'text-[#1A1A1A] underline' : 'text-[#0B1324] hover:underline'}`}
+                            >
+                                {reviewPacks.length} need review
+                            </button>
                         </div>
                     </div>
 
                     <div className="mt-5 overflow-hidden rounded-lg border border-[#E5E7EB] bg-white">
+                        <div className="px-4 pt-1">
+                            <UnderlineTabs
+                                items={[
+                                    { id: 'processed', label: `Processed (${processedPacks.length})` },
+                                    { id: 'review', label: `Need review (${reviewPacks.length})` },
+                                ]}
+                                active={listFilter}
+                                onChange={(id) => changeListFilter(id as ListFilter)}
+                            />
+                        </div>
                         <div className="overflow-x-auto">
                             <table className="w-full min-w-[960px] border-collapse text-left text-[13px]">
                                 <thead>
@@ -454,7 +454,7 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
                                         {[
                                             'Payment ref',
                                             'Batch ref',
-                                            'Contract',
+                                            'Pack',
                                             'Outcome',
                                             'Integrity',
                                             'Coverage',
@@ -471,7 +471,16 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {pagePacks.map((p) => (
+                                    {pagePacks.length === 0 ? (
+                                        <tr>
+                                            <td colSpan={8} className="px-4 py-10 text-center text-[13px] text-[#6B6B6B]">
+                                                {listFilter === 'review'
+                                                    ? 'No packs need review in this batch.'
+                                                    : 'No processed packs in this batch.'}
+                                            </td>
+                                        </tr>
+                                    ) : (
+                                    pagePacks.map((p) => (
                                         <tr
                                             key={p.id}
                                             className="cursor-pointer border-b border-[#F0F0F0] last:border-0 hover:bg-[#FAFBFC]"
@@ -484,13 +493,14 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
                                                 </p>
                                             </td>
                                             <td className="px-4 py-3 font-mono text-[11px] text-[#475569]">{p.batchId}</td>
-                                            <td className="px-4 py-3 font-mono text-[12px] text-[#2E5BFF]">{p.contractId}</td>
+                                            <td className="px-4 py-3 font-mono text-[12px] text-[#2E5BFF]">{p.id}</td>
                                             <td className="px-4 py-3">
                                                 <span
                                                     className={`inline-flex h-7 min-w-[5.5rem] items-center justify-center px-2 text-[11px] font-semibold ${outcomeStyle(p.businessOutcome)}`}
                                                 >
                                                     {p.businessOutcome}
                                                 </span>
+                                                <p className="mt-1 max-w-[14rem] text-[11px] text-[#6B6B6B]">{p.outcomeDetail}</p>
                                             </td>
                                             <td className="px-4 py-3">
                                                 <span
@@ -520,23 +530,25 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
                                                 </button>
                                             </td>
                                         </tr>
-                                    ))}
+                                    ))
+                                    )}
                                 </tbody>
                             </table>
                         </div>
                         <DemoTablePager
                             page={safePackPage}
                             pageSize={pageSize}
-                            total={batchPacks.length}
-                            noun="payouts"
+                            total={filteredPacks.length}
+                            noun={listFilter === 'review' ? 'need review' : 'processed'}
                             onPageChange={setPage}
                             onPageSizeChange={setPageSize}
                         />
                     </div>
 
                     <p className="mt-3 text-[11px] text-[#8C8C8C]">
-                        Evidence coverage is a ladder (P0-P5), not a Proof Score. Integrity can verify while business
-                        outcome is an exception.
+                        Evidence coverage is a ladder (P0-P5), not a Proof Score. Processed packs are Exact / P5.
+                        Exception packs are Need review — not failed, not “not processed” — with the webhooks and
+                        sources that actually gathered.
                     </p>
                 </div>
                 {toast ? (
@@ -592,8 +604,9 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
                             {selected.id}
                         </h1>
                         <p className="mt-1 text-[13px] text-[#6B6B6B]">
-                            {selected.paymentRef} · {selected.contractId} · {selected.batchLabel} · {selected.amountLabel}
+                            {selected.paymentRef} · {selected.batchLabel} · {selected.amountLabel}
                         </p>
+                        <p className="mt-1 text-[12px] text-[#64748B]">{selected.outcomeDetail}</p>
                     </div>
                     <button
                         type="button"
@@ -615,7 +628,7 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
                             type="button"
                             onClick={() => {
                                 setTab(t.id)
-                                router.replace(`/proof/${selected.id}?demo=sandbox&tab=${t.id}`, { scroll: false })
+                                router.replace(packHref(selected.id, t.id, listFilter), { scroll: false })
                             }}
                             className={`h-9 px-3 text-[13px] font-semibold ${
                                 tab === t.id
@@ -659,7 +672,7 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
                                 </p>
                                 {selected.missingItems.length > 0 ? (
                                     <div className="border border-[#E5E7EB] bg-white px-4 py-3">
-                                        <p className="text-[14px] font-semibold text-[#1A1A1A]">Missing evidence</p>
+                                        <p className="text-[14px] font-semibold text-[#1A1A1A]">Still open for review</p>
                                         <ul className="mt-2 list-disc space-y-1 pl-5 text-[13px] text-[#6B6B6B]">
                                             {selected.missingItems.map((m) => (
                                                 <li key={m}>{m}</li>
@@ -671,13 +684,52 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
                                         No missing evidence items for this coverage level.
                                     </div>
                                 )}
+                                <div className="border border-[#E5E7EB] bg-white px-4 py-3">
+                                    <p className="text-[14px] font-semibold text-[#1A1A1A]">Signals gathered</p>
+                                    <p className="mt-0.5 text-[12px] text-[#6B6B6B]">
+                                        API webhooks and source feeds that landed in this pack
+                                    </p>
+                                    <ul className="mt-3 divide-y divide-[#F0F0F0] border-t border-[#F0F0F0]">
+                                        {selected.webhooks.map((wh) => (
+                                            <li key={`${wh.at}-${wh.event}`} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-2">
+                                                <span className="w-24 shrink-0 text-[11px] text-[#8C8C8C]">{wh.at}</span>
+                                                <span className="font-mono text-[12px] font-semibold text-[#1A1A1A]">{wh.event}</span>
+                                                <span className="text-[11px] text-[#64748B]">{wh.source}</span>
+                                                <span className="ml-auto text-[11px] font-semibold uppercase text-[#0B1324]">
+                                                    {wh.status === 'review' ? 'review' : 'received'}
+                                                </span>
+                                                <p className="w-full pl-24 text-[12px] text-[#6B6B6B]">{wh.detail}</p>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                                <div className="border border-[#E5E7EB] bg-white px-4 py-3">
+                                    <p className="text-[14px] font-semibold text-[#1A1A1A]">Sources</p>
+                                    <p className="mt-0.5 text-[12px] text-[#6B6B6B]">Provider · bank · webhook · ledger</p>
+                                    <table className="mt-3 w-full text-left text-[12px]">
+                                        <thead>
+                                            <tr className="border-b border-[#E5E7EB] text-[11px] font-semibold uppercase tracking-[0.04em] text-[#6B6B6B]">
+                                                {['Stage', 'Provider', 'Bank', 'Webhook', 'Ledger'].map((h) => (
+                                                    <th key={h} className="py-1.5 pr-2 font-semibold">
+                                                        {h}
+                                                    </th>
+                                                ))}
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {selected.sources.map((row) => (
+                                                <tr key={row.stage} className="border-b border-[#F0F0F0] last:border-0">
+                                                    <td className="py-1.5 pr-2 font-medium text-[#1A1A1A]">{row.stage}</td>
+                                                    <td className="py-1.5 pr-2 text-[#475569]">{sourceFlag(row.provider)}</td>
+                                                    <td className="py-1.5 pr-2 text-[#475569]">{sourceFlag(row.bank)}</td>
+                                                    <td className="py-1.5 pr-2 text-[#475569]">{sourceFlag(row.webhook)}</td>
+                                                    <td className="py-1.5 pr-2 text-[#475569]">{sourceFlag(row.ledger)}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
                                 <div className="flex flex-wrap gap-2">
-                                    <Link
-                                        href={selected.contractHref}
-                                        className="inline-flex h-9 items-center rounded-md border border-[#E5E7EB] bg-white px-3.5 text-[13px] font-semibold text-[#2E5BFF] hover:bg-[#F8FAFC]"
-                                    >
-                                        Open Action Contract
-                                    </Link>
                                     <Link
                                         href={selected.traceHref}
                                         className="inline-flex h-9 items-center rounded-md border border-[#E5E7EB] bg-white px-3.5 text-[13px] font-semibold text-[#2E5BFF] hover:bg-[#F8FAFC]"
@@ -708,20 +760,21 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
                                 {selected.timeline.map((ev, i) => (
                                     <li key={`${ev.at}-${i}`} className="flex gap-4 px-4 py-3.5">
                                         <span className="w-28 shrink-0 text-[12px] font-medium text-[#8C8C8C]">{ev.at}</span>
-                                        <div>
+                                        <div className="min-w-0 flex-1">
                                             <p className="text-[13px] font-semibold text-[#1A1A1A]">{ev.label}</p>
                                             <p className="mt-0.5 text-[12px] text-[#6B6B6B]">{ev.detail}</p>
+                                            <p className="mt-1 text-[11px] text-[#64748B]">Source · {ev.source}</p>
                                         </div>
                                         <span
                                             className={`ml-auto self-start rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase ${
                                                 ev.status === 'ok'
                                                     ? 'bg-[#F1F5F9] text-[#0B1324]'
-                                                    : ev.status === 'warn'
+                                                    : ev.status === 'review'
                                                         ? 'bg-[#F1F5F9] text-[#0B1324]'
                                                         : 'bg-[#F1F5F9] text-[#64748B]'
                                             }`}
                                         >
-                                            {ev.status}
+                                            {ev.status === 'review' ? 'review' : ev.status}
                                         </span>
                                     </li>
                                 ))}
@@ -734,7 +787,7 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
                             <table className="w-full border-collapse text-left text-[13px]">
                                 <thead>
                                     <tr className="border-b border-[#E5E7EB] bg-[#FAFBFC]">
-                                        {['Evidence item', 'Status', 'Hash', 'Note', ''].map((h) => (
+                                        {['Evidence item', 'Source', 'Status', 'Hash', 'Note', ''].map((h) => (
                                             <th
                                                 key={h || 'a'}
                                                 className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.04em] text-[#6B6B6B]"
@@ -748,6 +801,7 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
                                     {selected.evidence.map((item) => (
                                         <tr key={item.id} className="border-b border-[#F0F0F0] last:border-0">
                                             <td className="px-4 py-3 font-medium text-[#1A1A1A]">{item.kind}</td>
+                                            <td className="px-4 py-3 text-[12px] text-[#475569]">{item.source ?? '—'}</td>
                                             <td className="px-4 py-3">
                                                 <span
                                                     className={`rounded-md px-2 py-0.5 text-[11px] font-semibold ${
@@ -842,10 +896,16 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
                             </div>
                             {selected.businessOutcome !== 'Exact' ? (
                                 <p className="border border-[#0B1324]/20 bg-[#F1F5F9] px-4 py-3 text-[13px] text-[#0B1324]">
-                                    Business outcome is <strong>{selected.businessOutcome}</strong> even if integrity verifies.
-                                    Open Outcome Review to resolve the exception.
+                                    Business outcome is <strong>Need review</strong> ({selected.outcomeDetail}) even if
+                                    integrity verifies. This is not failed and not “not processed”. Open Outcome Review to
+                                    close it.
                                 </p>
-                            ) : null}
+                            ) : (
+                                <p className="border border-[#0B1324]/20 bg-[#F1F5F9] px-4 py-3 text-[13px] text-[#0B1324]">
+                                    Transaction processed successfully. Webhook <span className="font-mono">payout.processed</span>,
+                                    bank credit, and match decision all gathered.
+                                </p>
+                            )}
                         </div>
                     ) : null}
 
@@ -854,7 +914,9 @@ export function ProofCenterSurface({ initialPackId }: { initialPackId?: string }
                             <p className="text-[14px] font-semibold text-[#1A1A1A]">Export</p>
                             <p className="mt-1 text-[13px] text-[#6B6B6B]">
                                 Same finance summary and audit pack HTML the evidence service issues for disputes
-                                ({selected.contractId} · {selected.businessOutcome}).
+                                ({selected.paymentRef} · {selected.businessOutcome}
+                                {selected.businessOutcome === 'Need review' ? ` · ${selected.outcomeDetail}` : ' · processed successfully'}
+                                ). Includes gathered webhooks and source matrix.
                             </p>
                             <div className="mt-4 flex flex-wrap gap-2">
                                 <button

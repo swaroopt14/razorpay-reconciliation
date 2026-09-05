@@ -4,8 +4,8 @@ import { AuthSessionBootstrap } from '@/components/auth/AuthSessionBootstrap'
 import { SessionManager } from '@/components/auth/SessionManager'
 
 export const metadata: Metadata = {
-  title: 'Zord Ingestion Console',
-  description: 'Ingestion management and evidence tracking',
+  title: 'Console',
+  description: 'Match Razorpay settlements to bank cash. Prove the exceptions.',
   icons: {
     icon: '/icon.svg',
     shortcut: '/favicon.ico',

@@ -12,15 +12,15 @@ const MARKETING: Record<
   { headline: string; features: [string, string, string] }
 > = {
   signin: {
-    headline: 'Join finance teams that trust Arealis Zord to prove every payout.',
+    headline: 'Match Razorpay settlements to bank cash. Prove the exceptions.',
     features: ['Payment intelligence', 'Proof-ready evidence', 'Live & sandbox workspaces'],
   },
   signup: {
-    headline: 'Provision a tenant on Arealis Zord - payout control and defensibility, ready to ship.',
+    headline: 'Provision a tenant on Console - payout control and defensibility, ready to ship.',
     features: ['Tenant provisioning', 'Secure API keys', 'Sandbox-first onboarding'],
   },
   demo: {
-    headline: 'Tell us about your payments - see how Zord controls and proves every payout.',
+    headline: 'Tell us about your payments - see how Console matches settlements to bank cash.',
     features: ['Payout control', 'Proof-ready evidence', 'A team that calls you back'],
   },
   admin: {
@@ -63,8 +63,8 @@ function AuthMarketingAside({ variant }: { variant: AuthMarketingVariant }) {
       <MarketingBands />
 
       <div className="relative z-[1]">
-        <Link href="/" className="inline-flex items-center">
-          <ZordLogo size="lg" variant="light" />
+        <Link href="/signin" className="inline-flex items-center">
+          <ZordLogo size="lg" variant="light" withWordmark />
         </Link>
       </div>
 
@@ -87,7 +87,7 @@ function AuthMarketingAside({ variant }: { variant: AuthMarketingVariant }) {
         </ul>
       </div>
 
-      <p className="relative z-[1] text-[12px] text-slate-500">© {new Date().getFullYear()} Arealis · Zord Console</p>
+      <p className="relative z-[1] text-[12px] text-slate-500">© {new Date().getFullYear()} Console</p>
     </aside>
   )
 }
@@ -95,7 +95,7 @@ function AuthMarketingAside({ variant }: { variant: AuthMarketingVariant }) {
 function AuthFormBrandMark() {
   return (
     <div className="mb-7 flex justify-center lg:justify-start">
-      <ZordLogo size="lg" variant="light" />
+      <ZordLogo size="lg" variant="light" withWordmark />
     </div>
   )
 }

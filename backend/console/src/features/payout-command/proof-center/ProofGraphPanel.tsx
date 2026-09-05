@@ -20,7 +20,8 @@ export function ProofGraphPanel({ pack }: { pack: ProofPack; onToast?: (msg: str
           {PROOF_LINEAGE_HEADER.title}
         </h2>
         <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-[#64748B]">
-          {PROOF_LINEAGE_HEADER.subtitle}
+          {PROOF_LINEAGE_HEADER.subtitle} Leaves are the artefacts gathered from API webhooks, bank,
+          and ledger — same sources as Summary, Timeline, and Evidence.
         </p>
       </div>
 

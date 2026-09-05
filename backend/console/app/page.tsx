@@ -1,6 +1,11 @@
-import LandingPageFinalClient from '@/components/landing-final/LandingPageFinalClient'
+import { redirect } from 'next/navigation'
 
-/** Marketing home - served at `/` (zordnet.com root). */
+// Landing is off for the demo. Uncomment to restore the marketing home.
+// import LandingPageFinalClient from '@/components/landing-final/LandingPageFinalClient'
+// export default function HomePage() {
+//   return <LandingPageFinalClient />
+// }
+
 export default function HomePage() {
-  return <LandingPageFinalClient />
+  redirect('/signin')
 }

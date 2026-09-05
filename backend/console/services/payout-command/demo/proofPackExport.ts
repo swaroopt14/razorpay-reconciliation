@@ -74,6 +74,10 @@ export function packToExportPayload(pack: ProofPack) {
     integrity: pack.integrity,
     governance: pack.governance,
     coverage: pack.coverage,
+    outcome_detail: pack.outcomeDetail,
+    signal_source: pack.signalSource,
+    webhooks: pack.webhooks,
+    sources: pack.sources,
     pack_hash: pack.packHash,
     merkle_root: pack.merkleRoot,
     signature: pack.signature,
@@ -106,9 +110,14 @@ export function downloadProofPackPdf(pack: ProofPack) {
     '',
     '--- Status (kept separate) ---',
     `Business outcome: ${pack.businessOutcome}`,
+    `Outcome detail:    ${pack.outcomeDetail}`,
     `Integrity:        ${pack.integrity}`,
     `Governance:       ${pack.governance}`,
     `Coverage:         ${pack.coverage}`,
+    `Signal source:    ${pack.signalSource}`,
+    '',
+    '--- Webhooks gathered ---',
+    ...pack.webhooks.map((w) => `${w.at} | ${w.event} | ${w.source} | ${w.status} | ${w.detail}`),
     '',
     '--- Cryptographic refs ---',
     `Pack hash:    ${pack.packHash}`,
@@ -118,7 +127,7 @@ export function downloadProofPackPdf(pack: ProofPack) {
     '--- Evidence items ---',
     ...pack.evidence.map(
       (e, i) =>
-        `${i + 1}. ${e.kind} | ${e.available ? 'present' : 'missing'} | ${e.hash ?? '-'}`,
+        `${i + 1}. ${e.kind} | ${e.source ?? '-'} | ${e.available ? 'present' : 'missing'} | ${e.hash ?? '-'} | ${e.note}`,
     ),
     '',
     pack.missingItems.length
@@ -188,19 +197,22 @@ function componentStatus(present: boolean): { badge: string; label: string } {
 }
 
 function proofComponents(pack: ProofPack) {
-  const instruction = evidenceByKind(pack, 'Original obligation')?.available !== false
-  const settlement = evidenceByKind(pack, 'Settlement record')?.available === true
+  const instruction = evidenceByKind(pack, 'Payout instruction')?.available !== false
+  const settlement =
+    evidenceByKind(pack, 'Bank credit')?.available === true ||
+    evidenceByKind(pack, 'Settlement record')?.available === true
   const match = evidenceByKind(pack, 'Match decision')?.available === true
-  const governance = pack.governance === 'Passed' || evidenceByKind(pack, 'Policy decision')?.available === true
-  const variance = pack.businessOutcome === 'Exact' || evidenceByKind(pack, 'Match decision')?.available === true
+  const outcomeWebhook = evidenceByKind(pack, 'Outcome webhook')?.available === true
+  const processing = evidenceByKind(pack, 'Processing webhook')?.available === true
+  const variance = pack.businessOutcome === 'Exact' || match
   const seal = Boolean(pack.signature && pack.signature !== '-' && pack.merkleRoot && pack.merkleRoot !== '-')
   return [
-    { name: 'Original Payment Instruction', weight: 20, present: instruction },
-    { name: 'Settlement / Bank Record', weight: 20, present: settlement },
-    { name: 'Match Decision', weight: 20, present: match },
-    { name: 'Governance Check', weight: 15, present: governance },
-    { name: 'Variance / Decision Evidence', weight: 15, present: variance },
-    { name: 'Cryptographic Seal', weight: 10, present: seal },
+    { name: 'Payout instruction (Razorpay API)', weight: 20, present: instruction },
+    { name: 'Bank credit / settlement', weight: 20, present: settlement },
+    { name: 'Match decision', weight: 20, present: match },
+    { name: 'Outcome webhook (payout.processed / reversed)', weight: 15, present: outcomeWebhook },
+    { name: 'Processing webhook', weight: 15, present: processing || variance },
+    { name: 'Cryptographic seal', weight: 10, present: seal },
   ]
 }
 
@@ -211,20 +223,17 @@ function proofScore(pack: ProofPack): number {
 
 function disputeReason(pack: ProofPack): string {
   if (pack.businessOutcome === 'Exact') return 'NONE'
-  if (pack.businessOutcome === 'Short-settled') return 'AMOUNT_MISMATCH'
-  if (pack.businessOutcome === 'Returned' || pack.businessOutcome === 'Reversed') {
-    return 'BENEFICIARY_SAYS_NOT_RECEIVED'
-  }
-  if (pack.businessOutcome === 'Blocked') return 'GOVERNANCE_HOLD'
+  const detail = pack.outcomeDetail.toLowerCase()
+  if (detail.includes('short')) return 'AMOUNT_MISMATCH'
+  if (detail.includes('return') || detail.includes('reversal')) return 'BENEFICIARY_SAYS_NOT_RECEIVED'
+  if (detail.includes('policy') || detail.includes('beneficiary change')) return 'GOVERNANCE_HOLD'
   return 'UTR_NOT_MATCHED'
 }
 
 function matchStatus(pack: ProofPack): { cls: string; label: string } {
   if (pack.businessOutcome === 'Exact') return { cls: 'ok', label: 'MATCHED' }
-  if (pack.businessOutcome === 'Unresolved' || pack.businessOutcome === 'Blocked') {
-    return { cls: 'warn', label: 'NOT MATCHED' }
-  }
-  return { cls: 'warn', label: 'VARIANCE' }
+  if (pack.coverageRank <= 3) return { cls: 'warn', label: 'NEED REVIEW' }
+  return { cls: 'warn', label: 'NEED REVIEW' }
 }
 
 function timelineValue(pack: ProofPack, labels: string[], fallback: string): string {
@@ -298,22 +307,22 @@ ${components
   })
   .join('')}
 </table>
-<h2>Service 2 — Intent Pipeline Signals</h2>
+<h2>Service 2 — Payout / webhook signals</h2>
 <table>
 <tr><th>Field</th><th>Value</th></tr>
-<tr><td>Payment Instruction Received</td><td>${escapeHtml(timelineValue(pack, ['obligation', 'instruction', 'original'], pack.generatedAt))}</td></tr>
-<tr><td>Canonical Intent Created</td><td>${escapeHtml(timelineValue(pack, ['canonical', 'intent'], pack.generatedAt))}</td></tr>
-<tr><td>Mapping Profile</td><td>auto-generic-${escapeHtml(pack.batchId)}-v1</td></tr>
-<tr><td>Governance Decision</td><td>${escapeHtml(pack.governance)}</td></tr>
-<tr><td>Required Fields Status</td><td>${pack.governance === 'Failed' ? 'false' : 'true'}</td></tr>
-<tr><td>Tokenization Status</td><td>true</td></tr>
+<tr><td>Payout instruction received</td><td>${escapeHtml(timelineValue(pack, ['payout created', 'instruction'], pack.generatedAt))}</td></tr>
+<tr><td>Webhook payout.pending</td><td>${escapeHtml(timelineValue(pack, ['payout.pending', 'pending'], pack.generatedAt))}</td></tr>
+<tr><td>Webhook payout.processing</td><td>${escapeHtml(timelineValue(pack, ['payout.processing', 'processing'], pack.generatedAt))}</td></tr>
+<tr><td>Signal source</td><td>${escapeHtml(pack.signalSource)}</td></tr>
+<tr><td>Coverage</td><td>${escapeHtml(pack.coverage)}</td></tr>
+<tr><td>Governance</td><td>${escapeHtml(pack.governance)}</td></tr>
 </table>
 <h2>Service 5 — Settlement Reconciliation Signals</h2>
 <table>
 <tr><th>Field</th><th>Value</th></tr>
-<tr><td>Settlement Record Received</td><td>${escapeHtml(timelineValue(pack, ['settlement'], pack.generatedAt))}</td></tr>
-<tr><td>Canonical Settlement Created</td><td>${escapeHtml(timelineValue(pack, ['settlement', 'match'], pack.generatedAt))}</td></tr>
-<tr><td>Attachment Decision</td><td>${pack.businessOutcome === 'Exact' ? 'MATCH_EXACT' : 'NOT_MATCHED'}</td></tr>
+<tr><td>Bank credit / settlement received</td><td>${escapeHtml(timelineValue(pack, ['bank credit', 'settlement', 'return', 'reversal'], pack.generatedAt))}</td></tr>
+<tr><td>Match decision</td><td>${escapeHtml(timelineValue(pack, ['match'], pack.generatedAt))}</td></tr>
+<tr><td>Attachment Decision</td><td>${pack.businessOutcome === 'Exact' ? 'MATCH_EXACT' : 'NEED_REVIEW'}</td></tr>
 <tr><td>Match Confidence</td><td>${pack.businessOutcome === 'Exact' ? '96.75%' : pack.coverageRank >= 4 ? '82.00%' : '—'}</td></tr>
 <tr><td>Value Date Check</td><td>${evidenceByKind(pack, 'Settlement record')?.available ? 'true' : 'false'}</td></tr>
 <tr><td>Amount Match</td><td>${pack.businessOutcome === 'Exact' ? 'true' : 'false'}</td></tr>
@@ -365,10 +374,10 @@ footer{margin-top:3rem;font-size:0.72rem;color:#666;border-top:1px solid #ccc;pa
 <h2>① Timestamps</h2>
 <table>
 <tr><th>Milestone</th><th>Timestamp (UTC)</th></tr>
-<tr><td>Payment Instruction Received</td><td>${escapeHtml(timelineValue(pack, ['obligation', 'instruction', 'original'], pack.generatedAt))}</td></tr>
-<tr><td>Canonical Intent Created</td><td>${escapeHtml(timelineValue(pack, ['canonical', 'intent'], pack.generatedAt))}</td></tr>
-<tr><td>Settlement Record Received</td><td>${escapeHtml(timelineValue(pack, ['settlement'], pack.generatedAt))}</td></tr>
-<tr><td>Canonical Settlement Created</td><td>${escapeHtml(timelineValue(pack, ['match', 'settlement'], pack.generatedAt))}</td></tr>
+<tr><td>Payout instruction received</td><td>${escapeHtml(timelineValue(pack, ['payout created', 'instruction'], pack.generatedAt))}</td></tr>
+<tr><td>Webhook payout.pending</td><td>${escapeHtml(timelineValue(pack, ['payout.pending', 'pending'], pack.generatedAt))}</td></tr>
+<tr><td>Bank credit / settlement received</td><td>${escapeHtml(timelineValue(pack, ['bank credit', 'settlement', 'return', 'reversal'], pack.generatedAt))}</td></tr>
+<tr><td>Match decision</td><td>${escapeHtml(timelineValue(pack, ['match'], pack.generatedAt))}</td></tr>
 <tr><td>Evidence Pack Created</td><td>${escapeHtml(pack.generatedAt)}</td></tr>
 </table>
 <h2>② Mapping Profiles</h2>
@@ -400,7 +409,7 @@ ${hashRows}
 <table>
 <tr><th>Field</th><th>Value</th></tr>
 <tr><td>Governance Decision</td><td>${escapeHtml(pack.governance)}</td></tr>
-<tr><td>Required Fields Status</td><td>${pack.governance === 'Failed' ? 'false' : 'true'}</td></tr>
+<tr><td>Required Fields Status</td><td>${pack.governance === 'Need review' ? 'review' : 'true'}</td></tr>
 <tr><td>Tokenization Status</td><td>true</td></tr>
 </table>
 <h2>⑤ Merkle Root &amp; Cryptographic Seal</h2>

@@ -1,9 +1,9 @@
 /**
  * Spec 7.15 - Proof Graph node builders for Proof Center demo packs.
- * Business labels on the canvas; technical IDs live in the inspector.
+ * Leaves match the Evidence tab: Razorpay API + webhooks + bank + ledger.
  */
 
-import type { ProofPack } from './proofCenterDemo'
+import type { EvidenceItemKind, ProofPack } from './proofCenterDemo'
 
 export type GraphNodeState = 'Valid' | 'Missing' | 'Invalid' | 'Derived'
 
@@ -25,20 +25,19 @@ export type ProofGraphNode = {
 export const PROOF_LINEAGE_HEADER = {
   title: 'Proof lineage',
   subtitle:
-    'See how source, policy, execution, outcome, and evidence roll into one verifiable bundle.',
+    'See how payout instruction, webhooks, bank credit, ledger, and match roll into one verifiable bundle.',
 } as const
 
-/** Spec-required source artefacts (left → right before derived). */
-const SOURCE_LABELS = [
-  'Original obligation',
-  'Canonical intent',
-  'Policy decision',
-  'Action Contract',
-  'Dispatch request',
-  'Outcome signal',
+const EVIDENCE_LABELS: EvidenceItemKind[] = [
+  'Payout instruction',
+  'Provider acknowledgement',
+  'Processing webhook',
+  'Outcome webhook',
+  'Bank credit',
+  'Ledger posting',
+  'Settlement record',
   'Match decision',
-  'Evidence pack',
-] as const
+]
 
 /** Spec-required derived objects (right side). */
 const DERIVED_LABELS = [
@@ -70,147 +69,56 @@ function wireChain(seeds: NodeSeed[]): ProofGraphNode[] {
 
 function evidenceState(
   pack: ProofPack,
-  kind: string,
-): { state: GraphNodeState; hash: string | null; note: string } {
+  kind: EvidenceItemKind,
+): { state: GraphNodeState; hash: string | null; note: string; source: string } {
   const item = pack.evidence.find((e) => e.kind === kind)
   if (!item) {
-    if (kind === 'Outcome signal') {
-      const provider = pack.evidence.find((e) => e.kind === 'Provider signal')
-      const settlement = pack.evidence.find((e) => e.kind === 'Settlement record')
-      const hit = settlement?.available ? settlement : provider
-      if (!hit?.available) {
-        return { state: 'Missing', hash: null, note: 'No outcome signal bound' }
-      }
-      return {
-        state: 'Valid',
-        hash: hit.hash,
-        note: hit.note,
-      }
-    }
-    return { state: 'Missing', hash: null, note: 'Not in pack' }
+    return { state: 'Missing', hash: null, note: 'Not in pack', source: 'Ledger' }
   }
   if (!item.available) {
-    const invalid =
-      kind === 'Policy decision' && pack.governance === 'Failed' && pack.businessOutcome === 'Blocked'
     return {
-      state: invalid ? 'Invalid' : 'Missing',
+      state: 'Missing',
       hash: null,
       note: item.note,
+      source: item.source ?? pack.signalSource,
     }
   }
-  return { state: 'Valid', hash: item.hash, note: item.note }
+  return {
+    state: 'Valid',
+    hash: item.hash,
+    note: item.note,
+    source: item.source ?? pack.signalSource,
+  }
 }
 
-/** Build Spec 7.15 graph for a pack - same objects as Evidence tab where possible. */
+/** Build Spec 7.15 graph for a pack - same objects as Evidence tab. */
 export function buildProofLineageGraph(pack: ProofPack): ProofGraphNode[] {
   const incomplete = pack.integrity === 'Pending' || pack.packHash === '-'
 
-  const sourceSeeds: NodeSeed[] = SOURCE_LABELS.map((label) => {
-    if (label === 'Evidence pack') {
-      return {
-        label,
-        state: 'Valid',
-        role: 'source',
-        technicalId: pack.id,
-        source: 'Proof Center',
-        capturedAt: pack.generatedAt,
-        hash: incomplete ? null : pack.packHash,
-        integrity: incomplete ? 'Pending - pack incomplete' : 'Present in pack',
-      }
-    }
-    if (label === 'Action Contract') {
-      const e = evidenceState(pack, 'Action Contract')
+  const sourceSeeds: NodeSeed[] = [
+    ...EVIDENCE_LABELS.map((label) => {
+      const e = evidenceState(pack, label)
       return {
         label,
         state: e.state,
-        role: 'source',
-        technicalId: pack.contractId,
-        source: 'Action Contract seal',
+        role: 'source' as const,
+        technicalId: e.hash ?? `${pack.paymentRef}:${label.slice(0, 6).toLowerCase().replace(/\s/g, '_')}`,
+        source: e.source,
         capturedAt: pack.generatedAt,
         hash: e.hash,
         integrity: e.state === 'Valid' ? 'Bound to pack' : e.note,
       }
-    }
-    if (label === 'Outcome signal') {
-      const e = evidenceState(pack, 'Outcome signal')
-      return {
-        label,
-        state: e.state,
-        role: 'source',
-        technicalId:
-          pack.evidence.find((x) => x.kind === 'Provider signal' && x.available)?.note.match(/UTR[\w-]*/)?.[0] ??
-          `${pack.paymentRef}-outcome`,
-        source: 'Bank / provider feed',
-        capturedAt: pack.generatedAt,
-        hash: e.hash,
-        integrity: e.state === 'Valid' ? 'Bound to pack' : e.note,
-      }
-    }
-    const kind =
-      label === 'Original obligation'
-        ? 'Original obligation'
-        : label === 'Canonical intent'
-          ? 'Canonical intent'
-          : label === 'Policy decision'
-            ? 'Policy decision'
-            : label === 'Dispatch request'
-              ? 'Dispatch request'
-              : 'Match decision'
-    const e = evidenceState(pack, kind)
-    return {
-      label,
-      state: e.state,
-      role: 'source',
-      technicalId: `${pack.paymentRef}:${label.slice(0, 6).toLowerCase().replace(/\s/g, '_')}`,
-      source:
-        label === 'Original obligation'
-          ? 'File / API intake'
-          : label === 'Canonical intent'
-            ? 'Intent Journal'
-            : label === 'Policy decision'
-              ? 'Policy Studio'
-              : label === 'Dispatch request'
-                ? 'Dispatch & Relay'
-                : 'Outcome Review',
+    }),
+    {
+      label: 'Evidence pack',
+      state: 'Valid' as const,
+      role: 'source' as const,
+      technicalId: pack.id,
+      source: 'Proof Center',
       capturedAt: pack.generatedAt,
-      hash: e.hash,
-      integrity: e.state === 'Valid' ? 'Bound to pack' : e.note,
-    }
-  })
-
-  // Optional extras that appear in exceptions (still business-labelled).
-  const extras: NodeSeed[] = []
-  if (pack.id === 'EP-0019') {
-    extras.push({
-      label: 'Fee schedule',
-      state: 'Missing',
-      role: 'source',
-      technicalId: `${pack.paymentRef}:fee`,
-      source: 'Settlement feed',
-      capturedAt: '-',
-      hash: null,
-      integrity: 'Not captured - does not block pack digest recompute',
-    })
-  }
-  if (pack.id === 'EP-0015') {
-    extras.push({
-      label: 'Beneficiary update',
-      state: 'Missing',
-      role: 'source',
-      technicalId: `${pack.paymentRef}:bene`,
-      source: 'ERP / beneficiary file',
-      capturedAt: '-',
-      hash: null,
-      integrity: 'Missing - distinct from Invalid',
-    })
-  }
-
-  // Insert extras before Evidence pack.
-  const evidenceIdx = sourceSeeds.findIndex((s) => s.label === 'Evidence pack')
-  const withExtras = [
-    ...sourceSeeds.slice(0, evidenceIdx),
-    ...extras,
-    ...sourceSeeds.slice(evidenceIdx),
+      hash: incomplete ? null : pack.packHash,
+      integrity: incomplete ? 'Pending - pack incomplete' : 'Present in pack',
+    },
   ]
 
   const derivedSeeds: NodeSeed[] = DERIVED_LABELS.map((label) => {
@@ -274,7 +182,7 @@ export function buildProofLineageGraph(pack: ProofPack): ProofGraphNode[] {
     }
   })
 
-  return wireChain([...withExtras, ...derivedSeeds])
+  return wireChain([...sourceSeeds, ...derivedSeeds])
 }
 
 export function graphHasMissing(nodes: ProofGraphNode[]) {

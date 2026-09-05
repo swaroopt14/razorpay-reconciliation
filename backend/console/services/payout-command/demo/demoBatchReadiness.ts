@@ -8,7 +8,7 @@
  */
 
 import { useEffect, useState } from 'react'
-import { DEMO_SMOKE_BATCH_ID, getActiveDemoBatchId } from './ycDemoConstants'
+import { DEMO_SMOKE_BATCH_ID } from './ycDemoConstants'
 import { scenarioScopedKey } from './scenarioMode'
 
 /** Which upload stage a surface needs before showing fixture data. */
@@ -116,34 +116,9 @@ export function markBatchDispatched(batchId: string) {
   }
 }
 
-/** React hook - the batch id that was dispatched from the Intent Journal (null if none yet). */
+/** React hook - the demo batch is always treated as dispatched (hardcoded fixtures). */
 export function useDispatchedBatchId(): string | null {
-  const [dispatchedId, setDispatchedId] = useState<string | null>(() => {
-    if (typeof window === 'undefined') return null
-    try {
-      return sessionStorage.getItem(DEMO_BATCH_DISPATCHED_KEY)
-    } catch {
-      return null
-    }
-  })
-
-  useEffect(() => {
-    const sync = () => {
-      try {
-        setDispatchedId(sessionStorage.getItem(DEMO_BATCH_DISPATCHED_KEY))
-      } catch {
-        setDispatchedId(null)
-      }
-    }
-    window.addEventListener(DEMO_BATCH_DISPATCHED_EVENT, sync)
-    window.addEventListener('storage', sync)
-    return () => {
-      window.removeEventListener(DEMO_BATCH_DISPATCHED_EVENT, sync)
-      window.removeEventListener('storage', sync)
-    }
-  }, [])
-
-  return dispatchedId
+  return DEMO_SMOKE_BATCH_ID
 }
 
 const DEMO_BATCH_POLICY_BASE = 'zord_demo_batch_policy'
@@ -233,111 +208,13 @@ export function useBatchPolicyRecord(batchId?: string): DemoBatchPolicyRecord | 
   return !checkId || record.batchId === checkId ? record : null
 }
 
-/** React hook - true once the batch was dispatched from the Intent Journal. */
-export function useBatchDispatched(batchId?: string): boolean {
-  const [dispatchedId, setDispatchedId] = useState<string | null>(() => {
-    if (typeof window === 'undefined') return null
-    try {
-      return sessionStorage.getItem(DEMO_BATCH_DISPATCHED_KEY)
-    } catch {
-      return null
-    }
-  })
-
-  useEffect(() => {
-    const sync = () => {
-      try {
-        setDispatchedId(sessionStorage.getItem(DEMO_BATCH_DISPATCHED_KEY))
-      } catch {
-        setDispatchedId(null)
-      }
-    }
-    window.addEventListener(DEMO_BATCH_DISPATCHED_EVENT, sync)
-    window.addEventListener('storage', sync)
-    return () => {
-      window.removeEventListener(DEMO_BATCH_DISPATCHED_EVENT, sync)
-      window.removeEventListener('storage', sync)
-    }
-  }, [])
-
-  if (!dispatchedId) return false
-  const checkId = batchId?.trim()
-  return !checkId || dispatchedId === checkId
-}
-
-function stageReady(
-  readiness: DemoBatchReadiness | null,
-  checkId: string,
-  require: DemoBatchRequire,
-): boolean {
-  if (!readiness || (checkId && readiness.batchId !== checkId)) return false
-  if (require === 'intent') return Boolean(readiness.intentOk)
-  if (require === 'settlement') return Boolean(readiness.settlementOk)
-  return Boolean(readiness.intentOk && readiness.settlementOk)
-}
-
-type ServerIngestFlags = {
-  intentOk: boolean | null
-  settlementOk: boolean | null
-  checked: boolean
-}
-
-async function fetchServerIngest(): Promise<{ intentOk: boolean; settlementOk: boolean } | null> {
-  try {
-    const res = await fetch('/api/prod/ingest-status', { cache: 'no-store' })
-    if (!res.ok) return null
-    const data = (await res.json()) as {
-      sources?: Array<{ id?: string; status?: string }>
-    }
-    const sources = Array.isArray(data?.sources) ? data.sources : []
-    const intent = sources.find((s) => s.id === 'intent_file')
-    const settlement = sources.find((s) => s.id === 'settlement_file')
-    return {
-      intentOk: intent?.status === 'received',
-      settlementOk: settlement?.status === 'received',
-    }
-  } catch {
-    return null
-  }
-}
-
-function mergeReadiness(
-  local: DemoBatchReadiness | null,
-  server: ServerIngestFlags,
-  fallbackBatchId: string,
-): DemoBatchReadiness | null {
-  // Local session flags (set by markDemo*Uploaded in the browser) are the
-  // primary signal — they represent the user's explicit upload action in
-  // the current session.  Server positive confirmation strengthens that;
-  // server absence (null = probe failed) or negative (false = not yet
-  // visible upstream) must NOT override a fresh local upload flag.
-  //
-  // This OR-logic prevents three common failure modes:
-  //  1. Server probe fails (401 / network) — local still unlocks the gate.
-  //  2. Upstream hasn't finished processing — local unlocks immediately.
-  //  3. Multi-tenant cookie collision — only the local tenant's flag
-  //     applies because keys are now tenant-scoped.
-  const intentOk = Boolean(local?.intentOk) || server.intentOk === true
-  const settlementOk = Boolean(local?.settlementOk) || server.settlementOk === true
-  if (!intentOk && !settlementOk && !local) return null
-  return {
-    batchId: fallbackBatchId,
-    intentOk,
-    settlementOk,
-    updatedAt: local?.updatedAt || '',
-  }
+/** React hook - demo fixtures are always treated as dispatched. */
+export function useBatchDispatched(_batchId?: string): boolean {
+  return true
 }
 
 /**
- * React hook - re-renders when uploads complete.
- * Defaults to the active demo batch when checking readiness.
- *
- * Pass `require: 'intent' | 'settlement' | 'both'` (default `'both'`) for stage gates.
- * Pass `{ requireUploads: false }` to skip the gate (e.g. live mode with API data).
- *
- * Server ingest-status wins when it reports a file missing — leftover
- * sessionStorage from a previous demo must not fill Dispatch / Trace /
- * Control plane while Intent Journal is still empty.
+ * React hook - hardcoded demo fixtures are always ready (no upload / ingest gate).
  */
 export function useDemoBatchReady(
   batchId?: string,
@@ -348,71 +225,13 @@ export function useDemoBatchReady(
   activeBatchId: string
   require: DemoBatchRequire
 } {
-  const requireUploads = opts?.requireUploads !== false
   const require = opts?.require ?? 'both'
-  const [local, setLocal] = useState<DemoBatchReadiness | null>(() => readRaw())
-  const [server, setServer] = useState<ServerIngestFlags>({
-    intentOk: null,
-    settlementOk: null,
-    checked: false,
-  })
-  const [activeBatchId, setActiveBatchId] = useState(DEMO_SMOKE_BATCH_ID)
-  const [hydrated, setHydrated] = useState(() => typeof window !== 'undefined')
-
-  useEffect(() => {
-    let cancelled = false
-
-    const pullServer = () => {
-      void fetchServerIngest().then((result) => {
-        if (cancelled) return
-        if (!result) {
-          setServer((prev) => ({ ...prev, checked: true }))
-          return
-        }
-        setServer({
-          intentOk: result.intentOk,
-          settlementOk: result.settlementOk,
-          checked: true,
-        })
-      })
-    }
-
-    const syncLocal = () => {
-      setLocal(readRaw())
-      setActiveBatchId(batchId?.trim() || getActiveDemoBatchId())
-      pullServer()
-    }
-
-    syncLocal()
-    window.addEventListener(DEMO_BATCH_READY_EVENT, syncLocal)
-    window.addEventListener('storage', syncLocal)
-    return () => {
-      cancelled = true
-      window.removeEventListener(DEMO_BATCH_READY_EVENT, syncLocal)
-      window.removeEventListener('storage', syncLocal)
-    }
-  }, [batchId])
-
-  // NOTE: The cleanup effect that used to clear local flags based on
-  // server probe responses has been removed.  It caused a destructive
-  // cascade: markDemo*Uploaded sets intentOk/settlementOk = true in
-  // sessionStorage, the server probe returns false (data not yet
-  // processed or upstream not reachable), and the effect immediately
-  // overwrites the fresh upload flag back to false — undoing the upload.
-  //
-  // The OR-logic in mergeReadiness already handles all cases:
-  //  - Fresh upload: local=true  → intentOk/settlementOk = true
-  //  - Server confirms: server=true  → adds confirmation
-  //  - Stale session, no server data: local=true still shows
-  //  - No upload ever: local=null, server=false → stays hidden
-
-  const checkId = batchId?.trim() || activeBatchId
-  const readiness = mergeReadiness(local, server, checkId)
-  // When the user just uploaded a file, the local session flag is already
-  // set — don't block readiness on the (asynchronous) server probe.
-  const hasLocalUpload = Boolean(local?.intentOk) || Boolean(local?.settlementOk)
-  const uploadsReady = (server.checked || hasLocalUpload) && stageReady(readiness, checkId, require)
-  const ready = hydrated && (requireUploads ? uploadsReady : true)
-
-  return { ready, readiness, activeBatchId: checkId, require }
+  const checkId = batchId?.trim() || DEMO_SMOKE_BATCH_ID
+  const readiness: DemoBatchReadiness = {
+    batchId: checkId,
+    intentOk: true,
+    settlementOk: true,
+    updatedAt: '',
+  }
+  return { ready: true, readiness, activeBatchId: checkId, require }
 }

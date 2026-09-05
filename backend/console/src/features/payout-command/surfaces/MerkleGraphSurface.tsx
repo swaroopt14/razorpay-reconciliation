@@ -1012,7 +1012,7 @@ export function MerkleGraphSurface({
             </div>
           ) : null}
 
-          <MetricTile label="Contract" value={pack.contractId || '-'} mono />
+          <MetricTile label={hideScopePickers ? 'Payout' : 'Contract'} value={pack.contractId || '-'} mono />
           <MetricTile label="Mode" value={pack.mode.replace(/_/g, ' ')} />
 
           <div className="rounded-xl border border-[#E5E5E5] bg-[#111111] px-3 py-2.5 text-white sm:col-span-2 xl:col-span-1">
