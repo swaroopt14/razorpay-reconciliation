@@ -30,71 +30,71 @@ The backend consists of 7 specialized microservices that work together to provid
 
 ## 🎯 Microservices Overview
 
-### 🌐 [edge](./edge/) - Webhooks & file upload
+### 🌐 [Edge Ingestion Service](./edge/)
 - **Port**: 8080
-- **Purpose**: HMAC Razorpay webhooks, settlement and bank file ingest, JWT auth
-- **Tech**: Go + Gin + PostgreSQL + OpenTelemetry
-- **Features**: Signature verify, duplicate-file detection, tenant isolation, rate limiting
+- **Purpose**: Receive signed Razorpay webhooks and uploaded settlement or bank files. Verify HMAC signatures and authenticate callers with JWT before anything is stored.
+- **Tech**: Go, Gin, PostgreSQL, OpenTelemetry
+- **Features**: Webhook signature verification, duplicate-file detection, tenant isolation, rate limiting
 
-### ⚙️ [recon](./recon/) - Razorpay match & exceptions
+### ⚙️ [Reconciliation Engine](./recon/)
 - **Port**: 8081
-- **Purpose**: Razorpay client, canonical payments/payouts, settlement ↔ bank match
-- **Tech**: Go + Gin + PostgreSQL
-- **Features**: `MATCHED` / `AMBIGUOUS` / `UNRESOLVED`, honest exceptions, payments API backfill
+- **Purpose**: Talk to the Razorpay Payments API, keep one canonical row per payment and payout, then match settlement lines to bank credits. Razorpay `settled` is never treated as money in the bank.
+- **Tech**: Go, Gin, PostgreSQL
+- **Features**: Outcomes `MATCHED`, `AMBIGUOUS`, and `UNRESOLVED`; exceptions stay unresolved instead of being forced; optional payments API backfill
 
-### 🧠 [intents](./intents/) - Canonical instructions
+### 🧠 [Intent Engine](./intents/)
 - **Port**: 8083
-- **Purpose**: Validate and canonicalize incoming instructions before they hit the bus
-- **Tech**: Go + PostgreSQL + Redis + OpenTelemetry
-- **Features**: Schema validation, idempotency, DLQ, business rules
+- **Purpose**: Validate and canonicalize incoming payment instructions so every downstream service sees the same shape of record.
+- **Tech**: Go, PostgreSQL, Redis, OpenTelemetry
+- **Features**: Schema validation, idempotency keys, dead-letter queue, tenant business rules
 
-### 📡 [relay](./relay/) - Kafka + KRaft communication
+### 📡 [Event Relay](./relay/)
 - **Port**: 8082
-- **Purpose**: Event bus between services. Not proof of a match
-- **Tech**: Go + Apache Kafka (KRaft, no ZooKeeper) + PostgreSQL + Outbox
-- **Features**: Topic publish/consume, transactional outbox, DLQ, guaranteed delivery
+- **Purpose**: Move events between services over Kafka. This is communication only. A Kafka offset is not proof that a payment matched.
+- **Tech**: Go, Apache Kafka in KRaft mode (no ZooKeeper), PostgreSQL, transactional outbox
+- **Features**: Topic publish and consume, outbox drain, dead-letter queue, at-least-once delivery
 
-### 📄 [evidence](./evidence/) - Cryptographic proof
+### 📄 [Evidence Service](./evidence/)
 - **Port**: 8088
-- **Purpose**: Proof packs for recon decisions. SHA-256 hashes, Merkle root, ed25519 signature
-- **Tech**: Go + PostgreSQL + S3 references
-- **Features**: Replay check, decision traces, no plaintext PII
+- **Purpose**: After the Reconciliation Engine decides, build a cryptographic proof pack: SHA-256 over each item, a Merkle root over those hashes, then an ed25519 signature over the pack.
+- **Tech**: Go, PostgreSQL, S3 object references
+- **Features**: Replay regenerates the pack and checks it still matches, decision traces, no plaintext PII in the pack
 
-### 🔒 [vault](./vault/) - PII tokens
+### 🔒 [PII Token Vault](./vault/)
 - **Port**: 8087
-- **Purpose**: Tokenize and detokenize sensitive fields for other services
-- **Tech**: Go + PostgreSQL
-- **Features**: Format-preserving tokens, scoped access, no raw PII in recon or evidence
+- **Purpose**: Replace account numbers and other sensitive fields with tokens so the Reconciliation Engine and Evidence Service never store raw PII.
+- **Tech**: Go, PostgreSQL
+- **Features**: Format-preserving tokens, scoped detokenize, other services see tokens only
 
-### 🖥️ [console](./console/) - Frontend
+### 🖥️ [Web Console](./console/)
 - **Port**: 3000
-- **Purpose**: Dashboard for recon, exceptions, Ask, and investigations
-- **Tech**: Next.js 14 + TypeScript + Tailwind CSS
-- **Features**: Razorpay connect, match rate, exception list, evidence chips
+- **Purpose**: Operator dashboard to connect Razorpay, run reconciliation, read exceptions, open Ask, and start an investigation.
+- **Tech**: Next.js 14, TypeScript, Tailwind CSS
+- **Features**: Razorpay Test Mode connect, match rate, exception list, evidence chips
 
-### 📊 [intel](./intel/) - Leakage, ambiguity, SLA
+### 📊 [Intelligence Service](./intel/)
 - **Port**: 8089
-- **Purpose**: Project the batch. Scores never invent a `MATCHED` row
-- **Tech**: Go + PostgreSQL + Kafka
-- **Features**: Leakage, ambiguity, defensibility, RCA, SLA timers
+- **Purpose**: Score the batch for leakage, ambiguity, and SLA risk. Scores explain the batch. They never write a `MATCHED` row.
+- **Tech**: Go, PostgreSQL, Kafka
+- **Features**: Leakage, ambiguity, defensibility, root-cause analysis, SLA timers
 
-### 🤖 [ml](./ml/) - Anomaly / leakage scores
-- **Port**: Kafka worker (no public HTTP)
-- **Purpose**: CatBoost / z-score / HDBSCAN over intel features
-- **Tech**: Python 3.12 + scikit-learn + CatBoost
-- **Features**: Leakage prediction, anomaly flags, retrain thresholds
+### 🤖 [Machine Learning Service](./ml/)
+- **Port**: none (Kafka worker)
+- **Purpose**: Consume feature events from the Intelligence Service and return leakage and anomaly scores. No public HTTP API.
+- **Tech**: Python 3.12, scikit-learn, CatBoost, HDBSCAN
+- **Features**: Leakage prediction, anomaly flags, retrain when enough new labels arrive
 
-### 💬 [agents](./agents/) - Ask, investigate, briefing
+### 💬 [Agent Service](./agents/)
 - **Port**: 8086
-- **Purpose**: Finance Q&A and exception walkthroughs. Model writes prose only
-- **Tech**: Go HTTP tools + Gemini for wording
-- **Features**: Citations, tool budget, cannot coerce `AMBIGUOUS` → `MATCHED`
+- **Purpose**: Answer finance questions and walk exceptions using HTTP tools. The model only writes wording. It copies numbers from APIs and cannot rename a Razorpay status.
+- **Tech**: Go tool layer, Gemini for prose
+- **Features**: Ask with citations, investigation with a tool budget, close briefing; cannot coerce `AMBIGUOUS` into `MATCHED`
 
-### ⏰ [scheduler](./scheduler/) - Backfill jobs
+### ⏰ [Airflow Scheduler](./scheduler/)
 - **Port**: 8091
-- **Purpose**: Airflow DAGs that call recon for bounded Razorpay payment windows
+- **Purpose**: Run bounded Razorpay payment backfill windows by calling the Reconciliation Engine. Airflow never calls Razorpay itself.
 - **Tech**: Apache Airflow
-- **Features**: Overlapping backfill, freshness check, never talks to Razorpay directly
+- **Features**: Overlapping windows, freshness check, scheduled backfill DAGs
 
 ## 🚀 Quick Start
 
